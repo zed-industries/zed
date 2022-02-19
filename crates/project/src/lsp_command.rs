@@ -1,7 +1,7 @@
 use crate::{Project, ProjectTransaction};
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use client::{proto, PeerId};
-use futures::{future::LocalBoxFuture, FutureExt};
 use gpui::{AppContext, AsyncAppContext, ModelContext, ModelHandle};
 use language::{
     proto::deserialize_anchor, range_from_lsp, Anchor, Bias, Buffer, PointUtf16, ToLspPosition,
@@ -9,6 +9,7 @@ use language::{
 };
 use std::{ops::Range, path::Path};
 
+#[async_trait(?Send)]
 pub(crate) trait LspCommand: 'static + Sized {
     type Response: 'static + Default + Send;
     type LspRequest: 'static + Send + lsp::request::Request;
@@ -19,13 +20,13 @@ pub(crate) trait LspCommand: 'static + Sized {
         path: &Path,
         cx: &AppContext,
     ) -> <Self::LspRequest as lsp::request::Request>::Params;
-    fn response_from_lsp(
+    async fn response_from_lsp(
         self,
         message: <Self::LspRequest as lsp::request::Request>::Result,
         project: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
         cx: AsyncAppContext,
-    ) -> LocalBoxFuture<'static, Result<Self::Response>>;
+    ) -> Result<Self::Response>;
 
     fn to_proto(
         &self,
@@ -48,26 +49,26 @@ pub(crate) trait LspCommand: 'static + Sized {
         buffer_version: &clock::Global,
         cx: &mut ModelContext<Project>,
     ) -> <Self::ProtoRequest as proto::RequestMessage>::Response;
-    fn response_from_proto(
+    async fn response_from_proto(
         self,
         message: <Self::ProtoRequest as proto::RequestMessage>::Response,
         project: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
         cx: AsyncAppContext,
-    ) -> LocalBoxFuture<'static, Result<Self::Response>>;
+    ) -> Result<Self::Response>;
 }
 
 pub(crate) struct PrepareRename {
     pub position: PointUtf16,
 }
 
-#[derive(Debug)]
 pub(crate) struct PerformRename {
     pub position: PointUtf16,
     pub new_name: String,
     pub push_to_history: bool,
 }
 
+#[async_trait(?Send)]
 impl LspCommand for PrepareRename {
     type Response = Option<Range<Anchor>>;
     type LspRequest = lsp::request::PrepareRenameRequest;
@@ -82,31 +83,28 @@ impl LspCommand for PrepareRename {
         }
     }
 
-    fn response_from_lsp(
+    async fn response_from_lsp(
         self,
         message: Option<lsp::PrepareRenameResponse>,
         _: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
         cx: AsyncAppContext,
-    ) -> LocalBoxFuture<'static, Result<Option<Range<Anchor>>>> {
-        async move {
-            Ok(message.and_then(|result| match result {
+    ) -> Result<Option<Range<Anchor>>> {
+        buffer.read_with(&cx, |buffer, _| {
+            if let Some(
                 lsp::PrepareRenameResponse::Range(range)
-                | lsp::PrepareRenameResponse::RangeWithPlaceholder { range, .. } => buffer
-                    .read_with(&cx, |buffer, _| {
-                        let range = range_from_lsp(range);
-                        if buffer.clip_point_utf16(range.start, Bias::Left) == range.start
-                            && buffer.clip_point_utf16(range.end, Bias::Left) == range.end
-                        {
-                            Some(buffer.anchor_after(range.start)..buffer.anchor_before(range.end))
-                        } else {
-                            None
-                        }
-                    }),
-                _ => None,
-            }))
-        }
-        .boxed_local()
+                | lsp::PrepareRenameResponse::RangeWithPlaceholder { range, .. },
+            ) = message
+            {
+                let Range { start, end } = range_from_lsp(range);
+                if buffer.clip_point_utf16(start, Bias::Left) == start
+                    && buffer.clip_point_utf16(end, Bias::Left) == end
+                {
+                    return Ok(Some(buffer.anchor_after(start)..buffer.anchor_before(end)));
+                }
+            }
+            Ok(None)
+        })
     }
 
     fn to_proto(
@@ -166,31 +164,29 @@ impl LspCommand for PrepareRename {
         }
     }
 
-    fn response_from_proto(
+    async fn response_from_proto(
         self,
         message: proto::PrepareRenameResponse,
         _: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
         mut cx: AsyncAppContext,
-    ) -> LocalBoxFuture<'static, Result<Option<Range<Anchor>>>> {
-        async move {
-            if message.can_rename {
-                buffer
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_version(message.version.into())
-                    })
-                    .await;
-                let start = message.start.and_then(deserialize_anchor);
-                let end = message.end.and_then(deserialize_anchor);
-                Ok(start.zip(end).map(|(start, end)| start..end))
-            } else {
-                Ok(None)
-            }
+    ) -> Result<Option<Range<Anchor>>> {
+        if message.can_rename {
+            buffer
+                .update(&mut cx, |buffer, _| {
+                    buffer.wait_for_version(message.version.into())
+                })
+                .await;
+            let start = message.start.and_then(deserialize_anchor);
+            let end = message.end.and_then(deserialize_anchor);
+            Ok(start.zip(end).map(|(start, end)| start..end))
+        } else {
+            Ok(None)
         }
-        .boxed_local()
     }
 }
 
+#[async_trait(?Send)]
 impl LspCommand for PerformRename {
     type Response = ProjectTransaction;
     type LspRequest = lsp::request::Rename;
@@ -209,39 +205,36 @@ impl LspCommand for PerformRename {
         }
     }
 
-    fn response_from_lsp(
+    async fn response_from_lsp(
         self,
         message: Option<lsp::WorkspaceEdit>,
         project: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
         mut cx: AsyncAppContext,
-    ) -> LocalBoxFuture<'static, Result<ProjectTransaction>> {
-        async move {
-            if let Some(edit) = message {
-                let (language_name, language_server) = buffer.read_with(&cx, |buffer, _| {
-                    let language = buffer
-                        .language()
-                        .ok_or_else(|| anyhow!("buffer's language was removed"))?;
-                    let language_server = buffer
-                        .language_server()
-                        .cloned()
-                        .ok_or_else(|| anyhow!("buffer's language server was removed"))?;
-                    Ok::<_, anyhow::Error>((language.name().to_string(), language_server))
-                })?;
-                Project::deserialize_workspace_edit(
-                    project,
-                    edit,
-                    self.push_to_history,
-                    language_name,
-                    language_server,
-                    &mut cx,
-                )
-                .await
-            } else {
-                Ok(ProjectTransaction::default())
-            }
+    ) -> Result<ProjectTransaction> {
+        if let Some(edit) = message {
+            let (language_name, language_server) = buffer.read_with(&cx, |buffer, _| {
+                let language = buffer
+                    .language()
+                    .ok_or_else(|| anyhow!("buffer's language was removed"))?;
+                let language_server = buffer
+                    .language_server()
+                    .cloned()
+                    .ok_or_else(|| anyhow!("buffer's language server was removed"))?;
+                Ok::<_, anyhow::Error>((language.name().to_string(), language_server))
+            })?;
+            Project::deserialize_workspace_edit(
+                project,
+                edit,
+                self.push_to_history,
+                language_name,
+                language_server,
+                &mut cx,
+            )
+            .await
+        } else {
+            Ok(ProjectTransaction::default())
         }
-        .boxed_local()
     }
 
     fn to_proto(
@@ -300,23 +293,20 @@ impl LspCommand for PerformRename {
         }
     }
 
-    fn response_from_proto(
+    async fn response_from_proto(
         self,
         message: proto::PerformRenameResponse,
         project: ModelHandle<Project>,
         _: ModelHandle<Buffer>,
         mut cx: AsyncAppContext,
-    ) -> LocalBoxFuture<'static, Result<ProjectTransaction>> {
-        async move {
-            let message = message
-                .transaction
-                .ok_or_else(|| anyhow!("missing transaction"))?;
-            project
-                .update(&mut cx, |project, cx| {
-                    project.deserialize_project_transaction(message, self.push_to_history, cx)
-                })
-                .await
-        }
-        .boxed_local()
+    ) -> Result<ProjectTransaction> {
+        let message = message
+            .transaction
+            .ok_or_else(|| anyhow!("missing transaction"))?;
+        project
+            .update(&mut cx, |project, cx| {
+                project.deserialize_project_transaction(message, self.push_to_history, cx)
+            })
+            .await
     }
 }
