@@ -768,19 +768,6 @@ mod tests {
         fake.receive_notification::<notification::Exit>().await;
     }
 
-    impl LanguageServer {
-        async fn next_idle_notification(self: &Arc<Self>) {
-            let (tx, rx) = channel::unbounded();
-            let _subscription =
-                self.on_notification::<ServerStatusNotification, _>(move |params| {
-                    if params.quiescent {
-                        tx.try_send(()).unwrap();
-                    }
-                });
-            let _ = rx.recv().await;
-        }
-    }
-
     pub enum ServerStatusNotification {}
 
     impl notification::Notification for ServerStatusNotification {
