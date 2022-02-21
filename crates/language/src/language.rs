@@ -8,7 +8,10 @@ mod tests;
 
 use anyhow::{anyhow, Result};
 use collections::HashSet;
-use futures::future::BoxFuture;
+use futures::{
+    future::{BoxFuture, Shared},
+    FutureExt,
+};
 use gpui::{AppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
@@ -55,8 +58,8 @@ pub trait ToLspPosition {
     fn to_lsp_position(self) -> lsp::Position;
 }
 
-pub trait LspPostProcessor: 'static + Send + Sync {
-    fn download_language_server(&self) -> BoxFuture<'static, Result<PathBuf>>;
+pub trait LspExt: 'static + Send + Sync {
+    fn server_bin_path(&self) -> BoxFuture<'static, Option<PathBuf>>;
     fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams);
     fn label_for_completion(
         &self,
@@ -86,7 +89,6 @@ pub struct LanguageConfig {
 
 #[derive(Default, Deserialize)]
 pub struct LanguageServerConfig {
-    pub binary: String,
     pub disk_based_diagnostic_sources: HashSet<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     #[cfg(any(test, feature = "test-support"))]
@@ -112,7 +114,8 @@ pub struct BracketPair {
 pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
-    pub(crate) lsp_post_processor: Option<Box<dyn LspPostProcessor>>,
+    pub(crate) lsp_ext: Option<Box<dyn LspExt>>,
+    lsp_binary_path: Mutex<Option<Shared<BoxFuture<'static, Option<PathBuf>>>>>,
 }
 
 pub struct Grammar {
@@ -179,7 +182,8 @@ impl Language {
                     highlight_map: Default::default(),
                 })
             }),
-            lsp_post_processor: None,
+            lsp_ext: None,
+            lsp_binary_path: Default::default(),
         }
     }
 
@@ -223,8 +227,8 @@ impl Language {
         Ok(self)
     }
 
-    pub fn with_lsp_post_processor(mut self, processor: impl LspPostProcessor) -> Self {
-        self.lsp_post_processor = Some(Box::new(processor));
+    pub fn with_lsp_ext(mut self, processor: impl LspExt) -> Self {
+        self.lsp_ext = Some(Box::new(processor));
         self
     }
 
@@ -241,8 +245,8 @@ impl Language {
         root_path: Arc<Path>,
         cx: &AppContext,
     ) -> Task<Result<Option<Arc<lsp::LanguageServer>>>> {
+        #[cfg(any(test, feature = "test-support"))]
         if let Some(config) = &self.config.language_server {
-            #[cfg(any(test, feature = "test-support"))]
             if let Some(fake_config) = &config.fake_config {
                 use postage::prelude::Stream;
 
@@ -266,19 +270,20 @@ impl Language {
 
                 return Task::ready(Ok(Some(server.clone())));
             }
+        }
 
-            let background = cx.background().clone();
-            let server_binary_path = self
-                .download_language_server()
-                .ok_or_else(|| anyhow!("cannot download language server"));
-            cx.background().spawn(async move {
-                let server_binary_path = server_binary_path?.await?;
+        let background = cx.background().clone();
+        let server_binary_path = self
+            .lsp_binary_path()
+            .ok_or_else(|| anyhow!("cannot locate or download language server"));
+        cx.background().spawn(async move {
+            if let Some(server_binary_path) = server_binary_path?.await {
                 let server = lsp::LanguageServer::new(&server_binary_path, &root_path, background)?;
                 Ok(Some(server))
-            })
-        } else {
-            Task::ready(Ok(None))
-        }
+            } else {
+                Ok(None)
+            }
+        })
     }
 
     pub fn disk_based_diagnostic_sources(&self) -> Option<&HashSet<String>> {
@@ -296,7 +301,7 @@ impl Language {
     }
 
     pub fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams) {
-        if let Some(processor) = self.lsp_post_processor.as_ref() {
+        if let Some(processor) = self.lsp_ext.as_ref() {
             processor.process_diagnostics(diagnostics);
         }
     }
@@ -305,7 +310,7 @@ impl Language {
         &self,
         completion: &lsp::CompletionItem,
     ) -> Option<CompletionLabel> {
-        self.lsp_post_processor
+        self.lsp_ext
             .as_ref()?
             .label_for_completion(completion, self)
     }
@@ -331,10 +336,17 @@ impl Language {
         result
     }
 
-    fn download_language_server(&self) -> Option<impl Future<Output = Result<PathBuf>>> {
-        self.lsp_post_processor
-            .as_ref()
-            .map(|processor| processor.download_language_server())
+    fn lsp_binary_path(&self) -> Option<impl Future<Output = Option<PathBuf>>> {
+        if let Some(lsp_ext) = self.lsp_ext.as_ref() {
+            Some(
+                self.lsp_binary_path
+                    .lock()
+                    .get_or_insert_with(|| lsp_ext.server_bin_path().shared())
+                    .clone(),
+            )
+        } else {
+            None
+        }
     }
 
     pub fn brackets(&self) -> &[BracketPair] {

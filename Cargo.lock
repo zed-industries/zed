@@ -5741,6 +5741,7 @@ name = "zed"
 version = "0.15.2"
 dependencies = [
  "anyhow",
+ "async-compression",
  "async-recursion",
  "async-trait",
  "chat_panel",

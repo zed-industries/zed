@@ -1,22 +1,98 @@
-use anyhow::Result;
-use futures::future::BoxFuture;
+use anyhow::anyhow;
+use async_compression::futures::bufread::GzipDecoder;
+use client::http;
+use futures::{future::BoxFuture, FutureExt, StreamExt};
 pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
 use rust_embed::RustEmbed;
-use std::borrow::Cow;
-use std::path::PathBuf;
-use std::{str, sync::Arc};
+use serde::Deserialize;
+use smol::fs::{self, File};
+use std::{borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
+use util::{ResultExt, TryFutureExt};
 
 #[derive(RustEmbed)]
 #[folder = "languages"]
 struct LanguageDir;
 
-struct RustPostProcessor;
+struct RustLsp;
 
-impl LspPostProcessor for RustPostProcessor {
-    fn download_language_server(&self) -> BoxFuture<'static, Result<PathBuf>> {
-        todo!()
+#[derive(Deserialize)]
+struct GithubRelease {
+    name: String,
+    assets: Vec<GithubReleaseAsset>,
+}
+
+#[derive(Deserialize)]
+struct GithubReleaseAsset {
+    name: String,
+    browser_download_url: http::Url,
+}
+
+impl RustLsp {
+    async fn download(destination_dir_path: PathBuf) -> anyhow::Result<PathBuf> {
+        let client = surf::client().with(surf::middleware::Redirect::default());
+        let release = client
+            .get("https://api.github.com/repos/rust-analyzer/rust-analyzer/releases/latest")
+            .recv_json::<GithubRelease>()
+            .await
+            .map_err(|err| anyhow!("error getting latest release: {}", err))?;
+        let release_name = format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH);
+        let asset = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == release_name)
+            .ok_or_else(|| anyhow!("no release found matching {:?}", release_name))?;
+
+        let destination_path = destination_dir_path.join(format!("rust-analyzer-{}", release.name));
+        if fs::metadata(&destination_path).await.is_ok() {
+            let response = client
+                .get(&asset.browser_download_url)
+                .send()
+                .await
+                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+            let decompressed_bytes = GzipDecoder::new(response);
+            let mut file = File::create(&destination_path).await?;
+            futures::io::copy(decompressed_bytes, &mut file).await?;
+            fs::set_permissions(
+                &destination_path,
+                <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+            )
+            .await?;
+        }
+
+        Ok::<_, anyhow::Error>(destination_path)
+    }
+}
+
+impl LspExt for RustLsp {
+    fn server_bin_path(&self) -> BoxFuture<'static, Option<PathBuf>> {
+        async move {
+            let destination_dir_path = dirs::home_dir()
+                .ok_or_else(|| anyhow!("can't determine home directory"))?
+                .join(".zed/rust-analyzer");
+            fs::create_dir_all(&destination_dir_path).await?;
+
+            let mut server_bin_path = Self::download(destination_dir_path.clone()).await.log_err();
+            if let Some(mut entries) = fs::read_dir(&destination_dir_path).await.log_err() {
+                while let Some(entry) = entries.next().await {
+                    if let Some(entry) = entry.log_err() {
+                        let entry_path = entry.path();
+                        if let Some(downloaded_server_path) = server_bin_path.as_ref() {
+                            if downloaded_server_path != entry_path.as_path() {
+                                fs::remove_file(entry_path).await.log_err();
+                            }
+                        } else {
+                            server_bin_path = Some(entry_path);
+                        }
+                    }
+                }
+            }
+
+            server_bin_path.ok_or_else(|| anyhow!("could not locate or download server"))
+        }
+        .log_err()
+        .boxed()
     }
 
     fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
@@ -138,7 +214,7 @@ fn rust() -> Language {
         .unwrap()
         .with_outline_query(load_query("rust/outline.scm").as_ref())
         .unwrap()
-        .with_lsp_post_processor(RustPostProcessor)
+        .with_lsp_ext(RustLsp)
 }
 
 fn markdown() -> Language {
@@ -160,7 +236,7 @@ fn load_query(path: &str) -> Cow<'static, str> {
 mod tests {
     use super::*;
     use gpui::color::Color;
-    use language::LspPostProcessor;
+    use language::LspExt;
     use theme::SyntaxTheme;
 
     #[test]
@@ -187,7 +263,7 @@ mod tests {
                 },
             ],
         };
-        RustPostProcessor.process_diagnostics(&mut params);
+        RustLsp.process_diagnostics(&mut params);
 
         assert_eq!(params.diagnostics[0].message, "use of moved value `a`");
 
