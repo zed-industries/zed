@@ -12,10 +12,11 @@ use futures::{
     future::{BoxFuture, Shared},
     FutureExt,
 };
-use gpui::{AppContext, Task};
+use gpui::{executor, AppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
+use postage::watch;
 use serde::Deserialize;
 use std::{
     cell::RefCell,
@@ -127,18 +128,33 @@ pub struct Grammar {
     pub(crate) highlight_map: Mutex<HighlightMap>,
 }
 
-#[derive(Default)]
 pub struct LanguageRegistry {
     languages: Vec<Arc<Language>>,
+    pending_lsp_binaries_tx: Arc<Mutex<watch::Sender<usize>>>,
+    pending_lsp_binaries_rx: watch::Receiver<usize>,
 }
 
 impl LanguageRegistry {
     pub fn new() -> Self {
-        Self::default()
+        let (pending_lsp_binaries_tx, pending_lsp_binaries_rx) = watch::channel();
+        Self {
+            languages: Default::default(),
+            pending_lsp_binaries_tx: Arc::new(Mutex::new(pending_lsp_binaries_tx)),
+            pending_lsp_binaries_rx,
+        }
     }
 
-    pub fn add(&mut self, language: Arc<Language>) {
-        self.languages.push(language);
+    pub fn add(&mut self, language: Arc<Language>, cx: &executor::Background) {
+        self.languages.push(language.clone());
+        if let Some(lsp_binary_path) = language.lsp_binary_path() {
+            let pending_lsp_binaries_tx = self.pending_lsp_binaries_tx.clone();
+            cx.spawn(async move {
+                *pending_lsp_binaries_tx.lock().borrow_mut() += 1;
+                lsp_binary_path.await;
+                *pending_lsp_binaries_tx.lock().borrow_mut() -= 1;
+            })
+            .detach();
+        }
     }
 
     pub fn set_theme(&self, theme: &SyntaxTheme) {
@@ -165,6 +181,10 @@ impl LanguageRegistry {
                 .iter()
                 .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())))
         })
+    }
+
+    pub fn pending_lsp_binaries(&self) -> watch::Receiver<usize> {
+        self.pending_lsp_binaries_rx.clone()
     }
 }
 

@@ -26,14 +26,17 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
     let client = Client::new(http.clone());
     let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
     let mut languages = LanguageRegistry::new();
-    languages.add(Arc::new(language::Language::new(
-        language::LanguageConfig {
-            name: "Rust".to_string(),
-            path_suffixes: vec!["rs".to_string()],
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::language()),
-    )));
+    languages.add(
+        Arc::new(language::Language::new(
+            language::LanguageConfig {
+                name: "Rust".to_string(),
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        )),
+        cx.background(),
+    );
     Arc::new(AppState {
         settings_tx: Arc::new(Mutex::new(settings_tx)),
         settings,

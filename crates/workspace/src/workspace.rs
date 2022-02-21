@@ -1,3 +1,4 @@
+pub mod lsp_status;
 pub mod menu;
 pub mod pane;
 pub mod pane_group;

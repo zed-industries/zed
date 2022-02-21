@@ -5701,6 +5701,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "futures",
  "gpui",
  "language",
  "log",

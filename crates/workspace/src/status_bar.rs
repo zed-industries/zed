@@ -42,17 +42,21 @@ impl View for StatusBar {
     fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme.workspace.status_bar;
         Flex::row()
-            .with_children(
-                self.left_items
-                    .iter()
-                    .map(|i| ChildView::new(i.as_ref()).aligned().boxed()),
-            )
+            .with_children(self.left_items.iter().map(|i| {
+                ChildView::new(i.as_ref())
+                    .aligned()
+                    .contained()
+                    .with_margin_right(theme.item_spacing)
+                    .boxed()
+            }))
             .with_child(Empty::new().flexible(1., true).boxed())
-            .with_children(
-                self.right_items
-                    .iter()
-                    .map(|i| ChildView::new(i.as_ref()).aligned().boxed()),
-            )
+            .with_children(self.right_items.iter().map(|i| {
+                ChildView::new(i.as_ref())
+                    .aligned()
+                    .contained()
+                    .with_margin_left(theme.item_spacing)
+                    .boxed()
+            }))
             .contained()
             .with_style(theme.container)
             .constrained()

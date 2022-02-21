@@ -19,6 +19,7 @@ project = { path = "../project" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 anyhow = "1.0.38"
+futures = "0.3"
 log = "0.4"
 parking_lot = "0.11.1"
 postage = { version = "0.4.1", features = ["futures-traits"] }

@@ -22,28 +22,31 @@ fn init_logger() {
     }
 }
 
-#[test]
-fn test_select_language() {
-    let registry = LanguageRegistry {
-        languages: vec![
-            Arc::new(Language::new(
-                LanguageConfig {
-                    name: "Rust".to_string(),
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                Some(tree_sitter_rust::language()),
-            )),
-            Arc::new(Language::new(
-                LanguageConfig {
-                    name: "Make".to_string(),
-                    path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
-                    ..Default::default()
-                },
-                Some(tree_sitter_rust::language()),
-            )),
-        ],
-    };
+#[gpui::test]
+fn test_select_language(cx: &mut MutableAppContext) {
+    let mut registry = LanguageRegistry::new();
+    registry.add(
+        Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".to_string(),
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        )),
+        cx.background(),
+    );
+    registry.add(
+        Arc::new(Language::new(
+            LanguageConfig {
+                name: "Make".to_string(),
+                path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        )),
+        cx.background(),
+    );
 
     // matching file extension
     assert_eq!(

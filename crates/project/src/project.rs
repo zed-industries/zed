@@ -3069,8 +3069,10 @@ mod tests {
         .await;
 
         let project = Project::test(fs, &mut cx);
-        project.update(&mut cx, |project, _| {
-            Arc::get_mut(&mut project.languages).unwrap().add(language);
+        project.update(&mut cx, |project, cx| {
+            Arc::get_mut(&mut project.languages)
+                .unwrap()
+                .add(language, cx.background());
         });
 
         let (tree, _) = project
@@ -3215,8 +3217,10 @@ mod tests {
         .await;
 
         let project = Project::test(fs, &mut cx);
-        project.update(&mut cx, |project, _| {
-            Arc::get_mut(&mut project.languages).unwrap().add(language);
+        project.update(&mut cx, |project, cx| {
+            Arc::get_mut(&mut project.languages)
+                .unwrap()
+                .add(language, cx.background());
         });
 
         let (tree, _) = project
@@ -4108,8 +4112,10 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), &mut cx);
-        project.update(&mut cx, |project, _| {
-            Arc::get_mut(&mut project.languages).unwrap().add(language);
+        project.update(&mut cx, |project, cx| {
+            Arc::get_mut(&mut project.languages)
+                .unwrap()
+                .add(language, cx.background());
         });
 
         let (tree, _) = project

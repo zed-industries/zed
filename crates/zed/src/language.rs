@@ -2,6 +2,7 @@ use anyhow::anyhow;
 use async_compression::futures::bufread::GzipDecoder;
 use client::http;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
+use gpui::executor;
 pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -45,7 +46,7 @@ impl RustLsp {
             .ok_or_else(|| anyhow!("no release found matching {:?}", release_name))?;
 
         let destination_path = destination_dir_path.join(format!("rust-analyzer-{}", release.name));
-        if fs::metadata(&destination_path).await.is_ok() {
+        if fs::metadata(&destination_path).await.is_err() {
             let response = client
                 .get(&asset.browser_download_url)
                 .send()
@@ -195,10 +196,10 @@ impl LspExt for RustLsp {
     }
 }
 
-pub fn build_language_registry() -> LanguageRegistry {
-    let mut languages = LanguageRegistry::default();
-    languages.add(Arc::new(rust()));
-    languages.add(Arc::new(markdown()));
+pub fn build_language_registry(executor: &Arc<executor::Background>) -> LanguageRegistry {
+    let mut languages = LanguageRegistry::new();
+    languages.add(Arc::new(rust()), executor);
+    languages.add(Arc::new(markdown()), executor);
     languages
 }
 
