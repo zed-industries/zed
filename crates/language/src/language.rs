@@ -7,12 +7,13 @@ pub mod proto;
 mod tests;
 
 use anyhow::{anyhow, Result};
+use client::http::HttpClient;
 use collections::HashSet;
 use futures::{
     future::{BoxFuture, Shared},
-    FutureExt,
+    FutureExt, TryFutureExt,
 };
-use gpui::{executor, AppContext, Task};
+use gpui::{AppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -20,7 +21,6 @@ use postage::watch;
 use serde::Deserialize;
 use std::{
     cell::RefCell,
-    future::Future,
     ops::Range,
     path::{Path, PathBuf},
     str,
@@ -60,7 +60,10 @@ pub trait ToLspPosition {
 }
 
 pub trait LspExt: 'static + Send + Sync {
-    fn server_bin_path(&self) -> BoxFuture<'static, Option<PathBuf>>;
+    fn fetch_latest_language_server(
+        &self,
+        http: Arc<dyn HttpClient>,
+    ) -> BoxFuture<'static, Result<PathBuf>>;
     fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams);
     fn label_for_completion(
         &self,
@@ -116,7 +119,7 @@ pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
     pub(crate) lsp_ext: Option<Box<dyn LspExt>>,
-    lsp_binary_path: Mutex<Option<Shared<BoxFuture<'static, Option<PathBuf>>>>>,
+    lsp_binary_path: Mutex<Option<Shared<BoxFuture<'static, Result<PathBuf, Arc<anyhow::Error>>>>>>,
 }
 
 pub struct Grammar {
@@ -144,17 +147,8 @@ impl LanguageRegistry {
         }
     }
 
-    pub fn add(&mut self, language: Arc<Language>, cx: &executor::Background) {
+    pub fn add(&mut self, language: Arc<Language>) {
         self.languages.push(language.clone());
-        if let Some(lsp_binary_path) = language.lsp_binary_path() {
-            let pending_lsp_binaries_tx = self.pending_lsp_binaries_tx.clone();
-            cx.spawn(async move {
-                *pending_lsp_binaries_tx.lock().borrow_mut() += 1;
-                lsp_binary_path.await;
-                *pending_lsp_binaries_tx.lock().borrow_mut() -= 1;
-            })
-            .detach();
-        }
     }
 
     pub fn set_theme(&self, theme: &SyntaxTheme) {
@@ -181,6 +175,71 @@ impl LanguageRegistry {
                 .iter()
                 .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())))
         })
+    }
+
+    pub fn start_language_server(
+        &self,
+        language: &Arc<Language>,
+        root_path: Arc<Path>,
+        http_client: Arc<dyn HttpClient>,
+        cx: &AppContext,
+    ) -> Option<Task<Result<Arc<lsp::LanguageServer>>>> {
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(config) = &language.config.language_server {
+            if let Some(fake_config) = &config.fake_config {
+                use postage::prelude::Stream;
+
+                let (server, mut fake_server) = lsp::LanguageServer::fake_with_capabilities(
+                    fake_config.capabilities.clone(),
+                    cx.background().clone(),
+                );
+
+                if let Some(initalizer) = &fake_config.initializer {
+                    initalizer(&mut fake_server);
+                }
+
+                let servers_tx = fake_config.servers_tx.clone();
+                let mut initialized = server.capabilities();
+                cx.background()
+                    .spawn(async move {
+                        while initialized.recv().await.is_none() {}
+                        servers_tx.unbounded_send(fake_server).ok();
+                    })
+                    .detach();
+
+                return Some(Task::ready(Ok(server.clone())));
+            }
+        }
+
+        let lsp_ext = language.lsp_ext.as_ref()?;
+        let background = cx.background().clone();
+        let server_binary_path = {
+            Some(
+                language
+                    .lsp_binary_path
+                    .lock()
+                    .get_or_insert_with(|| {
+                        let pending_lsp_binaries_tx = self.pending_lsp_binaries_tx.clone();
+                        let language_server_path =
+                            lsp_ext.fetch_latest_language_server(http_client);
+                        async move {
+                            *pending_lsp_binaries_tx.lock().borrow_mut() += 1;
+                            let path = language_server_path.map_err(Arc::new).await;
+                            *pending_lsp_binaries_tx.lock().borrow_mut() -= 1;
+                            path
+                        }
+                        .boxed()
+                        .shared()
+                    })
+                    .clone()
+                    .map_err(|e| anyhow!(e)),
+            )
+        }?;
+        Some(cx.background().spawn(async move {
+            let server_binary_path = server_binary_path.await?;
+            let server = lsp::LanguageServer::new(&server_binary_path, &root_path, background)?;
+            Ok(server)
+        }))
     }
 
     pub fn pending_lsp_binaries(&self) -> watch::Receiver<usize> {
@@ -260,52 +319,6 @@ impl Language {
         self.config.line_comment.as_deref()
     }
 
-    pub fn start_server(
-        &self,
-        root_path: Arc<Path>,
-        cx: &AppContext,
-    ) -> Task<Result<Option<Arc<lsp::LanguageServer>>>> {
-        #[cfg(any(test, feature = "test-support"))]
-        if let Some(config) = &self.config.language_server {
-            if let Some(fake_config) = &config.fake_config {
-                use postage::prelude::Stream;
-
-                let (server, mut fake_server) = lsp::LanguageServer::fake_with_capabilities(
-                    fake_config.capabilities.clone(),
-                    cx.background().clone(),
-                );
-
-                if let Some(initalizer) = &fake_config.initializer {
-                    initalizer(&mut fake_server);
-                }
-
-                let servers_tx = fake_config.servers_tx.clone();
-                let mut initialized = server.capabilities();
-                cx.background()
-                    .spawn(async move {
-                        while initialized.recv().await.is_none() {}
-                        servers_tx.unbounded_send(fake_server).ok();
-                    })
-                    .detach();
-
-                return Task::ready(Ok(Some(server.clone())));
-            }
-        }
-
-        let background = cx.background().clone();
-        let server_binary_path = self
-            .lsp_binary_path()
-            .ok_or_else(|| anyhow!("cannot locate or download language server"));
-        cx.background().spawn(async move {
-            if let Some(server_binary_path) = server_binary_path?.await {
-                let server = lsp::LanguageServer::new(&server_binary_path, &root_path, background)?;
-                Ok(Some(server))
-            } else {
-                Ok(None)
-            }
-        })
-    }
-
     pub fn disk_based_diagnostic_sources(&self) -> Option<&HashSet<String>> {
         self.config
             .language_server
@@ -354,19 +367,6 @@ impl Language {
             }
         }
         result
-    }
-
-    fn lsp_binary_path(&self) -> Option<impl Future<Output = Option<PathBuf>>> {
-        if let Some(lsp_ext) = self.lsp_ext.as_ref() {
-            Some(
-                self.lsp_binary_path
-                    .lock()
-                    .get_or_insert_with(|| lsp_ext.server_bin_path().shared())
-                    .clone(),
-            )
-        } else {
-            None
-        }
     }
 
     pub fn brackets(&self) -> &[BracketPair] {

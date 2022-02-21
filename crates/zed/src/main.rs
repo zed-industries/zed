@@ -39,7 +39,7 @@ fn main() {
             },
         );
     let (settings_tx, settings) = postage::watch::channel_with(settings);
-    let languages = Arc::new(language::build_language_registry(&app.background()));
+    let languages = Arc::new(language::build_language_registry());
     languages.set_theme(&settings.borrow().theme.editor.syntax);
 
     app.run(move |cx| {

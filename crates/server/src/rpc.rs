@@ -2011,7 +2011,7 @@ mod tests {
                 },
                 Some(tree_sitter_rust::language()),
             )),
-            &cx_a.background(),
+            
         );
 
         // Connect to a server as 2 clients.
@@ -2243,7 +2243,7 @@ mod tests {
                 },
                 Some(tree_sitter_rust::language()),
             )),
-            &cx_a.background(),
+            
         );
 
         // Connect to a server as 2 clients.
@@ -2446,7 +2446,7 @@ mod tests {
                 },
                 Some(tree_sitter_rust::language()),
             )),
-            &cx_a.background(),
+            
         );
 
         // Connect to a server as 2 clients.
@@ -2564,7 +2564,7 @@ mod tests {
                 },
                 Some(tree_sitter_rust::language()),
             )),
-            &cx_a.background(),
+            
         );
 
         // Connect to a server as 2 clients.
@@ -2713,7 +2713,7 @@ mod tests {
                 },
                 Some(tree_sitter_rust::language()),
             )),
-            &cx_a.background(),
+            
         );
 
         // Connect to a server as 2 clients.
@@ -2815,7 +2815,7 @@ mod tests {
                 },
                 Some(tree_sitter_rust::language()),
             )),
-            &cx_a.background(),
+            
         );
 
         // Connect to a server as 2 clients.
@@ -3055,7 +3055,7 @@ mod tests {
                 },
                 Some(tree_sitter_rust::language()),
             )),
-            &cx_a.background(),
+            
         );
 
         // Connect to a server as 2 clients.
@@ -3862,7 +3862,7 @@ mod tests {
                 },
                 None,
             )),
-            &cx.background(),
+            
         );
 
         let fs = FakeFs::new(cx.background());

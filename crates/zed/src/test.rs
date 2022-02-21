@@ -35,7 +35,7 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
             },
             Some(tree_sitter_rust::language()),
         )),
-        cx.background(),
+        
     );
     Arc::new(AppState {
         settings_tx: Arc::new(Mutex::new(settings_tx)),

@@ -224,6 +224,10 @@ impl Client {
         self.id
     }
 
+    pub fn http_client(&self) -> Arc<dyn HttpClient> {
+        self.http.clone()
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn override_authenticate<F>(&mut self, authenticate: F) -> &mut Self
     where

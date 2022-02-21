@@ -1,8 +1,7 @@
-use anyhow::anyhow;
+use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
-use client::http;
+use client::http::{self, HttpClient, Method};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use gpui::executor;
 pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -10,7 +9,7 @@ use rust_embed::RustEmbed;
 use serde::Deserialize;
 use smol::fs::{self, File};
 use std::{borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
-use util::{ResultExt, TryFutureExt};
+use util::ResultExt;
 
 #[derive(RustEmbed)]
 #[folder = "languages"]
@@ -31,13 +30,27 @@ struct GithubReleaseAsset {
 }
 
 impl RustLsp {
-    async fn download(destination_dir_path: PathBuf) -> anyhow::Result<PathBuf> {
-        let client = surf::client().with(surf::middleware::Redirect::default());
-        let release = client
-            .get("https://api.github.com/repos/rust-analyzer/rust-analyzer/releases/latest")
-            .recv_json::<GithubRelease>()
+    async fn download(
+        destination_dir_path: PathBuf,
+        http: Arc<dyn HttpClient>,
+    ) -> anyhow::Result<PathBuf> {
+        let release = http
+            .send(
+                surf::RequestBuilder::new(
+                    Method::Get,
+                    http::Url::parse(
+                        "https://api.github.com/repos/rust-analyzer/rust-analyzer/releases/latest",
+                    )
+                    .unwrap(),
+                )
+                .middleware(surf::middleware::Redirect::default())
+                .build(),
+            )
             .await
-            .map_err(|err| anyhow!("error getting latest release: {}", err))?;
+            .map_err(|err| anyhow!("error fetching latest release: {}", err))?
+            .body_json::<GithubRelease>()
+            .await
+            .map_err(|err| anyhow!("error parsing latest release: {}", err))?;
         let release_name = format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH);
         let asset = release
             .assets
@@ -47,9 +60,12 @@ impl RustLsp {
 
         let destination_path = destination_dir_path.join(format!("rust-analyzer-{}", release.name));
         if fs::metadata(&destination_path).await.is_err() {
-            let response = client
-                .get(&asset.browser_download_url)
-                .send()
+            let response = http
+                .send(
+                    surf::RequestBuilder::new(Method::Get, asset.browser_download_url.clone())
+                        .middleware(surf::middleware::Redirect::default())
+                        .build(),
+                )
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
             let decompressed_bytes = GzipDecoder::new(response);
@@ -67,32 +83,40 @@ impl RustLsp {
 }
 
 impl LspExt for RustLsp {
-    fn server_bin_path(&self) -> BoxFuture<'static, Option<PathBuf>> {
+    fn fetch_latest_language_server(
+        &self,
+        http: Arc<dyn HttpClient>,
+    ) -> BoxFuture<'static, Result<PathBuf>> {
         async move {
             let destination_dir_path = dirs::home_dir()
                 .ok_or_else(|| anyhow!("can't determine home directory"))?
                 .join(".zed/rust-analyzer");
             fs::create_dir_all(&destination_dir_path).await?;
 
-            let mut server_bin_path = Self::download(destination_dir_path.clone()).await.log_err();
+            let downloaded_bin_path = Self::download(destination_dir_path.clone(), http).await;
+            let mut last_cached_bin_path = None;
             if let Some(mut entries) = fs::read_dir(&destination_dir_path).await.log_err() {
                 while let Some(entry) = entries.next().await {
                     if let Some(entry) = entry.log_err() {
                         let entry_path = entry.path();
-                        if let Some(downloaded_server_path) = server_bin_path.as_ref() {
-                            if downloaded_server_path != entry_path.as_path() {
-                                fs::remove_file(entry_path).await.log_err();
+                        if let Ok(downloaded_bin_path) = downloaded_bin_path.as_ref() {
+                            if downloaded_bin_path != entry_path.as_path() {
+                                fs::remove_file(&entry_path).await.log_err();
                             }
-                        } else {
-                            server_bin_path = Some(entry_path);
                         }
+                        last_cached_bin_path = Some(entry_path);
                     }
                 }
             }
 
-            server_bin_path.ok_or_else(|| anyhow!("could not locate or download server"))
+            if downloaded_bin_path.is_err() {
+                if let Some(last_cached_bin_path) = last_cached_bin_path {
+                    return Ok(last_cached_bin_path);
+                }
+            }
+
+            downloaded_bin_path
         }
-        .log_err()
         .boxed()
     }
 
@@ -196,10 +220,10 @@ impl LspExt for RustLsp {
     }
 }
 
-pub fn build_language_registry(executor: &Arc<executor::Background>) -> LanguageRegistry {
+pub fn build_language_registry() -> LanguageRegistry {
     let mut languages = LanguageRegistry::new();
-    languages.add(Arc::new(rust()), executor);
-    languages.add(Arc::new(markdown()), executor);
+    languages.add(Arc::new(rust()));
+    languages.add(Arc::new(markdown()));
     languages
 }
 

@@ -835,19 +835,20 @@ impl Project {
         self.started_language_servers
             .entry(key.clone())
             .or_insert_with(|| {
-                let language_server = language.start_server(worktree_path, cx);
+                let language_server = self.languages.start_language_server(
+                    &language,
+                    worktree_path,
+                    self.client.http_client(),
+                    cx,
+                );
                 let rpc = self.client.clone();
                 cx.spawn_weak(|this, mut cx| async move {
-                    let language_server = language_server.await.log_err().flatten();
+                    let language_server = language_server?.await.log_err()?;
                     if let Some(this) = this.upgrade(&cx) {
                         this.update(&mut cx, |this, _| {
-                            if let Some(language_server) = language_server.clone() {
-                                this.language_servers.insert(key, language_server);
-                            }
+                            this.language_servers.insert(key, language_server.clone());
                         });
                     }
-
-                    let language_server = language_server?;
 
                     let disk_based_sources = language
                         .disk_based_diagnostic_sources()
@@ -3069,10 +3070,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs, &mut cx);
-        project.update(&mut cx, |project, cx| {
-            Arc::get_mut(&mut project.languages)
-                .unwrap()
-                .add(language, cx.background());
+        project.update(&mut cx, |project, _| {
+            Arc::get_mut(&mut project.languages).unwrap().add(language);
         });
 
         let (tree, _) = project
@@ -3217,10 +3216,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs, &mut cx);
-        project.update(&mut cx, |project, cx| {
-            Arc::get_mut(&mut project.languages)
-                .unwrap()
-                .add(language, cx.background());
+        project.update(&mut cx, |project, _| {
+            Arc::get_mut(&mut project.languages).unwrap().add(language);
         });
 
         let (tree, _) = project
@@ -4112,10 +4109,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), &mut cx);
-        project.update(&mut cx, |project, cx| {
-            Arc::get_mut(&mut project.languages)
-                .unwrap()
-                .add(language, cx.background());
+        project.update(&mut cx, |project, _| {
+            Arc::get_mut(&mut project.languages).unwrap().add(language);
         });
 
         let (tree, _) = project
