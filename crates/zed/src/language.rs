@@ -1,8 +1,11 @@
+use anyhow::Result;
+use futures::future::BoxFuture;
 pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
 use rust_embed::RustEmbed;
 use std::borrow::Cow;
+use std::path::PathBuf;
 use std::{str, sync::Arc};
 
 #[derive(RustEmbed)]
@@ -12,6 +15,10 @@ struct LanguageDir;
 struct RustPostProcessor;
 
 impl LspPostProcessor for RustPostProcessor {
+    fn download_language_server(&self) -> BoxFuture<'static, Result<PathBuf>> {
+        todo!()
+    }
+
     fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
         lazy_static! {
             static ref REGEX: Regex = Regex::new("(?m)`([^`]+)\n`$").unwrap();

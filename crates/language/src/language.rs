@@ -8,12 +8,20 @@ mod tests;
 
 use anyhow::{anyhow, Result};
 use collections::HashSet;
+use futures::future::BoxFuture;
 use gpui::{AppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Deserialize;
-use std::{cell::RefCell, ops::Range, path::Path, str, sync::Arc};
+use std::{
+    cell::RefCell,
+    future::Future,
+    ops::Range,
+    path::{Path, PathBuf},
+    str,
+    sync::Arc,
+};
 use theme::SyntaxTheme;
 use tree_sitter::{self, Query};
 
@@ -48,6 +56,7 @@ pub trait ToLspPosition {
 }
 
 pub trait LspPostProcessor: 'static + Send + Sync {
+    fn download_language_server(&self) -> BoxFuture<'static, Result<PathBuf>>;
     fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams);
     fn label_for_completion(
         &self,
@@ -259,13 +268,14 @@ impl Language {
             }
 
             let background = cx.background().clone();
-            let server = lsp::LanguageServer::new(
-                Path::new(&config.binary),
-                &root_path,
-                cx.background().clone(),
-            )
-            .map(Some);
-            cx.background().spawn(async move { server })
+            let server_binary_path = self
+                .download_language_server()
+                .ok_or_else(|| anyhow!("cannot download language server"));
+            cx.background().spawn(async move {
+                let server_binary_path = server_binary_path?.await?;
+                let server = lsp::LanguageServer::new(&server_binary_path, &root_path, background)?;
+                Ok(Some(server))
+            })
         } else {
             Task::ready(Ok(None))
         }
@@ -319,6 +329,12 @@ impl Language {
             }
         }
         result
+    }
+
+    fn download_language_server(&self) -> Option<impl Future<Output = Result<PathBuf>>> {
+        self.lsp_post_processor
+            .as_ref()
+            .map(|processor| processor.download_language_server())
     }
 
     pub fn brackets(&self) -> &[BracketPair] {
