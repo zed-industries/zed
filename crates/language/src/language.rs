@@ -260,15 +260,8 @@ impl Language {
 
             const ZED_BUNDLE: Option<&'static str> = option_env!("ZED_BUNDLE");
             let binary_path = if ZED_BUNDLE.map_or(Ok(false), |b| b.parse())? {
-                let bundled_path = cx
-                    .platform()
-                    .path_for_resource(Some(&config.binary), None)?;
-                std::fs::set_permissions(
-                    &bundled_path,
-                    <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-                )
-                .unwrap();
-                bundled_path
+                cx.platform()
+                    .path_for_resource(Some(&config.binary), None)?
             } else {
                 Path::new(&config.binary).to_path_buf()
             };

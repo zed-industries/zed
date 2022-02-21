@@ -23,7 +23,6 @@ lipo -create target/x86_64-apple-darwin/release/Zed target/aarch64-apple-darwin/
 
 # Bundle rust-analyzer
 cp vendor/bin/rust-analyzer target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/Resources/
-chmod -x target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/Resources/rust-analyzer
 
 # Sign the app bundle with an ad-hoc signature so it runs on the M1. We need a real certificate but this works for now.
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
@@ -35,6 +34,7 @@ if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTAR
     security import /tmp/zed-certificate.p12 -k zed.keychain -P $MACOS_CERTIFICATE_PASSWORD -T /usr/bin/codesign
     rm /tmp/zed-certificate.p12
     security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $MACOS_CERTIFICATE_PASSWORD zed.keychain
+    /usr/bin/codesign --force --deep --timestamp --options runtime --sign "Zed Industries, Inc." target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/Resources/rust-analyzer -v
     /usr/bin/codesign --force --deep --timestamp --options runtime --sign "Zed Industries, Inc." target/x86_64-apple-darwin/release/bundle/osx/Zed.app -v
     security default-keychain -s login.keychain
 else
