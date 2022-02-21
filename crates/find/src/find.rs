@@ -1,6 +1,6 @@
 use aho_corasick::AhoCorasickBuilder;
 use anyhow::Result;
-use collections::HashSet;
+use collections::HashMap;
 use editor::{
     char_kind, display_map::ToDisplayPoint, Anchor, Autoscroll, Bias, Editor, EditorSettings,
     MultiBufferSnapshot,
@@ -63,12 +63,13 @@ struct FindBar {
     active_editor: Option<ViewHandle<Editor>>,
     active_match_index: Option<usize>,
     active_editor_subscription: Option<Subscription>,
-    highlighted_editors: HashSet<WeakViewHandle<Editor>>,
+    editors_with_matches: HashMap<WeakViewHandle<Editor>, Vec<Range<Anchor>>>,
     pending_search: Option<Task<()>>,
     case_sensitive_mode: bool,
     whole_word_mode: bool,
     regex_mode: bool,
     query_contains_error: bool,
+    dismissed: bool,
 }
 
 impl Entity for FindBar {
@@ -119,10 +120,9 @@ impl View for FindBar {
                     .boxed(),
             )
             .with_children(self.active_editor.as_ref().and_then(|editor| {
-                let (_, highlighted_ranges) =
-                    editor.read(cx).highlighted_ranges_for_type::<Self>()?;
+                let matches = self.editors_with_matches.get(&editor.downgrade())?;
                 let message = if let Some(match_ix) = self.active_match_index {
-                    format!("{}/{}", match_ix + 1, highlighted_ranges.len())
+                    format!("{}/{}", match_ix + 1, matches.len())
                 } else {
                     "No matches".to_string()
                 };
@@ -157,7 +157,7 @@ impl Toolbar for FindBar {
             self.active_editor_subscription =
                 Some(cx.subscribe(&editor, Self::on_active_editor_event));
             self.active_editor = Some(editor);
-            self.update_matches(cx);
+            self.update_matches(false, cx);
             true
         } else {
             false
@@ -165,11 +165,12 @@ impl Toolbar for FindBar {
     }
 
     fn on_dismiss(&mut self, cx: &mut ViewContext<Self>) {
-        self.active_editor.take();
-        self.active_editor_subscription.take();
-        self.active_match_index.take();
-        self.pending_search.take();
-        self.clear_matches(cx);
+        self.dismissed = true;
+        for (editor, _) in &self.editors_with_matches {
+            if let Some(editor) = editor.upgrade(cx) {
+                editor.update(cx, |editor, cx| editor.clear_highlighted_ranges::<Self>(cx));
+            }
+        }
     }
 }
 
@@ -200,13 +201,14 @@ impl FindBar {
             active_editor: None,
             active_editor_subscription: None,
             active_match_index: None,
-            highlighted_editors: Default::default(),
+            editors_with_matches: Default::default(),
             case_sensitive_mode: false,
             whole_word_mode: false,
             regex_mode: false,
             settings,
             pending_search: None,
             query_contains_error: false,
+            dismissed: false,
         }
     }
 
@@ -277,6 +279,7 @@ impl FindBar {
                 .active_toolbar()
                 .and_then(|toolbar| toolbar.downcast::<Self>())
             {
+                find_bar.update(cx, |find_bar, _| find_bar.dismissed = false);
                 let editor = pane.active_item().unwrap().act_as::<Editor>(cx).unwrap();
                 let display_map = editor
                     .update(cx, |editor, cx| editor.snapshot(cx))
@@ -344,7 +347,7 @@ impl FindBar {
             SearchMode::Regex => &mut self.regex_mode,
         };
         *value = !*value;
-        self.update_matches(cx);
+        self.update_matches(true, cx);
         cx.notify();
     }
 
@@ -353,7 +356,7 @@ impl FindBar {
             if let Some(editor) = self.active_editor.as_ref() {
                 editor.update(cx, |editor, cx| {
                     let newest_selection = editor.newest_anchor_selection().clone();
-                    if let Some((_, ranges)) = editor.highlighted_ranges_for_type::<Self>() {
+                    if let Some(ranges) = self.editors_with_matches.get(&cx.weak_handle()) {
                         let position = newest_selection.head();
                         let buffer = editor.buffer().read(cx).read(cx);
                         if ranges[index].start.cmp(&position, &buffer).unwrap().is_gt() {
@@ -407,7 +410,7 @@ impl FindBar {
             editor::Event::Edited => {
                 self.query_contains_error = false;
                 self.clear_matches(cx);
-                self.update_matches(cx);
+                self.update_matches(true, cx);
                 cx.notify();
             }
             _ => {}
@@ -421,23 +424,27 @@ impl FindBar {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            editor::Event::Edited => self.update_matches(cx),
+            editor::Event::Edited => self.update_matches(false, cx),
             editor::Event::SelectionsChanged => self.update_match_index(cx),
             _ => {}
         }
     }
 
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
-        for editor in self.highlighted_editors.drain() {
+        let mut active_editor_matches = None;
+        for (editor, ranges) in self.editors_with_matches.drain() {
             if let Some(editor) = editor.upgrade(cx) {
-                if Some(&editor) != self.active_editor.as_ref() {
+                if Some(&editor) == self.active_editor.as_ref() {
+                    active_editor_matches = Some((editor.downgrade(), ranges));
+                } else {
                     editor.update(cx, |editor, cx| editor.clear_highlighted_ranges::<Self>(cx));
                 }
             }
         }
+        self.editors_with_matches.extend(active_editor_matches);
     }
 
-    fn update_matches(&mut self, cx: &mut ViewContext<Self>) {
+    fn update_matches(&mut self, select_closest_match: bool, cx: &mut ViewContext<Self>) {
         let query = self.query_editor.read(cx).text(cx);
         self.pending_search.take();
         if let Some(editor) = self.active_editor.as_ref() {
@@ -463,16 +470,30 @@ impl FindBar {
                         Ok(ranges) => {
                             if let Some(editor) = editor.upgrade(&cx) {
                                 this.update(&mut cx, |this, cx| {
-                                    this.highlighted_editors.insert(editor.downgrade());
-                                    editor.update(cx, |editor, cx| {
-                                        let theme = &this.settings.borrow().theme.find;
-                                        editor.highlight_ranges::<Self>(
-                                            ranges,
-                                            theme.match_background,
-                                            cx,
-                                        )
-                                    });
+                                    this.editors_with_matches
+                                        .insert(editor.downgrade(), ranges.clone());
                                     this.update_match_index(cx);
+                                    if !this.dismissed {
+                                        editor.update(cx, |editor, cx| {
+                                            let theme = &this.settings.borrow().theme.find;
+
+                                            if select_closest_match {
+                                                if let Some(match_ix) = this.active_match_index {
+                                                    editor.select_ranges(
+                                                        [ranges[match_ix].clone()],
+                                                        Some(Autoscroll::Fit),
+                                                        cx,
+                                                    );
+                                                }
+                                            }
+
+                                            editor.highlight_ranges::<Self>(
+                                                ranges,
+                                                theme.match_background,
+                                                cx,
+                                            );
+                                        });
+                                    }
                                 });
                             }
                         }
@@ -495,9 +516,9 @@ impl FindBar {
 
     fn active_match_index(&mut self, cx: &mut ViewContext<Self>) -> Option<usize> {
         let editor = self.active_editor.as_ref()?;
+        let ranges = self.editors_with_matches.get(&editor.downgrade())?;
         let editor = editor.read(cx);
         let position = editor.newest_anchor_selection().head();
-        let ranges = editor.highlighted_ranges_for_type::<Self>()?.1;
         if ranges.is_empty() {
             None
         } else {

@@ -449,14 +449,11 @@ impl Pane {
     }
 
     fn update_active_toolbar(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(type_id) = self.active_toolbar_type {
-            if let Some(toolbar) = self.toolbars.get(&type_id) {
-                self.active_toolbar_visible = toolbar.active_item_changed(
-                    self.item_views
-                        .get(self.active_item_index)
-                        .map(|i| i.1.clone()),
-                    cx,
-                );
+        let active_item = self.item_views.get(self.active_item_index);
+        for (toolbar_type_id, toolbar) in &self.toolbars {
+            let visible = toolbar.active_item_changed(active_item.map(|i| i.1.clone()), cx);
+            if Some(*toolbar_type_id) == self.active_toolbar_type {
+                self.active_toolbar_visible = visible;
             }
         }
     }
