@@ -8,7 +8,7 @@ mod tests;
 
 use anyhow::{anyhow, Result};
 use collections::HashSet;
-use gpui::AppContext;
+use gpui::{AppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -229,9 +229,9 @@ impl Language {
 
     pub fn start_server(
         &self,
-        root_path: &Path,
+        root_path: Arc<Path>,
         cx: &AppContext,
-    ) -> Result<Option<Arc<lsp::LanguageServer>>> {
+    ) -> Task<Result<Option<Arc<lsp::LanguageServer>>>> {
         if let Some(config) = &self.config.language_server {
             #[cfg(any(test, feature = "test-support"))]
             if let Some(fake_config) = &config.fake_config {
@@ -255,19 +255,19 @@ impl Language {
                     })
                     .detach();
 
-                return Ok(Some(server.clone()));
+                return Task::ready(Ok(Some(server.clone())));
             }
 
-            const ZED_BUNDLE: Option<&'static str> = option_env!("ZED_BUNDLE");
-            let binary_path = if ZED_BUNDLE.map_or(Ok(false), |b| b.parse())? {
-                cx.platform()
-                    .path_for_resource(Some(&config.binary), None)?
-            } else {
-                Path::new(&config.binary).to_path_buf()
-            };
-            lsp::LanguageServer::new(&binary_path, root_path, cx.background().clone()).map(Some)
+            let background = cx.background().clone();
+            let server = lsp::LanguageServer::new(
+                Path::new(&config.binary),
+                &root_path,
+                cx.background().clone(),
+            )
+            .map(Some);
+            cx.background().spawn(async move { server })
         } else {
-            Ok(None)
+            Task::ready(Ok(None))
         }
     }
 
