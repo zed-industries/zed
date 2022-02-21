@@ -321,7 +321,7 @@ impl EditorElement {
         let end_row = ((scroll_top + bounds.height()) / layout.line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
         let max_glyph_width = layout.em_width;
         let scroll_left = scroll_position.x() * max_glyph_width;
-        let content_origin = bounds.origin() + layout.gutter_margin;
+        let content_origin = bounds.origin() + vec2f(layout.gutter_margin, 0.);
 
         cx.scene.push_layer(Some(bounds));
 
