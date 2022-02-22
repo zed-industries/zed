@@ -387,6 +387,11 @@ impl Project {
             .any(|buffer| matches!(buffer, OpenBuffer::Loading(_)))
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn languages(&self) -> &Arc<LanguageRegistry> {
+        &self.languages
+    }
+
     pub fn fs(&self) -> &Arc<dyn Fs> {
         &self.fs
     }
@@ -817,7 +822,7 @@ impl Project {
         };
 
         // If the buffer has a language, set it and start/assign the language server
-        if let Some(language) = self.languages.select_language(&full_path).cloned() {
+        if let Some(language) = self.languages.select_language(&full_path) {
             buffer.update(cx, |buffer, cx| {
                 buffer.set_language(Some(language.clone()), cx);
             });
@@ -3386,7 +3391,7 @@ mod tests {
 
         let language = Arc::new(Language::new(
             LanguageConfig {
-                name: "Rust".to_string(),
+                name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
                 language_server: Some(language_server_config),
                 ..Default::default()
@@ -3532,7 +3537,7 @@ mod tests {
         let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
         let language = Arc::new(Language::new(
             LanguageConfig {
-                name: "Rust".to_string(),
+                name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
                 language_server: Some(language_server_config),
                 ..Default::default()
@@ -4425,7 +4430,7 @@ mod tests {
         let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
         let language = Arc::new(Language::new(
             LanguageConfig {
-                name: "Rust".to_string(),
+                name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
                 language_server: Some(language_server_config),
                 ..Default::default()

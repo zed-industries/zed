@@ -2035,7 +2035,7 @@ mod tests {
             .unwrap()
             .add(Arc::new(Language::new(
                 LanguageConfig {
-                    name: "Rust".to_string(),
+                    name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
                     language_server: Some(language_server_config),
                     ..Default::default()
@@ -2266,7 +2266,7 @@ mod tests {
             .unwrap()
             .add(Arc::new(Language::new(
                 LanguageConfig {
-                    name: "Rust".to_string(),
+                    name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
                     language_server: Some(language_server_config),
                     ..Default::default()
@@ -2468,7 +2468,7 @@ mod tests {
             .unwrap()
             .add(Arc::new(Language::new(
                 LanguageConfig {
-                    name: "Rust".to_string(),
+                    name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
                     language_server: Some(language_server_config),
                     ..Default::default()
@@ -2585,7 +2585,7 @@ mod tests {
             .unwrap()
             .add(Arc::new(Language::new(
                 LanguageConfig {
-                    name: "Rust".to_string(),
+                    name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
                     language_server: Some(language_server_config),
                     ..Default::default()
@@ -2733,7 +2733,7 @@ mod tests {
             .unwrap()
             .add(Arc::new(Language::new(
                 LanguageConfig {
-                    name: "Rust".to_string(),
+                    name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
                     language_server: Some(language_server_config),
                     ..Default::default()
@@ -2834,7 +2834,7 @@ mod tests {
             .unwrap()
             .add(Arc::new(Language::new(
                 LanguageConfig {
-                    name: "Rust".to_string(),
+                    name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
                     language_server: Some(language_server_config),
                     ..Default::default()
@@ -3073,7 +3073,7 @@ mod tests {
             .unwrap()
             .add(Arc::new(Language::new(
                 LanguageConfig {
-                    name: "Rust".to_string(),
+                    name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
                     language_server: Some(language_server_config),
                     ..Default::default()
@@ -3842,50 +3842,8 @@ mod tests {
 
         let rng = Rc::new(RefCell::new(rng));
 
-        let mut host_lang_registry = Arc::new(LanguageRegistry::new());
         let guest_lang_registry = Arc::new(LanguageRegistry::new());
-
-        // Set up a fake language server.
-        let (mut language_server_config, _fake_language_servers) = LanguageServerConfig::fake();
-        language_server_config.set_fake_initializer(|fake_server| {
-            fake_server.handle_request::<lsp::request::Completion, _>(|_| {
-                Some(lsp::CompletionResponse::Array(vec![lsp::CompletionItem {
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
-                        new_text: "the-new-text".to_string(),
-                    })),
-                    ..Default::default()
-                }]))
-            });
-
-            fake_server.handle_request::<lsp::request::CodeActionRequest, _>(|_| {
-                Some(vec![lsp::CodeActionOrCommand::CodeAction(
-                    lsp::CodeAction {
-                        title: "the-code-action".to_string(),
-                        ..Default::default()
-                    },
-                )])
-            });
-
-            fake_server.handle_request::<lsp::request::PrepareRenameRequest, _>(|params| {
-                Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
-                    params.position,
-                    params.position,
-                )))
-            });
-        });
-
-        Arc::get_mut(&mut host_lang_registry)
-            .unwrap()
-            .add(Arc::new(Language::new(
-                LanguageConfig {
-                    name: "Rust".to_string(),
-                    path_suffixes: vec!["rs".to_string()],
-                    language_server: Some(language_server_config),
-                    ..Default::default()
-                },
-                None,
-            )));
+        let (language_server_config, _fake_language_servers) = LanguageServerConfig::fake();
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -3914,7 +3872,7 @@ mod tests {
             Project::local(
                 host.client.clone(),
                 host.user_store.clone(),
-                host_lang_registry.clone(),
+                Arc::new(LanguageRegistry::new()),
                 fs.clone(),
                 cx,
             )
@@ -3939,6 +3897,7 @@ mod tests {
 
         clients.push(cx.foreground().spawn(host.simulate_host(
             host_project.clone(),
+            language_server_config,
             operations.clone(),
             max_operations,
             rng.clone(),
@@ -4268,113 +4227,160 @@ mod tests {
             )
         }
 
-        async fn simulate_host(
+        fn simulate_host(
             mut self,
             project: ModelHandle<Project>,
+            mut language_server_config: LanguageServerConfig,
             operations: Rc<Cell<usize>>,
             max_operations: usize,
             rng: Rc<RefCell<StdRng>>,
             mut cx: TestAppContext,
-        ) -> (Self, TestAppContext) {
-            let fs = project.read_with(&cx, |project, _| project.fs().clone());
-            let mut files: Vec<PathBuf> = Default::default();
-            while operations.get() < max_operations {
-                operations.set(operations.get() + 1);
+        ) -> impl Future<Output = (Self, TestAppContext)> {
+            // Set up a fake language server.
+            language_server_config.set_fake_initializer(|fake_server| {
+                fake_server.handle_request::<lsp::request::Completion, _>(|_| {
+                    Some(lsp::CompletionResponse::Array(vec![lsp::CompletionItem {
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 0),
+                                lsp::Position::new(0, 0),
+                            ),
+                            new_text: "the-new-text".to_string(),
+                        })),
+                        ..Default::default()
+                    }]))
+                });
 
-                let distribution = rng.borrow_mut().gen_range(0..100);
-                match distribution {
-                    0..=20 if !files.is_empty() => {
-                        let mut path = files.choose(&mut *rng.borrow_mut()).unwrap().as_path();
-                        while let Some(parent_path) = path.parent() {
-                            path = parent_path;
-                            if rng.borrow_mut().gen() {
-                                break;
+                fake_server.handle_request::<lsp::request::CodeActionRequest, _>(|_| {
+                    Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                        lsp::CodeAction {
+                            title: "the-code-action".to_string(),
+                            ..Default::default()
+                        },
+                    )])
+                });
+
+                fake_server.handle_request::<lsp::request::PrepareRenameRequest, _>(|params| {
+                    Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                        params.position,
+                        params.position,
+                    )))
+                });
+            });
+
+            project.update(&mut cx, |project, _| {
+                project.languages().add(Arc::new(Language::new(
+                    LanguageConfig {
+                        name: "Rust".into(),
+                        path_suffixes: vec!["rs".to_string()],
+                        language_server: Some(language_server_config),
+                        ..Default::default()
+                    },
+                    None,
+                )));
+            });
+
+            async move {
+                let fs = project.read_with(&cx, |project, _| project.fs().clone());
+                let mut files: Vec<PathBuf> = Default::default();
+                while operations.get() < max_operations {
+                    operations.set(operations.get() + 1);
+
+                    let distribution = rng.borrow_mut().gen_range(0..100);
+                    match distribution {
+                        0..=20 if !files.is_empty() => {
+                            let mut path = files.choose(&mut *rng.borrow_mut()).unwrap().as_path();
+                            while let Some(parent_path) = path.parent() {
+                                path = parent_path;
+                                if rng.borrow_mut().gen() {
+                                    break;
+                                }
+                            }
+
+                            log::info!("Host: find/create local worktree {:?}", path);
+                            project
+                                .update(&mut cx, |project, cx| {
+                                    project.find_or_create_local_worktree(path, false, cx)
+                                })
+                                .await
+                                .unwrap();
+                        }
+                        10..=80 if !files.is_empty() => {
+                            let buffer = if self.buffers.is_empty() || rng.borrow_mut().gen() {
+                                let file = files.choose(&mut *rng.borrow_mut()).unwrap();
+                                let (worktree, path) = project
+                                    .update(&mut cx, |project, cx| {
+                                        project.find_or_create_local_worktree(file, false, cx)
+                                    })
+                                    .await
+                                    .unwrap();
+                                let project_path =
+                                    worktree.read_with(&cx, |worktree, _| (worktree.id(), path));
+                                log::info!("Host: opening path {:?}", project_path);
+                                let buffer = project
+                                    .update(&mut cx, |project, cx| {
+                                        project.open_buffer(project_path, cx)
+                                    })
+                                    .await
+                                    .unwrap();
+                                self.buffers.insert(buffer.clone());
+                                buffer
+                            } else {
+                                self.buffers
+                                    .iter()
+                                    .choose(&mut *rng.borrow_mut())
+                                    .unwrap()
+                                    .clone()
+                            };
+
+                            if rng.borrow_mut().gen_bool(0.1) {
+                                cx.update(|cx| {
+                                    log::info!(
+                                        "Host: dropping buffer {:?}",
+                                        buffer.read(cx).file().unwrap().full_path(cx)
+                                    );
+                                    self.buffers.remove(&buffer);
+                                    drop(buffer);
+                                });
+                            } else {
+                                buffer.update(&mut cx, |buffer, cx| {
+                                    log::info!(
+                                        "Host: updating buffer {:?}",
+                                        buffer.file().unwrap().full_path(cx)
+                                    );
+                                    buffer.randomly_edit(&mut *rng.borrow_mut(), 5, cx)
+                                });
                             }
                         }
+                        _ => loop {
+                            let path_component_count = rng.borrow_mut().gen_range(1..=5);
+                            let mut path = PathBuf::new();
+                            path.push("/");
+                            for _ in 0..path_component_count {
+                                let letter = rng.borrow_mut().gen_range(b'a'..=b'z');
+                                path.push(std::str::from_utf8(&[letter]).unwrap());
+                            }
+                            path.set_extension("rs");
+                            let parent_path = path.parent().unwrap();
 
-                        log::info!("Host: find/create local worktree {:?}", path);
-                        project
-                            .update(&mut cx, |project, cx| {
-                                project.find_or_create_local_worktree(path, false, cx)
-                            })
-                            .await
-                            .unwrap();
+                            log::info!("Host: creating file {:?}", path);
+                            if fs.create_dir(&parent_path).await.is_ok()
+                                && fs.create_file(&path, Default::default()).await.is_ok()
+                            {
+                                files.push(path);
+                                break;
+                            } else {
+                                log::info!("Host: cannot create file");
+                            }
+                        },
                     }
-                    10..=80 if !files.is_empty() => {
-                        let buffer = if self.buffers.is_empty() || rng.borrow_mut().gen() {
-                            let file = files.choose(&mut *rng.borrow_mut()).unwrap();
-                            let (worktree, path) = project
-                                .update(&mut cx, |project, cx| {
-                                    project.find_or_create_local_worktree(file, false, cx)
-                                })
-                                .await
-                                .unwrap();
-                            let project_path =
-                                worktree.read_with(&cx, |worktree, _| (worktree.id(), path));
-                            log::info!("Host: opening path {:?}", project_path);
-                            let buffer = project
-                                .update(&mut cx, |project, cx| {
-                                    project.open_buffer(project_path, cx)
-                                })
-                                .await
-                                .unwrap();
-                            self.buffers.insert(buffer.clone());
-                            buffer
-                        } else {
-                            self.buffers
-                                .iter()
-                                .choose(&mut *rng.borrow_mut())
-                                .unwrap()
-                                .clone()
-                        };
 
-                        if rng.borrow_mut().gen_bool(0.1) {
-                            cx.update(|cx| {
-                                log::info!(
-                                    "Host: dropping buffer {:?}",
-                                    buffer.read(cx).file().unwrap().full_path(cx)
-                                );
-                                self.buffers.remove(&buffer);
-                                drop(buffer);
-                            });
-                        } else {
-                            buffer.update(&mut cx, |buffer, cx| {
-                                log::info!(
-                                    "Host: updating buffer {:?}",
-                                    buffer.file().unwrap().full_path(cx)
-                                );
-                                buffer.randomly_edit(&mut *rng.borrow_mut(), 5, cx)
-                            });
-                        }
-                    }
-                    _ => loop {
-                        let path_component_count = rng.borrow_mut().gen_range(1..=5);
-                        let mut path = PathBuf::new();
-                        path.push("/");
-                        for _ in 0..path_component_count {
-                            let letter = rng.borrow_mut().gen_range(b'a'..=b'z');
-                            path.push(std::str::from_utf8(&[letter]).unwrap());
-                        }
-                        path.set_extension("rs");
-                        let parent_path = path.parent().unwrap();
-
-                        log::info!("Host: creating file {:?}", path);
-                        if fs.create_dir(&parent_path).await.is_ok()
-                            && fs.create_file(&path, Default::default()).await.is_ok()
-                        {
-                            files.push(path);
-                            break;
-                        } else {
-                            log::info!("Host: cannot create file");
-                        }
-                    },
+                    cx.background().simulate_random_delay().await;
                 }
 
-                cx.background().simulate_random_delay().await;
+                self.project = Some(project);
+                (self, cx)
             }
-
-            self.project = Some(project);
-            (self, cx)
         }
 
         pub async fn simulate_guest(

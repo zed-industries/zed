@@ -534,7 +534,7 @@ mod tests {
         editor.read_with(&cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
             assert_eq!(editor.title(cx), "the-new-name.rs");
-            assert_eq!(editor.language(cx).unwrap().name(), "Rust");
+            assert_eq!(editor.language(cx).unwrap().name().as_ref(), "Rust");
         });
 
         // Edit the file and save it again. This time, there is no filename prompt.
@@ -614,7 +614,7 @@ mod tests {
         // The buffer is not dirty anymore and the language is assigned based on the path.
         editor.read_with(&cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
-            assert_eq!(editor.language(cx).unwrap().name(), "Rust")
+            assert_eq!(editor.language(cx).unwrap().name().as_ref(), "Rust")
         });
     }
 

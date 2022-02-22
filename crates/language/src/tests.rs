@@ -24,10 +24,10 @@ fn init_logger() {
 
 #[gpui::test]
 fn test_select_language() {
-    let mut registry = LanguageRegistry::new();
+    let registry = LanguageRegistry::new();
     registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: "Rust".to_string(),
+            name: "Rust".into(),
             path_suffixes: vec!["rs".to_string()],
             ..Default::default()
         },
@@ -35,7 +35,7 @@ fn test_select_language() {
     )));
     registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: "Make".to_string(),
+            name: "Make".into(),
             path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
             ..Default::default()
         },
@@ -45,17 +45,17 @@ fn test_select_language() {
     // matching file extension
     assert_eq!(
         registry.select_language("zed/lib.rs").map(|l| l.name()),
-        Some("Rust")
+        Some("Rust".into())
     );
     assert_eq!(
         registry.select_language("zed/lib.mk").map(|l| l.name()),
-        Some("Make")
+        Some("Make".into())
     );
 
     // matching filename
     assert_eq!(
         registry.select_language("zed/Makefile").map(|l| l.name()),
-        Some("Make")
+        Some("Make".into())
     );
 
     // matching suffix that is not the full file extension or filename
@@ -1354,7 +1354,7 @@ impl Buffer {
 fn rust_lang() -> Language {
     Language::new(
         LanguageConfig {
-            name: "Rust".to_string(),
+            name: "Rust".into(),
             path_suffixes: vec!["rs".to_string()],
             language_server: None,
             ..Default::default()

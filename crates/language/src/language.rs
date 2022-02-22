@@ -16,7 +16,7 @@ use futures::{
 use gpui::{AppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use serde::Deserialize;
 use std::{
     cell::RefCell,
@@ -45,7 +45,7 @@ thread_local! {
 lazy_static! {
     pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
         LanguageConfig {
-            name: "Plain Text".to_string(),
+            name: "Plain Text".into(),
             path_suffixes: Default::default(),
             brackets: Default::default(),
             line_comment: None,
@@ -92,13 +92,25 @@ pub struct CodeLabel {
     pub filter_range: Range<usize>,
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Deserialize)]
 pub struct LanguageConfig {
-    pub name: String,
+    pub name: Arc<str>,
     pub path_suffixes: Vec<String>,
     pub brackets: Vec<BracketPair>,
     pub line_comment: Option<String>,
     pub language_server: Option<LanguageServerConfig>,
+}
+
+impl Default for LanguageConfig {
+    fn default() -> Self {
+        Self {
+            name: "".into(),
+            path_suffixes: Default::default(),
+            brackets: Default::default(),
+            line_comment: Default::default(),
+            language_server: Default::default(),
+        }
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -151,7 +163,7 @@ pub enum LanguageServerBinaryStatus {
 }
 
 pub struct LanguageRegistry {
-    languages: Vec<Arc<Language>>,
+    languages: RwLock<Vec<Arc<Language>>>,
     language_server_download_dir: Option<Arc<Path>>,
     lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
     lsp_binary_statuses_rx: async_broadcast::Receiver<(Arc<Language>, LanguageServerBinaryStatus)>,
@@ -168,12 +180,12 @@ impl LanguageRegistry {
         }
     }
 
-    pub fn add(&mut self, language: Arc<Language>) {
-        self.languages.push(language.clone());
+    pub fn add(&self, language: Arc<Language>) {
+        self.languages.write().push(language.clone());
     }
 
     pub fn set_theme(&self, theme: &SyntaxTheme) {
-        for language in &self.languages {
+        for language in self.languages.read().iter() {
             language.set_theme(theme);
         }
     }
@@ -182,24 +194,30 @@ impl LanguageRegistry {
         self.language_server_download_dir = Some(path.into());
     }
 
-    pub fn get_language(&self, name: &str) -> Option<&Arc<Language>> {
+    pub fn get_language(&self, name: &str) -> Option<Arc<Language>> {
         self.languages
+            .read()
             .iter()
-            .find(|language| language.name() == name)
+            .find(|language| language.name().as_ref() == name)
+            .cloned()
     }
 
-    pub fn select_language(&self, path: impl AsRef<Path>) -> Option<&Arc<Language>> {
+    pub fn select_language(&self, path: impl AsRef<Path>) -> Option<Arc<Language>> {
         let path = path.as_ref();
         let filename = path.file_name().and_then(|name| name.to_str());
         let extension = path.extension().and_then(|name| name.to_str());
         let path_suffixes = [extension, filename];
-        self.languages.iter().find(|language| {
-            language
-                .config
-                .path_suffixes
-                .iter()
-                .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())))
-        })
+        self.languages
+            .read()
+            .iter()
+            .find(|language| {
+                language
+                    .config
+                    .path_suffixes
+                    .iter()
+                    .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())))
+            })
+            .cloned()
     }
 
     pub fn start_language_server(
@@ -401,8 +419,8 @@ impl Language {
         self
     }
 
-    pub fn name(&self) -> &str {
-        self.config.name.as_str()
+    pub fn name(&self) -> Arc<str> {
+        self.config.name.clone()
     }
 
     pub fn line_comment_prefix(&self) -> Option<&str> {

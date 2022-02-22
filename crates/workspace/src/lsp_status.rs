@@ -37,7 +37,7 @@ impl LspStatus {
                             &mut this.downloading,
                             &mut this.failed,
                         ] {
-                            vector.retain(|name| name != language.name());
+                            vector.retain(|name| name != language.name().as_ref());
                         }
 
                         match event {

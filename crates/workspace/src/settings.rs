@@ -11,7 +11,7 @@ pub struct Settings {
     pub tab_size: usize,
     soft_wrap: SoftWrap,
     preferred_line_length: u32,
-    overrides: HashMap<String, Override>,
+    overrides: HashMap<Arc<str>, Override>,
     pub theme: Arc<Theme>,
 }
 
@@ -50,21 +50,25 @@ impl Settings {
         self
     }
 
-    pub fn with_overrides(mut self, language_name: impl Into<String>, overrides: Override) -> Self {
+    pub fn with_overrides(
+        mut self,
+        language_name: impl Into<Arc<str>>,
+        overrides: Override,
+    ) -> Self {
         self.overrides.insert(language_name.into(), overrides);
         self
     }
 
     pub fn soft_wrap(&self, language: Option<&Arc<Language>>) -> SoftWrap {
         language
-            .and_then(|language| self.overrides.get(language.name()))
+            .and_then(|language| self.overrides.get(language.name().as_ref()))
             .and_then(|settings| settings.soft_wrap)
             .unwrap_or(self.soft_wrap)
     }
 
     pub fn preferred_line_length(&self, language: Option<&Arc<Language>>) -> u32 {
         language
-            .and_then(|language| self.overrides.get(language.name()))
+            .and_then(|language| self.overrides.get(language.name().as_ref()))
             .and_then(|settings| settings.preferred_line_length)
             .unwrap_or(self.preferred_line_length)
     }
