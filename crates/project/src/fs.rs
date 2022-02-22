@@ -5,7 +5,7 @@ use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::{
     io,
     os::unix::fs::MetadataExt,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     pin::Pin,
     time::{Duration, SystemTime},
 };
@@ -379,6 +379,7 @@ impl Fs for FakeFs {
     async fn create_dir(&self, path: &Path) -> Result<()> {
         self.executor.simulate_random_delay().await;
         let state = &mut *self.state.lock().await;
+        let path = normalize_path(path);
         let mut ancestor_path = PathBuf::new();
         let mut created_dir_paths = Vec::new();
         for component in path.components() {
@@ -415,8 +416,9 @@ impl Fs for FakeFs {
     async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()> {
         self.executor.simulate_random_delay().await;
         let mut state = self.state.lock().await;
-        state.validate_path(path)?;
-        if let Some(entry) = state.entries.get_mut(path) {
+        let path = normalize_path(path);
+        state.validate_path(&path)?;
+        if let Some(entry) = state.entries.get_mut(&path) {
             if entry.metadata.is_dir || entry.metadata.is_symlink {
                 return Err(anyhow!(
                     "cannot create file because {:?} is a dir or a symlink",
@@ -430,7 +432,7 @@ impl Fs for FakeFs {
             } else if !options.ignore_if_exists {
                 return Err(anyhow!(
                     "cannot create file because {:?} already exists",
-                    path
+                    &path
                 ));
             }
         } else {
@@ -453,11 +455,14 @@ impl Fs for FakeFs {
     }
 
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()> {
-        let mut state = self.state.lock().await;
-        state.validate_path(source)?;
-        state.validate_path(target)?;
+        let source = normalize_path(source);
+        let target = normalize_path(target);
 
-        if !options.overwrite && state.entries.contains_key(target) {
+        let mut state = self.state.lock().await;
+        state.validate_path(&source)?;
+        state.validate_path(&target)?;
+
+        if !options.overwrite && state.entries.contains_key(&target) {
             if options.ignore_if_exists {
                 return Ok(());
             } else {
@@ -467,7 +472,7 @@ impl Fs for FakeFs {
 
         let mut removed = Vec::new();
         state.entries.retain(|path, entry| {
-            if let Ok(relative_path) = path.strip_prefix(source) {
+            if let Ok(relative_path) = path.strip_prefix(&source) {
                 removed.push((relative_path.to_path_buf(), entry.clone()));
                 false
             } else {
@@ -485,9 +490,10 @@ impl Fs for FakeFs {
     }
 
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        let path = normalize_path(path);
         let mut state = self.state.lock().await;
-        state.validate_path(path)?;
-        if let Some(entry) = state.entries.get(path) {
+        state.validate_path(&path)?;
+        if let Some(entry) = state.entries.get(&path) {
             if !entry.metadata.is_dir {
                 return Err(anyhow!("cannot remove {path:?} because it is not a dir"));
             }
@@ -513,14 +519,15 @@ impl Fs for FakeFs {
     }
 
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        let path = normalize_path(path);
         let mut state = self.state.lock().await;
-        state.validate_path(path)?;
-        if let Some(entry) = state.entries.get(path) {
+        state.validate_path(&path)?;
+        if let Some(entry) = state.entries.get(&path) {
             if entry.metadata.is_dir {
                 return Err(anyhow!("cannot remove {path:?} because it is not a file"));
             }
 
-            state.entries.remove(path);
+            state.entries.remove(&path);
             state.emit_event(&[path]).await;
         } else if !options.ignore_if_not_exists {
             return Err(anyhow!("{path:?} does not exist"));
@@ -529,11 +536,12 @@ impl Fs for FakeFs {
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
+        let path = normalize_path(path);
         self.executor.simulate_random_delay().await;
         let state = self.state.lock().await;
         let text = state
             .entries
-            .get(path)
+            .get(&path)
             .and_then(|e| e.content.as_ref())
             .ok_or_else(|| anyhow!("file {:?} does not exist", path))?;
         Ok(text.clone())
@@ -542,8 +550,9 @@ impl Fs for FakeFs {
     async fn save(&self, path: &Path, text: &Rope) -> Result<()> {
         self.executor.simulate_random_delay().await;
         let mut state = self.state.lock().await;
-        state.validate_path(path)?;
-        if let Some(entry) = state.entries.get_mut(path) {
+        let path = normalize_path(path);
+        state.validate_path(&path)?;
+        if let Some(entry) = state.entries.get_mut(&path) {
             if entry.metadata.is_dir {
                 Err(anyhow!("cannot overwrite a directory with a file"))
             } else {
@@ -572,22 +581,24 @@ impl Fs for FakeFs {
 
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
         self.executor.simulate_random_delay().await;
-        Ok(path.to_path_buf())
+        Ok(normalize_path(path))
     }
 
     async fn is_file(&self, path: &Path) -> bool {
+        let path = normalize_path(path);
         self.executor.simulate_random_delay().await;
         let state = self.state.lock().await;
         state
             .entries
-            .get(path)
+            .get(&path)
             .map_or(false, |entry| !entry.metadata.is_dir)
     }
 
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
         self.executor.simulate_random_delay().await;
         let state = self.state.lock().await;
-        Ok(state.entries.get(path).map(|entry| entry.metadata.clone()))
+        let path = normalize_path(path);
+        Ok(state.entries.get(&path).map(|entry| entry.metadata.clone()))
     }
 
     async fn read_dir(
@@ -597,7 +608,7 @@ impl Fs for FakeFs {
         use futures::{future, stream};
         self.executor.simulate_random_delay().await;
         let state = self.state.lock().await;
-        let abs_path = abs_path.to_path_buf();
+        let abs_path = normalize_path(abs_path);
         Ok(Box::pin(stream::iter(state.entries.clone()).filter_map(
             move |(child_path, _)| {
                 future::ready(if child_path.parent() == Some(&abs_path) {
@@ -632,4 +643,31 @@ impl Fs for FakeFs {
     fn as_fake(&self) -> &FakeFs {
         self
     }
+}
+
+pub fn normalize_path(path: &Path) -> PathBuf {
+    let mut components = path.components().peekable();
+    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
+        components.next();
+        PathBuf::from(c.as_os_str())
+    } else {
+        PathBuf::new()
+    };
+
+    for component in components {
+        match component {
+            Component::Prefix(..) => unreachable!(),
+            Component::RootDir => {
+                ret.push(component.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                ret.pop();
+            }
+            Component::Normal(c) => {
+                ret.push(c);
+            }
+        }
+    }
+    ret
 }
