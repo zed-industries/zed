@@ -1165,7 +1165,7 @@ mod tests {
     use serde_json::json;
     use sqlx::types::time::OffsetDateTime;
     use std::{
-        cell::{Cell, RefCell},
+        cell::Cell,
         env,
         ops::Deref,
         path::Path,
@@ -3840,7 +3840,7 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let rng = Rc::new(RefCell::new(rng));
+        let rng = Arc::new(Mutex::new(rng));
 
         let guest_lang_registry = Arc::new(LanguageRegistry::new());
         let (language_server_config, _fake_language_servers) = LanguageServerConfig::fake();
@@ -3906,7 +3906,7 @@ mod tests {
 
         while operations.get() < max_operations {
             cx.background().simulate_random_delay().await;
-            if clients.len() < max_peers && rng.borrow_mut().gen_bool(0.05) {
+            if clients.len() < max_peers && rng.lock().gen_bool(0.05) {
                 operations.set(operations.get() + 1);
 
                 let guest_id = clients.len();
@@ -4233,39 +4233,66 @@ mod tests {
             mut language_server_config: LanguageServerConfig,
             operations: Rc<Cell<usize>>,
             max_operations: usize,
-            rng: Rc<RefCell<StdRng>>,
+            rng: Arc<Mutex<StdRng>>,
             mut cx: TestAppContext,
         ) -> impl Future<Output = (Self, TestAppContext)> {
+            let files: Arc<Mutex<Vec<PathBuf>>> = Default::default();
+
             // Set up a fake language server.
-            language_server_config.set_fake_initializer(|fake_server| {
-                fake_server.handle_request::<lsp::request::Completion, _>(|_| {
-                    Some(lsp::CompletionResponse::Array(vec![lsp::CompletionItem {
-                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                            range: lsp::Range::new(
-                                lsp::Position::new(0, 0),
-                                lsp::Position::new(0, 0),
-                            ),
-                            new_text: "the-new-text".to_string(),
-                        })),
-                        ..Default::default()
-                    }]))
-                });
-
-                fake_server.handle_request::<lsp::request::CodeActionRequest, _>(|_| {
-                    Some(vec![lsp::CodeActionOrCommand::CodeAction(
-                        lsp::CodeAction {
-                            title: "the-code-action".to_string(),
+            language_server_config.set_fake_initializer({
+                let rng = rng.clone();
+                let files = files.clone();
+                move |fake_server| {
+                    fake_server.handle_request::<lsp::request::Completion, _>(|_| {
+                        Some(lsp::CompletionResponse::Array(vec![lsp::CompletionItem {
+                            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 0),
+                                    lsp::Position::new(0, 0),
+                                ),
+                                new_text: "the-new-text".to_string(),
+                            })),
                             ..Default::default()
-                        },
-                    )])
-                });
+                        }]))
+                    });
 
-                fake_server.handle_request::<lsp::request::PrepareRenameRequest, _>(|params| {
-                    Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
-                        params.position,
-                        params.position,
-                    )))
-                });
+                    fake_server.handle_request::<lsp::request::CodeActionRequest, _>(|_| {
+                        Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                            lsp::CodeAction {
+                                title: "the-code-action".to_string(),
+                                ..Default::default()
+                            },
+                        )])
+                    });
+
+                    fake_server.handle_request::<lsp::request::PrepareRenameRequest, _>(|params| {
+                        Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                            params.position,
+                            params.position,
+                        )))
+                    });
+
+                    fake_server.handle_request::<lsp::request::GotoDefinition, _>({
+                        let files = files.clone();
+                        let rng = rng.clone();
+                        move |_| {
+                            let files = files.lock();
+                            let mut rng = rng.lock();
+                            let count = rng.gen_range::<usize, _>(1..3);
+                            Some(lsp::GotoDefinitionResponse::Array(
+                                (0..count)
+                                    .map(|_| {
+                                        let file = files.choose(&mut *rng).unwrap().as_path();
+                                        lsp::Location {
+                                            uri: lsp::Url::from_file_path(file).unwrap(),
+                                            range: Default::default(),
+                                        }
+                                    })
+                                    .collect(),
+                            ))
+                        }
+                    });
+                }
             });
 
             project.update(&mut cx, |project, _| {
@@ -4282,17 +4309,17 @@ mod tests {
 
             async move {
                 let fs = project.read_with(&cx, |project, _| project.fs().clone());
-                let mut files: Vec<PathBuf> = Default::default();
                 while operations.get() < max_operations {
                     operations.set(operations.get() + 1);
 
-                    let distribution = rng.borrow_mut().gen_range(0..100);
+                    let distribution = rng.lock().gen_range::<usize, _>(0..100);
                     match distribution {
-                        0..=20 if !files.is_empty() => {
-                            let mut path = files.choose(&mut *rng.borrow_mut()).unwrap().as_path();
+                        0..=20 if !files.lock().is_empty() => {
+                            let path = files.lock().choose(&mut *rng.lock()).unwrap().clone();
+                            let mut path = path.as_path();
                             while let Some(parent_path) = path.parent() {
                                 path = parent_path;
-                                if rng.borrow_mut().gen() {
+                                if rng.lock().gen() {
                                     break;
                                 }
                             }
@@ -4305,9 +4332,9 @@ mod tests {
                                 .await
                                 .unwrap();
                         }
-                        10..=80 if !files.is_empty() => {
-                            let buffer = if self.buffers.is_empty() || rng.borrow_mut().gen() {
-                                let file = files.choose(&mut *rng.borrow_mut()).unwrap();
+                        10..=80 if !files.lock().is_empty() => {
+                            let buffer = if self.buffers.is_empty() || rng.lock().gen() {
+                                let file = files.lock().choose(&mut *rng.lock()).unwrap().clone();
                                 let (worktree, path) = project
                                     .update(&mut cx, |project, cx| {
                                         project.find_or_create_local_worktree(file, false, cx)
@@ -4328,12 +4355,12 @@ mod tests {
                             } else {
                                 self.buffers
                                     .iter()
-                                    .choose(&mut *rng.borrow_mut())
+                                    .choose(&mut *rng.lock())
                                     .unwrap()
                                     .clone()
                             };
 
-                            if rng.borrow_mut().gen_bool(0.1) {
+                            if rng.lock().gen_bool(0.1) {
                                 cx.update(|cx| {
                                     log::info!(
                                         "Host: dropping buffer {:?}",
@@ -4348,26 +4375,27 @@ mod tests {
                                         "Host: updating buffer {:?}",
                                         buffer.file().unwrap().full_path(cx)
                                     );
-                                    buffer.randomly_edit(&mut *rng.borrow_mut(), 5, cx)
+                                    buffer.randomly_edit(&mut *rng.lock(), 5, cx)
                                 });
                             }
                         }
                         _ => loop {
-                            let path_component_count = rng.borrow_mut().gen_range(1..=5);
+                            let path_component_count = rng.lock().gen_range::<usize, _>(1..=5);
                             let mut path = PathBuf::new();
                             path.push("/");
                             for _ in 0..path_component_count {
-                                let letter = rng.borrow_mut().gen_range(b'a'..=b'z');
+                                let letter = rng.lock().gen_range(b'a'..=b'z');
                                 path.push(std::str::from_utf8(&[letter]).unwrap());
                             }
                             path.set_extension("rs");
                             let parent_path = path.parent().unwrap();
 
-                            log::info!("Host: creating file {:?}", path);
+                            log::info!("Host: creating file {:?}", path,);
+
                             if fs.create_dir(&parent_path).await.is_ok()
                                 && fs.create_file(&path, Default::default()).await.is_ok()
                             {
-                                files.push(path);
+                                files.lock().push(path);
                                 break;
                             } else {
                                 log::info!("Host: cannot create file");
@@ -4389,18 +4417,18 @@ mod tests {
             project: ModelHandle<Project>,
             operations: Rc<Cell<usize>>,
             max_operations: usize,
-            rng: Rc<RefCell<StdRng>>,
+            rng: Arc<Mutex<StdRng>>,
             mut cx: TestAppContext,
         ) -> (Self, TestAppContext) {
             while operations.get() < max_operations {
-                let buffer = if self.buffers.is_empty() || rng.borrow_mut().gen() {
+                let buffer = if self.buffers.is_empty() || rng.lock().gen() {
                     let worktree = if let Some(worktree) = project.read_with(&cx, |project, cx| {
                         project
                             .worktrees(&cx)
                             .filter(|worktree| {
                                 worktree.read(cx).entries(false).any(|e| e.is_file())
                             })
-                            .choose(&mut *rng.borrow_mut())
+                            .choose(&mut *rng.lock())
                     }) {
                         worktree
                     } else {
@@ -4413,7 +4441,7 @@ mod tests {
                         let entry = worktree
                             .entries(false)
                             .filter(|e| e.is_file())
-                            .choose(&mut *rng.borrow_mut())
+                            .choose(&mut *rng.lock())
                             .unwrap();
                         (worktree.id(), entry.path.clone())
                     });
@@ -4429,12 +4457,12 @@ mod tests {
 
                     self.buffers
                         .iter()
-                        .choose(&mut *rng.borrow_mut())
+                        .choose(&mut *rng.lock())
                         .unwrap()
                         .clone()
                 };
 
-                let choice = rng.borrow_mut().gen_range(0..100);
+                let choice = rng.lock().gen_range(0..100);
                 match choice {
                     0..=9 => {
                         cx.update(|cx| {
@@ -4454,13 +4482,13 @@ mod tests {
                                 guest_id,
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
-                            let offset = rng.borrow_mut().gen_range(0..=buffer.read(cx).len());
+                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
                             project.completions(&buffer, offset, cx)
                         });
                         let completions = cx.background().spawn(async move {
                             completions.await.expect("completions request failed");
                         });
-                        if rng.borrow_mut().gen_bool(0.3) {
+                        if rng.lock().gen_bool(0.3) {
                             log::info!("Guest {}: detaching completions request", guest_id);
                             completions.detach();
                         } else {
@@ -4474,14 +4502,13 @@ mod tests {
                                 guest_id,
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
-                            let range =
-                                buffer.read(cx).random_byte_range(0, &mut *rng.borrow_mut());
+                            let range = buffer.read(cx).random_byte_range(0, &mut *rng.lock());
                             project.code_actions(&buffer, range, cx)
                         });
                         let code_actions = cx.background().spawn(async move {
                             code_actions.await.expect("code actions request failed");
                         });
-                        if rng.borrow_mut().gen_bool(0.3) {
+                        if rng.lock().gen_bool(0.3) {
                             log::info!("Guest {}: detaching code actions request", guest_id);
                             code_actions.detach();
                         } else {
@@ -4504,7 +4531,7 @@ mod tests {
                                 assert!(saved_version.observed_all(&requested_version));
                             });
                         });
-                        if rng.borrow_mut().gen_bool(0.3) {
+                        if rng.lock().gen_bool(0.3) {
                             log::info!("Guest {}: detaching save request", guest_id);
                             save.detach();
                         } else {
@@ -4518,17 +4545,37 @@ mod tests {
                                 guest_id,
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
-                            let offset = rng.borrow_mut().gen_range(0..=buffer.read(cx).len());
+                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
                             project.prepare_rename(buffer, offset, cx)
                         });
                         let prepare_rename = cx.background().spawn(async move {
                             prepare_rename.await.expect("prepare rename request failed");
                         });
-                        if rng.borrow_mut().gen_bool(0.3) {
+                        if rng.lock().gen_bool(0.3) {
                             log::info!("Guest {}: detaching prepare rename request", guest_id);
                             prepare_rename.detach();
                         } else {
                             prepare_rename.await;
+                        }
+                    }
+                    46..=49 => {
+                        let definitions = project.update(&mut cx, |project, cx| {
+                            log::info!(
+                                "Guest {}: requesting defintions for buffer {:?}",
+                                guest_id,
+                                buffer.read(cx).file().unwrap().full_path(cx)
+                            );
+                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                            project.definition(&buffer, offset, cx)
+                        });
+                        let definitions = cx.background().spawn(async move {
+                            definitions.await.expect("definitions request failed");
+                        });
+                        if rng.lock().gen_bool(0.3) {
+                            log::info!("Guest {}: detaching definitions request", guest_id);
+                            definitions.detach();
+                        } else {
+                            definitions.await;
                         }
                     }
                     _ => {
@@ -4538,7 +4585,7 @@ mod tests {
                                 guest_id,
                                 buffer.file().unwrap().full_path(cx)
                             );
-                            buffer.randomly_edit(&mut *rng.borrow_mut(), 5, cx)
+                            buffer.randomly_edit(&mut *rng.lock(), 5, cx)
                         });
                     }
                 }
