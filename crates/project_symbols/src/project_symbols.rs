@@ -180,7 +180,12 @@ impl ProjectSymbolsView {
             .project
             .update(cx, |project, cx| project.symbols(&query, cx));
         self.pending_symbols_task = cx.spawn_weak(|this, mut cx| async move {
-            let symbols = symbols.await.log_err()?;
+            let symbols = symbols
+                .await
+                .log_err()?
+                .into_values()
+                .flatten()
+                .collect::<Vec<_>>();
             if let Some(this) = this.upgrade(&cx) {
                 this.update(&mut cx, |this, cx| {
                     this.match_candidates = symbols

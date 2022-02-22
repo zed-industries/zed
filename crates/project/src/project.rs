@@ -1226,7 +1226,7 @@ impl Project {
         &self,
         query: &str,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<ProjectSymbol>>> {
+    ) -> Task<Result<HashMap<String, Vec<ProjectSymbol>>>> {
         if self.is_local() {
             let mut language_servers = HashMap::default();
             for ((_, language_name), language_server) in self.language_servers.iter() {
@@ -1248,13 +1248,16 @@ impl Project {
 
             cx.foreground().spawn(async move {
                 let responses = futures::future::try_join_all(requests).await?;
-                let mut symbols = Vec::new();
-                for ((_, language), lsp_symbols) in language_servers.values().zip(responses) {
+                let mut symbols = HashMap::default();
+                for ((_, language), lsp_symbols) in language_servers.into_values().zip(responses) {
+                    let language_symbols = symbols
+                        .entry(language.name().to_string())
+                        .or_insert(Vec::new());
                     for lsp_symbol in lsp_symbols.into_iter().flatten() {
                         let label = language
                             .label_for_symbol(&lsp_symbol)
                             .unwrap_or_else(|| CodeLabel::plain(lsp_symbol.name.clone(), None));
-                        symbols.push(ProjectSymbol { label, lsp_symbol });
+                        language_symbols.push(ProjectSymbol { label, lsp_symbol });
                     }
                 }
                 Ok(symbols)
