@@ -2708,6 +2708,142 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
+    async fn test_project_symbols(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+        cx_a.foreground().forbid_parking();
+        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = FakeFs::new(cx_a.background());
+        fs.insert_tree(
+            "/code",
+            json!({
+                "crate-1": {
+                    ".zed.toml": r#"collaborators = ["user_b"]"#,
+                    "one.rs": "const ONE: usize = 1;",
+                },
+                "crate-2": {
+                    "two.rs": "const TWO: usize = 2; const THREE: usize = 3;",
+                },
+                "private": {
+                    "passwords.txt": "the-password",
+                }
+            }),
+        )
+        .await;
+
+        // Set up a fake language server.
+        let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Rust".into(),
+                    path_suffixes: vec!["rs".to_string()],
+                    language_server: Some(language_server_config),
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )));
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let client_a = server.create_client(&mut cx_a, "user_a").await;
+        let client_b = server.create_client(&mut cx_b, "user_b").await;
+
+        // Share a project as client A
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/code/crate-1", false, cx)
+            })
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
+        project_a
+            .update(&mut cx_a, |p, cx| p.share(cx))
+            .await
+            .unwrap();
+
+        // Join the worktree as client B.
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        // Cause the language server to start.
+        let _buffer = cx_b
+            .background()
+            .spawn(project_b.update(&mut cx_b, |p, cx| {
+                p.open_buffer((worktree_id, "one.rs"), cx)
+            }))
+            .await
+            .unwrap();
+
+        // Request the definition of a symbol as the guest.
+        let symbols = project_b.update(&mut cx_b, |p, cx| p.symbols("two", cx));
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
+        fake_language_server.handle_request::<lsp::request::WorkspaceSymbol, _>(|_| {
+            #[allow(deprecated)]
+            Some(vec![lsp::SymbolInformation {
+                name: "TWO".into(),
+                location: lsp::Location {
+                    uri: lsp::Url::from_file_path("/code/crate-2/two.rs").unwrap(),
+                    range: lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                },
+                kind: lsp::SymbolKind::CONSTANT,
+                tags: None,
+                container_name: None,
+                deprecated: None,
+            }])
+        });
+
+        let symbols = symbols.await.unwrap();
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "TWO");
+
+        // Open one of the returned symbols.
+        let buffer_b_2 = project_b
+            .update(&mut cx_b, |project, cx| {
+                project.open_buffer_for_symbol(&symbols[0], cx)
+            })
+            .await
+            .unwrap();
+        buffer_b_2.read_with(&cx_b, |buffer, _| {
+            assert_eq!(
+                buffer.file().unwrap().path().as_ref(),
+                Path::new("../crate-2/two.rs")
+            );
+        });
+
+        // Attempt to craft a symbol and violate host's privacy by opening an arbitrary file.
+        let mut fake_symbol = symbols[0].clone();
+        fake_symbol.path = Path::new("/code/secrets").into();
+        let error = project_b
+            .update(&mut cx_b, |project, cx| {
+                project.open_buffer_for_symbol(&fake_symbol, cx)
+            })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid symbol signature"));
+    }
+
+    #[gpui::test(iterations = 10)]
     async fn test_open_buffer_while_getting_definition_pointing_to_it(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
