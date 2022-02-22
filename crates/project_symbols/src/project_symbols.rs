@@ -14,6 +14,7 @@ use ordered_float::OrderedFloat;
 use postage::watch;
 use project::{Project, Symbol};
 use std::{
+    borrow::Cow,
     cmp::{self, Reverse},
     sync::Arc,
 };
@@ -277,12 +278,12 @@ impl ProjectSymbolsView {
                 let view = view.read(cx);
                 let start = range.start;
                 range.end = cmp::min(range.end, view.matches.len());
-                items.extend(
-                    view.matches[range]
-                        .iter()
-                        .enumerate()
-                        .map(move |(ix, m)| view.render_match(m, start + ix)),
-                );
+
+                let show_worktree_root_name =
+                    view.project.read(cx).strong_worktrees(cx).count() > 1;
+                items.extend(view.matches[range].iter().enumerate().map(move |(ix, m)| {
+                    view.render_match(m, start + ix, show_worktree_root_name, cx)
+                }));
             },
         );
 
@@ -291,7 +292,13 @@ impl ProjectSymbolsView {
             .named("matches")
     }
 
-    fn render_match(&self, string_match: &StringMatch, index: usize) -> ElementBox {
+    fn render_match(
+        &self,
+        string_match: &StringMatch,
+        index: usize,
+        show_worktree_root_name: bool,
+        cx: &AppContext,
+    ) -> ElementBox {
         let settings = self.settings.borrow();
         let style = if index == self.selected_match_index {
             &settings.theme.selector.active_item
@@ -305,6 +312,19 @@ impl ProjectSymbolsView {
             &settings.theme.editor.syntax,
         );
 
+        let mut path = symbol.path.to_string_lossy();
+        if show_worktree_root_name {
+            let project = self.project.read(cx);
+            if let Some(worktree) = project.worktree_for_id(symbol.worktree_id, cx) {
+                path = Cow::Owned(format!(
+                    "{}{}{}",
+                    worktree.read(cx).root_name(),
+                    std::path::MAIN_SEPARATOR,
+                    path.as_ref()
+                ));
+            }
+        }
+
         Flex::column()
             .with_child(
                 Text::new(symbol.label.text.clone(), style.label.text.clone())
@@ -317,13 +337,7 @@ impl ProjectSymbolsView {
                     ))
                     .boxed(),
             )
-            .with_child(
-                Label::new(
-                    symbol.path.to_string_lossy().to_string(),
-                    style.label.clone(),
-                )
-                .boxed(),
-            )
+            .with_child(Label::new(path.to_string(), style.label.clone()).boxed())
             .contained()
             .with_style(style.container)
             .boxed()

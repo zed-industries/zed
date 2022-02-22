@@ -453,6 +453,21 @@ impl Project {
             .filter_map(move |worktree| worktree.upgrade(cx))
     }
 
+    pub fn strong_worktrees<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = ModelHandle<Worktree>> {
+        self.worktrees.iter().filter_map(|worktree| {
+            worktree.upgrade(cx).and_then(|worktree| {
+                if worktree.read(cx).is_weak() {
+                    None
+                } else {
+                    Some(worktree)
+                }
+            })
+        })
+    }
+
     pub fn worktree_for_id(
         &self,
         id: WorktreeId,
