@@ -118,9 +118,9 @@ pub struct DiagnosticSummary {
 }
 
 #[derive(Debug)]
-pub struct Definition {
-    pub target_buffer: ModelHandle<Buffer>,
-    pub target_range: Range<language::Anchor>,
+pub struct Location {
+    pub buffer: ModelHandle<Buffer>,
+    pub range: Range<language::Anchor>,
 }
 
 #[derive(Clone, Debug)]
@@ -202,6 +202,7 @@ impl Project {
         client.add_entity_request_handler(Self::handle_get_code_actions);
         client.add_entity_request_handler(Self::handle_get_completions);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDefinition>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetReferences>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
         client.add_entity_request_handler(Self::handle_get_project_symbols);
@@ -1253,9 +1254,19 @@ impl Project {
         buffer: &ModelHandle<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Definition>>> {
+    ) -> Task<Result<Vec<Location>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(buffer.clone(), GetDefinition { position }, cx)
+    }
+
+    pub fn references<T: ToPointUtf16>(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Location>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.request_lsp(buffer.clone(), GetReferences { position }, cx)
     }
 
     pub fn symbols(&self, query: &str, cx: &mut ModelContext<Self>) -> Task<Result<Vec<Symbol>>> {
@@ -3606,7 +3617,7 @@ mod tests {
         assert_eq!(definitions.len(), 1);
         let definition = definitions.pop().unwrap();
         cx.update(|cx| {
-            let target_buffer = definition.target_buffer.read(cx);
+            let target_buffer = definition.buffer.read(cx);
             assert_eq!(
                 target_buffer
                     .file()
@@ -3616,7 +3627,7 @@ mod tests {
                     .abs_path(cx),
                 Path::new("/dir/a.rs"),
             );
-            assert_eq!(definition.target_range.to_offset(target_buffer), 9..10);
+            assert_eq!(definition.range.to_offset(target_buffer), 9..10);
             assert_eq!(
                 list_worktrees(&project, cx),
                 [("/dir/b.rs".as_ref(), false), ("/dir/a.rs".as_ref(), true)]

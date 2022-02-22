@@ -118,6 +118,7 @@ action!(SelectSmallerSyntaxNode);
 action!(MoveToEnclosingBracket);
 action!(ShowNextDiagnostic);
 action!(GoToDefinition);
+action!(FindAllReferences);
 action!(Rename);
 action!(ConfirmRename);
 action!(PageUp);
@@ -249,6 +250,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
         Binding::new("f8", ShowNextDiagnostic, Some("Editor")),
         Binding::new("f2", Rename, Some("Editor")),
         Binding::new("f12", GoToDefinition, Some("Editor")),
+        Binding::new("alt-shift-f12", FindAllReferences, Some("Editor")),
         Binding::new("ctrl-m", MoveToEnclosingBracket, Some("Editor")),
         Binding::new("pageup", PageUp, Some("Editor")),
         Binding::new("pagedown", PageDown, Some("Editor")),
@@ -326,6 +328,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_async_action(Editor::confirm_code_action);
     cx.add_async_action(Editor::rename);
     cx.add_async_action(Editor::confirm_rename);
+    cx.add_async_action(Editor::find_all_references);
 }
 
 trait SelectionExt {
@@ -4069,11 +4072,9 @@ impl Editor {
             let definitions = definitions.await?;
             workspace.update(&mut cx, |workspace, cx| {
                 for definition in definitions {
-                    let range = definition
-                        .target_range
-                        .to_offset(definition.target_buffer.read(cx));
+                    let range = definition.range.to_offset(definition.buffer.read(cx));
                     let target_editor_handle = workspace
-                        .open_item(BufferItemHandle(definition.target_buffer), cx)
+                        .open_item(BufferItemHandle(definition.buffer), cx)
                         .downcast::<Self>()
                         .unwrap();
 
@@ -4096,6 +4097,83 @@ impl Editor {
             Ok::<(), anyhow::Error>(())
         })
         .detach_and_log_err(cx);
+    }
+
+    pub fn find_all_references(
+        workspace: &mut Workspace,
+        _: &FindAllReferences,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Task<Result<()>>> {
+        let active_item = workspace.active_item(cx)?;
+        let editor_handle = active_item.act_as::<Self>(cx)?;
+
+        let editor = editor_handle.read(cx);
+        let buffer = editor.buffer.read(cx);
+        let head = editor.newest_selection::<usize>(&buffer.read(cx)).head();
+        let (buffer, head) = editor.buffer.read(cx).text_anchor_for_position(head, cx)?;
+        let replica_id = editor.replica_id(cx);
+
+        let references = workspace
+            .project()
+            .update(cx, |project, cx| project.references(&buffer, head, cx));
+        Some(cx.spawn(|workspace, mut cx| async move {
+            let mut locations = references.await?;
+            if locations.is_empty() {
+                return Ok(());
+            }
+
+            locations.sort_by_key(|location| location.buffer.id());
+            let mut locations = locations.into_iter().peekable();
+            let mut ranges_to_highlight = Vec::new();
+
+            let excerpt_buffer = cx.add_model(|cx| {
+                let mut symbol_name = None;
+                let mut multibuffer = MultiBuffer::new(replica_id);
+                while let Some(location) = locations.next() {
+                    let buffer = location.buffer.read(cx);
+                    let mut ranges_for_buffer = Vec::new();
+                    let range = location.range.to_offset(buffer);
+                    ranges_for_buffer.push(range.clone());
+                    if symbol_name.is_none() {
+                        symbol_name = Some(buffer.text_for_range(range).collect::<String>());
+                    }
+
+                    while let Some(next_location) = locations.peek() {
+                        if next_location.buffer == location.buffer {
+                            ranges_for_buffer.push(next_location.range.to_offset(buffer));
+                            locations.next();
+                        } else {
+                            break;
+                        }
+                    }
+
+                    ranges_for_buffer.sort_by_key(|range| (range.start, Reverse(range.end)));
+                    ranges_to_highlight.extend(multibuffer.push_excerpts_with_context_lines(
+                        location.buffer.clone(),
+                        ranges_for_buffer,
+                        1,
+                        cx,
+                    ));
+                }
+                multibuffer.with_title(format!("References to `{}`", symbol_name.unwrap()))
+            });
+
+            workspace.update(&mut cx, |workspace, cx| {
+                let editor = workspace.open_item(MultiBufferItemHandle(excerpt_buffer), cx);
+                if let Some(editor) = editor.act_as::<Self>(cx) {
+                    editor.update(cx, |editor, cx| {
+                        let settings = (editor.build_settings)(cx);
+                        editor.highlight_ranges::<Self>(
+                            ranges_to_highlight,
+                            settings.style.highlighted_line_background,
+                            cx,
+                        );
+                    });
+                }
+            });
+
+            Ok(())
+        }))
     }
 
     pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
