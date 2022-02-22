@@ -27,6 +27,7 @@ use std::{
 };
 use theme::SyntaxTheme;
 use tree_sitter::{self, Query};
+use util::ResultExt;
 
 #[cfg(any(test, feature = "test-support"))]
 use futures::channel::mpsc;
@@ -240,7 +241,8 @@ impl LanguageRegistry {
         let download_dir = self
             .language_server_download_dir
             .clone()
-            .expect("language server download directory has not been assigned");
+            .ok_or_else(|| anyhow!("language server download directory has not been assigned"))
+            .log_err()?;
 
         let lsp_ext = language.lsp_ext.clone()?;
         let background = cx.background().clone();
