@@ -185,9 +185,11 @@ message GetProjectSymbolsResponse {
 }
 
 message Symbol {
-    uint64 worktree_id = 1;
-    string language_name = 2;
-    bytes lsp_symbol = 3;
+    uint64 source_worktree_id = 1;
+    uint64 worktree_id = 2;
+    string language_name = 3;
+    string path = 4;
+    bytes lsp_symbol = 5;
 }
 
 message OpenBufferForSymbol {

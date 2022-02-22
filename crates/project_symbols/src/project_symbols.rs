@@ -306,14 +306,25 @@ impl ProjectSymbolsView {
             &settings.theme.editor.syntax,
         );
 
-        Text::new(symbol.label.text.clone(), style.label.text.clone())
-            .with_soft_wrap(false)
-            .with_highlights(combine_syntax_and_fuzzy_match_highlights(
-                &symbol.label.text,
-                style.label.text.clone().into(),
-                syntax_runs,
-                &string_match.positions,
-            ))
+        Flex::column()
+            .with_child(
+                Text::new(symbol.label.text.clone(), style.label.text.clone())
+                    .with_soft_wrap(false)
+                    .with_highlights(combine_syntax_and_fuzzy_match_highlights(
+                        &symbol.label.text,
+                        style.label.text.clone().into(),
+                        syntax_runs,
+                        &string_match.positions,
+                    ))
+                    .boxed(),
+            )
+            .with_child(
+                Label::new(
+                    symbol.path.to_string_lossy().to_string(),
+                    style.label.clone(),
+                )
+                .boxed(),
+            )
             .contained()
             .with_style(style.container)
             .boxed()

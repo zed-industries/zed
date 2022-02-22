@@ -25,7 +25,7 @@ use smol::block_on;
 use std::{
     convert::TryInto,
     ops::Range,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
     time::Instant,
 };
@@ -120,8 +120,10 @@ pub struct Definition {
 
 #[derive(Clone, Debug)]
 pub struct Symbol {
+    pub source_worktree_id: WorktreeId,
     pub worktree_id: WorktreeId,
     pub language_name: String,
+    pub path: PathBuf,
     pub label: CodeLabel,
     pub lsp_symbol: lsp::SymbolInformation,
 }
@@ -1230,14 +1232,24 @@ impl Project {
         if self.is_local() {
             let mut language_servers = HashMap::default();
             for ((worktree_id, language_name), language_server) in self.language_servers.iter() {
-                let language = self.languages.get_language(language_name).unwrap();
-                language_servers
-                    .entry(Arc::as_ptr(language_server))
-                    .or_insert((language_server.clone(), *worktree_id, language.clone()));
+                if let Some((worktree, language)) = self
+                    .worktree_for_id(*worktree_id, cx)
+                    .and_then(|worktree| worktree.read(cx).as_local())
+                    .zip(self.languages.get_language(language_name))
+                {
+                    language_servers
+                        .entry(Arc::as_ptr(language_server))
+                        .or_insert((
+                            language_server.clone(),
+                            *worktree_id,
+                            worktree.abs_path().clone(),
+                            language.clone(),
+                        ));
+                }
             }
 
             let mut requests = Vec::new();
-            for (language_server, _, _) in language_servers.values() {
+            for (language_server, _, _, _) in language_servers.values() {
                 requests.push(language_server.request::<lsp::request::WorkspaceSymbol>(
                     lsp::WorkspaceSymbolParams {
                         query: query.to_string(),
@@ -1246,24 +1258,48 @@ impl Project {
                 ));
             }
 
-            cx.foreground().spawn(async move {
+            cx.spawn_weak(|this, cx| async move {
                 let responses = futures::future::try_join_all(requests).await?;
+
                 let mut symbols = Vec::new();
-                for ((_, worktree_id, language), lsp_symbols) in
-                    language_servers.into_values().zip(responses)
-                {
-                    symbols.extend(lsp_symbols.into_iter().flatten().map(|lsp_symbol| {
-                        let label = language
-                            .label_for_symbol(&lsp_symbol)
-                            .unwrap_or_else(|| CodeLabel::plain(lsp_symbol.name.clone(), None));
-                        Symbol {
-                            worktree_id,
-                            language_name: language.name().to_string(),
-                            label,
-                            lsp_symbol,
+                if let Some(this) = this.upgrade(&cx) {
+                    this.read_with(&cx, |this, cx| {
+                        for ((_, source_worktree_id, worktree_abs_path, language), lsp_symbols) in
+                            language_servers.into_values().zip(responses)
+                        {
+                            symbols.extend(lsp_symbols.into_iter().flatten().filter_map(
+                                |lsp_symbol| {
+                                    let abs_path = lsp_symbol.location.uri.to_file_path().ok()?;
+                                    let mut worktree_id = source_worktree_id;
+                                    let path;
+                                    if let Some((worktree, rel_path)) =
+                                        this.find_local_worktree(&abs_path, cx)
+                                    {
+                                        worktree_id = worktree.read(cx).id();
+                                        path = rel_path;
+                                    } else {
+                                        path = relativize_path(&worktree_abs_path, &abs_path);
+                                    }
+
+                                    let label =
+                                        language.label_for_symbol(&lsp_symbol).unwrap_or_else(
+                                            || CodeLabel::plain(lsp_symbol.name.clone(), None),
+                                        );
+
+                                    Some(Symbol {
+                                        source_worktree_id,
+                                        worktree_id,
+                                        language_name: language.name().to_string(),
+                                        label,
+                                        path,
+                                        lsp_symbol,
+                                    })
+                                },
+                            ));
                         }
-                    }));
+                    })
                 }
+
                 Ok(symbols)
             })
         } else if let Some(project_id) = self.remote_id() {
@@ -1299,7 +1335,7 @@ impl Project {
         if self.is_local() {
             let language_server = if let Some(server) = self
                 .language_servers
-                .get(&(symbol.worktree_id, symbol.language_name.clone()))
+                .get(&(symbol.source_worktree_id, symbol.language_name.clone()))
             {
                 server.clone()
             } else {
@@ -1308,8 +1344,24 @@ impl Project {
                 )));
             };
 
+            let worktree_abs_path = if let Some(worktree_abs_path) = self
+                .worktree_for_id(symbol.worktree_id, cx)
+                .and_then(|worktree| worktree.read(cx).as_local())
+                .map(|local_worktree| local_worktree.abs_path())
+            {
+                worktree_abs_path
+            } else {
+                return Task::ready(Err(anyhow!("worktree not found for symbol")));
+            };
+            let symbol_abs_path = worktree_abs_path.join(&symbol.path);
+            let symbol_uri = if let Ok(uri) = lsp::Url::from_file_path(symbol_abs_path) {
+                uri
+            } else {
+                return Task::ready(Err(anyhow!("invalid symbol path")));
+            };
+
             self.open_local_buffer_via_lsp(
-                symbol.lsp_symbol.location.uri.clone(),
+                symbol_uri,
                 symbol.language_name.clone(),
                 language_server,
                 cx,
@@ -2846,11 +2898,13 @@ impl Project {
             .get_language(&serialized_symbol.language_name);
         let lsp_symbol = serde_json::from_slice(&serialized_symbol.lsp_symbol)?;
         Ok(Symbol {
+            source_worktree_id: WorktreeId::from_proto(serialized_symbol.source_worktree_id),
             worktree_id: WorktreeId::from_proto(serialized_symbol.worktree_id),
             language_name: serialized_symbol.language_name.clone(),
             label: language
                 .and_then(|language| language.label_for_symbol(&lsp_symbol))
                 .unwrap_or(CodeLabel::plain(lsp_symbol.name.clone(), None)),
+            path: PathBuf::from(serialized_symbol.path),
             lsp_symbol,
         })
     }
@@ -3138,10 +3192,41 @@ impl From<lsp::DeleteFileOptions> for fs::RemoveOptions {
 
 fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
     proto::Symbol {
+        source_worktree_id: symbol.source_worktree_id.to_proto(),
         worktree_id: symbol.worktree_id.to_proto(),
         language_name: symbol.language_name.clone(),
+        path: symbol.path.to_string_lossy().to_string(),
         lsp_symbol: serde_json::to_vec(&symbol.lsp_symbol).unwrap(),
     }
+}
+
+fn relativize_path(base: &Path, path: &Path) -> PathBuf {
+    let mut path_components = path.components();
+    let mut base_components = base.components();
+    let mut components: Vec<Component> = Vec::new();
+    loop {
+        match (path_components.next(), base_components.next()) {
+            (None, None) => break,
+            (Some(a), None) => {
+                components.push(a);
+                components.extend(path_components.by_ref());
+                break;
+            }
+            (None, _) => components.push(Component::ParentDir),
+            (Some(a), Some(b)) if components.is_empty() && a == b => (),
+            (Some(a), Some(b)) if b == Component::CurDir => components.push(a),
+            (Some(a), Some(_)) => {
+                components.push(Component::ParentDir);
+                for _ in base_components {
+                    components.push(Component::ParentDir);
+                }
+                components.push(a);
+                components.extend(path_components.by_ref());
+                break;
+            }
+        }
+    }
+    components.iter().map(|c| c.as_os_str()).collect()
 }
 
 #[cfg(test)]
