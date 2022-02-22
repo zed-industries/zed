@@ -9,7 +9,7 @@ use rust_embed::RustEmbed;
 use serde::Deserialize;
 use smol::fs::{self, File};
 use std::{borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
-use util::ResultExt;
+use util::{ResultExt, TryFutureExt};
 
 #[derive(RustEmbed)]
 #[folder = "languages"]
@@ -29,12 +29,13 @@ struct GithubReleaseAsset {
     browser_download_url: http::Url,
 }
 
-impl RustLsp {
-    async fn download(
-        destination_dir_path: PathBuf,
+impl LspExt for RustLsp {
+    fn fetch_latest_server_version(
+        &self,
         http: Arc<dyn HttpClient>,
-    ) -> anyhow::Result<PathBuf> {
-        let release = http
+    ) -> BoxFuture<'static, Result<LspBinaryVersion>> {
+        async move {
+            let release = http
             .send(
                 surf::RequestBuilder::new(
                     Method::Get,
@@ -51,40 +52,23 @@ impl RustLsp {
             .body_json::<GithubRelease>()
             .await
             .map_err(|err| anyhow!("error parsing latest release: {}", err))?;
-        let release_name = format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH);
-        let asset = release
-            .assets
-            .iter()
-            .find(|asset| asset.name == release_name)
-            .ok_or_else(|| anyhow!("no release found matching {:?}", release_name))?;
-
-        let destination_path = destination_dir_path.join(format!("rust-analyzer-{}", release.name));
-        if fs::metadata(&destination_path).await.is_err() {
-            let response = http
-                .send(
-                    surf::RequestBuilder::new(Method::Get, asset.browser_download_url.clone())
-                        .middleware(surf::middleware::Redirect::default())
-                        .build(),
-                )
-                .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
-            let decompressed_bytes = GzipDecoder::new(response);
-            let mut file = File::create(&destination_path).await?;
-            futures::io::copy(decompressed_bytes, &mut file).await?;
-            fs::set_permissions(
-                &destination_path,
-                <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-            )
-            .await?;
+            let asset_name = format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH);
+            let asset = release
+                .assets
+                .iter()
+                .find(|asset| asset.name == asset_name)
+                .ok_or_else(|| anyhow!("no release found matching {:?}", asset_name))?;
+            Ok(LspBinaryVersion {
+                name: release.name,
+                url: asset.browser_download_url.clone(),
+            })
         }
-
-        Ok::<_, anyhow::Error>(destination_path)
+        .boxed()
     }
-}
 
-impl LspExt for RustLsp {
-    fn fetch_latest_language_server(
+    fn fetch_server_binary(
         &self,
+        version: LspBinaryVersion,
         http: Arc<dyn HttpClient>,
     ) -> BoxFuture<'static, Result<PathBuf>> {
         async move {
@@ -92,31 +76,59 @@ impl LspExt for RustLsp {
                 .ok_or_else(|| anyhow!("can't determine home directory"))?
                 .join(".zed/rust-analyzer");
             fs::create_dir_all(&destination_dir_path).await?;
+            let destination_path =
+                destination_dir_path.join(format!("rust-analyzer-{}", version.name));
 
-            let downloaded_bin_path = Self::download(destination_dir_path.clone(), http).await;
-            let mut last_cached_bin_path = None;
-            if let Some(mut entries) = fs::read_dir(&destination_dir_path).await.log_err() {
-                while let Some(entry) = entries.next().await {
-                    if let Some(entry) = entry.log_err() {
-                        let entry_path = entry.path();
-                        if let Ok(downloaded_bin_path) = downloaded_bin_path.as_ref() {
-                            if downloaded_bin_path != entry_path.as_path() {
+            if fs::metadata(&destination_path).await.is_err() {
+                let response = http
+                    .send(
+                        surf::RequestBuilder::new(Method::Get, version.url)
+                            .middleware(surf::middleware::Redirect::default())
+                            .build(),
+                    )
+                    .await
+                    .map_err(|err| anyhow!("error downloading release: {}", err))?;
+                let decompressed_bytes = GzipDecoder::new(response);
+                let mut file = File::create(&destination_path).await?;
+                futures::io::copy(decompressed_bytes, &mut file).await?;
+                fs::set_permissions(
+                    &destination_path,
+                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+                )
+                .await?;
+
+                if let Some(mut entries) = fs::read_dir(&destination_dir_path).await.log_err() {
+                    while let Some(entry) = entries.next().await {
+                        if let Some(entry) = entry.log_err() {
+                            let entry_path = entry.path();
+                            if entry_path.as_path() != destination_path {
                                 fs::remove_file(&entry_path).await.log_err();
                             }
                         }
-                        last_cached_bin_path = Some(entry_path);
                     }
                 }
             }
 
-            if downloaded_bin_path.is_err() {
-                if let Some(last_cached_bin_path) = last_cached_bin_path {
-                    return Ok(last_cached_bin_path);
-                }
-            }
-
-            downloaded_bin_path
+            Ok(destination_path)
         }
+        .boxed()
+    }
+
+    fn cached_server_binary(&self) -> BoxFuture<'static, Option<PathBuf>> {
+        async move {
+            let destination_dir_path = dirs::home_dir()
+                .ok_or_else(|| anyhow!("can't determine home directory"))?
+                .join(".zed/rust-analyzer");
+            fs::create_dir_all(&destination_dir_path).await?;
+
+            let mut last = None;
+            let mut entries = fs::read_dir(&destination_dir_path).await?;
+            while let Some(entry) = entries.next().await {
+                last = Some(entry?.path());
+            }
+            last.ok_or_else(|| anyhow!("no cached binary"))
+        }
+        .log_err()
         .boxed()
     }
 

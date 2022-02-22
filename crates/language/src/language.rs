@@ -7,7 +7,7 @@ pub mod proto;
 mod tests;
 
 use anyhow::{anyhow, Result};
-use client::http::HttpClient;
+use client::http::{self, HttpClient};
 use collections::HashSet;
 use futures::{
     future::{BoxFuture, Shared},
@@ -17,7 +17,6 @@ use gpui::{AppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
-use postage::watch;
 use serde::Deserialize;
 use std::{
     cell::RefCell,
@@ -59,11 +58,22 @@ pub trait ToLspPosition {
     fn to_lsp_position(self) -> lsp::Position;
 }
 
+pub struct LspBinaryVersion {
+    pub name: String,
+    pub url: http::Url,
+}
+
 pub trait LspExt: 'static + Send + Sync {
-    fn fetch_latest_language_server(
+    fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,
+    ) -> BoxFuture<'static, Result<LspBinaryVersion>>;
+    fn fetch_server_binary(
+        &self,
+        version: LspBinaryVersion,
+        http: Arc<dyn HttpClient>,
     ) -> BoxFuture<'static, Result<PathBuf>>;
+    fn cached_server_binary(&self) -> BoxFuture<'static, Option<PathBuf>>;
     fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams);
     fn label_for_completion(
         &self,
@@ -118,7 +128,7 @@ pub struct BracketPair {
 pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
-    pub(crate) lsp_ext: Option<Box<dyn LspExt>>,
+    pub(crate) lsp_ext: Option<Arc<dyn LspExt>>,
     lsp_binary_path: Mutex<Option<Shared<BoxFuture<'static, Result<PathBuf, Arc<anyhow::Error>>>>>>,
 }
 
@@ -131,19 +141,28 @@ pub struct Grammar {
     pub(crate) highlight_map: Mutex<HighlightMap>,
 }
 
+#[derive(Clone)]
+pub enum LanguageServerBinaryStatus {
+    CheckingForUpdate,
+    Downloading,
+    Downloaded,
+    Cached,
+    Failed,
+}
+
 pub struct LanguageRegistry {
     languages: Vec<Arc<Language>>,
-    pending_lsp_binaries_tx: Arc<Mutex<watch::Sender<usize>>>,
-    pending_lsp_binaries_rx: watch::Receiver<usize>,
+    lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
+    lsp_binary_statuses_rx: async_broadcast::Receiver<(Arc<Language>, LanguageServerBinaryStatus)>,
 }
 
 impl LanguageRegistry {
     pub fn new() -> Self {
-        let (pending_lsp_binaries_tx, pending_lsp_binaries_rx) = watch::channel();
+        let (lsp_binary_statuses_tx, lsp_binary_statuses_rx) = async_broadcast::broadcast(16);
         Self {
             languages: Default::default(),
-            pending_lsp_binaries_tx: Arc::new(Mutex::new(pending_lsp_binaries_tx)),
-            pending_lsp_binaries_rx,
+            lsp_binary_statuses_tx,
+            lsp_binary_statuses_rx,
         }
     }
 
@@ -211,7 +230,7 @@ impl LanguageRegistry {
             }
         }
 
-        let lsp_ext = language.lsp_ext.as_ref()?;
+        let lsp_ext = language.lsp_ext.clone()?;
         let background = cx.background().clone();
         let server_binary_path = {
             Some(
@@ -219,15 +238,13 @@ impl LanguageRegistry {
                     .lsp_binary_path
                     .lock()
                     .get_or_insert_with(|| {
-                        let pending_lsp_binaries_tx = self.pending_lsp_binaries_tx.clone();
-                        let language_server_path =
-                            lsp_ext.fetch_latest_language_server(http_client);
-                        async move {
-                            *pending_lsp_binaries_tx.lock().borrow_mut() += 1;
-                            let path = language_server_path.map_err(Arc::new).await;
-                            *pending_lsp_binaries_tx.lock().borrow_mut() -= 1;
-                            path
-                        }
+                        get_server_binary_path(
+                            lsp_ext,
+                            language.clone(),
+                            http_client,
+                            self.lsp_binary_statuses_tx.clone(),
+                        )
+                        .map_err(Arc::new)
                         .boxed()
                         .shared()
                     })
@@ -242,9 +259,66 @@ impl LanguageRegistry {
         }))
     }
 
-    pub fn pending_lsp_binaries(&self) -> watch::Receiver<usize> {
-        self.pending_lsp_binaries_rx.clone()
+    pub fn language_server_binary_statuses(
+        &self,
+    ) -> async_broadcast::Receiver<(Arc<Language>, LanguageServerBinaryStatus)> {
+        self.lsp_binary_statuses_rx.clone()
     }
+}
+
+async fn get_server_binary_path(
+    lsp_ext: Arc<dyn LspExt>,
+    language: Arc<Language>,
+    http_client: Arc<dyn HttpClient>,
+    statuses: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
+) -> Result<PathBuf> {
+    let path = fetch_latest_server_binary_path(
+        lsp_ext.clone(),
+        language.clone(),
+        http_client,
+        statuses.clone(),
+    )
+    .await;
+    if path.is_err() {
+        if let Some(cached_path) = lsp_ext.cached_server_binary().await {
+            statuses
+                .broadcast((language.clone(), LanguageServerBinaryStatus::Cached))
+                .await?;
+            return Ok(cached_path);
+        } else {
+            statuses
+                .broadcast((language.clone(), LanguageServerBinaryStatus::Failed))
+                .await?;
+        }
+    }
+    path
+}
+
+async fn fetch_latest_server_binary_path(
+    lsp_ext: Arc<dyn LspExt>,
+    language: Arc<Language>,
+    http_client: Arc<dyn HttpClient>,
+    lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
+) -> Result<PathBuf> {
+    lsp_binary_statuses_tx
+        .broadcast((
+            language.clone(),
+            LanguageServerBinaryStatus::CheckingForUpdate,
+        ))
+        .await?;
+    let version_info = lsp_ext
+        .fetch_latest_server_version(http_client.clone())
+        .await?;
+    lsp_binary_statuses_tx
+        .broadcast((language.clone(), LanguageServerBinaryStatus::Downloading))
+        .await?;
+    let path = lsp_ext
+        .fetch_server_binary(version_info, http_client)
+        .await?;
+    lsp_binary_statuses_tx
+        .broadcast((language.clone(), LanguageServerBinaryStatus::Downloaded))
+        .await?;
+    Ok(path)
 }
 
 impl Language {
@@ -306,8 +380,8 @@ impl Language {
         Ok(self)
     }
 
-    pub fn with_lsp_ext(mut self, processor: impl LspExt) -> Self {
-        self.lsp_ext = Some(Box::new(processor));
+    pub fn with_lsp_ext(mut self, lsp_ext: impl LspExt) -> Self {
+        self.lsp_ext = Some(Arc::new(lsp_ext));
         self
     }
 

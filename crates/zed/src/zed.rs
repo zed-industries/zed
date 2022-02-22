@@ -43,6 +43,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         }
     });
 
+    workspace::lsp_status::init(cx);
+
     cx.add_bindings(vec![
         Binding::new("cmd-=", AdjustBufferFontSize(1.), None),
         Binding::new("cmd--", AdjustBufferFontSize(-1.), None),

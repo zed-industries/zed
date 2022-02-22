@@ -30,6 +30,7 @@ text = { path = "../text" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 anyhow = "1.0.38"
+async-broadcast = "0.3.4"
 async-trait = "0.1"
 futures = "0.3"
 lazy_static = "1.4"
