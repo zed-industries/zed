@@ -10,7 +10,6 @@ path = "src/project_symbols.rs"
 editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
-language = { path = "../language" }
 project = { path = "../project" }
 text = { path = "../text" }
 workspace = { path = "../workspace" }

@@ -80,7 +80,7 @@ pub trait LspExt: 'static + Send + Sync {
     fn label_for_completion(&self, _: &lsp::CompletionItem, _: &Language) -> Option<CodeLabel> {
         None
     }
-    fn label_for_symbol(&self, _: &lsp::SymbolInformation, _: &Language) -> Option<CodeLabel> {
+    fn label_for_symbol(&self, _: &str, _: lsp::SymbolKind, _: &Language) -> Option<CodeLabel> {
         None
     }
 }
@@ -435,8 +435,8 @@ impl Language {
             .label_for_completion(completion, self)
     }
 
-    pub fn label_for_symbol(&self, symbol: &lsp::SymbolInformation) -> Option<CodeLabel> {
-        self.lsp_ext.as_ref()?.label_for_symbol(symbol, self)
+    pub fn label_for_symbol(&self, name: &str, kind: lsp::SymbolKind) -> Option<CodeLabel> {
+        self.lsp_ext.as_ref()?.label_for_symbol(name, kind, self)
     }
 
     pub fn highlight_text<'a>(

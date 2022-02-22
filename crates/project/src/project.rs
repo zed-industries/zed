@@ -24,6 +24,7 @@ use postage::{broadcast, prelude::Stream, sink::Sink, watch};
 use smol::block_on;
 use std::{
     convert::TryInto,
+    mem,
     ops::Range,
     path::{Component, Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
@@ -125,7 +126,9 @@ pub struct Symbol {
     pub language_name: String,
     pub path: PathBuf,
     pub label: CodeLabel,
-    pub lsp_symbol: lsp::SymbolInformation,
+    pub name: String,
+    pub kind: lsp::SymbolKind,
+    pub range: Range<PointUtf16>,
 }
 
 #[derive(Default)]
@@ -1281,18 +1284,21 @@ impl Project {
                                         path = relativize_path(&worktree_abs_path, &abs_path);
                                     }
 
-                                    let label =
-                                        language.label_for_symbol(&lsp_symbol).unwrap_or_else(
-                                            || CodeLabel::plain(lsp_symbol.name.clone(), None),
-                                        );
+                                    let label = language
+                                        .label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
+                                        .unwrap_or_else(|| {
+                                            CodeLabel::plain(lsp_symbol.name.clone(), None)
+                                        });
 
                                     Some(Symbol {
                                         source_worktree_id,
                                         worktree_id,
                                         language_name: language.name().to_string(),
+                                        name: lsp_symbol.name,
+                                        kind: lsp_symbol.kind,
                                         label,
                                         path,
-                                        lsp_symbol,
+                                        range: range_from_lsp(lsp_symbol.location.range),
                                     })
                                 },
                             ));
@@ -2896,16 +2902,24 @@ impl Project {
         let language = self
             .languages
             .get_language(&serialized_symbol.language_name);
-        let lsp_symbol = serde_json::from_slice(&serialized_symbol.lsp_symbol)?;
+        let start = serialized_symbol
+            .start
+            .ok_or_else(|| anyhow!("invalid start"))?;
+        let end = serialized_symbol
+            .end
+            .ok_or_else(|| anyhow!("invalid end"))?;
+        let kind = unsafe { mem::transmute(serialized_symbol.kind) };
         Ok(Symbol {
             source_worktree_id: WorktreeId::from_proto(serialized_symbol.source_worktree_id),
             worktree_id: WorktreeId::from_proto(serialized_symbol.worktree_id),
             language_name: serialized_symbol.language_name.clone(),
             label: language
-                .and_then(|language| language.label_for_symbol(&lsp_symbol))
-                .unwrap_or(CodeLabel::plain(lsp_symbol.name.clone(), None)),
+                .and_then(|language| language.label_for_symbol(&serialized_symbol.name, kind))
+                .unwrap_or_else(|| CodeLabel::plain(serialized_symbol.name.clone(), None)),
+            name: serialized_symbol.name,
             path: PathBuf::from(serialized_symbol.path),
-            lsp_symbol,
+            range: PointUtf16::new(start.row, start.column)..PointUtf16::new(end.row, end.column),
+            kind,
         })
     }
 
@@ -3195,8 +3209,17 @@ fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
         source_worktree_id: symbol.source_worktree_id.to_proto(),
         worktree_id: symbol.worktree_id.to_proto(),
         language_name: symbol.language_name.clone(),
+        name: symbol.name.clone(),
+        kind: unsafe { mem::transmute(symbol.kind) },
         path: symbol.path.to_string_lossy().to_string(),
-        lsp_symbol: serde_json::to_vec(&symbol.lsp_symbol).unwrap(),
+        start: Some(proto::Point {
+            row: symbol.range.start.row,
+            column: symbol.range.start.column,
+        }),
+        end: Some(proto::Point {
+            row: symbol.range.end.row,
+            column: symbol.range.end.column,
+        }),
     }
 }
 

@@ -10,7 +10,6 @@ use gpui::{
     AppContext, Axis, Entity, ModelHandle, MutableAppContext, RenderContext, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
-use language::range_from_lsp;
 use ordered_float::OrderedFloat;
 use postage::watch;
 use project::{Project, Symbol};
@@ -358,14 +357,13 @@ impl ProjectSymbolsView {
                 let symbol = symbol.clone();
                 cx.spawn(|workspace, mut cx| async move {
                     let buffer = buffer.await?;
-                    let range = range_from_lsp(symbol.lsp_symbol.location.range);
                     workspace.update(&mut cx, |workspace, cx| {
                         let start;
                         let end;
                         {
                             let buffer = buffer.read(cx);
-                            start = buffer.clip_point_utf16(range.start, Bias::Left);
-                            end = buffer.clip_point_utf16(range.end, Bias::Left);
+                            start = buffer.clip_point_utf16(symbol.range.start, Bias::Left);
+                            end = buffer.clip_point_utf16(symbol.range.end, Bias::Left);
                         }
 
                         let editor = workspace.open_item(BufferItemHandle(buffer), cx);
