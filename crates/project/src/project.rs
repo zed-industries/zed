@@ -21,9 +21,12 @@ use language::{
 use lsp::{DiagnosticSeverity, LanguageServer};
 use lsp_command::*;
 use postage::{broadcast, prelude::Stream, sink::Sink, watch};
+use rand::prelude::*;
+use sha2::{Digest, Sha256};
 use smol::block_on;
 use std::{
     convert::TryInto,
+    hash::Hash,
     mem,
     ops::Range,
     path::{Component, Path, PathBuf},
@@ -56,6 +59,7 @@ pub struct Project {
         postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
     >,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
+    nonce: u128,
 }
 
 enum OpenBuffer {
@@ -129,6 +133,7 @@ pub struct Symbol {
     pub name: String,
     pub kind: lsp::SymbolKind,
     pub range: Range<PointUtf16>,
+    pub signature: [u8; 32],
 }
 
 #[derive(Default)]
@@ -276,6 +281,7 @@ impl Project {
                 language_servers_with_diagnostics_running: 0,
                 language_servers: Default::default(),
                 started_language_servers: Default::default(),
+                nonce: StdRng::from_entropy().gen(),
             }
         })
     }
@@ -328,6 +334,7 @@ impl Project {
                 language_servers_with_diagnostics_running: 0,
                 language_servers: Default::default(),
                 started_language_servers: Default::default(),
+                nonce: StdRng::from_entropy().gen(),
             };
             for worktree in worktrees {
                 this.add_worktree(&worktree, cx);
@@ -1289,6 +1296,7 @@ impl Project {
                                         .unwrap_or_else(|| {
                                             CodeLabel::plain(lsp_symbol.name.clone(), None)
                                         });
+                                    let signature = this.symbol_signature(worktree_id, &path);
 
                                     Some(Symbol {
                                         source_worktree_id,
@@ -1299,6 +1307,7 @@ impl Project {
                                         label,
                                         path,
                                         range: range_from_lsp(lsp_symbol.location.range),
+                                        signature,
                                     })
                                 },
                             ));
@@ -2725,7 +2734,15 @@ impl Project {
             .payload
             .symbol
             .ok_or_else(|| anyhow!("invalid symbol"))?;
-        let symbol = this.read_with(&cx, |this, _| this.deserialize_symbol(symbol))?;
+        let symbol = this.read_with(&cx, |this, _| {
+            let symbol = this.deserialize_symbol(symbol)?;
+            let signature = this.symbol_signature(symbol.worktree_id, &symbol.path);
+            if signature == symbol.signature {
+                Ok(symbol)
+            } else {
+                Err(anyhow!("invalid symbol signature"))
+            }
+        })?;
         let buffer = this
             .update(&mut cx, |this, cx| this.open_buffer_for_symbol(&symbol, cx))
             .await?;
@@ -2735,6 +2752,14 @@ impl Project {
                 this.serialize_buffer_for_peer(&buffer, peer_id, cx)
             })),
         })
+    }
+
+    fn symbol_signature(&self, worktree_id: WorktreeId, path: &Path) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(worktree_id.to_proto().to_be_bytes());
+        hasher.update(path.to_string_lossy().as_bytes());
+        hasher.update(self.nonce.to_be_bytes());
+        hasher.finalize().as_slice().try_into().unwrap()
     }
 
     async fn handle_open_buffer(
@@ -2920,6 +2945,10 @@ impl Project {
             path: PathBuf::from(serialized_symbol.path),
             range: PointUtf16::new(start.row, start.column)..PointUtf16::new(end.row, end.column),
             kind,
+            signature: serialized_symbol
+                .signature
+                .try_into()
+                .map_err(|_| anyhow!("invalid signature"))?,
         })
     }
 
@@ -3220,6 +3249,7 @@ fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
             row: symbol.range.end.row,
             column: symbol.range.end.column,
         }),
+        signature: symbol.signature.to_vec(),
     }
 }
 

@@ -35,8 +35,10 @@ libc = "0.2"
 log = "0.4"
 parking_lot = "0.11.1"
 postage = { version = "0.4.1", features = ["futures-traits"] }
+rand = "0.8.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1.0.64", features = ["preserve_order"] }
+sha2 = "0.10"
 smol = "1.2.5"
 toml = "0.5"
 
@@ -48,6 +50,5 @@ language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
-rand = "0.8.3"
 tempdir = { version = "0.3.7" }
 unindent = "0.1.7"

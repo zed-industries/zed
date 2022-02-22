@@ -193,6 +193,7 @@ message Symbol {
     string path = 6;
     Point start = 7;
     Point end = 8;
+    bytes signature = 9;
 }
 
 message OpenBufferForSymbol {
