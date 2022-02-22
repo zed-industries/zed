@@ -119,7 +119,7 @@ pub struct Definition {
 }
 
 #[derive(Debug)]
-pub struct ProjectSymbol {
+pub struct Symbol {
     pub label: CodeLabel,
     pub lsp_symbol: lsp::SymbolInformation,
 }
@@ -192,6 +192,7 @@ impl Project {
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDefinition>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
+        client.add_entity_request_handler(Self::handle_get_project_symbols);
         client.add_entity_request_handler(Self::handle_open_buffer);
         client.add_entity_request_handler(Self::handle_save_buffer);
     }
@@ -446,7 +447,7 @@ impl Project {
             .find(|worktree| worktree.read(cx).id() == id)
     }
 
-    pub fn share(&self, cx: &mut ModelContext<Self>) -> Task<anyhow::Result<()>> {
+    pub fn share(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let rpc = self.client.clone();
         cx.spawn(|this, mut cx| async move {
             let project_id = this.update(&mut cx, |this, _| {
@@ -483,7 +484,7 @@ impl Project {
         })
     }
 
-    pub fn unshare(&self, cx: &mut ModelContext<Self>) -> Task<anyhow::Result<()>> {
+    pub fn unshare(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let rpc = self.client.clone();
         cx.spawn(|this, mut cx| async move {
             let project_id = this.update(&mut cx, |this, _| {
@@ -1226,7 +1227,7 @@ impl Project {
         &self,
         query: &str,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<HashMap<String, Vec<ProjectSymbol>>>> {
+    ) -> Task<Result<HashMap<String, Vec<Symbol>>>> {
         if self.is_local() {
             let mut language_servers = HashMap::default();
             for ((_, language_name), language_server) in self.language_servers.iter() {
@@ -1257,13 +1258,56 @@ impl Project {
                         let label = language
                             .label_for_symbol(&lsp_symbol)
                             .unwrap_or_else(|| CodeLabel::plain(lsp_symbol.name.clone(), None));
-                        language_symbols.push(ProjectSymbol { label, lsp_symbol });
+                        language_symbols.push(Symbol { label, lsp_symbol });
                     }
                 }
                 Ok(symbols)
             })
         } else if let Some(project_id) = self.remote_id() {
-            todo!()
+            let request = self.client.request(proto::GetProjectSymbols {
+                project_id,
+                query: query.to_string(),
+            });
+            cx.spawn_weak(|this, cx| async move {
+                let response = request.await?;
+                let mut symbols = HashMap::default();
+                if let Some(this) = this.upgrade(&cx) {
+                    this.read_with(&cx, |this, _| {
+                        let mut serialized_symbols = response.symbols.into_iter();
+                        for (language_name, symbol_count) in response
+                            .languages
+                            .into_iter()
+                            .zip(response.symbol_counts_per_language)
+                        {
+                            let language = this.languages.get_language(&language_name);
+                            let language_symbols =
+                                symbols.entry(language_name).or_insert(Vec::new());
+                            language_symbols.extend(
+                                serialized_symbols
+                                    .by_ref()
+                                    .take(symbol_count as usize)
+                                    .filter_map(|serialized_symbol| {
+                                        let lsp_symbol =
+                                            serde_json::from_slice(&serialized_symbol.lsp_symbol)
+                                                .log_err()?;
+                                        Some(Symbol {
+                                            label: language
+                                                .and_then(|language| {
+                                                    language.label_for_symbol(&lsp_symbol)
+                                                })
+                                                .unwrap_or(CodeLabel::plain(
+                                                    lsp_symbol.name.clone(),
+                                                    None,
+                                                )),
+                                            lsp_symbol,
+                                        })
+                                    }),
+                            );
+                        }
+                    })
+                }
+                Ok(symbols)
+            })
         } else {
             Task::ready(Ok(Default::default()))
         }
@@ -2578,12 +2622,42 @@ impl Project {
         })
     }
 
+    async fn handle_get_project_symbols(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::GetProjectSymbols>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::GetProjectSymbolsResponse> {
+        let symbols = this
+            .update(&mut cx, |this, cx| {
+                this.symbols(&envelope.payload.query, cx)
+            })
+            .await?;
+
+        let mut languages = Vec::new();
+        let mut symbol_counts_per_language = Vec::new();
+        let mut serialized_symbols = Vec::new();
+        for (language_name, language_symbols) in symbols {
+            languages.push(language_name);
+            symbol_counts_per_language.push(language_symbols.len() as u64);
+            serialized_symbols.extend(language_symbols.into_iter().map(|symbol| proto::Symbol {
+                lsp_symbol: serde_json::to_vec(&symbol.lsp_symbol).unwrap(),
+            }));
+        }
+
+        Ok(proto::GetProjectSymbolsResponse {
+            languages,
+            symbol_counts_per_language,
+            symbols: serialized_symbols,
+        })
+    }
+
     async fn handle_open_buffer(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::OpenBuffer>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
-    ) -> anyhow::Result<proto::OpenBufferResponse> {
+    ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id()?;
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let open_buffer = this.update(&mut cx, |this, cx| {
@@ -2744,7 +2818,7 @@ impl Project {
         envelope: TypedEnvelope<proto::CloseBuffer>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             if let Some(shared_buffers) =
                 this.shared_buffers.get_mut(&envelope.original_sender_id()?)

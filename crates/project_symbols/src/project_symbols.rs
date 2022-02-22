@@ -11,7 +11,7 @@ use gpui::{
 };
 use ordered_float::OrderedFloat;
 use postage::watch;
-use project::{Project, ProjectSymbol};
+use project::{Project, Symbol};
 use std::{
     cmp::{self, Reverse},
     sync::Arc,
@@ -43,7 +43,7 @@ pub struct ProjectSymbolsView {
     settings: watch::Receiver<Settings>,
     selected_match_index: usize,
     list_state: UniformListState,
-    symbols: Vec<ProjectSymbol>,
+    symbols: Vec<Symbol>,
     match_candidates: Vec<StringMatchCandidate>,
     matches: Vec<StringMatch>,
     pending_symbols_task: Task<Option<()>>,

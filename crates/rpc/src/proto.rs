@@ -239,6 +239,7 @@ entity_messages!(
     GetCodeActions,
     GetCompletions,
     GetDefinition,
+    GetProjectSymbols,
     JoinProject,
     LeaveProject,
     OpenBuffer,

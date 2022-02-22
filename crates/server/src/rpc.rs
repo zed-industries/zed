@@ -79,6 +79,7 @@ impl Server {
             .add_message_handler(Server::disk_based_diagnostics_updating)
             .add_message_handler(Server::disk_based_diagnostics_updated)
             .add_request_handler(Server::get_definition)
+            .add_request_handler(Server::get_project_symbols)
             .add_request_handler(Server::open_buffer)
             .add_message_handler(Server::close_buffer)
             .add_request_handler(Server::update_buffer)
@@ -577,6 +578,20 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetDefinition>,
     ) -> tide::Result<proto::GetDefinitionResponse> {
+        let host_connection_id = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .host_connection_id;
+        Ok(self
+            .peer
+            .forward_request(request.sender_id, host_connection_id, request.payload)
+            .await?)
+    }
+
+    async fn get_project_symbols(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::GetProjectSymbols>,
+    ) -> tide::Result<proto::GetProjectSymbolsResponse> {
         let host_connection_id = self
             .state()
             .read_project(request.payload.project_id, request.sender_id)?
@@ -2001,8 +2016,9 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
-        Arc::get_mut(&mut lang_registry).unwrap().add(
-            Arc::new(Language::new(
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
                 LanguageConfig {
                     name: "Rust".to_string(),
                     path_suffixes: vec!["rs".to_string()],
@@ -2010,9 +2026,7 @@ mod tests {
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
-            )),
-            
-        );
+            )));
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -2233,8 +2247,9 @@ mod tests {
             }),
             ..Default::default()
         });
-        Arc::get_mut(&mut lang_registry).unwrap().add(
-            Arc::new(Language::new(
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
                 LanguageConfig {
                     name: "Rust".to_string(),
                     path_suffixes: vec!["rs".to_string()],
@@ -2242,9 +2257,7 @@ mod tests {
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
-            )),
-            
-        );
+            )));
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -2436,8 +2449,9 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
-        Arc::get_mut(&mut lang_registry).unwrap().add(
-            Arc::new(Language::new(
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
                 LanguageConfig {
                     name: "Rust".to_string(),
                     path_suffixes: vec!["rs".to_string()],
@@ -2445,9 +2459,7 @@ mod tests {
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
-            )),
-            
-        );
+            )));
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -2554,8 +2566,9 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
-        Arc::get_mut(&mut lang_registry).unwrap().add(
-            Arc::new(Language::new(
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
                 LanguageConfig {
                     name: "Rust".to_string(),
                     path_suffixes: vec!["rs".to_string()],
@@ -2563,9 +2576,7 @@ mod tests {
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
-            )),
-            
-        );
+            )));
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -2703,8 +2714,9 @@ mod tests {
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
 
-        Arc::get_mut(&mut lang_registry).unwrap().add(
-            Arc::new(Language::new(
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
                 LanguageConfig {
                     name: "Rust".to_string(),
                     path_suffixes: vec!["rs".to_string()],
@@ -2712,9 +2724,7 @@ mod tests {
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
-            )),
-            
-        );
+            )));
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -2805,8 +2815,9 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
-        Arc::get_mut(&mut lang_registry).unwrap().add(
-            Arc::new(Language::new(
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
                 LanguageConfig {
                     name: "Rust".to_string(),
                     path_suffixes: vec!["rs".to_string()],
@@ -2814,9 +2825,7 @@ mod tests {
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
-            )),
-            
-        );
+            )));
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -3045,8 +3054,9 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
-        Arc::get_mut(&mut lang_registry).unwrap().add(
-            Arc::new(Language::new(
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
                 LanguageConfig {
                     name: "Rust".to_string(),
                     path_suffixes: vec!["rs".to_string()],
@@ -3054,9 +3064,7 @@ mod tests {
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
-            )),
-            
-        );
+            )));
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -3852,8 +3860,9 @@ mod tests {
             });
         });
 
-        Arc::get_mut(&mut host_lang_registry).unwrap().add(
-            Arc::new(Language::new(
+        Arc::get_mut(&mut host_lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
                 LanguageConfig {
                     name: "Rust".to_string(),
                     path_suffixes: vec!["rs".to_string()],
@@ -3861,9 +3870,7 @@ mod tests {
                     ..Default::default()
                 },
                 None,
-            )),
-            
-        );
+            )));
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
