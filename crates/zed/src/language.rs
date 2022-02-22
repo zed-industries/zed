@@ -230,6 +230,64 @@ impl LspExt for RustLsp {
         }
         None
     }
+
+    fn label_for_symbol(
+        &self,
+        symbol: &lsp::SymbolInformation,
+        language: &Language,
+    ) -> Option<CodeLabel> {
+        let (text, filter_range, display_range) = match symbol.kind {
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+                let text = format!("fn {} () {{}}", symbol.name);
+                let filter_range = 3..3 + symbol.name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::STRUCT => {
+                let text = format!("struct {} {{}}", symbol.name);
+                let filter_range = 7..7 + symbol.name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::ENUM => {
+                let text = format!("enum {} {{}}", symbol.name);
+                let filter_range = 5..5 + symbol.name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::INTERFACE => {
+                let text = format!("trait {} {{}}", symbol.name);
+                let filter_range = 6..6 + symbol.name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::CONSTANT => {
+                let text = format!("const {}: () = ();", symbol.name);
+                let filter_range = 6..6 + symbol.name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::MODULE => {
+                let text = format!("mod {} {{}}", symbol.name);
+                let filter_range = 4..4 + symbol.name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::TYPE_PARAMETER => {
+                let text = format!("type {} {{}}", symbol.name);
+                let filter_range = 5..5 + symbol.name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            _ => return None,
+        };
+
+        Some(CodeLabel {
+            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
+            text: text[display_range].to_string(),
+            filter_range,
+        })
+    }
 }
 
 pub fn build_language_registry() -> LanguageRegistry {
@@ -323,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn test_process_rust_completions() {
+    fn test_rust_label_for_completion() {
         let language = rust();
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new(vec![
@@ -393,6 +451,57 @@ mod tests {
                     (25..28, highlight_type),
                     (29..30, highlight_type),
                 ],
+            })
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_rust_label_for_symbol() {
+        let language = rust();
+        let grammar = language.grammar().unwrap();
+        let theme = SyntaxTheme::new(vec![
+            ("type".into(), Color::green().into()),
+            ("keyword".into(), Color::blue().into()),
+            ("function".into(), Color::red().into()),
+            ("property".into(), Color::white().into()),
+        ]);
+
+        language.set_theme(&theme);
+
+        let highlight_function = grammar.highlight_id_for_name("function").unwrap();
+        let highlight_type = grammar.highlight_id_for_name("type").unwrap();
+        let highlight_keyword = grammar.highlight_id_for_name("keyword").unwrap();
+
+        assert_eq!(
+            language.label_for_symbol(&lsp::SymbolInformation {
+                kind: lsp::SymbolKind::FUNCTION,
+                name: "hello".to_string(),
+                location: lsp::Location::new("file://a".parse().unwrap(), Default::default()),
+                container_name: Default::default(),
+                deprecated: Default::default(),
+                tags: Default::default(),
+            }),
+            Some(CodeLabel {
+                text: "fn hello".to_string(),
+                filter_range: 3..8,
+                runs: vec![(0..2, highlight_keyword), (3..8, highlight_function)],
+            })
+        );
+
+        assert_eq!(
+            language.label_for_symbol(&lsp::SymbolInformation {
+                kind: lsp::SymbolKind::TYPE_PARAMETER,
+                name: "World".to_string(),
+                location: lsp::Location::new("file://a".parse().unwrap(), Default::default()),
+                container_name: Default::default(),
+                deprecated: Default::default(),
+                tags: Default::default(),
+            }),
+            Some(CodeLabel {
+                text: "type World".to_string(),
+                filter_range: 5..10,
+                runs: vec![(0..4, highlight_keyword), (5..10, highlight_type)],
             })
         );
     }

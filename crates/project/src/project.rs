@@ -118,6 +118,7 @@ pub struct Definition {
     pub target_range: Range<language::Anchor>,
 }
 
+#[derive(Debug)]
 pub struct ProjectSymbol {
     pub label: CodeLabel,
     pub lsp_symbol: lsp::SymbolInformation,

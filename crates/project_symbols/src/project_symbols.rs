@@ -241,7 +241,7 @@ impl ProjectSymbolsView {
         }
 
         self.matches = matches;
-        self.selected_match_index = 0;
+        self.select_first(&SelectFirst, cx);
         cx.notify();
     }
 
