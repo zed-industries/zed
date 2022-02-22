@@ -79,6 +79,7 @@ impl Server {
             .add_message_handler(Server::disk_based_diagnostics_updating)
             .add_message_handler(Server::disk_based_diagnostics_updated)
             .add_request_handler(Server::get_definition)
+            .add_request_handler(Server::get_references)
             .add_request_handler(Server::get_project_symbols)
             .add_request_handler(Server::open_buffer_for_symbol)
             .add_request_handler(Server::open_buffer)
@@ -579,6 +580,20 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetDefinition>,
     ) -> tide::Result<proto::GetDefinitionResponse> {
+        let host_connection_id = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .host_connection_id;
+        Ok(self
+            .peer
+            .forward_request(request.sender_id, host_connection_id, request.payload)
+            .await?)
+    }
+
+    async fn get_references(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::GetReferences>,
+    ) -> tide::Result<proto::GetReferencesResponse> {
         let host_connection_id = self
             .state()
             .read_project(request.payload.project_id, request.sender_id)?
@@ -2658,13 +2673,13 @@ mod tests {
         cx_b.read(|cx| {
             assert_eq!(definitions_1.len(), 1);
             assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
-            let target_buffer = definitions_1[0].target_buffer.read(cx);
+            let target_buffer = definitions_1[0].buffer.read(cx);
             assert_eq!(
                 target_buffer.text(),
                 "const TWO: usize = 2;\nconst THREE: usize = 3;"
             );
             assert_eq!(
-                definitions_1[0].target_range.to_point(target_buffer),
+                definitions_1[0].range.to_point(target_buffer),
                 Point::new(0, 6)..Point::new(0, 9)
             );
         });
@@ -2683,20 +2698,17 @@ mod tests {
         cx_b.read(|cx| {
             assert_eq!(definitions_2.len(), 1);
             assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
-            let target_buffer = definitions_2[0].target_buffer.read(cx);
+            let target_buffer = definitions_2[0].buffer.read(cx);
             assert_eq!(
                 target_buffer.text(),
                 "const TWO: usize = 2;\nconst THREE: usize = 3;"
             );
             assert_eq!(
-                definitions_2[0].target_range.to_point(target_buffer),
+                definitions_2[0].range.to_point(target_buffer),
                 Point::new(1, 6)..Point::new(1, 11)
             );
         });
-        assert_eq!(
-            definitions_1[0].target_buffer,
-            definitions_2[0].target_buffer
-        );
+        assert_eq!(definitions_1[0].buffer, definitions_2[0].buffer);
 
         cx_b.update(|_| {
             drop(definitions_1);
@@ -2705,6 +2717,142 @@ mod tests {
         project_b
             .condition(&cx_b, |proj, cx| proj.worktrees(cx).count() == 1)
             .await;
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_references(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+        cx_a.foreground().forbid_parking();
+        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = FakeFs::new(cx_a.background());
+        fs.insert_tree(
+            "/root-1",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/root-2",
+            json!({
+                "three.rs": "const THREE: usize = two::TWO + one::ONE;",
+            }),
+        )
+        .await;
+
+        // Set up a fake language server.
+        let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Rust".into(),
+                    path_suffixes: vec!["rs".to_string()],
+                    language_server: Some(language_server_config),
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )));
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let client_a = server.create_client(&mut cx_a, "user_a").await;
+        let client_b = server.create_client(&mut cx_b, "user_b").await;
+
+        // Share a project as client A
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/root-1", false, cx)
+            })
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
+        project_a
+            .update(&mut cx_a, |p, cx| p.share(cx))
+            .await
+            .unwrap();
+
+        // Join the worktree as client B.
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        // Open the file on client B.
+        let buffer_b = cx_b
+            .background()
+            .spawn(project_b.update(&mut cx_b, |p, cx| {
+                p.open_buffer((worktree_id, "one.rs"), cx)
+            }))
+            .await
+            .unwrap();
+
+        // Request references to a symbol as the guest.
+        let references = project_b.update(&mut cx_b, |p, cx| p.references(&buffer_b, 7, cx));
+
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
+        fake_language_server.handle_request::<lsp::request::References, _>(|params| {
+            assert_eq!(
+                params.text_document_position.text_document.uri.as_str(),
+                "file:///root-1/one.rs"
+            );
+            Some(vec![
+                lsp::Location {
+                    uri: lsp::Url::from_file_path("/root-1/two.rs").unwrap(),
+                    range: lsp::Range::new(lsp::Position::new(0, 24), lsp::Position::new(0, 27)),
+                },
+                lsp::Location {
+                    uri: lsp::Url::from_file_path("/root-1/two.rs").unwrap(),
+                    range: lsp::Range::new(lsp::Position::new(0, 35), lsp::Position::new(0, 38)),
+                },
+                lsp::Location {
+                    uri: lsp::Url::from_file_path("/root-2/three.rs").unwrap(),
+                    range: lsp::Range::new(lsp::Position::new(0, 37), lsp::Position::new(0, 40)),
+                },
+            ])
+        });
+
+        let references = references.await.unwrap();
+        cx_b.read(|cx| {
+            assert_eq!(references.len(), 3);
+            assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
+
+            let two_buffer = references[0].buffer.read(cx);
+            let three_buffer = references[2].buffer.read(cx);
+            assert_eq!(
+                two_buffer.file().unwrap().path().as_ref(),
+                Path::new("two.rs")
+            );
+            assert_eq!(references[1].buffer, references[0].buffer);
+            assert_eq!(
+                three_buffer.file().unwrap().full_path(cx),
+                Path::new("three.rs")
+            );
+
+            assert_eq!(references[0].range.to_offset(&two_buffer), 24..27);
+            assert_eq!(references[1].range.to_offset(&two_buffer), 35..38);
+            assert_eq!(references[2].range.to_offset(&three_buffer), 37..40);
+        });
     }
 
     #[gpui::test(iterations = 10)]
@@ -2950,7 +3098,7 @@ mod tests {
         let buffer_b2 = buffer_b2.await.unwrap();
         let definitions = definitions.await.unwrap();
         assert_eq!(definitions.len(), 1);
-        assert_eq!(definitions[0].target_buffer, buffer_b2);
+        assert_eq!(definitions[0].buffer, buffer_b2);
     }
 
     #[gpui::test(iterations = 10)]

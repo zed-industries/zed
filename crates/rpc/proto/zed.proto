@@ -23,57 +23,59 @@ message Envelope {
         RemoveProjectCollaborator remove_project_collaborator = 17;
         GetDefinition get_definition = 18;
         GetDefinitionResponse get_definition_response = 19;
-        GetProjectSymbols get_project_symbols = 20;
-        GetProjectSymbolsResponse get_project_symbols_response = 21;
-        OpenBufferForSymbol open_buffer_for_symbol = 22;
-        OpenBufferForSymbolResponse open_buffer_for_symbol_response = 23;
+        GetReferences get_references = 20;
+        GetReferencesResponse get_references_response = 21;
+        GetProjectSymbols get_project_symbols = 22;
+        GetProjectSymbolsResponse get_project_symbols_response = 23;
+        OpenBufferForSymbol open_buffer_for_symbol = 24;
+        OpenBufferForSymbolResponse open_buffer_for_symbol_response = 25;
 
-        RegisterWorktree register_worktree = 24;
-        UnregisterWorktree unregister_worktree = 25;
-        ShareWorktree share_worktree = 26;
-        UpdateWorktree update_worktree = 27;
-        UpdateDiagnosticSummary update_diagnostic_summary = 28;
-        DiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 29;
-        DiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 30;
+        RegisterWorktree register_worktree = 26;
+        UnregisterWorktree unregister_worktree = 27;
+        ShareWorktree share_worktree = 28;
+        UpdateWorktree update_worktree = 29;
+        UpdateDiagnosticSummary update_diagnostic_summary = 30;
+        DiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 31;
+        DiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 32;
 
-        OpenBuffer open_buffer = 31;
-        OpenBufferResponse open_buffer_response = 32;
-        CloseBuffer close_buffer = 33;
-        UpdateBuffer update_buffer = 34;
-        UpdateBufferFile update_buffer_file = 35;
-        SaveBuffer save_buffer = 36;
-        BufferSaved buffer_saved = 37;
-        BufferReloaded buffer_reloaded = 38;
-        FormatBuffers format_buffers = 39;
-        FormatBuffersResponse format_buffers_response = 40;
-        GetCompletions get_completions = 41;
-        GetCompletionsResponse get_completions_response = 42;
-        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 43;
-        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 44;
-        GetCodeActions get_code_actions = 45;
-        GetCodeActionsResponse get_code_actions_response = 46;
-        ApplyCodeAction apply_code_action = 47;
-        ApplyCodeActionResponse apply_code_action_response = 48;
-        PrepareRename prepare_rename = 49;
-        PrepareRenameResponse prepare_rename_response = 50;
-        PerformRename perform_rename = 51;
-        PerformRenameResponse perform_rename_response = 52;
+        OpenBuffer open_buffer = 33;
+        OpenBufferResponse open_buffer_response = 34;
+        CloseBuffer close_buffer = 35;
+        UpdateBuffer update_buffer = 36;
+        UpdateBufferFile update_buffer_file = 37;
+        SaveBuffer save_buffer = 38;
+        BufferSaved buffer_saved = 39;
+        BufferReloaded buffer_reloaded = 40;
+        FormatBuffers format_buffers = 41;
+        FormatBuffersResponse format_buffers_response = 42;
+        GetCompletions get_completions = 43;
+        GetCompletionsResponse get_completions_response = 44;
+        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 45;
+        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 46;
+        GetCodeActions get_code_actions = 47;
+        GetCodeActionsResponse get_code_actions_response = 48;
+        ApplyCodeAction apply_code_action = 49;
+        ApplyCodeActionResponse apply_code_action_response = 50;
+        PrepareRename prepare_rename = 51;
+        PrepareRenameResponse prepare_rename_response = 52;
+        PerformRename perform_rename = 53;
+        PerformRenameResponse perform_rename_response = 54;
 
-        GetChannels get_channels = 53;
-        GetChannelsResponse get_channels_response = 54;
-        JoinChannel join_channel = 55;
-        JoinChannelResponse join_channel_response = 56;
-        LeaveChannel leave_channel = 57;
-        SendChannelMessage send_channel_message = 58;
-        SendChannelMessageResponse send_channel_message_response = 59;
-        ChannelMessageSent channel_message_sent = 60;
-        GetChannelMessages get_channel_messages = 61;
-        GetChannelMessagesResponse get_channel_messages_response = 62;
+        GetChannels get_channels = 55;
+        GetChannelsResponse get_channels_response = 56;
+        JoinChannel join_channel = 57;
+        JoinChannelResponse join_channel_response = 58;
+        LeaveChannel leave_channel = 59;
+        SendChannelMessage send_channel_message = 60;
+        SendChannelMessageResponse send_channel_message_response = 61;
+        ChannelMessageSent channel_message_sent = 62;
+        GetChannelMessages get_channel_messages = 63;
+        GetChannelMessagesResponse get_channel_messages_response = 64;
 
-        UpdateContacts update_contacts = 63;
+        UpdateContacts update_contacts = 65;
 
-        GetUsers get_users = 64;
-        GetUsersResponse get_users_response = 65;
+        GetUsers get_users = 66;
+        GetUsersResponse get_users_response = 67;
     }
 }
 
@@ -166,13 +168,23 @@ message GetDefinition {
  }
 
 message GetDefinitionResponse {
-    repeated Definition definitions = 1;
+    repeated Location locations = 1;
 }
 
-message Definition {
+message GetReferences {
+     uint64 project_id = 1;
+     uint64 buffer_id = 2;
+     Anchor position = 3;
+ }
+
+message GetReferencesResponse {
+    repeated Location locations = 1;
+}
+
+message Location {
     Buffer buffer = 1;
-    Anchor target_start = 2;
-    Anchor target_end = 3;
+    Anchor start = 2;
+    Anchor end = 3;
 }
 
 message GetProjectSymbols {

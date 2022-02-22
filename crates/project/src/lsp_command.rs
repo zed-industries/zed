@@ -1,4 +1,4 @@
-use crate::{Definition, Project, ProjectTransaction};
+use crate::{Location, Project, ProjectTransaction};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use client::{proto, PeerId};
@@ -63,6 +63,10 @@ pub(crate) struct PerformRename {
 }
 
 pub(crate) struct GetDefinition {
+    pub position: PointUtf16,
+}
+
+pub(crate) struct GetReferences {
     pub position: PointUtf16,
 }
 
@@ -287,7 +291,7 @@ impl LspCommand for PerformRename {
 
 #[async_trait(?Send)]
 impl LspCommand for GetDefinition {
-    type Response = Vec<Definition>;
+    type Response = Vec<Location>;
     type LspRequest = lsp::request::GotoDefinition;
     type ProtoRequest = proto::GetDefinition;
 
@@ -310,7 +314,7 @@ impl LspCommand for GetDefinition {
         project: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
         mut cx: AsyncAppContext,
-    ) -> Result<Vec<Definition>> {
+    ) -> Result<Vec<Location>> {
         let mut definitions = Vec::new();
         let (language, language_server) = buffer
             .read_with(&cx, |buffer, _| {
@@ -357,9 +361,9 @@ impl LspCommand for GetDefinition {
                         .clip_point_utf16(point_from_lsp(target_range.start), Bias::Left);
                     let target_end = target_buffer
                         .clip_point_utf16(point_from_lsp(target_range.end), Bias::Left);
-                    definitions.push(Definition {
-                        target_buffer: target_buffer_handle,
-                        target_range: target_buffer.anchor_after(target_start)
+                    definitions.push(Location {
+                        buffer: target_buffer_handle,
+                        range: target_buffer.anchor_after(target_start)
                             ..target_buffer.anchor_before(target_end),
                     });
                 });
@@ -393,25 +397,24 @@ impl LspCommand for GetDefinition {
     }
 
     fn response_to_proto(
-        response: Vec<Definition>,
+        response: Vec<Location>,
         project: &mut Project,
         peer_id: PeerId,
         _: &clock::Global,
         cx: &AppContext,
     ) -> proto::GetDefinitionResponse {
-        let definitions = response
+        let locations = response
             .into_iter()
             .map(|definition| {
-                let buffer =
-                    project.serialize_buffer_for_peer(&definition.target_buffer, peer_id, cx);
-                proto::Definition {
-                    target_start: Some(serialize_anchor(&definition.target_range.start)),
-                    target_end: Some(serialize_anchor(&definition.target_range.end)),
+                let buffer = project.serialize_buffer_for_peer(&definition.buffer, peer_id, cx);
+                proto::Location {
+                    start: Some(serialize_anchor(&definition.range.start)),
+                    end: Some(serialize_anchor(&definition.range.end)),
                     buffer: Some(buffer),
                 }
             })
             .collect();
-        proto::GetDefinitionResponse { definitions }
+        proto::GetDefinitionResponse { locations }
     }
 
     async fn response_from_proto(
@@ -420,30 +423,178 @@ impl LspCommand for GetDefinition {
         project: ModelHandle<Project>,
         _: ModelHandle<Buffer>,
         mut cx: AsyncAppContext,
-    ) -> Result<Vec<Definition>> {
-        let mut definitions = Vec::new();
-        for definition in message.definitions {
-            let buffer = definition.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
-            let target_buffer = project
+    ) -> Result<Vec<Location>> {
+        let mut locations = Vec::new();
+        for location in message.locations {
+            let buffer = location.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
+            let buffer = project
                 .update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
                 .await?;
-            let target_start = definition
-                .target_start
+            let start = location
+                .start
                 .and_then(deserialize_anchor)
                 .ok_or_else(|| anyhow!("missing target start"))?;
-            let target_end = definition
-                .target_end
+            let end = location
+                .end
                 .and_then(deserialize_anchor)
                 .ok_or_else(|| anyhow!("missing target end"))?;
-            definitions.push(Definition {
-                target_buffer,
-                target_range: target_start..target_end,
+            locations.push(Location {
+                buffer,
+                range: start..end,
             })
         }
-        Ok(definitions)
+        Ok(locations)
     }
 
     fn buffer_id_from_proto(message: &proto::GetDefinition) -> u64 {
+        message.buffer_id
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetReferences {
+    type Response = Vec<Location>;
+    type LspRequest = lsp::request::References;
+    type ProtoRequest = proto::GetReferences;
+
+    fn to_lsp(&self, path: &Path, _: &AppContext) -> lsp::ReferenceParams {
+        lsp::ReferenceParams {
+            text_document_position: lsp::TextDocumentPositionParams {
+                text_document: lsp::TextDocumentIdentifier {
+                    uri: lsp::Url::from_file_path(path).unwrap(),
+                },
+                position: self.position.to_lsp_position(),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+            context: lsp::ReferenceContext {
+                include_declaration: true,
+            },
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        locations: Option<Vec<lsp::Location>>,
+        project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Vec<Location>> {
+        let mut references = Vec::new();
+        let (language, language_server) = buffer
+            .read_with(&cx, |buffer, _| {
+                buffer
+                    .language()
+                    .cloned()
+                    .zip(buffer.language_server().cloned())
+            })
+            .ok_or_else(|| anyhow!("buffer no longer has language server"))?;
+
+        if let Some(locations) = locations {
+            for lsp_location in locations {
+                let target_buffer_handle = project
+                    .update(&mut cx, |this, cx| {
+                        this.open_local_buffer_via_lsp(
+                            lsp_location.uri,
+                            language.name().to_string(),
+                            language_server.clone(),
+                            cx,
+                        )
+                    })
+                    .await?;
+
+                cx.read(|cx| {
+                    let target_buffer = target_buffer_handle.read(cx);
+                    let target_start = target_buffer
+                        .clip_point_utf16(point_from_lsp(lsp_location.range.start), Bias::Left);
+                    let target_end = target_buffer
+                        .clip_point_utf16(point_from_lsp(lsp_location.range.end), Bias::Left);
+                    references.push(Location {
+                        buffer: target_buffer_handle,
+                        range: target_buffer.anchor_after(target_start)
+                            ..target_buffer.anchor_before(target_end),
+                    });
+                });
+            }
+        }
+
+        Ok(references)
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetReferences {
+        proto::GetReferences {
+            project_id,
+            buffer_id: buffer.remote_id(),
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
+        }
+    }
+
+    fn from_proto(message: proto::GetReferences, _: &mut Project, buffer: &Buffer) -> Result<Self> {
+        let position = message
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        if !buffer.can_resolve(&position) {
+            Err(anyhow!("cannot resolve position"))?;
+        }
+        Ok(Self {
+            position: position.to_point_utf16(buffer),
+        })
+    }
+
+    fn response_to_proto(
+        response: Vec<Location>,
+        project: &mut Project,
+        peer_id: PeerId,
+        _: &clock::Global,
+        cx: &AppContext,
+    ) -> proto::GetReferencesResponse {
+        let locations = response
+            .into_iter()
+            .map(|definition| {
+                let buffer = project.serialize_buffer_for_peer(&definition.buffer, peer_id, cx);
+                proto::Location {
+                    start: Some(serialize_anchor(&definition.range.start)),
+                    end: Some(serialize_anchor(&definition.range.end)),
+                    buffer: Some(buffer),
+                }
+            })
+            .collect();
+        proto::GetReferencesResponse { locations }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::GetReferencesResponse,
+        project: ModelHandle<Project>,
+        _: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Vec<Location>> {
+        let mut locations = Vec::new();
+        for location in message.locations {
+            let buffer = location.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
+            let target_buffer = project
+                .update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
+                .await?;
+            let start = location
+                .start
+                .and_then(deserialize_anchor)
+                .ok_or_else(|| anyhow!("missing target start"))?;
+            let end = location
+                .end
+                .and_then(deserialize_anchor)
+                .ok_or_else(|| anyhow!("missing target end"))?;
+            locations.push(Location {
+                buffer: target_buffer,
+                range: start..end,
+            })
+        }
+        Ok(locations)
+    }
+
+    fn buffer_id_from_proto(message: &proto::GetReferences) -> u64 {
         message.buffer_id
     }
 }
