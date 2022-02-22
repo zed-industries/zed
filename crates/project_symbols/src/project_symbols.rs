@@ -337,7 +337,11 @@ impl ProjectSymbolsView {
                     ))
                     .boxed(),
             )
-            .with_child(Label::new(path.to_string(), style.label.clone()).boxed())
+            .with_child(
+                // Avoid styling the path differently when it is selected, since
+                // the symbol's syntax highlighting doesn't change when selected.
+                Label::new(path.to_string(), settings.theme.selector.item.label.clone()).boxed(),
+            )
             .contained()
             .with_style(style.container)
             .boxed()
@@ -372,18 +376,19 @@ impl ProjectSymbolsView {
                 cx.spawn(|workspace, mut cx| async move {
                     let buffer = buffer.await?;
                     workspace.update(&mut cx, |workspace, cx| {
-                        let start;
-                        let end;
-                        {
-                            let buffer = buffer.read(cx);
-                            start = buffer.clip_point_utf16(symbol.range.start, Bias::Left);
-                            end = buffer.clip_point_utf16(symbol.range.end, Bias::Left);
-                        }
-
-                        let editor = workspace.open_item(BufferItemHandle(buffer), cx);
-                        let editor = editor.downcast::<Editor>().unwrap();
+                        let position = buffer
+                            .read(cx)
+                            .clip_point_utf16(symbol.range.start, Bias::Left);
+                        let editor = workspace
+                            .open_item(BufferItemHandle(buffer), cx)
+                            .downcast::<Editor>()
+                            .unwrap();
                         editor.update(cx, |editor, cx| {
-                            editor.select_ranges([start..end], Some(Autoscroll::Center), cx);
+                            editor.select_ranges(
+                                [position..position],
+                                Some(Autoscroll::Center),
+                                cx,
+                            );
                         });
                     });
                     Ok::<_, anyhow::Error>(())
