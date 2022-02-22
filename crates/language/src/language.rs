@@ -72,8 +72,9 @@ pub trait LspExt: 'static + Send + Sync {
         &self,
         version: LspBinaryVersion,
         http: Arc<dyn HttpClient>,
+        download_dir: Arc<Path>,
     ) -> BoxFuture<'static, Result<PathBuf>>;
-    fn cached_server_binary(&self) -> BoxFuture<'static, Option<PathBuf>>;
+    fn cached_server_binary(&self, download_dir: Arc<Path>) -> BoxFuture<'static, Option<PathBuf>>;
     fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams);
     fn label_for_completion(
         &self,
@@ -152,6 +153,7 @@ pub enum LanguageServerBinaryStatus {
 
 pub struct LanguageRegistry {
     languages: Vec<Arc<Language>>,
+    language_server_download_dir: Option<Arc<Path>>,
     lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
     lsp_binary_statuses_rx: async_broadcast::Receiver<(Arc<Language>, LanguageServerBinaryStatus)>,
 }
@@ -160,6 +162,7 @@ impl LanguageRegistry {
     pub fn new() -> Self {
         let (lsp_binary_statuses_tx, lsp_binary_statuses_rx) = async_broadcast::broadcast(16);
         Self {
+            language_server_download_dir: None,
             languages: Default::default(),
             lsp_binary_statuses_tx,
             lsp_binary_statuses_rx,
@@ -174,6 +177,10 @@ impl LanguageRegistry {
         for language in &self.languages {
             language.set_theme(theme);
         }
+    }
+
+    pub fn set_language_server_download_dir(&mut self, path: impl Into<Arc<Path>>) {
+        self.language_server_download_dir = Some(path.into());
     }
 
     pub fn get_language(&self, name: &str) -> Option<&Arc<Language>> {
@@ -230,6 +237,11 @@ impl LanguageRegistry {
             }
         }
 
+        let download_dir = self
+            .language_server_download_dir
+            .clone()
+            .expect("language server download directory has not been assigned");
+
         let lsp_ext = language.lsp_ext.clone()?;
         let background = cx.background().clone();
         let server_binary_path = {
@@ -242,6 +254,7 @@ impl LanguageRegistry {
                             lsp_ext,
                             language.clone(),
                             http_client,
+                            download_dir,
                             self.lsp_binary_statuses_tx.clone(),
                         )
                         .map_err(Arc::new)
@@ -270,17 +283,19 @@ async fn get_server_binary_path(
     lsp_ext: Arc<dyn LspExt>,
     language: Arc<Language>,
     http_client: Arc<dyn HttpClient>,
+    download_dir: Arc<Path>,
     statuses: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
 ) -> Result<PathBuf> {
     let path = fetch_latest_server_binary_path(
         lsp_ext.clone(),
         language.clone(),
         http_client,
+        download_dir.clone(),
         statuses.clone(),
     )
     .await;
     if path.is_err() {
-        if let Some(cached_path) = lsp_ext.cached_server_binary().await {
+        if let Some(cached_path) = lsp_ext.cached_server_binary(download_dir).await {
             statuses
                 .broadcast((language.clone(), LanguageServerBinaryStatus::Cached))
                 .await?;
@@ -298,6 +313,7 @@ async fn fetch_latest_server_binary_path(
     lsp_ext: Arc<dyn LspExt>,
     language: Arc<Language>,
     http_client: Arc<dyn HttpClient>,
+    download_dir: Arc<Path>,
     lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
 ) -> Result<PathBuf> {
     lsp_binary_statuses_tx
@@ -313,7 +329,7 @@ async fn fetch_latest_server_binary_path(
         .broadcast((language.clone(), LanguageServerBinaryStatus::Downloading))
         .await?;
     let path = lsp_ext
-        .fetch_server_binary(version_info, http_client)
+        .fetch_server_binary(version_info, http_client, download_dir)
         .await?;
     lsp_binary_statuses_tx
         .broadcast((language.clone(), LanguageServerBinaryStatus::Downloaded))

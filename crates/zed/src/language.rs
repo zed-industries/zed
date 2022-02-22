@@ -8,7 +8,13 @@ use regex::Regex;
 use rust_embed::RustEmbed;
 use serde::Deserialize;
 use smol::fs::{self, File};
-use std::{borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
+use std::{
+    borrow::Cow,
+    env::consts,
+    path::{Path, PathBuf},
+    str,
+    sync::Arc,
+};
 use util::{ResultExt, TryFutureExt};
 
 #[derive(RustEmbed)]
@@ -70,11 +76,10 @@ impl LspExt for RustLsp {
         &self,
         version: LspBinaryVersion,
         http: Arc<dyn HttpClient>,
+        download_dir: Arc<Path>,
     ) -> BoxFuture<'static, Result<PathBuf>> {
         async move {
-            let destination_dir_path = dirs::home_dir()
-                .ok_or_else(|| anyhow!("can't determine home directory"))?
-                .join(".zed/rust-analyzer");
+            let destination_dir_path = download_dir.join("rust-analyzer");
             fs::create_dir_all(&destination_dir_path).await?;
             let destination_path =
                 destination_dir_path.join(format!("rust-analyzer-{}", version.name));
@@ -114,11 +119,9 @@ impl LspExt for RustLsp {
         .boxed()
     }
 
-    fn cached_server_binary(&self) -> BoxFuture<'static, Option<PathBuf>> {
+    fn cached_server_binary(&self, download_dir: Arc<Path>) -> BoxFuture<'static, Option<PathBuf>> {
         async move {
-            let destination_dir_path = dirs::home_dir()
-                .ok_or_else(|| anyhow!("can't determine home directory"))?
-                .join(".zed/rust-analyzer");
+            let destination_dir_path = download_dir.join("rust-analyzer");
             fs::create_dir_all(&destination_dir_path).await?;
 
             let mut last = None;
@@ -234,6 +237,11 @@ impl LspExt for RustLsp {
 
 pub fn build_language_registry() -> LanguageRegistry {
     let mut languages = LanguageRegistry::new();
+    languages.set_language_server_download_dir(
+        dirs::home_dir()
+            .expect("failed to determine home directory")
+            .join(".zed"),
+    );
     languages.add(Arc::new(rust()));
     languages.add(Arc::new(markdown()));
     languages
