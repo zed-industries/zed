@@ -159,7 +159,7 @@ impl LspExt for RustLsp {
         &self,
         completion: &lsp::CompletionItem,
         language: &Language,
-    ) -> Option<CompletionLabel> {
+    ) -> Option<CodeLabel> {
         match completion.kind {
             Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
                 let detail = completion.detail.as_ref().unwrap();
@@ -167,11 +167,10 @@ impl LspExt for RustLsp {
                 let text = format!("{}: {}", name, detail);
                 let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
                 let runs = language.highlight_text(&source, 11..11 + text.len());
-                return Some(CompletionLabel {
+                return Some(CodeLabel {
                     text,
                     runs,
                     filter_range: 0..name.len(),
-                    left_aligned_len: name.len(),
                 });
             }
             Some(lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE)
@@ -182,11 +181,10 @@ impl LspExt for RustLsp {
                 let text = format!("{}: {}", name, detail);
                 let source = Rope::from(format!("let {} = ();", text).as_str());
                 let runs = language.highlight_text(&source, 4..4 + text.len());
-                return Some(CompletionLabel {
+                return Some(CodeLabel {
                     text,
                     runs,
                     filter_range: 0..name.len(),
-                    left_aligned_len: name.len(),
                 });
             }
             Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD)
@@ -201,8 +199,7 @@ impl LspExt for RustLsp {
                     let text = REGEX.replace(&completion.label, &detail[2..]).to_string();
                     let source = Rope::from(format!("fn {} {{}}", text).as_str());
                     let runs = language.highlight_text(&source, 3..3 + text.len());
-                    return Some(CompletionLabel {
-                        left_aligned_len: text.find("->").unwrap_or(text.len()),
+                    return Some(CodeLabel {
                         filter_range: 0..completion.label.find('(').unwrap_or(text.len()),
                         text,
                         runs,
@@ -222,7 +219,7 @@ impl LspExt for RustLsp {
                     _ => None,
                 };
                 let highlight_id = language.grammar()?.highlight_id_for_name(highlight_name?)?;
-                let mut label = CompletionLabel::plain(&completion);
+                let mut label = CodeLabel::plain(completion.label.clone(), None);
                 label.runs.push((
                     0..label.text.rfind('(').unwrap_or(label.text.len()),
                     highlight_id,
@@ -350,7 +347,7 @@ mod tests {
                 detail: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
                 ..Default::default()
             }),
-            Some(CompletionLabel {
+            Some(CodeLabel {
                 text: "hello(&mut Option<T>) -> Vec<T>".to_string(),
                 filter_range: 0..5,
                 runs: vec![
@@ -361,7 +358,6 @@ mod tests {
                     (25..28, highlight_type),
                     (29..30, highlight_type),
                 ],
-                left_aligned_len: 22,
             })
         );
 
@@ -372,11 +368,10 @@ mod tests {
                 detail: Some("usize".to_string()),
                 ..Default::default()
             }),
-            Some(CompletionLabel {
+            Some(CodeLabel {
                 text: "len: usize".to_string(),
                 filter_range: 0..3,
                 runs: vec![(0..3, highlight_field), (5..10, highlight_type),],
-                left_aligned_len: 3,
             })
         );
 
@@ -387,7 +382,7 @@ mod tests {
                 detail: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
                 ..Default::default()
             }),
-            Some(CompletionLabel {
+            Some(CodeLabel {
                 text: "hello(&mut Option<T>) -> Vec<T>".to_string(),
                 filter_range: 0..5,
                 runs: vec![
@@ -398,7 +393,6 @@ mod tests {
                     (25..28, highlight_type),
                     (29..30, highlight_type),
                 ],
-                left_aligned_len: 22,
             })
         );
     }

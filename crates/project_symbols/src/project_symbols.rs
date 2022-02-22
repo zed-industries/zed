@@ -1,6 +1,8 @@
 use std::{cmp, sync::Arc};
 
-use editor::{combine_syntax_and_fuzzy_match_highlights, Editor, EditorSettings};
+use editor::{
+    combine_syntax_and_fuzzy_match_highlights, styled_runs_for_code_label, Editor, EditorSettings,
+};
 use fuzzy::StringMatch;
 use gpui::{
     action,
@@ -167,7 +169,12 @@ impl ProjectSymbolsView {
         cx.emit(Event::Dismissed);
     }
 
-    fn update_matches(&mut self, _: &mut ViewContext<Self>) {}
+    fn update_matches(&mut self, cx: &mut ViewContext<Self>) {
+        let query = self.query_editor.read(cx).text(cx);
+        self.project
+            .update(cx, |project, cx| project.symbols(&query, cx))
+            .detach_and_log_err(cx);
+    }
 
     fn render_matches(&self) -> ElementBox {
         if self.matches.is_empty() {
@@ -215,13 +222,18 @@ impl ProjectSymbolsView {
             &settings.theme.selector.item
         };
         let symbol = &self.symbols[string_match.candidate_id];
+        let syntax_runs = styled_runs_for_code_label(
+            &symbol.label,
+            style.label.text.color,
+            &settings.theme.editor.syntax,
+        );
 
-        Text::new(symbol.text.clone(), style.label.text.clone())
+        Text::new(symbol.label.text.clone(), style.label.text.clone())
             .with_soft_wrap(false)
             .with_highlights(combine_syntax_and_fuzzy_match_highlights(
-                &symbol.text,
+                &symbol.label.text,
                 style.label.text.clone().into(),
-                symbol.highlight_ranges.iter().cloned(),
+                syntax_runs,
                 &string_match.positions,
             ))
             .contained()

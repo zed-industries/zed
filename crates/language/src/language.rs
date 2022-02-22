@@ -77,21 +77,19 @@ pub trait LspExt: 'static + Send + Sync {
     ) -> BoxFuture<'static, Result<PathBuf>>;
     fn cached_server_binary(&self, download_dir: Arc<Path>) -> BoxFuture<'static, Option<PathBuf>>;
     fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams);
-    fn label_for_completion(
-        &self,
-        _: &lsp::CompletionItem,
-        _: &Language,
-    ) -> Option<CompletionLabel> {
+    fn label_for_completion(&self, _: &lsp::CompletionItem, _: &Language) -> Option<CodeLabel> {
+        None
+    }
+    fn label_for_symbol(&self, _: &lsp::SymbolInformation, _: &Language) -> Option<CodeLabel> {
         None
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CompletionLabel {
+pub struct CodeLabel {
     pub text: String,
     pub runs: Vec<(Range<usize>, HighlightId)>,
     pub filter_range: Range<usize>,
-    pub left_aligned_len: usize,
 }
 
 #[derive(Default, Deserialize)]
@@ -431,13 +429,14 @@ impl Language {
         }
     }
 
-    pub fn label_for_completion(
-        &self,
-        completion: &lsp::CompletionItem,
-    ) -> Option<CompletionLabel> {
+    pub fn label_for_completion(&self, completion: &lsp::CompletionItem) -> Option<CodeLabel> {
         self.lsp_ext
             .as_ref()?
             .label_for_completion(completion, self)
+    }
+
+    pub fn label_for_symbol(&self, symbol: &lsp::SymbolInformation) -> Option<CodeLabel> {
+        self.lsp_ext.as_ref()?.label_for_symbol(symbol, self)
     }
 
     pub fn highlight_text<'a>(
@@ -507,16 +506,15 @@ impl Grammar {
     }
 }
 
-impl CompletionLabel {
-    pub fn plain(completion: &lsp::CompletionItem) -> Self {
+impl CodeLabel {
+    pub fn plain(text: String, filter_text: Option<&str>) -> Self {
         let mut result = Self {
-            text: completion.label.clone(),
             runs: Vec::new(),
-            left_aligned_len: completion.label.len(),
-            filter_range: 0..completion.label.len(),
+            filter_range: 0..text.len(),
+            text,
         };
-        if let Some(filter_text) = &completion.filter_text {
-            if let Some(ix) = completion.label.find(filter_text) {
+        if let Some(filter_text) = filter_text {
+            if let Some(ix) = result.text.find(filter_text) {
                 result.filter_range = ix..ix + filter_text.len();
             }
         }

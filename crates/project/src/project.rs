@@ -10,11 +10,11 @@ use collections::{hash_map, HashMap, HashSet};
 use futures::{future::Shared, Future, FutureExt};
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
-    fonts::HighlightStyle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
-    MutableAppContext, Task, UpgradeModelHandle, WeakModelHandle,
+    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
+    UpgradeModelHandle, WeakModelHandle,
 };
 use language::{
-    range_from_lsp, Anchor, AnchorRangeExt, Bias, Buffer, CodeAction, Completion, CompletionLabel,
+    range_from_lsp, Anchor, AnchorRangeExt, Bias, Buffer, CodeAction, CodeLabel, Completion,
     Diagnostic, DiagnosticEntry, File as _, Language, LanguageRegistry, Operation, PointUtf16,
     ToLspPosition, ToOffset, ToPointUtf16, Transaction,
 };
@@ -119,8 +119,8 @@ pub struct Definition {
 }
 
 pub struct ProjectSymbol {
-    pub text: String,
-    pub highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
+    pub label: CodeLabel,
+    pub lsp_symbol: lsp::SymbolInformation,
 }
 
 #[derive(Default)]
@@ -1221,6 +1221,50 @@ impl Project {
         self.request_lsp(buffer.clone(), GetDefinition { position }, cx)
     }
 
+    pub fn symbols(
+        &self,
+        query: &str,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<ProjectSymbol>>> {
+        if self.is_local() {
+            let mut language_servers = HashMap::default();
+            for ((_, language_name), language_server) in self.language_servers.iter() {
+                let language = self.languages.get_language(language_name).unwrap();
+                language_servers
+                    .entry(Arc::as_ptr(language_server))
+                    .or_insert((language_server.clone(), language.clone()));
+            }
+
+            let mut requests = Vec::new();
+            for (language_server, _) in language_servers.values() {
+                requests.push(language_server.request::<lsp::request::WorkspaceSymbol>(
+                    lsp::WorkspaceSymbolParams {
+                        query: query.to_string(),
+                        ..Default::default()
+                    },
+                ));
+            }
+
+            cx.foreground().spawn(async move {
+                let responses = futures::future::try_join_all(requests).await?;
+                let mut symbols = Vec::new();
+                for ((_, language), lsp_symbols) in language_servers.values().zip(responses) {
+                    for lsp_symbol in lsp_symbols.into_iter().flatten() {
+                        let label = language
+                            .label_for_symbol(&lsp_symbol)
+                            .unwrap_or_else(|| CodeLabel::plain(lsp_symbol.name.clone(), None));
+                        symbols.push(ProjectSymbol { label, lsp_symbol });
+                    }
+                }
+                Ok(symbols)
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            todo!()
+        } else {
+            Task::ready(Ok(Default::default()))
+        }
+    }
+
     pub fn completions<T: ToPointUtf16>(
         &self,
         source_buffer_handle: &ModelHandle<Buffer>,
@@ -1300,7 +1344,12 @@ impl Project {
                                     label: language
                                         .as_ref()
                                         .and_then(|l| l.label_for_completion(&lsp_completion))
-                                        .unwrap_or_else(|| CompletionLabel::plain(&lsp_completion)),
+                                        .unwrap_or_else(|| {
+                                            CodeLabel::plain(
+                                                lsp_completion.label.clone(),
+                                                lsp_completion.filter_text.as_deref(),
+                                            )
+                                        }),
                                     lsp_completion,
                                 })
                             } else {
