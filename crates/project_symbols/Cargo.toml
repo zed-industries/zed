@@ -1,0 +1,16 @@
+[package]
+name = "project_symbols"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/project_symbols.rs"
+
+[dependencies]
+editor = { path = "../editor" }
+fuzzy = { path = "../fuzzy" }
+gpui = { path = "../gpui" }
+project = { path = "../project" }
+text = { path = "../text" }
+workspace = { path = "../workspace" }
+postage = { version = "0.4", features = ["futures-traits"] }

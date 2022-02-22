@@ -10,8 +10,8 @@ use collections::{hash_map, HashMap, HashSet};
 use futures::{future::Shared, Future, FutureExt};
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
-    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
-    UpgradeModelHandle, WeakModelHandle,
+    fonts::HighlightStyle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
+    MutableAppContext, Task, UpgradeModelHandle, WeakModelHandle,
 };
 use language::{
     range_from_lsp, Anchor, AnchorRangeExt, Bias, Buffer, CodeAction, Completion, CompletionLabel,
@@ -116,6 +116,11 @@ pub struct DiagnosticSummary {
 pub struct Definition {
     pub target_buffer: ModelHandle<Buffer>,
     pub target_range: Range<language::Anchor>,
+}
+
+pub struct ProjectSymbol {
+    pub text: String,
+    pub highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
 }
 
 #[derive(Default)]

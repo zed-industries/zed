@@ -57,6 +57,7 @@ fn main() {
         file_finder::init(cx);
         chat_panel::init(cx);
         outline::init(cx);
+        project_symbols::init(cx);
         project_panel::init(cx);
         diagnostics::init(cx);
         find::init(cx);

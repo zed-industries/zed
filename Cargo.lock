@@ -3560,6 +3560,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "project_symbols"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "fuzzy",
+ "gpui",
+ "postage",
+ "project",
+ "text",
+ "workspace",
+]
+
+[[package]]
 name = "prost"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5794,6 +5807,7 @@ dependencies = [
  "postage",
  "project",
  "project_panel",
+ "project_symbols",
  "rand 0.8.3",
  "regex",
  "rpc",
