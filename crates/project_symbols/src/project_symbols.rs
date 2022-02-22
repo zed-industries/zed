@@ -1,18 +1,22 @@
-use std::{cmp, sync::Arc};
-
 use editor::{
     combine_syntax_and_fuzzy_match_highlights, styled_runs_for_code_label, Editor, EditorSettings,
 };
-use fuzzy::StringMatch;
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     action,
     elements::*,
     keymap::{self, Binding},
-    AppContext, Axis, Entity, ModelHandle, MutableAppContext, RenderContext, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AppContext, Axis, Entity, ModelHandle, MutableAppContext, RenderContext, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
+use ordered_float::OrderedFloat;
 use postage::watch;
 use project::{Project, ProjectSymbol};
+use std::{
+    cmp::{self, Reverse},
+    sync::Arc,
+};
+use util::ResultExt;
 use workspace::{
     menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev},
     Settings, Workspace,
@@ -40,7 +44,9 @@ pub struct ProjectSymbolsView {
     selected_match_index: usize,
     list_state: UniformListState,
     symbols: Vec<ProjectSymbol>,
+    match_candidates: Vec<StringMatchCandidate>,
     matches: Vec<StringMatch>,
+    pending_symbols_task: Task<Option<()>>,
     query_editor: ViewHandle<Editor>,
 }
 
@@ -119,7 +125,9 @@ impl ProjectSymbolsView {
             selected_match_index: 0,
             list_state: Default::default(),
             symbols: Default::default(),
+            match_candidates: Default::default(),
             matches: Default::default(),
+            pending_symbols_task: Task::ready(None),
             query_editor,
         };
         this.update_matches(cx);
@@ -137,31 +145,27 @@ impl ProjectSymbolsView {
 
     fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
         if self.selected_match_index > 0 {
-            self.select(self.selected_match_index - 1, false, cx);
+            self.select(self.selected_match_index - 1, cx);
         }
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
         if self.selected_match_index + 1 < self.matches.len() {
-            self.select(self.selected_match_index + 1, false, cx);
+            self.select(self.selected_match_index + 1, cx);
         }
     }
 
     fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
-        self.select(0, false, cx);
+        self.select(0, cx);
     }
 
     fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
-        self.select(self.matches.len().saturating_sub(1), false, cx);
+        self.select(self.matches.len().saturating_sub(1), cx);
     }
 
-    fn select(&mut self, index: usize, center: bool, cx: &mut ViewContext<Self>) {
+    fn select(&mut self, index: usize, cx: &mut ViewContext<Self>) {
         self.selected_match_index = index;
-        self.list_state.scroll_to(if center {
-            ScrollTarget::Center(index)
-        } else {
-            ScrollTarget::Show(index)
-        });
+        self.list_state.scroll_to(ScrollTarget::Show(index));
         cx.notify();
     }
 
@@ -170,10 +174,75 @@ impl ProjectSymbolsView {
     }
 
     fn update_matches(&mut self, cx: &mut ViewContext<Self>) {
+        self.filter(cx);
         let query = self.query_editor.read(cx).text(cx);
-        self.project
-            .update(cx, |project, cx| project.symbols(&query, cx))
-            .detach_and_log_err(cx);
+        let symbols = self
+            .project
+            .update(cx, |project, cx| project.symbols(&query, cx));
+        self.pending_symbols_task = cx.spawn_weak(|this, mut cx| async move {
+            let symbols = symbols.await.log_err()?;
+            if let Some(this) = this.upgrade(&cx) {
+                this.update(&mut cx, |this, cx| {
+                    this.match_candidates = symbols
+                        .iter()
+                        .enumerate()
+                        .map(|(id, symbol)| {
+                            StringMatchCandidate::new(
+                                id,
+                                symbol.label.text[symbol.label.filter_range.clone()].to_string(),
+                            )
+                        })
+                        .collect();
+                    this.symbols = symbols;
+                    this.filter(cx);
+                });
+            }
+            None
+        });
+    }
+
+    fn filter(&mut self, cx: &mut ViewContext<Self>) {
+        let query = self.query_editor.read(cx).text(cx);
+        let mut matches = if query.is_empty() {
+            self.match_candidates
+                .iter()
+                .enumerate()
+                .map(|(candidate_id, candidate)| StringMatch {
+                    candidate_id,
+                    score: Default::default(),
+                    positions: Default::default(),
+                    string: candidate.string.clone(),
+                })
+                .collect()
+        } else {
+            smol::block_on(fuzzy::match_strings(
+                &self.match_candidates,
+                &query,
+                false,
+                100,
+                &Default::default(),
+                cx.background().clone(),
+            ))
+        };
+
+        matches.sort_unstable_by_key(|mat| {
+            let label = &self.symbols[mat.candidate_id].label;
+            (
+                Reverse(OrderedFloat(mat.score)),
+                &label.text[label.filter_range.clone()],
+            )
+        });
+
+        for mat in &mut matches {
+            let filter_start = self.symbols[mat.candidate_id].label.filter_range.start;
+            for position in &mut mat.positions {
+                *position += filter_start;
+            }
+        }
+
+        self.matches = matches;
+        self.selected_match_index = 0;
+        cx.notify();
     }
 
     fn render_matches(&self) -> ElementBox {

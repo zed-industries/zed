@@ -13,4 +13,7 @@ gpui = { path = "../gpui" }
 project = { path = "../project" }
 text = { path = "../text" }
 workspace = { path = "../workspace" }
+util = { path = "../util" }
+ordered-float = "2.1.1"
 postage = { version = "0.4", features = ["futures-traits"] }
+smol = "1.2"

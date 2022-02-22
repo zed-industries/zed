@@ -3566,9 +3566,12 @@ dependencies = [
  "editor",
  "fuzzy",
  "gpui",
+ "ordered-float",
  "postage",
  "project",
+ "smol",
  "text",
+ "util",
  "workspace",
 ]
 
