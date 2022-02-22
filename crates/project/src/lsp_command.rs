@@ -342,7 +342,7 @@ impl LspCommand for GetDefinition {
             for (target_uri, target_range) in unresolved_locations {
                 let target_buffer_handle = project
                     .update(&mut cx, |this, cx| {
-                        this.open_local_buffer_from_lsp_path(
+                        this.open_local_buffer_via_lsp(
                             target_uri,
                             language.name().to_string(),
                             language_server.clone(),

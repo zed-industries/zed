@@ -31,7 +31,7 @@ use gpui::{
 use items::{BufferItemHandle, MultiBufferItemHandle};
 use itertools::Itertools as _;
 use language::{
-    AnchorRangeExt as _, BracketPair, Buffer, CodeAction, Completion, CompletionLabel, Diagnostic,
+    AnchorRangeExt as _, BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic,
     DiagnosticSeverity, Language, Point, Selection, SelectionGoal, TransactionId,
 };
 use multi_buffer::MultiBufferChunks;
@@ -600,7 +600,7 @@ impl CompletionsMenu {
                                 .with_highlights(combine_syntax_and_fuzzy_match_highlights(
                                     &completion.label.text,
                                     settings.style.text.color.into(),
-                                    styled_runs_for_completion_label(
+                                    styled_runs_for_code_label(
                                         &completion.label,
                                         settings.style.text.color,
                                         &settings.style.syntax,
@@ -5654,8 +5654,8 @@ pub fn combine_syntax_and_fuzzy_match_highlights(
     result
 }
 
-fn styled_runs_for_completion_label<'a>(
-    label: &'a CompletionLabel,
+pub fn styled_runs_for_code_label<'a>(
+    label: &'a CodeLabel,
     default_color: Color,
     syntax_theme: &'a theme::SyntaxTheme,
 ) -> impl 'a + Iterator<Item = (Range<usize>, HighlightStyle)> {

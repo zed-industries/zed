@@ -14,18 +14,22 @@ use gpui::{
     UpgradeModelHandle, WeakModelHandle,
 };
 use language::{
-    range_from_lsp, Anchor, AnchorRangeExt, Bias, Buffer, CodeAction, Completion, CompletionLabel,
+    range_from_lsp, Anchor, AnchorRangeExt, Bias, Buffer, CodeAction, CodeLabel, Completion,
     Diagnostic, DiagnosticEntry, File as _, Language, LanguageRegistry, Operation, PointUtf16,
     ToLspPosition, ToOffset, ToPointUtf16, Transaction,
 };
 use lsp::{DiagnosticSeverity, LanguageServer};
 use lsp_command::*;
 use postage::{broadcast, prelude::Stream, sink::Sink, watch};
+use rand::prelude::*;
+use sha2::{Digest, Sha256};
 use smol::block_on;
 use std::{
     convert::TryInto,
+    hash::Hash,
+    mem,
     ops::Range,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
     time::Instant,
 };
@@ -55,6 +59,7 @@ pub struct Project {
         postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
     >,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
+    nonce: u128,
 }
 
 enum OpenBuffer {
@@ -116,6 +121,19 @@ pub struct DiagnosticSummary {
 pub struct Definition {
     pub target_buffer: ModelHandle<Buffer>,
     pub target_range: Range<language::Anchor>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Symbol {
+    pub source_worktree_id: WorktreeId,
+    pub worktree_id: WorktreeId,
+    pub language_name: String,
+    pub path: PathBuf,
+    pub label: CodeLabel,
+    pub name: String,
+    pub kind: lsp::SymbolKind,
+    pub range: Range<PointUtf16>,
+    pub signature: [u8; 32],
 }
 
 #[derive(Default)]
@@ -186,6 +204,8 @@ impl Project {
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDefinition>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
+        client.add_entity_request_handler(Self::handle_get_project_symbols);
+        client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_entity_request_handler(Self::handle_open_buffer);
         client.add_entity_request_handler(Self::handle_save_buffer);
     }
@@ -261,6 +281,7 @@ impl Project {
                 language_servers_with_diagnostics_running: 0,
                 language_servers: Default::default(),
                 started_language_servers: Default::default(),
+                nonce: StdRng::from_entropy().gen(),
             }
         })
     }
@@ -313,6 +334,7 @@ impl Project {
                 language_servers_with_diagnostics_running: 0,
                 language_servers: Default::default(),
                 started_language_servers: Default::default(),
+                nonce: StdRng::from_entropy().gen(),
             };
             for worktree in worktrees {
                 this.add_worktree(&worktree, cx);
@@ -363,6 +385,11 @@ impl Project {
         self.open_buffers
             .values()
             .any(|buffer| matches!(buffer, OpenBuffer::Loading(_)))
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn languages(&self) -> &Arc<LanguageRegistry> {
+        &self.languages
     }
 
     pub fn fs(&self) -> &Arc<dyn Fs> {
@@ -431,6 +458,21 @@ impl Project {
             .filter_map(move |worktree| worktree.upgrade(cx))
     }
 
+    pub fn strong_worktrees<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = ModelHandle<Worktree>> {
+        self.worktrees.iter().filter_map(|worktree| {
+            worktree.upgrade(cx).and_then(|worktree| {
+                if worktree.read(cx).is_weak() {
+                    None
+                } else {
+                    Some(worktree)
+                }
+            })
+        })
+    }
+
     pub fn worktree_for_id(
         &self,
         id: WorktreeId,
@@ -440,7 +482,7 @@ impl Project {
             .find(|worktree| worktree.read(cx).id() == id)
     }
 
-    pub fn share(&self, cx: &mut ModelContext<Self>) -> Task<anyhow::Result<()>> {
+    pub fn share(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let rpc = self.client.clone();
         cx.spawn(|this, mut cx| async move {
             let project_id = this.update(&mut cx, |this, _| {
@@ -477,7 +519,7 @@ impl Project {
         })
     }
 
-    pub fn unshare(&self, cx: &mut ModelContext<Self>) -> Task<anyhow::Result<()>> {
+    pub fn unshare(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let rpc = self.client.clone();
         cx.spawn(|this, mut cx| async move {
             let project_id = this.update(&mut cx, |this, _| {
@@ -646,7 +688,7 @@ impl Project {
         })
     }
 
-    fn open_local_buffer_from_lsp_path(
+    fn open_local_buffer_via_lsp(
         &mut self,
         abs_path: lsp::Url,
         lang_name: String,
@@ -780,7 +822,7 @@ impl Project {
         };
 
         // If the buffer has a language, set it and start/assign the language server
-        if let Some(language) = self.languages.select_language(&full_path).cloned() {
+        if let Some(language) = self.languages.select_language(&full_path) {
             buffer.update(cx, |buffer, cx| {
                 buffer.set_language(Some(language.clone()), cx);
             });
@@ -1216,6 +1258,165 @@ impl Project {
         self.request_lsp(buffer.clone(), GetDefinition { position }, cx)
     }
 
+    pub fn symbols(&self, query: &str, cx: &mut ModelContext<Self>) -> Task<Result<Vec<Symbol>>> {
+        if self.is_local() {
+            let mut language_servers = HashMap::default();
+            for ((worktree_id, language_name), language_server) in self.language_servers.iter() {
+                if let Some((worktree, language)) = self
+                    .worktree_for_id(*worktree_id, cx)
+                    .and_then(|worktree| worktree.read(cx).as_local())
+                    .zip(self.languages.get_language(language_name))
+                {
+                    language_servers
+                        .entry(Arc::as_ptr(language_server))
+                        .or_insert((
+                            language_server.clone(),
+                            *worktree_id,
+                            worktree.abs_path().clone(),
+                            language.clone(),
+                        ));
+                }
+            }
+
+            let mut requests = Vec::new();
+            for (language_server, _, _, _) in language_servers.values() {
+                requests.push(language_server.request::<lsp::request::WorkspaceSymbol>(
+                    lsp::WorkspaceSymbolParams {
+                        query: query.to_string(),
+                        ..Default::default()
+                    },
+                ));
+            }
+
+            cx.spawn_weak(|this, cx| async move {
+                let responses = futures::future::try_join_all(requests).await?;
+
+                let mut symbols = Vec::new();
+                if let Some(this) = this.upgrade(&cx) {
+                    this.read_with(&cx, |this, cx| {
+                        for ((_, source_worktree_id, worktree_abs_path, language), lsp_symbols) in
+                            language_servers.into_values().zip(responses)
+                        {
+                            symbols.extend(lsp_symbols.into_iter().flatten().filter_map(
+                                |lsp_symbol| {
+                                    let abs_path = lsp_symbol.location.uri.to_file_path().ok()?;
+                                    let mut worktree_id = source_worktree_id;
+                                    let path;
+                                    if let Some((worktree, rel_path)) =
+                                        this.find_local_worktree(&abs_path, cx)
+                                    {
+                                        worktree_id = worktree.read(cx).id();
+                                        path = rel_path;
+                                    } else {
+                                        path = relativize_path(&worktree_abs_path, &abs_path);
+                                    }
+
+                                    let label = language
+                                        .label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
+                                        .unwrap_or_else(|| {
+                                            CodeLabel::plain(lsp_symbol.name.clone(), None)
+                                        });
+                                    let signature = this.symbol_signature(worktree_id, &path);
+
+                                    Some(Symbol {
+                                        source_worktree_id,
+                                        worktree_id,
+                                        language_name: language.name().to_string(),
+                                        name: lsp_symbol.name,
+                                        kind: lsp_symbol.kind,
+                                        label,
+                                        path,
+                                        range: range_from_lsp(lsp_symbol.location.range),
+                                        signature,
+                                    })
+                                },
+                            ));
+                        }
+                    })
+                }
+
+                Ok(symbols)
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            let request = self.client.request(proto::GetProjectSymbols {
+                project_id,
+                query: query.to_string(),
+            });
+            cx.spawn_weak(|this, cx| async move {
+                let response = request.await?;
+                let mut symbols = Vec::new();
+                if let Some(this) = this.upgrade(&cx) {
+                    this.read_with(&cx, |this, _| {
+                        symbols.extend(
+                            response
+                                .symbols
+                                .into_iter()
+                                .filter_map(|symbol| this.deserialize_symbol(symbol).log_err()),
+                        );
+                    })
+                }
+                Ok(symbols)
+            })
+        } else {
+            Task::ready(Ok(Default::default()))
+        }
+    }
+
+    pub fn open_buffer_for_symbol(
+        &mut self,
+        symbol: &Symbol,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<Buffer>>> {
+        if self.is_local() {
+            let language_server = if let Some(server) = self
+                .language_servers
+                .get(&(symbol.source_worktree_id, symbol.language_name.clone()))
+            {
+                server.clone()
+            } else {
+                return Task::ready(Err(anyhow!(
+                    "language server for worktree and language not found"
+                )));
+            };
+
+            let worktree_abs_path = if let Some(worktree_abs_path) = self
+                .worktree_for_id(symbol.worktree_id, cx)
+                .and_then(|worktree| worktree.read(cx).as_local())
+                .map(|local_worktree| local_worktree.abs_path())
+            {
+                worktree_abs_path
+            } else {
+                return Task::ready(Err(anyhow!("worktree not found for symbol")));
+            };
+            let symbol_abs_path = worktree_abs_path.join(&symbol.path);
+            let symbol_uri = if let Ok(uri) = lsp::Url::from_file_path(symbol_abs_path) {
+                uri
+            } else {
+                return Task::ready(Err(anyhow!("invalid symbol path")));
+            };
+
+            self.open_local_buffer_via_lsp(
+                symbol_uri,
+                symbol.language_name.clone(),
+                language_server,
+                cx,
+            )
+        } else if let Some(project_id) = self.remote_id() {
+            let request = self.client.request(proto::OpenBufferForSymbol {
+                project_id,
+                symbol: Some(serialize_symbol(symbol)),
+            });
+            cx.spawn(|this, mut cx| async move {
+                let response = request.await?;
+                let buffer = response.buffer.ok_or_else(|| anyhow!("invalid buffer"))?;
+                this.update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
+                    .await
+            })
+        } else {
+            Task::ready(Err(anyhow!("project does not have a remote id")))
+        }
+    }
+
     pub fn completions<T: ToPointUtf16>(
         &self,
         source_buffer_handle: &ModelHandle<Buffer>,
@@ -1295,7 +1496,12 @@ impl Project {
                                     label: language
                                         .as_ref()
                                         .and_then(|l| l.label_for_completion(&lsp_completion))
-                                        .unwrap_or_else(|| CompletionLabel::plain(&lsp_completion)),
+                                        .unwrap_or_else(|| {
+                                            CodeLabel::plain(
+                                                lsp_completion.label.clone(),
+                                                lsp_completion.filter_text.as_deref(),
+                                            )
+                                        }),
                                     lsp_completion,
                                 })
                             } else {
@@ -1683,7 +1889,7 @@ impl Project {
                 lsp::DocumentChangeOperation::Edit(op) => {
                     let buffer_to_edit = this
                         .update(cx, |this, cx| {
-                            this.open_local_buffer_from_lsp_path(
+                            this.open_local_buffer_via_lsp(
                                 op.text_document.uri,
                                 language_name.clone(),
                                 language_server.clone(),
@@ -2520,12 +2726,68 @@ impl Project {
         })
     }
 
+    async fn handle_get_project_symbols(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::GetProjectSymbols>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::GetProjectSymbolsResponse> {
+        let symbols = this
+            .update(&mut cx, |this, cx| {
+                this.symbols(&envelope.payload.query, cx)
+            })
+            .await?;
+
+        Ok(proto::GetProjectSymbolsResponse {
+            symbols: symbols.iter().map(serialize_symbol).collect(),
+        })
+    }
+
+    async fn handle_open_buffer_for_symbol(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::OpenBufferForSymbol>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::OpenBufferForSymbolResponse> {
+        let peer_id = envelope.original_sender_id()?;
+        let symbol = envelope
+            .payload
+            .symbol
+            .ok_or_else(|| anyhow!("invalid symbol"))?;
+        let symbol = this.read_with(&cx, |this, _| {
+            let symbol = this.deserialize_symbol(symbol)?;
+            let signature = this.symbol_signature(symbol.worktree_id, &symbol.path);
+            if signature == symbol.signature {
+                Ok(symbol)
+            } else {
+                Err(anyhow!("invalid symbol signature"))
+            }
+        })?;
+        let buffer = this
+            .update(&mut cx, |this, cx| this.open_buffer_for_symbol(&symbol, cx))
+            .await?;
+
+        Ok(proto::OpenBufferForSymbolResponse {
+            buffer: Some(this.update(&mut cx, |this, cx| {
+                this.serialize_buffer_for_peer(&buffer, peer_id, cx)
+            })),
+        })
+    }
+
+    fn symbol_signature(&self, worktree_id: WorktreeId, path: &Path) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(worktree_id.to_proto().to_be_bytes());
+        hasher.update(path.to_string_lossy().as_bytes());
+        hasher.update(self.nonce.to_be_bytes());
+        hasher.finalize().as_slice().try_into().unwrap()
+    }
+
     async fn handle_open_buffer(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::OpenBuffer>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
-    ) -> anyhow::Result<proto::OpenBufferResponse> {
+    ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id()?;
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let open_buffer = this.update(&mut cx, |this, cx| {
@@ -2681,12 +2943,41 @@ impl Project {
         })
     }
 
+    fn deserialize_symbol(&self, serialized_symbol: proto::Symbol) -> Result<Symbol> {
+        let language = self
+            .languages
+            .get_language(&serialized_symbol.language_name);
+        let start = serialized_symbol
+            .start
+            .ok_or_else(|| anyhow!("invalid start"))?;
+        let end = serialized_symbol
+            .end
+            .ok_or_else(|| anyhow!("invalid end"))?;
+        let kind = unsafe { mem::transmute(serialized_symbol.kind) };
+        Ok(Symbol {
+            source_worktree_id: WorktreeId::from_proto(serialized_symbol.source_worktree_id),
+            worktree_id: WorktreeId::from_proto(serialized_symbol.worktree_id),
+            language_name: serialized_symbol.language_name.clone(),
+            label: language
+                .and_then(|language| language.label_for_symbol(&serialized_symbol.name, kind))
+                .unwrap_or_else(|| CodeLabel::plain(serialized_symbol.name.clone(), None)),
+            name: serialized_symbol.name,
+            path: PathBuf::from(serialized_symbol.path),
+            range: PointUtf16::new(start.row, start.column)..PointUtf16::new(end.row, end.column),
+            kind,
+            signature: serialized_symbol
+                .signature
+                .try_into()
+                .map_err(|_| anyhow!("invalid signature"))?,
+        })
+    }
+
     async fn handle_close_buffer(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::CloseBuffer>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             if let Some(shared_buffers) =
                 this.shared_buffers.get_mut(&envelope.original_sender_id()?)
@@ -2962,6 +3253,55 @@ impl From<lsp::DeleteFileOptions> for fs::RemoveOptions {
     }
 }
 
+fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
+    proto::Symbol {
+        source_worktree_id: symbol.source_worktree_id.to_proto(),
+        worktree_id: symbol.worktree_id.to_proto(),
+        language_name: symbol.language_name.clone(),
+        name: symbol.name.clone(),
+        kind: unsafe { mem::transmute(symbol.kind) },
+        path: symbol.path.to_string_lossy().to_string(),
+        start: Some(proto::Point {
+            row: symbol.range.start.row,
+            column: symbol.range.start.column,
+        }),
+        end: Some(proto::Point {
+            row: symbol.range.end.row,
+            column: symbol.range.end.column,
+        }),
+        signature: symbol.signature.to_vec(),
+    }
+}
+
+fn relativize_path(base: &Path, path: &Path) -> PathBuf {
+    let mut path_components = path.components();
+    let mut base_components = base.components();
+    let mut components: Vec<Component> = Vec::new();
+    loop {
+        match (path_components.next(), base_components.next()) {
+            (None, None) => break,
+            (Some(a), None) => {
+                components.push(a);
+                components.extend(path_components.by_ref());
+                break;
+            }
+            (None, _) => components.push(Component::ParentDir),
+            (Some(a), Some(b)) if components.is_empty() && a == b => (),
+            (Some(a), Some(b)) if b == Component::CurDir => components.push(a),
+            (Some(a), Some(_)) => {
+                components.push(Component::ParentDir);
+                for _ in base_components {
+                    components.push(Component::ParentDir);
+                }
+                components.push(a);
+                components.extend(path_components.by_ref());
+                break;
+            }
+        }
+    }
+    components.iter().map(|c| c.as_os_str()).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Event, *};
@@ -3051,7 +3391,7 @@ mod tests {
 
         let language = Arc::new(Language::new(
             LanguageConfig {
-                name: "Rust".to_string(),
+                name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
                 language_server: Some(language_server_config),
                 ..Default::default()
@@ -3197,7 +3537,7 @@ mod tests {
         let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
         let language = Arc::new(Language::new(
             LanguageConfig {
-                name: "Rust".to_string(),
+                name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
                 language_server: Some(language_server_config),
                 ..Default::default()
@@ -4090,7 +4430,7 @@ mod tests {
         let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
         let language = Arc::new(Language::new(
             LanguageConfig {
-                name: "Rust".to_string(),
+                name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
                 language_server: Some(language_server_config),
                 ..Default::default()

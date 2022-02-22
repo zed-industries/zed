@@ -7,7 +7,7 @@ pub use crate::{
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     outline::OutlineItem,
-    range_from_lsp, CompletionLabel, Outline, ToLspPosition,
+    range_from_lsp, CodeLabel, Outline, ToLspPosition,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
@@ -117,7 +117,7 @@ pub struct Diagnostic {
 pub struct Completion {
     pub old_range: Range<Anchor>,
     pub new_text: String,
-    pub label: CompletionLabel,
+    pub label: CodeLabel,
     pub lsp_completion: lsp::CompletionItem,
 }
 

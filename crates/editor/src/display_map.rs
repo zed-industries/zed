@@ -864,7 +864,7 @@ mod tests {
         let language = Arc::new(
             Language::new(
                 LanguageConfig {
-                    name: "Test".to_string(),
+                    name: "Test".into(),
                     path_suffixes: vec![".test".to_string()],
                     ..Default::default()
                 },
@@ -951,7 +951,7 @@ mod tests {
         let language = Arc::new(
             Language::new(
                 LanguageConfig {
-                    name: "Test".to_string(),
+                    name: "Test".into(),
                     path_suffixes: vec![".test".to_string()],
                     ..Default::default()
                 },

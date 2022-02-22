@@ -79,6 +79,8 @@ impl Server {
             .add_message_handler(Server::disk_based_diagnostics_updating)
             .add_message_handler(Server::disk_based_diagnostics_updated)
             .add_request_handler(Server::get_definition)
+            .add_request_handler(Server::get_project_symbols)
+            .add_request_handler(Server::open_buffer_for_symbol)
             .add_request_handler(Server::open_buffer)
             .add_message_handler(Server::close_buffer)
             .add_request_handler(Server::update_buffer)
@@ -577,6 +579,34 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetDefinition>,
     ) -> tide::Result<proto::GetDefinitionResponse> {
+        let host_connection_id = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .host_connection_id;
+        Ok(self
+            .peer
+            .forward_request(request.sender_id, host_connection_id, request.payload)
+            .await?)
+    }
+
+    async fn get_project_symbols(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::GetProjectSymbols>,
+    ) -> tide::Result<proto::GetProjectSymbolsResponse> {
+        let host_connection_id = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .host_connection_id;
+        Ok(self
+            .peer
+            .forward_request(request.sender_id, host_connection_id, request.payload)
+            .await?)
+    }
+
+    async fn open_buffer_for_symbol(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::OpenBufferForSymbol>,
+    ) -> tide::Result<proto::OpenBufferForSymbolResponse> {
         let host_connection_id = self
             .state()
             .read_project(request.payload.project_id, request.sender_id)?
@@ -1135,7 +1165,7 @@ mod tests {
     use serde_json::json;
     use sqlx::types::time::OffsetDateTime;
     use std::{
-        cell::{Cell, RefCell},
+        cell::Cell,
         env,
         ops::Deref,
         path::Path,
@@ -2001,18 +2031,17 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
-        Arc::get_mut(&mut lang_registry).unwrap().add(
-            Arc::new(Language::new(
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
                 LanguageConfig {
-                    name: "Rust".to_string(),
+                    name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
                     language_server: Some(language_server_config),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
-            )),
-            
-        );
+            )));
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -2233,18 +2262,17 @@ mod tests {
             }),
             ..Default::default()
         });
-        Arc::get_mut(&mut lang_registry).unwrap().add(
-            Arc::new(Language::new(
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
                 LanguageConfig {
-                    name: "Rust".to_string(),
+                    name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
                     language_server: Some(language_server_config),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
-            )),
-            
-        );
+            )));
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -2436,18 +2464,17 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
-        Arc::get_mut(&mut lang_registry).unwrap().add(
-            Arc::new(Language::new(
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
                 LanguageConfig {
-                    name: "Rust".to_string(),
+                    name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
                     language_server: Some(language_server_config),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
-            )),
-            
-        );
+            )));
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -2554,18 +2581,17 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
-        Arc::get_mut(&mut lang_registry).unwrap().add(
-            Arc::new(Language::new(
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
                 LanguageConfig {
-                    name: "Rust".to_string(),
+                    name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
                     language_server: Some(language_server_config),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
-            )),
-            
-        );
+            )));
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -2682,6 +2708,142 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
+    async fn test_project_symbols(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+        cx_a.foreground().forbid_parking();
+        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = FakeFs::new(cx_a.background());
+        fs.insert_tree(
+            "/code",
+            json!({
+                "crate-1": {
+                    ".zed.toml": r#"collaborators = ["user_b"]"#,
+                    "one.rs": "const ONE: usize = 1;",
+                },
+                "crate-2": {
+                    "two.rs": "const TWO: usize = 2; const THREE: usize = 3;",
+                },
+                "private": {
+                    "passwords.txt": "the-password",
+                }
+            }),
+        )
+        .await;
+
+        // Set up a fake language server.
+        let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Rust".into(),
+                    path_suffixes: vec!["rs".to_string()],
+                    language_server: Some(language_server_config),
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )));
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let client_a = server.create_client(&mut cx_a, "user_a").await;
+        let client_b = server.create_client(&mut cx_b, "user_b").await;
+
+        // Share a project as client A
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/code/crate-1", false, cx)
+            })
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
+        project_a
+            .update(&mut cx_a, |p, cx| p.share(cx))
+            .await
+            .unwrap();
+
+        // Join the worktree as client B.
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        // Cause the language server to start.
+        let _buffer = cx_b
+            .background()
+            .spawn(project_b.update(&mut cx_b, |p, cx| {
+                p.open_buffer((worktree_id, "one.rs"), cx)
+            }))
+            .await
+            .unwrap();
+
+        // Request the definition of a symbol as the guest.
+        let symbols = project_b.update(&mut cx_b, |p, cx| p.symbols("two", cx));
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
+        fake_language_server.handle_request::<lsp::request::WorkspaceSymbol, _>(|_| {
+            #[allow(deprecated)]
+            Some(vec![lsp::SymbolInformation {
+                name: "TWO".into(),
+                location: lsp::Location {
+                    uri: lsp::Url::from_file_path("/code/crate-2/two.rs").unwrap(),
+                    range: lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                },
+                kind: lsp::SymbolKind::CONSTANT,
+                tags: None,
+                container_name: None,
+                deprecated: None,
+            }])
+        });
+
+        let symbols = symbols.await.unwrap();
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "TWO");
+
+        // Open one of the returned symbols.
+        let buffer_b_2 = project_b
+            .update(&mut cx_b, |project, cx| {
+                project.open_buffer_for_symbol(&symbols[0], cx)
+            })
+            .await
+            .unwrap();
+        buffer_b_2.read_with(&cx_b, |buffer, _| {
+            assert_eq!(
+                buffer.file().unwrap().path().as_ref(),
+                Path::new("../crate-2/two.rs")
+            );
+        });
+
+        // Attempt to craft a symbol and violate host's privacy by opening an arbitrary file.
+        let mut fake_symbol = symbols[0].clone();
+        fake_symbol.path = Path::new("/code/secrets").into();
+        let error = project_b
+            .update(&mut cx_b, |project, cx| {
+                project.open_buffer_for_symbol(&fake_symbol, cx)
+            })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid symbol signature"));
+    }
+
+    #[gpui::test(iterations = 10)]
     async fn test_open_buffer_while_getting_definition_pointing_to_it(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
@@ -2703,18 +2865,17 @@ mod tests {
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
 
-        Arc::get_mut(&mut lang_registry).unwrap().add(
-            Arc::new(Language::new(
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
                 LanguageConfig {
-                    name: "Rust".to_string(),
+                    name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
                     language_server: Some(language_server_config),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
-            )),
-            
-        );
+            )));
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -2805,18 +2966,17 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
-        Arc::get_mut(&mut lang_registry).unwrap().add(
-            Arc::new(Language::new(
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
                 LanguageConfig {
-                    name: "Rust".to_string(),
+                    name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
                     language_server: Some(language_server_config),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
-            )),
-            
-        );
+            )));
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -3045,18 +3205,17 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
-        Arc::get_mut(&mut lang_registry).unwrap().add(
-            Arc::new(Language::new(
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
                 LanguageConfig {
-                    name: "Rust".to_string(),
+                    name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
                     language_server: Some(language_server_config),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
-            )),
-            
-        );
+            )));
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -3817,53 +3976,10 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let rng = Rc::new(RefCell::new(rng));
+        let rng = Arc::new(Mutex::new(rng));
 
-        let mut host_lang_registry = Arc::new(LanguageRegistry::new());
         let guest_lang_registry = Arc::new(LanguageRegistry::new());
-
-        // Set up a fake language server.
-        let (mut language_server_config, _fake_language_servers) = LanguageServerConfig::fake();
-        language_server_config.set_fake_initializer(|fake_server| {
-            fake_server.handle_request::<lsp::request::Completion, _>(|_| {
-                Some(lsp::CompletionResponse::Array(vec![lsp::CompletionItem {
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
-                        new_text: "the-new-text".to_string(),
-                    })),
-                    ..Default::default()
-                }]))
-            });
-
-            fake_server.handle_request::<lsp::request::CodeActionRequest, _>(|_| {
-                Some(vec![lsp::CodeActionOrCommand::CodeAction(
-                    lsp::CodeAction {
-                        title: "the-code-action".to_string(),
-                        ..Default::default()
-                    },
-                )])
-            });
-
-            fake_server.handle_request::<lsp::request::PrepareRenameRequest, _>(|params| {
-                Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
-                    params.position,
-                    params.position,
-                )))
-            });
-        });
-
-        Arc::get_mut(&mut host_lang_registry).unwrap().add(
-            Arc::new(Language::new(
-                LanguageConfig {
-                    name: "Rust".to_string(),
-                    path_suffixes: vec!["rs".to_string()],
-                    language_server: Some(language_server_config),
-                    ..Default::default()
-                },
-                None,
-            )),
-            
-        );
+        let (language_server_config, _fake_language_servers) = LanguageServerConfig::fake();
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -3892,7 +4008,7 @@ mod tests {
             Project::local(
                 host.client.clone(),
                 host.user_store.clone(),
-                host_lang_registry.clone(),
+                Arc::new(LanguageRegistry::new()),
                 fs.clone(),
                 cx,
             )
@@ -3917,6 +4033,7 @@ mod tests {
 
         clients.push(cx.foreground().spawn(host.simulate_host(
             host_project.clone(),
+            language_server_config,
             operations.clone(),
             max_operations,
             rng.clone(),
@@ -3925,7 +4042,7 @@ mod tests {
 
         while operations.get() < max_operations {
             cx.background().simulate_random_delay().await;
-            if clients.len() < max_peers && rng.borrow_mut().gen_bool(0.05) {
+            if clients.len() < max_peers && rng.lock().gen_bool(0.05) {
                 operations.set(operations.get() + 1);
 
                 let guest_id = clients.len();
@@ -4246,113 +4363,188 @@ mod tests {
             )
         }
 
-        async fn simulate_host(
+        fn simulate_host(
             mut self,
             project: ModelHandle<Project>,
+            mut language_server_config: LanguageServerConfig,
             operations: Rc<Cell<usize>>,
             max_operations: usize,
-            rng: Rc<RefCell<StdRng>>,
+            rng: Arc<Mutex<StdRng>>,
             mut cx: TestAppContext,
-        ) -> (Self, TestAppContext) {
-            let fs = project.read_with(&cx, |project, _| project.fs().clone());
-            let mut files: Vec<PathBuf> = Default::default();
-            while operations.get() < max_operations {
-                operations.set(operations.get() + 1);
+        ) -> impl Future<Output = (Self, TestAppContext)> {
+            let files: Arc<Mutex<Vec<PathBuf>>> = Default::default();
 
-                let distribution = rng.borrow_mut().gen_range(0..100);
-                match distribution {
-                    0..=20 if !files.is_empty() => {
-                        let mut path = files.choose(&mut *rng.borrow_mut()).unwrap().as_path();
-                        while let Some(parent_path) = path.parent() {
-                            path = parent_path;
-                            if rng.borrow_mut().gen() {
-                                break;
+            // Set up a fake language server.
+            language_server_config.set_fake_initializer({
+                let rng = rng.clone();
+                let files = files.clone();
+                move |fake_server| {
+                    fake_server.handle_request::<lsp::request::Completion, _>(|_| {
+                        Some(lsp::CompletionResponse::Array(vec![lsp::CompletionItem {
+                            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 0),
+                                    lsp::Position::new(0, 0),
+                                ),
+                                new_text: "the-new-text".to_string(),
+                            })),
+                            ..Default::default()
+                        }]))
+                    });
+
+                    fake_server.handle_request::<lsp::request::CodeActionRequest, _>(|_| {
+                        Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                            lsp::CodeAction {
+                                title: "the-code-action".to_string(),
+                                ..Default::default()
+                            },
+                        )])
+                    });
+
+                    fake_server.handle_request::<lsp::request::PrepareRenameRequest, _>(|params| {
+                        Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                            params.position,
+                            params.position,
+                        )))
+                    });
+
+                    fake_server.handle_request::<lsp::request::GotoDefinition, _>({
+                        let files = files.clone();
+                        let rng = rng.clone();
+                        move |_| {
+                            let files = files.lock();
+                            let mut rng = rng.lock();
+                            let count = rng.gen_range::<usize, _>(1..3);
+                            Some(lsp::GotoDefinitionResponse::Array(
+                                (0..count)
+                                    .map(|_| {
+                                        let file = files.choose(&mut *rng).unwrap().as_path();
+                                        lsp::Location {
+                                            uri: lsp::Url::from_file_path(file).unwrap(),
+                                            range: Default::default(),
+                                        }
+                                    })
+                                    .collect(),
+                            ))
+                        }
+                    });
+                }
+            });
+
+            project.update(&mut cx, |project, _| {
+                project.languages().add(Arc::new(Language::new(
+                    LanguageConfig {
+                        name: "Rust".into(),
+                        path_suffixes: vec!["rs".to_string()],
+                        language_server: Some(language_server_config),
+                        ..Default::default()
+                    },
+                    None,
+                )));
+            });
+
+            async move {
+                let fs = project.read_with(&cx, |project, _| project.fs().clone());
+                while operations.get() < max_operations {
+                    operations.set(operations.get() + 1);
+
+                    let distribution = rng.lock().gen_range::<usize, _>(0..100);
+                    match distribution {
+                        0..=20 if !files.lock().is_empty() => {
+                            let path = files.lock().choose(&mut *rng.lock()).unwrap().clone();
+                            let mut path = path.as_path();
+                            while let Some(parent_path) = path.parent() {
+                                path = parent_path;
+                                if rng.lock().gen() {
+                                    break;
+                                }
+                            }
+
+                            log::info!("Host: find/create local worktree {:?}", path);
+                            project
+                                .update(&mut cx, |project, cx| {
+                                    project.find_or_create_local_worktree(path, false, cx)
+                                })
+                                .await
+                                .unwrap();
+                        }
+                        10..=80 if !files.lock().is_empty() => {
+                            let buffer = if self.buffers.is_empty() || rng.lock().gen() {
+                                let file = files.lock().choose(&mut *rng.lock()).unwrap().clone();
+                                let (worktree, path) = project
+                                    .update(&mut cx, |project, cx| {
+                                        project.find_or_create_local_worktree(file, false, cx)
+                                    })
+                                    .await
+                                    .unwrap();
+                                let project_path =
+                                    worktree.read_with(&cx, |worktree, _| (worktree.id(), path));
+                                log::info!("Host: opening path {:?}", project_path);
+                                let buffer = project
+                                    .update(&mut cx, |project, cx| {
+                                        project.open_buffer(project_path, cx)
+                                    })
+                                    .await
+                                    .unwrap();
+                                self.buffers.insert(buffer.clone());
+                                buffer
+                            } else {
+                                self.buffers
+                                    .iter()
+                                    .choose(&mut *rng.lock())
+                                    .unwrap()
+                                    .clone()
+                            };
+
+                            if rng.lock().gen_bool(0.1) {
+                                cx.update(|cx| {
+                                    log::info!(
+                                        "Host: dropping buffer {:?}",
+                                        buffer.read(cx).file().unwrap().full_path(cx)
+                                    );
+                                    self.buffers.remove(&buffer);
+                                    drop(buffer);
+                                });
+                            } else {
+                                buffer.update(&mut cx, |buffer, cx| {
+                                    log::info!(
+                                        "Host: updating buffer {:?}",
+                                        buffer.file().unwrap().full_path(cx)
+                                    );
+                                    buffer.randomly_edit(&mut *rng.lock(), 5, cx)
+                                });
                             }
                         }
+                        _ => loop {
+                            let path_component_count = rng.lock().gen_range::<usize, _>(1..=5);
+                            let mut path = PathBuf::new();
+                            path.push("/");
+                            for _ in 0..path_component_count {
+                                let letter = rng.lock().gen_range(b'a'..=b'z');
+                                path.push(std::str::from_utf8(&[letter]).unwrap());
+                            }
+                            path.set_extension("rs");
+                            let parent_path = path.parent().unwrap();
 
-                        log::info!("Host: find/create local worktree {:?}", path);
-                        project
-                            .update(&mut cx, |project, cx| {
-                                project.find_or_create_local_worktree(path, false, cx)
-                            })
-                            .await
-                            .unwrap();
+                            log::info!("Host: creating file {:?}", path,);
+
+                            if fs.create_dir(&parent_path).await.is_ok()
+                                && fs.create_file(&path, Default::default()).await.is_ok()
+                            {
+                                files.lock().push(path);
+                                break;
+                            } else {
+                                log::info!("Host: cannot create file");
+                            }
+                        },
                     }
-                    10..=80 if !files.is_empty() => {
-                        let buffer = if self.buffers.is_empty() || rng.borrow_mut().gen() {
-                            let file = files.choose(&mut *rng.borrow_mut()).unwrap();
-                            let (worktree, path) = project
-                                .update(&mut cx, |project, cx| {
-                                    project.find_or_create_local_worktree(file, false, cx)
-                                })
-                                .await
-                                .unwrap();
-                            let project_path =
-                                worktree.read_with(&cx, |worktree, _| (worktree.id(), path));
-                            log::info!("Host: opening path {:?}", project_path);
-                            let buffer = project
-                                .update(&mut cx, |project, cx| {
-                                    project.open_buffer(project_path, cx)
-                                })
-                                .await
-                                .unwrap();
-                            self.buffers.insert(buffer.clone());
-                            buffer
-                        } else {
-                            self.buffers
-                                .iter()
-                                .choose(&mut *rng.borrow_mut())
-                                .unwrap()
-                                .clone()
-                        };
 
-                        if rng.borrow_mut().gen_bool(0.1) {
-                            cx.update(|cx| {
-                                log::info!(
-                                    "Host: dropping buffer {:?}",
-                                    buffer.read(cx).file().unwrap().full_path(cx)
-                                );
-                                self.buffers.remove(&buffer);
-                                drop(buffer);
-                            });
-                        } else {
-                            buffer.update(&mut cx, |buffer, cx| {
-                                log::info!(
-                                    "Host: updating buffer {:?}",
-                                    buffer.file().unwrap().full_path(cx)
-                                );
-                                buffer.randomly_edit(&mut *rng.borrow_mut(), 5, cx)
-                            });
-                        }
-                    }
-                    _ => loop {
-                        let path_component_count = rng.borrow_mut().gen_range(1..=5);
-                        let mut path = PathBuf::new();
-                        path.push("/");
-                        for _ in 0..path_component_count {
-                            let letter = rng.borrow_mut().gen_range(b'a'..=b'z');
-                            path.push(std::str::from_utf8(&[letter]).unwrap());
-                        }
-                        path.set_extension("rs");
-                        let parent_path = path.parent().unwrap();
-
-                        log::info!("Host: creating file {:?}", path);
-                        if fs.create_dir(&parent_path).await.is_ok()
-                            && fs.create_file(&path, Default::default()).await.is_ok()
-                        {
-                            files.push(path);
-                            break;
-                        } else {
-                            log::info!("Host: cannot create file");
-                        }
-                    },
+                    cx.background().simulate_random_delay().await;
                 }
 
-                cx.background().simulate_random_delay().await;
+                self.project = Some(project);
+                (self, cx)
             }
-
-            self.project = Some(project);
-            (self, cx)
         }
 
         pub async fn simulate_guest(
@@ -4361,18 +4553,18 @@ mod tests {
             project: ModelHandle<Project>,
             operations: Rc<Cell<usize>>,
             max_operations: usize,
-            rng: Rc<RefCell<StdRng>>,
+            rng: Arc<Mutex<StdRng>>,
             mut cx: TestAppContext,
         ) -> (Self, TestAppContext) {
             while operations.get() < max_operations {
-                let buffer = if self.buffers.is_empty() || rng.borrow_mut().gen() {
+                let buffer = if self.buffers.is_empty() || rng.lock().gen() {
                     let worktree = if let Some(worktree) = project.read_with(&cx, |project, cx| {
                         project
                             .worktrees(&cx)
                             .filter(|worktree| {
                                 worktree.read(cx).entries(false).any(|e| e.is_file())
                             })
-                            .choose(&mut *rng.borrow_mut())
+                            .choose(&mut *rng.lock())
                     }) {
                         worktree
                     } else {
@@ -4385,7 +4577,7 @@ mod tests {
                         let entry = worktree
                             .entries(false)
                             .filter(|e| e.is_file())
-                            .choose(&mut *rng.borrow_mut())
+                            .choose(&mut *rng.lock())
                             .unwrap();
                         (worktree.id(), entry.path.clone())
                     });
@@ -4401,12 +4593,12 @@ mod tests {
 
                     self.buffers
                         .iter()
-                        .choose(&mut *rng.borrow_mut())
+                        .choose(&mut *rng.lock())
                         .unwrap()
                         .clone()
                 };
 
-                let choice = rng.borrow_mut().gen_range(0..100);
+                let choice = rng.lock().gen_range(0..100);
                 match choice {
                     0..=9 => {
                         cx.update(|cx| {
@@ -4426,13 +4618,13 @@ mod tests {
                                 guest_id,
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
-                            let offset = rng.borrow_mut().gen_range(0..=buffer.read(cx).len());
+                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
                             project.completions(&buffer, offset, cx)
                         });
                         let completions = cx.background().spawn(async move {
                             completions.await.expect("completions request failed");
                         });
-                        if rng.borrow_mut().gen_bool(0.3) {
+                        if rng.lock().gen_bool(0.3) {
                             log::info!("Guest {}: detaching completions request", guest_id);
                             completions.detach();
                         } else {
@@ -4446,14 +4638,13 @@ mod tests {
                                 guest_id,
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
-                            let range =
-                                buffer.read(cx).random_byte_range(0, &mut *rng.borrow_mut());
+                            let range = buffer.read(cx).random_byte_range(0, &mut *rng.lock());
                             project.code_actions(&buffer, range, cx)
                         });
                         let code_actions = cx.background().spawn(async move {
                             code_actions.await.expect("code actions request failed");
                         });
-                        if rng.borrow_mut().gen_bool(0.3) {
+                        if rng.lock().gen_bool(0.3) {
                             log::info!("Guest {}: detaching code actions request", guest_id);
                             code_actions.detach();
                         } else {
@@ -4476,7 +4667,7 @@ mod tests {
                                 assert!(saved_version.observed_all(&requested_version));
                             });
                         });
-                        if rng.borrow_mut().gen_bool(0.3) {
+                        if rng.lock().gen_bool(0.3) {
                             log::info!("Guest {}: detaching save request", guest_id);
                             save.detach();
                         } else {
@@ -4490,17 +4681,37 @@ mod tests {
                                 guest_id,
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
-                            let offset = rng.borrow_mut().gen_range(0..=buffer.read(cx).len());
+                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
                             project.prepare_rename(buffer, offset, cx)
                         });
                         let prepare_rename = cx.background().spawn(async move {
                             prepare_rename.await.expect("prepare rename request failed");
                         });
-                        if rng.borrow_mut().gen_bool(0.3) {
+                        if rng.lock().gen_bool(0.3) {
                             log::info!("Guest {}: detaching prepare rename request", guest_id);
                             prepare_rename.detach();
                         } else {
                             prepare_rename.await;
+                        }
+                    }
+                    46..=49 => {
+                        let definitions = project.update(&mut cx, |project, cx| {
+                            log::info!(
+                                "Guest {}: requesting defintions for buffer {:?}",
+                                guest_id,
+                                buffer.read(cx).file().unwrap().full_path(cx)
+                            );
+                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                            project.definition(&buffer, offset, cx)
+                        });
+                        let definitions = cx.background().spawn(async move {
+                            definitions.await.expect("definitions request failed");
+                        });
+                        if rng.lock().gen_bool(0.3) {
+                            log::info!("Guest {}: detaching definitions request", guest_id);
+                            definitions.detach();
+                        } else {
+                            definitions.await;
                         }
                     }
                     _ => {
@@ -4510,7 +4721,7 @@ mod tests {
                                 guest_id,
                                 buffer.file().unwrap().full_path(cx)
                             );
-                            buffer.randomly_edit(&mut *rng.borrow_mut(), 5, cx)
+                            buffer.randomly_edit(&mut *rng.lock(), 5, cx)
                         });
                     }
                 }

@@ -1,5 +1,5 @@
 use crate::{
-    diagnostic_set::DiagnosticEntry, CodeAction, Completion, CompletionLabel, Diagnostic, Language,
+    diagnostic_set::DiagnosticEntry, CodeAction, CodeLabel, Completion, Diagnostic, Language,
     Operation,
 };
 use anyhow::{anyhow, Result};
@@ -421,7 +421,10 @@ pub fn deserialize_completion(
         new_text: completion.new_text,
         label: language
             .and_then(|l| l.label_for_completion(&lsp_completion))
-            .unwrap_or(CompletionLabel::plain(&lsp_completion)),
+            .unwrap_or(CodeLabel::plain(
+                lsp_completion.label.clone(),
+                lsp_completion.filter_text.as_deref(),
+            )),
         lsp_completion,
     })
 }

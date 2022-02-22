@@ -159,7 +159,7 @@ impl LspExt for RustLsp {
         &self,
         completion: &lsp::CompletionItem,
         language: &Language,
-    ) -> Option<CompletionLabel> {
+    ) -> Option<CodeLabel> {
         match completion.kind {
             Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
                 let detail = completion.detail.as_ref().unwrap();
@@ -167,11 +167,10 @@ impl LspExt for RustLsp {
                 let text = format!("{}: {}", name, detail);
                 let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
                 let runs = language.highlight_text(&source, 11..11 + text.len());
-                return Some(CompletionLabel {
+                return Some(CodeLabel {
                     text,
                     runs,
                     filter_range: 0..name.len(),
-                    left_aligned_len: name.len(),
                 });
             }
             Some(lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE)
@@ -182,11 +181,10 @@ impl LspExt for RustLsp {
                 let text = format!("{}: {}", name, detail);
                 let source = Rope::from(format!("let {} = ();", text).as_str());
                 let runs = language.highlight_text(&source, 4..4 + text.len());
-                return Some(CompletionLabel {
+                return Some(CodeLabel {
                     text,
                     runs,
                     filter_range: 0..name.len(),
-                    left_aligned_len: name.len(),
                 });
             }
             Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD)
@@ -201,8 +199,7 @@ impl LspExt for RustLsp {
                     let text = REGEX.replace(&completion.label, &detail[2..]).to_string();
                     let source = Rope::from(format!("fn {} {{}}", text).as_str());
                     let runs = language.highlight_text(&source, 3..3 + text.len());
-                    return Some(CompletionLabel {
-                        left_aligned_len: text.find("->").unwrap_or(text.len()),
+                    return Some(CodeLabel {
                         filter_range: 0..completion.label.find('(').unwrap_or(text.len()),
                         text,
                         runs,
@@ -222,7 +219,7 @@ impl LspExt for RustLsp {
                     _ => None,
                 };
                 let highlight_id = language.grammar()?.highlight_id_for_name(highlight_name?)?;
-                let mut label = CompletionLabel::plain(&completion);
+                let mut label = CodeLabel::plain(completion.label.clone(), None);
                 label.runs.push((
                     0..label.text.rfind('(').unwrap_or(label.text.len()),
                     highlight_id,
@@ -232,6 +229,65 @@ impl LspExt for RustLsp {
             _ => {}
         }
         None
+    }
+
+    fn label_for_symbol(
+        &self,
+        name: &str,
+        kind: lsp::SymbolKind,
+        language: &Language,
+    ) -> Option<CodeLabel> {
+        let (text, filter_range, display_range) = match kind {
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+                let text = format!("fn {} () {{}}", name);
+                let filter_range = 3..3 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::STRUCT => {
+                let text = format!("struct {} {{}}", name);
+                let filter_range = 7..7 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::ENUM => {
+                let text = format!("enum {} {{}}", name);
+                let filter_range = 5..5 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::INTERFACE => {
+                let text = format!("trait {} {{}}", name);
+                let filter_range = 6..6 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::CONSTANT => {
+                let text = format!("const {}: () = ();", name);
+                let filter_range = 6..6 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::MODULE => {
+                let text = format!("mod {} {{}}", name);
+                let filter_range = 4..4 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::TYPE_PARAMETER => {
+                let text = format!("type {} {{}}", name);
+                let filter_range = 5..5 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            _ => return None,
+        };
+
+        Some(CodeLabel {
+            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
+            text: text[display_range].to_string(),
+            filter_range,
+        })
     }
 }
 
@@ -326,7 +382,7 @@ mod tests {
     }
 
     #[test]
-    fn test_process_rust_completions() {
+    fn test_rust_label_for_completion() {
         let language = rust();
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new(vec![
@@ -350,7 +406,7 @@ mod tests {
                 detail: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
                 ..Default::default()
             }),
-            Some(CompletionLabel {
+            Some(CodeLabel {
                 text: "hello(&mut Option<T>) -> Vec<T>".to_string(),
                 filter_range: 0..5,
                 runs: vec![
@@ -361,7 +417,6 @@ mod tests {
                     (25..28, highlight_type),
                     (29..30, highlight_type),
                 ],
-                left_aligned_len: 22,
             })
         );
 
@@ -372,11 +427,10 @@ mod tests {
                 detail: Some("usize".to_string()),
                 ..Default::default()
             }),
-            Some(CompletionLabel {
+            Some(CodeLabel {
                 text: "len: usize".to_string(),
                 filter_range: 0..3,
                 runs: vec![(0..3, highlight_field), (5..10, highlight_type),],
-                left_aligned_len: 3,
             })
         );
 
@@ -387,7 +441,7 @@ mod tests {
                 detail: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
                 ..Default::default()
             }),
-            Some(CompletionLabel {
+            Some(CodeLabel {
                 text: "hello(&mut Option<T>) -> Vec<T>".to_string(),
                 filter_range: 0..5,
                 runs: vec![
@@ -398,7 +452,42 @@ mod tests {
                     (25..28, highlight_type),
                     (29..30, highlight_type),
                 ],
-                left_aligned_len: 22,
+            })
+        );
+    }
+
+    #[test]
+    fn test_rust_label_for_symbol() {
+        let language = rust();
+        let grammar = language.grammar().unwrap();
+        let theme = SyntaxTheme::new(vec![
+            ("type".into(), Color::green().into()),
+            ("keyword".into(), Color::blue().into()),
+            ("function".into(), Color::red().into()),
+            ("property".into(), Color::white().into()),
+        ]);
+
+        language.set_theme(&theme);
+
+        let highlight_function = grammar.highlight_id_for_name("function").unwrap();
+        let highlight_type = grammar.highlight_id_for_name("type").unwrap();
+        let highlight_keyword = grammar.highlight_id_for_name("keyword").unwrap();
+
+        assert_eq!(
+            language.label_for_symbol("hello", lsp::SymbolKind::FUNCTION),
+            Some(CodeLabel {
+                text: "fn hello".to_string(),
+                filter_range: 3..8,
+                runs: vec![(0..2, highlight_keyword), (3..8, highlight_function)],
+            })
+        );
+
+        assert_eq!(
+            language.label_for_symbol("World", lsp::SymbolKind::TYPE_PARAMETER),
+            Some(CodeLabel {
+                text: "type World".to_string(),
+                filter_range: 5..10,
+                runs: vec![(0..4, highlight_keyword), (5..10, highlight_type)],
             })
         );
     }

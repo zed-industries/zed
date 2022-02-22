@@ -4,7 +4,7 @@ use super::{
     DiagnosticSummary,
 };
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, TypedEnvelope};
 use clock::ReplicaId;
 use collections::{HashMap, VecDeque};
@@ -469,7 +469,10 @@ impl LocalWorktree {
             .file_name()
             .map_or(String::new(), |f| f.to_string_lossy().to_string());
         let root_char_bag = root_name.chars().map(|c| c.to_ascii_lowercase()).collect();
-        let metadata = fs.metadata(&abs_path).await?;
+        let metadata = fs
+            .metadata(&abs_path)
+            .await
+            .context("failed to stat worktree path")?;
 
         let mut config = WorktreeConfig::default();
         if let Ok(zed_toml) = fs.load(&abs_path.join(".zed.toml")).await {
