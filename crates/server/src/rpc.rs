@@ -80,6 +80,7 @@ impl Server {
             .add_message_handler(Server::disk_based_diagnostics_updated)
             .add_request_handler(Server::get_definition)
             .add_request_handler(Server::get_project_symbols)
+            .add_request_handler(Server::open_buffer_for_symbol)
             .add_request_handler(Server::open_buffer)
             .add_message_handler(Server::close_buffer)
             .add_request_handler(Server::update_buffer)
@@ -592,6 +593,20 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetProjectSymbols>,
     ) -> tide::Result<proto::GetProjectSymbolsResponse> {
+        let host_connection_id = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .host_connection_id;
+        Ok(self
+            .peer
+            .forward_request(request.sender_id, host_connection_id, request.payload)
+            .await?)
+    }
+
+    async fn open_buffer_for_symbol(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::OpenBufferForSymbol>,
+    ) -> tide::Result<proto::OpenBufferForSymbolResponse> {
         let host_connection_id = self
             .state()
             .read_project(request.payload.project_id, request.sender_id)?

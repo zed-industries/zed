@@ -3563,9 +3563,11 @@ dependencies = [
 name = "project_symbols"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "editor",
  "fuzzy",
  "gpui",
+ "language",
  "ordered-float",
  "postage",
  "project",

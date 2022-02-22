@@ -118,8 +118,10 @@ pub struct Definition {
     pub target_range: Range<language::Anchor>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Symbol {
+    pub worktree_id: WorktreeId,
+    pub language_name: String,
     pub label: CodeLabel,
     pub lsp_symbol: lsp::SymbolInformation,
 }
@@ -193,6 +195,7 @@ impl Project {
         client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
         client.add_entity_request_handler(Self::handle_get_project_symbols);
+        client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_entity_request_handler(Self::handle_open_buffer);
         client.add_entity_request_handler(Self::handle_save_buffer);
     }
@@ -653,7 +656,7 @@ impl Project {
         })
     }
 
-    fn open_local_buffer_from_lsp_path(
+    fn open_local_buffer_via_lsp(
         &mut self,
         abs_path: lsp::Url,
         lang_name: String,
@@ -1223,22 +1226,18 @@ impl Project {
         self.request_lsp(buffer.clone(), GetDefinition { position }, cx)
     }
 
-    pub fn symbols(
-        &self,
-        query: &str,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<HashMap<String, Vec<Symbol>>>> {
+    pub fn symbols(&self, query: &str, cx: &mut ModelContext<Self>) -> Task<Result<Vec<Symbol>>> {
         if self.is_local() {
             let mut language_servers = HashMap::default();
-            for ((_, language_name), language_server) in self.language_servers.iter() {
+            for ((worktree_id, language_name), language_server) in self.language_servers.iter() {
                 let language = self.languages.get_language(language_name).unwrap();
                 language_servers
                     .entry(Arc::as_ptr(language_server))
-                    .or_insert((language_server.clone(), language.clone()));
+                    .or_insert((language_server.clone(), *worktree_id, language.clone()));
             }
 
             let mut requests = Vec::new();
-            for (language_server, _) in language_servers.values() {
+            for (language_server, _, _) in language_servers.values() {
                 requests.push(language_server.request::<lsp::request::WorkspaceSymbol>(
                     lsp::WorkspaceSymbolParams {
                         query: query.to_string(),
@@ -1249,17 +1248,21 @@ impl Project {
 
             cx.foreground().spawn(async move {
                 let responses = futures::future::try_join_all(requests).await?;
-                let mut symbols = HashMap::default();
-                for ((_, language), lsp_symbols) in language_servers.into_values().zip(responses) {
-                    let language_symbols = symbols
-                        .entry(language.name().to_string())
-                        .or_insert(Vec::new());
-                    for lsp_symbol in lsp_symbols.into_iter().flatten() {
+                let mut symbols = Vec::new();
+                for ((_, worktree_id, language), lsp_symbols) in
+                    language_servers.into_values().zip(responses)
+                {
+                    symbols.extend(lsp_symbols.into_iter().flatten().map(|lsp_symbol| {
                         let label = language
                             .label_for_symbol(&lsp_symbol)
                             .unwrap_or_else(|| CodeLabel::plain(lsp_symbol.name.clone(), None));
-                        language_symbols.push(Symbol { label, lsp_symbol });
-                    }
+                        Symbol {
+                            worktree_id,
+                            language_name: language.name().to_string(),
+                            label,
+                            lsp_symbol,
+                        }
+                    }));
                 }
                 Ok(symbols)
             })
@@ -1270,46 +1273,60 @@ impl Project {
             });
             cx.spawn_weak(|this, cx| async move {
                 let response = request.await?;
-                let mut symbols = HashMap::default();
+                let mut symbols = Vec::new();
                 if let Some(this) = this.upgrade(&cx) {
                     this.read_with(&cx, |this, _| {
-                        let mut serialized_symbols = response.symbols.into_iter();
-                        for (language_name, symbol_count) in response
-                            .languages
-                            .into_iter()
-                            .zip(response.symbol_counts_per_language)
-                        {
-                            let language = this.languages.get_language(&language_name);
-                            let language_symbols =
-                                symbols.entry(language_name).or_insert(Vec::new());
-                            language_symbols.extend(
-                                serialized_symbols
-                                    .by_ref()
-                                    .take(symbol_count as usize)
-                                    .filter_map(|serialized_symbol| {
-                                        let lsp_symbol =
-                                            serde_json::from_slice(&serialized_symbol.lsp_symbol)
-                                                .log_err()?;
-                                        Some(Symbol {
-                                            label: language
-                                                .and_then(|language| {
-                                                    language.label_for_symbol(&lsp_symbol)
-                                                })
-                                                .unwrap_or(CodeLabel::plain(
-                                                    lsp_symbol.name.clone(),
-                                                    None,
-                                                )),
-                                            lsp_symbol,
-                                        })
-                                    }),
-                            );
-                        }
+                        symbols.extend(
+                            response
+                                .symbols
+                                .into_iter()
+                                .filter_map(|symbol| this.deserialize_symbol(symbol).log_err()),
+                        );
                     })
                 }
                 Ok(symbols)
             })
         } else {
             Task::ready(Ok(Default::default()))
+        }
+    }
+
+    pub fn open_buffer_for_symbol(
+        &mut self,
+        symbol: &Symbol,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<Buffer>>> {
+        if self.is_local() {
+            let language_server = if let Some(server) = self
+                .language_servers
+                .get(&(symbol.worktree_id, symbol.language_name.clone()))
+            {
+                server.clone()
+            } else {
+                return Task::ready(Err(anyhow!(
+                    "language server for worktree and language not found"
+                )));
+            };
+
+            self.open_local_buffer_via_lsp(
+                symbol.lsp_symbol.location.uri.clone(),
+                symbol.language_name.clone(),
+                language_server,
+                cx,
+            )
+        } else if let Some(project_id) = self.remote_id() {
+            let request = self.client.request(proto::OpenBufferForSymbol {
+                project_id,
+                symbol: Some(serialize_symbol(symbol)),
+            });
+            cx.spawn(|this, mut cx| async move {
+                let response = request.await?;
+                let buffer = response.buffer.ok_or_else(|| anyhow!("invalid buffer"))?;
+                this.update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
+                    .await
+            })
+        } else {
+            Task::ready(Err(anyhow!("project does not have a remote id")))
         }
     }
 
@@ -1785,7 +1802,7 @@ impl Project {
                 lsp::DocumentChangeOperation::Edit(op) => {
                     let buffer_to_edit = this
                         .update(cx, |this, cx| {
-                            this.open_local_buffer_from_lsp_path(
+                            this.open_local_buffer_via_lsp(
                                 op.text_document.uri,
                                 language_name.clone(),
                                 language_server.clone(),
@@ -2634,21 +2651,31 @@ impl Project {
             })
             .await?;
 
-        let mut languages = Vec::new();
-        let mut symbol_counts_per_language = Vec::new();
-        let mut serialized_symbols = Vec::new();
-        for (language_name, language_symbols) in symbols {
-            languages.push(language_name);
-            symbol_counts_per_language.push(language_symbols.len() as u64);
-            serialized_symbols.extend(language_symbols.into_iter().map(|symbol| proto::Symbol {
-                lsp_symbol: serde_json::to_vec(&symbol.lsp_symbol).unwrap(),
-            }));
-        }
-
         Ok(proto::GetProjectSymbolsResponse {
-            languages,
-            symbol_counts_per_language,
-            symbols: serialized_symbols,
+            symbols: symbols.iter().map(serialize_symbol).collect(),
+        })
+    }
+
+    async fn handle_open_buffer_for_symbol(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::OpenBufferForSymbol>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::OpenBufferForSymbolResponse> {
+        let peer_id = envelope.original_sender_id()?;
+        let symbol = envelope
+            .payload
+            .symbol
+            .ok_or_else(|| anyhow!("invalid symbol"))?;
+        let symbol = this.read_with(&cx, |this, _| this.deserialize_symbol(symbol))?;
+        let buffer = this
+            .update(&mut cx, |this, cx| this.open_buffer_for_symbol(&symbol, cx))
+            .await?;
+
+        Ok(proto::OpenBufferForSymbolResponse {
+            buffer: Some(this.update(&mut cx, |this, cx| {
+                this.serialize_buffer_for_peer(&buffer, peer_id, cx)
+            })),
         })
     }
 
@@ -2810,6 +2837,21 @@ impl Project {
                     Ok(buffer)
                 }
             }
+        })
+    }
+
+    fn deserialize_symbol(&self, serialized_symbol: proto::Symbol) -> Result<Symbol> {
+        let language = self
+            .languages
+            .get_language(&serialized_symbol.language_name);
+        let lsp_symbol = serde_json::from_slice(&serialized_symbol.lsp_symbol)?;
+        Ok(Symbol {
+            worktree_id: WorktreeId::from_proto(serialized_symbol.worktree_id),
+            language_name: serialized_symbol.language_name.clone(),
+            label: language
+                .and_then(|language| language.label_for_symbol(&lsp_symbol))
+                .unwrap_or(CodeLabel::plain(lsp_symbol.name.clone(), None)),
+            lsp_symbol,
         })
     }
 
@@ -3091,6 +3133,14 @@ impl From<lsp::DeleteFileOptions> for fs::RemoveOptions {
             recursive: options.recursive.unwrap_or(false),
             ignore_if_not_exists: options.ignore_if_not_exists.unwrap_or(false),
         }
+    }
+}
+
+fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
+    proto::Symbol {
+        worktree_id: symbol.worktree_id.to_proto(),
+        language_name: symbol.language_name.clone(),
+        lsp_symbol: serde_json::to_vec(&symbol.lsp_symbol).unwrap(),
     }
 }
 

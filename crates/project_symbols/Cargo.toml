@@ -10,10 +10,12 @@ path = "src/project_symbols.rs"
 editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
+language = { path = "../language" }
 project = { path = "../project" }
 text = { path = "../text" }
 workspace = { path = "../workspace" }
 util = { path = "../util" }
+anyhow = "1.0.38"
 ordered-float = "2.1.1"
 postage = { version = "0.4", features = ["futures-traits"] }
 smol = "1.2"

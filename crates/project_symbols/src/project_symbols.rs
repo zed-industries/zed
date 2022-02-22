@@ -1,5 +1,6 @@
 use editor::{
-    combine_syntax_and_fuzzy_match_highlights, styled_runs_for_code_label, Editor, EditorSettings,
+    combine_syntax_and_fuzzy_match_highlights, items::BufferItemHandle, styled_runs_for_code_label,
+    Autoscroll, Bias, Editor, EditorSettings,
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -9,6 +10,7 @@ use gpui::{
     AppContext, Axis, Entity, ModelHandle, MutableAppContext, RenderContext, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
+use language::range_from_lsp;
 use ordered_float::OrderedFloat;
 use postage::watch;
 use project::{Project, Symbol};
@@ -52,6 +54,7 @@ pub struct ProjectSymbolsView {
 
 pub enum Event {
     Dismissed,
+    Selected(Symbol),
 }
 
 impl Entity for ProjectSymbolsView {
@@ -170,7 +173,13 @@ impl ProjectSymbolsView {
     }
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Dismissed);
+        if let Some(symbol) = self
+            .matches
+            .get(self.selected_match_index)
+            .map(|mat| self.symbols[mat.candidate_id].clone())
+        {
+            cx.emit(Event::Selected(symbol));
+        }
     }
 
     fn update_matches(&mut self, cx: &mut ViewContext<Self>) {
@@ -180,12 +189,7 @@ impl ProjectSymbolsView {
             .project
             .update(cx, |project, cx| project.symbols(&query, cx));
         self.pending_symbols_task = cx.spawn_weak(|this, mut cx| async move {
-            let symbols = symbols
-                .await
-                .log_err()?
-                .into_values()
-                .flatten()
-                .collect::<Vec<_>>();
+            let symbols = symbols.await.log_err()?;
             if let Some(this) = this.upgrade(&cx) {
                 this.update(&mut cx, |this, cx| {
                     this.match_candidates = symbols
@@ -336,6 +340,34 @@ impl ProjectSymbolsView {
     ) {
         match event {
             Event::Dismissed => workspace.dismiss_modal(cx),
+            Event::Selected(symbol) => {
+                let buffer = workspace
+                    .project()
+                    .update(cx, |project, cx| project.open_buffer_for_symbol(symbol, cx));
+                let symbol = symbol.clone();
+                cx.spawn(|workspace, mut cx| async move {
+                    let buffer = buffer.await?;
+                    let range = range_from_lsp(symbol.lsp_symbol.location.range);
+                    workspace.update(&mut cx, |workspace, cx| {
+                        let start;
+                        let end;
+                        {
+                            let buffer = buffer.read(cx);
+                            start = buffer.clip_point_utf16(range.start, Bias::Left);
+                            end = buffer.clip_point_utf16(range.end, Bias::Left);
+                        }
+
+                        let editor = workspace.open_item(BufferItemHandle(buffer), cx);
+                        let editor = editor.downcast::<Editor>().unwrap();
+                        editor.update(cx, |editor, cx| {
+                            editor.select_ranges([start..end], Some(Autoscroll::Center), cx);
+                        });
+                    });
+                    Ok::<_, anyhow::Error>(())
+                })
+                .detach_and_log_err(cx);
+                workspace.dismiss_modal(cx);
+            }
         }
     }
 }
