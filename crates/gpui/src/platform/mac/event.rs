@@ -21,11 +21,13 @@ impl Event {
 
         match event_type {
             NSEventType::NSKeyDown => {
+                let mut input = None;
                 let modifiers = native_event.modifierFlags();
-                let unmodified_chars = native_event.charactersIgnoringModifiers();
-                let unmodified_chars = CStr::from_ptr(unmodified_chars.UTF8String() as *mut c_char)
-                    .to_str()
-                    .unwrap();
+                let unmodified_chars = CStr::from_ptr(
+                    native_event.charactersIgnoringModifiers().UTF8String() as *mut c_char,
+                )
+                .to_str()
+                .unwrap();
 
                 let unmodified_chars = if let Some(first_char) = unmodified_chars.chars().next() {
                     use cocoa::appkit::*;
@@ -38,7 +40,10 @@ impl Event {
 
                     #[allow(non_upper_case_globals)]
                     match first_char as u16 {
-                        SPACE_KEY => "space",
+                        SPACE_KEY => {
+                            input = Some(" ".to_string());
+                            "space"
+                        }
                         BACKSPACE_KEY => "backspace",
                         ENTER_KEY => "enter",
                         ESCAPE_KEY => "escape",
@@ -65,17 +70,21 @@ impl Event {
                         NSF11FunctionKey => "f11",
                         NSF12FunctionKey => "f12",
 
-                        _ => unmodified_chars,
+                        _ => {
+                            input = Some(
+                                CStr::from_ptr(
+                                    native_event.characters().UTF8String() as *mut c_char
+                                )
+                                .to_str()
+                                .unwrap()
+                                .into(),
+                            );
+                            unmodified_chars
+                        }
                     }
                 } else {
                     return None;
                 };
-
-                let chars = native_event.characters();
-                let chars = CStr::from_ptr(chars.UTF8String() as *mut c_char)
-                    .to_str()
-                    .unwrap()
-                    .into();
 
                 Some(Self::KeyDown {
                     keystroke: Keystroke {
@@ -85,7 +94,7 @@ impl Event {
                         cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
                         key: unmodified_chars.into(),
                     },
-                    chars,
+                    input,
                     is_held: native_event.isARepeat() == YES,
                 })
             }

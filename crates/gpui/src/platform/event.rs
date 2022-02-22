@@ -4,7 +4,7 @@ use crate::{geometry::vector::Vector2F, keymap::Keystroke};
 pub enum Event {
     KeyDown {
         keystroke: Keystroke,
-        chars: String,
+        input: Option<String>,
         is_held: bool,
     },
     ScrollWheel {
