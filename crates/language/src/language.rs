@@ -7,15 +7,27 @@ pub mod proto;
 mod tests;
 
 use anyhow::{anyhow, Result};
+use client::http::{self, HttpClient};
 use collections::HashSet;
-use gpui::AppContext;
+use futures::{
+    future::{BoxFuture, Shared},
+    FutureExt, TryFutureExt,
+};
+use gpui::{AppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Deserialize;
-use std::{cell::RefCell, ops::Range, path::Path, str, sync::Arc};
+use std::{
+    cell::RefCell,
+    ops::Range,
+    path::{Path, PathBuf},
+    str,
+    sync::Arc,
+};
 use theme::SyntaxTheme;
 use tree_sitter::{self, Query};
+use util::ResultExt;
 
 #[cfg(any(test, feature = "test-support"))]
 use futures::channel::mpsc;
@@ -47,7 +59,23 @@ pub trait ToLspPosition {
     fn to_lsp_position(self) -> lsp::Position;
 }
 
-pub trait LspPostProcessor: 'static + Send + Sync {
+pub struct LspBinaryVersion {
+    pub name: String,
+    pub url: http::Url,
+}
+
+pub trait LspExt: 'static + Send + Sync {
+    fn fetch_latest_server_version(
+        &self,
+        http: Arc<dyn HttpClient>,
+    ) -> BoxFuture<'static, Result<LspBinaryVersion>>;
+    fn fetch_server_binary(
+        &self,
+        version: LspBinaryVersion,
+        http: Arc<dyn HttpClient>,
+        download_dir: Arc<Path>,
+    ) -> BoxFuture<'static, Result<PathBuf>>;
+    fn cached_server_binary(&self, download_dir: Arc<Path>) -> BoxFuture<'static, Option<PathBuf>>;
     fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams);
     fn label_for_completion(
         &self,
@@ -77,7 +105,6 @@ pub struct LanguageConfig {
 
 #[derive(Default, Deserialize)]
 pub struct LanguageServerConfig {
-    pub binary: String,
     pub disk_based_diagnostic_sources: HashSet<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     #[cfg(any(test, feature = "test-support"))]
@@ -103,7 +130,8 @@ pub struct BracketPair {
 pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
-    pub(crate) lsp_post_processor: Option<Box<dyn LspPostProcessor>>,
+    pub(crate) lsp_ext: Option<Arc<dyn LspExt>>,
+    lsp_binary_path: Mutex<Option<Shared<BoxFuture<'static, Result<PathBuf, Arc<anyhow::Error>>>>>>,
 }
 
 pub struct Grammar {
@@ -115,24 +143,45 @@ pub struct Grammar {
     pub(crate) highlight_map: Mutex<HighlightMap>,
 }
 
-#[derive(Default)]
+#[derive(Clone)]
+pub enum LanguageServerBinaryStatus {
+    CheckingForUpdate,
+    Downloading,
+    Downloaded,
+    Cached,
+    Failed,
+}
+
 pub struct LanguageRegistry {
     languages: Vec<Arc<Language>>,
+    language_server_download_dir: Option<Arc<Path>>,
+    lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
+    lsp_binary_statuses_rx: async_broadcast::Receiver<(Arc<Language>, LanguageServerBinaryStatus)>,
 }
 
 impl LanguageRegistry {
     pub fn new() -> Self {
-        Self::default()
+        let (lsp_binary_statuses_tx, lsp_binary_statuses_rx) = async_broadcast::broadcast(16);
+        Self {
+            language_server_download_dir: None,
+            languages: Default::default(),
+            lsp_binary_statuses_tx,
+            lsp_binary_statuses_rx,
+        }
     }
 
     pub fn add(&mut self, language: Arc<Language>) {
-        self.languages.push(language);
+        self.languages.push(language.clone());
     }
 
     pub fn set_theme(&self, theme: &SyntaxTheme) {
         for language in &self.languages {
             language.set_theme(theme);
         }
+    }
+
+    pub fn set_language_server_download_dir(&mut self, path: impl Into<Arc<Path>>) {
+        self.language_server_download_dir = Some(path.into());
     }
 
     pub fn get_language(&self, name: &str) -> Option<&Arc<Language>> {
@@ -154,6 +203,140 @@ impl LanguageRegistry {
                 .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())))
         })
     }
+
+    pub fn start_language_server(
+        &self,
+        language: &Arc<Language>,
+        root_path: Arc<Path>,
+        http_client: Arc<dyn HttpClient>,
+        cx: &AppContext,
+    ) -> Option<Task<Result<Arc<lsp::LanguageServer>>>> {
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(config) = &language.config.language_server {
+            if let Some(fake_config) = &config.fake_config {
+                use postage::prelude::Stream;
+
+                let (server, mut fake_server) = lsp::LanguageServer::fake_with_capabilities(
+                    fake_config.capabilities.clone(),
+                    cx.background().clone(),
+                );
+
+                if let Some(initalizer) = &fake_config.initializer {
+                    initalizer(&mut fake_server);
+                }
+
+                let servers_tx = fake_config.servers_tx.clone();
+                let mut initialized = server.capabilities();
+                cx.background()
+                    .spawn(async move {
+                        while initialized.recv().await.is_none() {}
+                        servers_tx.unbounded_send(fake_server).ok();
+                    })
+                    .detach();
+
+                return Some(Task::ready(Ok(server.clone())));
+            }
+        }
+
+        let download_dir = self
+            .language_server_download_dir
+            .clone()
+            .ok_or_else(|| anyhow!("language server download directory has not been assigned"))
+            .log_err()?;
+
+        let lsp_ext = language.lsp_ext.clone()?;
+        let background = cx.background().clone();
+        let server_binary_path = {
+            Some(
+                language
+                    .lsp_binary_path
+                    .lock()
+                    .get_or_insert_with(|| {
+                        get_server_binary_path(
+                            lsp_ext,
+                            language.clone(),
+                            http_client,
+                            download_dir,
+                            self.lsp_binary_statuses_tx.clone(),
+                        )
+                        .map_err(Arc::new)
+                        .boxed()
+                        .shared()
+                    })
+                    .clone()
+                    .map_err(|e| anyhow!(e)),
+            )
+        }?;
+        Some(cx.background().spawn(async move {
+            let server_binary_path = server_binary_path.await?;
+            let server = lsp::LanguageServer::new(&server_binary_path, &root_path, background)?;
+            Ok(server)
+        }))
+    }
+
+    pub fn language_server_binary_statuses(
+        &self,
+    ) -> async_broadcast::Receiver<(Arc<Language>, LanguageServerBinaryStatus)> {
+        self.lsp_binary_statuses_rx.clone()
+    }
+}
+
+async fn get_server_binary_path(
+    lsp_ext: Arc<dyn LspExt>,
+    language: Arc<Language>,
+    http_client: Arc<dyn HttpClient>,
+    download_dir: Arc<Path>,
+    statuses: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
+) -> Result<PathBuf> {
+    let path = fetch_latest_server_binary_path(
+        lsp_ext.clone(),
+        language.clone(),
+        http_client,
+        download_dir.clone(),
+        statuses.clone(),
+    )
+    .await;
+    if path.is_err() {
+        if let Some(cached_path) = lsp_ext.cached_server_binary(download_dir).await {
+            statuses
+                .broadcast((language.clone(), LanguageServerBinaryStatus::Cached))
+                .await?;
+            return Ok(cached_path);
+        } else {
+            statuses
+                .broadcast((language.clone(), LanguageServerBinaryStatus::Failed))
+                .await?;
+        }
+    }
+    path
+}
+
+async fn fetch_latest_server_binary_path(
+    lsp_ext: Arc<dyn LspExt>,
+    language: Arc<Language>,
+    http_client: Arc<dyn HttpClient>,
+    download_dir: Arc<Path>,
+    lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
+) -> Result<PathBuf> {
+    lsp_binary_statuses_tx
+        .broadcast((
+            language.clone(),
+            LanguageServerBinaryStatus::CheckingForUpdate,
+        ))
+        .await?;
+    let version_info = lsp_ext
+        .fetch_latest_server_version(http_client.clone())
+        .await?;
+    lsp_binary_statuses_tx
+        .broadcast((language.clone(), LanguageServerBinaryStatus::Downloading))
+        .await?;
+    let path = lsp_ext
+        .fetch_server_binary(version_info, http_client, download_dir)
+        .await?;
+    lsp_binary_statuses_tx
+        .broadcast((language.clone(), LanguageServerBinaryStatus::Downloaded))
+        .await?;
+    Ok(path)
 }
 
 impl Language {
@@ -170,7 +353,8 @@ impl Language {
                     highlight_map: Default::default(),
                 })
             }),
-            lsp_post_processor: None,
+            lsp_ext: None,
+            lsp_binary_path: Default::default(),
         }
     }
 
@@ -214,8 +398,8 @@ impl Language {
         Ok(self)
     }
 
-    pub fn with_lsp_post_processor(mut self, processor: impl LspPostProcessor) -> Self {
-        self.lsp_post_processor = Some(Box::new(processor));
+    pub fn with_lsp_ext(mut self, lsp_ext: impl LspExt) -> Self {
+        self.lsp_ext = Some(Arc::new(lsp_ext));
         self
     }
 
@@ -225,50 +409,6 @@ impl Language {
 
     pub fn line_comment_prefix(&self) -> Option<&str> {
         self.config.line_comment.as_deref()
-    }
-
-    pub fn start_server(
-        &self,
-        root_path: &Path,
-        cx: &AppContext,
-    ) -> Result<Option<Arc<lsp::LanguageServer>>> {
-        if let Some(config) = &self.config.language_server {
-            #[cfg(any(test, feature = "test-support"))]
-            if let Some(fake_config) = &config.fake_config {
-                use postage::prelude::Stream;
-
-                let (server, mut fake_server) = lsp::LanguageServer::fake_with_capabilities(
-                    fake_config.capabilities.clone(),
-                    cx.background().clone(),
-                );
-
-                if let Some(initalizer) = &fake_config.initializer {
-                    initalizer(&mut fake_server);
-                }
-
-                let servers_tx = fake_config.servers_tx.clone();
-                let mut initialized = server.capabilities();
-                cx.background()
-                    .spawn(async move {
-                        while initialized.recv().await.is_none() {}
-                        servers_tx.unbounded_send(fake_server).ok();
-                    })
-                    .detach();
-
-                return Ok(Some(server.clone()));
-            }
-
-            const ZED_BUNDLE: Option<&'static str> = option_env!("ZED_BUNDLE");
-            let binary_path = if ZED_BUNDLE.map_or(Ok(false), |b| b.parse())? {
-                cx.platform()
-                    .path_for_resource(Some(&config.binary), None)?
-            } else {
-                Path::new(&config.binary).to_path_buf()
-            };
-            lsp::LanguageServer::new(&binary_path, root_path, cx.background().clone()).map(Some)
-        } else {
-            Ok(None)
-        }
     }
 
     pub fn disk_based_diagnostic_sources(&self) -> Option<&HashSet<String>> {
@@ -286,7 +426,7 @@ impl Language {
     }
 
     pub fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams) {
-        if let Some(processor) = self.lsp_post_processor.as_ref() {
+        if let Some(processor) = self.lsp_ext.as_ref() {
             processor.process_diagnostics(diagnostics);
         }
     }
@@ -295,7 +435,7 @@ impl Language {
         &self,
         completion: &lsp::CompletionItem,
     ) -> Option<CompletionLabel> {
-        self.lsp_post_processor
+        self.lsp_ext
             .as_ref()?
             .label_for_completion(completion, self)
     }

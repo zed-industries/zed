@@ -1,17 +1,140 @@
+use anyhow::{anyhow, Result};
+use async_compression::futures::bufread::GzipDecoder;
+use client::http::{self, HttpClient, Method};
+use futures::{future::BoxFuture, FutureExt, StreamExt};
 pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
 use rust_embed::RustEmbed;
-use std::borrow::Cow;
-use std::{str, sync::Arc};
+use serde::Deserialize;
+use smol::fs::{self, File};
+use std::{
+    borrow::Cow,
+    env::consts,
+    path::{Path, PathBuf},
+    str,
+    sync::Arc,
+};
+use util::{ResultExt, TryFutureExt};
 
 #[derive(RustEmbed)]
 #[folder = "languages"]
 struct LanguageDir;
 
-struct RustPostProcessor;
+struct RustLsp;
 
-impl LspPostProcessor for RustPostProcessor {
+#[derive(Deserialize)]
+struct GithubRelease {
+    name: String,
+    assets: Vec<GithubReleaseAsset>,
+}
+
+#[derive(Deserialize)]
+struct GithubReleaseAsset {
+    name: String,
+    browser_download_url: http::Url,
+}
+
+impl LspExt for RustLsp {
+    fn fetch_latest_server_version(
+        &self,
+        http: Arc<dyn HttpClient>,
+    ) -> BoxFuture<'static, Result<LspBinaryVersion>> {
+        async move {
+            let release = http
+            .send(
+                surf::RequestBuilder::new(
+                    Method::Get,
+                    http::Url::parse(
+                        "https://api.github.com/repos/rust-analyzer/rust-analyzer/releases/latest",
+                    )
+                    .unwrap(),
+                )
+                .middleware(surf::middleware::Redirect::default())
+                .build(),
+            )
+            .await
+            .map_err(|err| anyhow!("error fetching latest release: {}", err))?
+            .body_json::<GithubRelease>()
+            .await
+            .map_err(|err| anyhow!("error parsing latest release: {}", err))?;
+            let asset_name = format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH);
+            let asset = release
+                .assets
+                .iter()
+                .find(|asset| asset.name == asset_name)
+                .ok_or_else(|| anyhow!("no release found matching {:?}", asset_name))?;
+            Ok(LspBinaryVersion {
+                name: release.name,
+                url: asset.browser_download_url.clone(),
+            })
+        }
+        .boxed()
+    }
+
+    fn fetch_server_binary(
+        &self,
+        version: LspBinaryVersion,
+        http: Arc<dyn HttpClient>,
+        download_dir: Arc<Path>,
+    ) -> BoxFuture<'static, Result<PathBuf>> {
+        async move {
+            let destination_dir_path = download_dir.join("rust-analyzer");
+            fs::create_dir_all(&destination_dir_path).await?;
+            let destination_path =
+                destination_dir_path.join(format!("rust-analyzer-{}", version.name));
+
+            if fs::metadata(&destination_path).await.is_err() {
+                let response = http
+                    .send(
+                        surf::RequestBuilder::new(Method::Get, version.url)
+                            .middleware(surf::middleware::Redirect::default())
+                            .build(),
+                    )
+                    .await
+                    .map_err(|err| anyhow!("error downloading release: {}", err))?;
+                let decompressed_bytes = GzipDecoder::new(response);
+                let mut file = File::create(&destination_path).await?;
+                futures::io::copy(decompressed_bytes, &mut file).await?;
+                fs::set_permissions(
+                    &destination_path,
+                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+                )
+                .await?;
+
+                if let Some(mut entries) = fs::read_dir(&destination_dir_path).await.log_err() {
+                    while let Some(entry) = entries.next().await {
+                        if let Some(entry) = entry.log_err() {
+                            let entry_path = entry.path();
+                            if entry_path.as_path() != destination_path {
+                                fs::remove_file(&entry_path).await.log_err();
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(destination_path)
+        }
+        .boxed()
+    }
+
+    fn cached_server_binary(&self, download_dir: Arc<Path>) -> BoxFuture<'static, Option<PathBuf>> {
+        async move {
+            let destination_dir_path = download_dir.join("rust-analyzer");
+            fs::create_dir_all(&destination_dir_path).await?;
+
+            let mut last = None;
+            let mut entries = fs::read_dir(&destination_dir_path).await?;
+            while let Some(entry) = entries.next().await {
+                last = Some(entry?.path());
+            }
+            last.ok_or_else(|| anyhow!("no cached binary"))
+        }
+        .log_err()
+        .boxed()
+    }
+
     fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
         lazy_static! {
             static ref REGEX: Regex = Regex::new("(?m)`([^`]+)\n`$").unwrap();
@@ -113,7 +236,12 @@ impl LspPostProcessor for RustPostProcessor {
 }
 
 pub fn build_language_registry() -> LanguageRegistry {
-    let mut languages = LanguageRegistry::default();
+    let mut languages = LanguageRegistry::new();
+    languages.set_language_server_download_dir(
+        dirs::home_dir()
+            .expect("failed to determine home directory")
+            .join(".zed"),
+    );
     languages.add(Arc::new(rust()));
     languages.add(Arc::new(markdown()));
     languages
@@ -131,7 +259,7 @@ fn rust() -> Language {
         .unwrap()
         .with_outline_query(load_query("rust/outline.scm").as_ref())
         .unwrap()
-        .with_lsp_post_processor(RustPostProcessor)
+        .with_lsp_ext(RustLsp)
 }
 
 fn markdown() -> Language {
@@ -153,7 +281,7 @@ fn load_query(path: &str) -> Cow<'static, str> {
 mod tests {
     use super::*;
     use gpui::color::Color;
-    use language::LspPostProcessor;
+    use language::LspExt;
     use theme::SyntaxTheme;
 
     #[test]
@@ -180,7 +308,7 @@ mod tests {
                 },
             ],
         };
-        RustPostProcessor.process_diagnostics(&mut params);
+        RustLsp.process_diagnostics(&mut params);
 
         assert_eq!(params.diagnostics[0].message, "use of moved value `a`");
 

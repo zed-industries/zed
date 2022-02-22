@@ -11,6 +11,5 @@ brackets = [
 ]
 
 [language_server]
-binary = "rust-analyzer"
 disk_based_diagnostic_sources = ["rustc"]
 disk_based_diagnostics_progress_token = "rustAnalyzer/cargo check"

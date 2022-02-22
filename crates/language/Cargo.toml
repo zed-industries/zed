@@ -9,6 +9,7 @@ path = "src/language.rs"
 [features]
 test-support = [
     "rand",
+    "client/test-support",
     "collections/test-support",
     "lsp/test-support",
     "text/test-support",
@@ -17,6 +18,7 @@ test-support = [
 ]
 
 [dependencies]
+client = { path = "../client" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
 fuzzy = { path = "../fuzzy" }
@@ -28,6 +30,7 @@ text = { path = "../text" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 anyhow = "1.0.38"
+async-broadcast = "0.3.4"
 async-trait = "0.1"
 futures = "0.3"
 lazy_static = "1.4"
@@ -44,6 +47,7 @@ tree-sitter = "0.20"
 tree-sitter-rust = { version = "0.20.0", optional = true }
 
 [dev-dependencies]
+client = { path = "../client", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }

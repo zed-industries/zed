@@ -77,9 +77,10 @@ border = { width = 1, color = "$border.0", left = true }
 [workspace.status_bar]
 padding = { left = 6, right = 6 }
 height = 24
-item_spacing = 24
+item_spacing = 8
 cursor_position = "$text.2"
 diagnostic_message = "$text.2"
+lsp_message = "$text.2"
 
 [workspace.toolbar]
 height = 44
@@ -188,7 +189,7 @@ corner_radius = 6
 
 [project_panel]
 extends = "$panel"
-padding.top = 6    # ($workspace.tab.height - $project_panel.entry.height) / 2
+padding.top = 6 # ($workspace.tab.height - $project_panel.entry.height) / 2
 
 [project_panel.entry]
 text = "$text.1"

@@ -141,6 +141,7 @@ pub struct StatusBar {
     pub item_spacing: f32,
     pub cursor_position: TextStyle,
     pub diagnostic_message: TextStyle,
+    pub lsp_message: TextStyle,
 }
 
 #[derive(Deserialize, Default)]

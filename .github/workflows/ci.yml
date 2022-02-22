@@ -34,11 +34,6 @@ jobs:
         with:
           clean: false
 
-      - name: Download rust-analyzer
-        run: |
-          script/download-rust-analyzer
-          echo "$PWD/vendor/bin" >> $GITHUB_PATH
-
       - name: Run tests
         run: cargo test --workspace --no-fail-fast
 
@@ -69,13 +64,10 @@ jobs:
         uses: actions/checkout@v2
         with:
           clean: false
-          
+
       - name: Validate version
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: script/validate-version
-
-      - name: Download rust-analyzer
-        run: script/download-rust-analyzer
 
       - name: Create app bundle
         run: script/bundle

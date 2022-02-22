@@ -43,6 +43,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         }
     });
 
+    workspace::lsp_status::init(cx);
+
     cx.add_bindings(vec![
         Binding::new("cmd-=", AdjustBufferFontSize(1.), None),
         Binding::new("cmd--", AdjustBufferFontSize(-1.), None),
@@ -97,11 +99,19 @@ pub fn build_workspace(
             cx,
         )
     });
+    let lsp_status = cx.add_view(|cx| {
+        workspace::lsp_status::LspStatus::new(
+            app_state.languages.clone(),
+            app_state.settings.clone(),
+            cx,
+        )
+    });
     let cursor_position =
         cx.add_view(|_| editor::items::CursorPosition::new(app_state.settings.clone()));
     workspace.status_bar().update(cx, |status_bar, cx| {
         status_bar.add_left_item(diagnostic_summary, cx);
         status_bar.add_left_item(diagnostic_message, cx);
+        status_bar.add_left_item(lsp_status, cx);
         status_bar.add_right_item(cursor_position, cx);
     });
 

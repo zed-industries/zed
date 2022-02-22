@@ -55,6 +55,7 @@ theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
 anyhow = "1.0.38"
+async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
 async-recursion = "0.3"
 async-trait = "0.1"
 crossbeam-channel = "0.5.0"

@@ -700,72 +700,12 @@ impl FakeLanguageServer {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use unindent::Unindent;
-    use util::test::temp_tree;
 
     #[ctor::ctor]
     fn init_logger() {
         if std::env::var("RUST_LOG").is_ok() {
             env_logger::init();
         }
-    }
-
-    #[gpui::test]
-    async fn test_rust_analyzer(cx: TestAppContext) {
-        let lib_source = r#"
-            fn fun() {
-                let hello = "world";
-            }
-        "#
-        .unindent();
-        let root_dir = temp_tree(json!({
-            "Cargo.toml": r#"
-                [package]
-                name = "temp"
-                version = "0.1.0"
-                edition = "2018"
-            "#.unindent(),
-            "src": {
-                "lib.rs": &lib_source
-            }
-        }));
-        let lib_file_uri = Url::from_file_path(root_dir.path().join("src/lib.rs")).unwrap();
-
-        let server =
-            LanguageServer::new(Path::new("rust-analyzer"), root_dir.path(), cx.background())
-                .unwrap();
-        server.next_idle_notification().await;
-
-        server
-            .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
-                text_document: TextDocumentItem::new(
-                    lib_file_uri.clone(),
-                    "rust".to_string(),
-                    0,
-                    lib_source,
-                ),
-            })
-            .await
-            .unwrap();
-
-        let hover = server
-            .request::<request::HoverRequest>(HoverParams {
-                text_document_position_params: TextDocumentPositionParams {
-                    text_document: TextDocumentIdentifier::new(lib_file_uri),
-                    position: Position::new(1, 21),
-                },
-                work_done_progress_params: Default::default(),
-            })
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            hover.contents,
-            HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::PlainText,
-                value: "&str".to_string()
-            })
-        );
     }
 
     #[gpui::test]
@@ -826,19 +766,6 @@ mod tests {
 
         drop(server);
         fake.receive_notification::<notification::Exit>().await;
-    }
-
-    impl LanguageServer {
-        async fn next_idle_notification(self: &Arc<Self>) {
-            let (tx, rx) = channel::unbounded();
-            let _subscription =
-                self.on_notification::<ServerStatusNotification, _>(move |params| {
-                    if params.quiescent {
-                        tx.try_send(()).unwrap();
-                    }
-                });
-            let _ = rx.recv().await;
-        }
     }
 
     pub enum ServerStatusNotification {}
