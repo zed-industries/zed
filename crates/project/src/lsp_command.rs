@@ -1,4 +1,4 @@
-use crate::{Location, Project, ProjectTransaction};
+use crate::{DocumentHighlight, Location, Project, ProjectTransaction};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use client::{proto, PeerId};
@@ -8,7 +8,8 @@ use language::{
     proto::{deserialize_anchor, serialize_anchor},
     range_from_lsp, Anchor, Bias, Buffer, PointUtf16, ToLspPosition, ToPointUtf16,
 };
-use std::{ops::Range, path::Path};
+use lsp::DocumentHighlightKind;
+use std::{cmp::Reverse, ops::Range, path::Path};
 
 #[async_trait(?Send)]
 pub(crate) trait LspCommand: 'static + Sized {
@@ -67,6 +68,10 @@ pub(crate) struct GetDefinition {
 }
 
 pub(crate) struct GetReferences {
+    pub position: PointUtf16,
+}
+
+pub(crate) struct GetDocumentHighlights {
     pub position: PointUtf16,
 }
 
@@ -595,6 +600,141 @@ impl LspCommand for GetReferences {
     }
 
     fn buffer_id_from_proto(message: &proto::GetReferences) -> u64 {
+        message.buffer_id
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetDocumentHighlights {
+    type Response = Vec<DocumentHighlight>;
+    type LspRequest = lsp::request::DocumentHighlightRequest;
+    type ProtoRequest = proto::GetDocumentHighlights;
+
+    fn to_lsp(&self, path: &Path, _: &AppContext) -> lsp::DocumentHighlightParams {
+        lsp::DocumentHighlightParams {
+            text_document_position_params: lsp::TextDocumentPositionParams {
+                text_document: lsp::TextDocumentIdentifier {
+                    uri: lsp::Url::from_file_path(path).unwrap(),
+                },
+                position: self.position.to_lsp_position(),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        lsp_highlights: Option<Vec<lsp::DocumentHighlight>>,
+        _: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        cx: AsyncAppContext,
+    ) -> Result<Vec<DocumentHighlight>> {
+        buffer.read_with(&cx, |buffer, _| {
+            let mut lsp_highlights = lsp_highlights.unwrap_or_default();
+            lsp_highlights.sort_unstable_by_key(|h| (h.range.start, Reverse(h.range.end)));
+            Ok(lsp_highlights
+                .into_iter()
+                .map(|lsp_highlight| {
+                    let start = buffer
+                        .clip_point_utf16(point_from_lsp(lsp_highlight.range.start), Bias::Left);
+                    let end = buffer
+                        .clip_point_utf16(point_from_lsp(lsp_highlight.range.end), Bias::Left);
+                    DocumentHighlight {
+                        range: buffer.anchor_after(start)..buffer.anchor_before(end),
+                        kind: lsp_highlight
+                            .kind
+                            .unwrap_or(lsp::DocumentHighlightKind::READ),
+                    }
+                })
+                .collect())
+        })
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetDocumentHighlights {
+        proto::GetDocumentHighlights {
+            project_id,
+            buffer_id: buffer.remote_id(),
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
+        }
+    }
+
+    fn from_proto(
+        message: proto::GetDocumentHighlights,
+        _: &mut Project,
+        buffer: &Buffer,
+    ) -> Result<Self> {
+        let position = message
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        if !buffer.can_resolve(&position) {
+            Err(anyhow!("cannot resolve position"))?;
+        }
+        Ok(Self {
+            position: position.to_point_utf16(buffer),
+        })
+    }
+
+    fn response_to_proto(
+        response: Vec<DocumentHighlight>,
+        _: &mut Project,
+        _: PeerId,
+        _: &clock::Global,
+        _: &AppContext,
+    ) -> proto::GetDocumentHighlightsResponse {
+        let highlights = response
+            .into_iter()
+            .map(|highlight| proto::DocumentHighlight {
+                start: Some(serialize_anchor(&highlight.range.start)),
+                end: Some(serialize_anchor(&highlight.range.end)),
+                kind: match highlight.kind {
+                    DocumentHighlightKind::TEXT => proto::document_highlight::Kind::Text.into(),
+                    DocumentHighlightKind::WRITE => proto::document_highlight::Kind::Write.into(),
+                    DocumentHighlightKind::READ => proto::document_highlight::Kind::Read.into(),
+                    _ => proto::document_highlight::Kind::Text.into(),
+                },
+            })
+            .collect();
+        proto::GetDocumentHighlightsResponse { highlights }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::GetDocumentHighlightsResponse,
+        _: ModelHandle<Project>,
+        _: ModelHandle<Buffer>,
+        _: AsyncAppContext,
+    ) -> Result<Vec<DocumentHighlight>> {
+        Ok(message
+            .highlights
+            .into_iter()
+            .map(|highlight| {
+                let start = highlight
+                    .start
+                    .and_then(deserialize_anchor)
+                    .ok_or_else(|| anyhow!("missing target start"))?;
+                let end = highlight
+                    .end
+                    .and_then(deserialize_anchor)
+                    .ok_or_else(|| anyhow!("missing target end"))?;
+                let kind = match proto::document_highlight::Kind::from_i32(highlight.kind) {
+                    Some(proto::document_highlight::Kind::Text) => DocumentHighlightKind::TEXT,
+                    Some(proto::document_highlight::Kind::Read) => DocumentHighlightKind::READ,
+                    Some(proto::document_highlight::Kind::Write) => DocumentHighlightKind::WRITE,
+                    None => DocumentHighlightKind::TEXT,
+                };
+                Ok(DocumentHighlight {
+                    range: start..end,
+                    kind,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?)
+    }
+
+    fn buffer_id_from_proto(message: &proto::GetDocumentHighlights) -> u64 {
         message.buffer_id
     }
 }

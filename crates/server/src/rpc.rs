@@ -80,6 +80,7 @@ impl Server {
             .add_message_handler(Server::disk_based_diagnostics_updated)
             .add_request_handler(Server::get_definition)
             .add_request_handler(Server::get_references)
+            .add_request_handler(Server::get_document_highlights)
             .add_request_handler(Server::get_project_symbols)
             .add_request_handler(Server::open_buffer_for_symbol)
             .add_request_handler(Server::open_buffer)
@@ -594,6 +595,20 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetReferences>,
     ) -> tide::Result<proto::GetReferencesResponse> {
+        let host_connection_id = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .host_connection_id;
+        Ok(self
+            .peer
+            .forward_request(request.sender_id, host_connection_id, request.payload)
+            .await?)
+    }
+
+    async fn get_document_highlights(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::GetDocumentHighlights>,
+    ) -> tide::Result<proto::GetDocumentHighlightsResponse> {
         let host_connection_id = self
             .state()
             .read_project(request.payload.project_id, request.sender_id)?
@@ -2852,6 +2867,148 @@ mod tests {
             assert_eq!(references[0].range.to_offset(&two_buffer), 24..27);
             assert_eq!(references[1].range.to_offset(&two_buffer), 35..38);
             assert_eq!(references[2].range.to_offset(&three_buffer), 37..40);
+        });
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_document_highlights(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+        cx_a.foreground().forbid_parking();
+        let lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = FakeFs::new(cx_a.background());
+        fs.insert_tree(
+            "/root-1",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "main.rs": "fn double(number: i32) -> i32 { number + number }",
+            }),
+        )
+        .await;
+
+        // Set up a fake language server.
+        let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
+        lang_registry.add(Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".to_string()],
+                language_server: Some(language_server_config),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        )));
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let client_a = server.create_client(&mut cx_a, "user_a").await;
+        let client_b = server.create_client(&mut cx_b, "user_b").await;
+
+        // Share a project as client A
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/root-1", false, cx)
+            })
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
+        project_a
+            .update(&mut cx_a, |p, cx| p.share(cx))
+            .await
+            .unwrap();
+
+        // Join the worktree as client B.
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        // Open the file on client B.
+        let buffer_b = cx_b
+            .background()
+            .spawn(project_b.update(&mut cx_b, |p, cx| {
+                p.open_buffer((worktree_id, "main.rs"), cx)
+            }))
+            .await
+            .unwrap();
+
+        // Request document highlights as the guest.
+        let highlights =
+            project_b.update(&mut cx_b, |p, cx| p.document_highlights(&buffer_b, 34, cx));
+
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
+        fake_language_server.handle_request::<lsp::request::DocumentHighlightRequest, _>(
+            |params| {
+                assert_eq!(
+                    params
+                        .text_document_position_params
+                        .text_document
+                        .uri
+                        .as_str(),
+                    "file:///root-1/main.rs"
+                );
+                assert_eq!(
+                    params.text_document_position_params.position,
+                    lsp::Position::new(0, 34)
+                );
+                Some(vec![
+                    lsp::DocumentHighlight {
+                        kind: Some(lsp::DocumentHighlightKind::WRITE),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 10),
+                            lsp::Position::new(0, 16),
+                        ),
+                    },
+                    lsp::DocumentHighlight {
+                        kind: Some(lsp::DocumentHighlightKind::READ),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 32),
+                            lsp::Position::new(0, 38),
+                        ),
+                    },
+                    lsp::DocumentHighlight {
+                        kind: Some(lsp::DocumentHighlightKind::READ),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 41),
+                            lsp::Position::new(0, 47),
+                        ),
+                    },
+                ])
+            },
+        );
+
+        let highlights = highlights.await.unwrap();
+        buffer_b.read_with(&cx_b, |buffer, _| {
+            let snapshot = buffer.snapshot();
+
+            let highlights = highlights
+                .into_iter()
+                .map(|highlight| (highlight.kind, highlight.range.to_offset(&snapshot)))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                highlights,
+                &[
+                    (lsp::DocumentHighlightKind::WRITE, 10..16),
+                    (lsp::DocumentHighlightKind::READ, 32..38),
+                    (lsp::DocumentHighlightKind::READ, 41..47)
+                ]
+            )
         });
     }
 
