@@ -334,16 +334,16 @@ impl Server {
                     replica_id: 0,
                     user_id: joined.project.host_user_id.to_proto(),
                 });
-                let worktrees = joined
-                    .project
+                let worktrees = share
                     .worktrees
                     .iter()
-                    .filter_map(|(id, worktree)| {
-                        worktree.share.as_ref().map(|share| proto::Worktree {
+                    .filter_map(|(id, shared_worktree)| {
+                        let worktree = joined.project.worktrees.get(&id)?;
+                        Some(proto::Worktree {
                             id: *id,
                             root_name: worktree.root_name.clone(),
-                            entries: share.entries.values().cloned().collect(),
-                            diagnostic_summaries: share
+                            entries: shared_worktree.entries.values().cloned().collect(),
+                            diagnostic_summaries: shared_worktree
                                 .diagnostic_summaries
                                 .values()
                                 .cloned()
@@ -437,7 +437,6 @@ impl Server {
                 Worktree {
                     authorized_user_ids: contact_user_ids.clone(),
                     root_name: request.payload.root_name.clone(),
-                    share: None,
                     weak: request.payload.weak,
                 },
             )?;
@@ -1164,7 +1163,7 @@ mod tests {
         cell::Cell,
         env,
         ops::Deref,
-        path::Path,
+        path::{Path, PathBuf},
         rc::Rc,
         sync::{
             atomic::{AtomicBool, Ordering::SeqCst},
@@ -2115,16 +2114,14 @@ mod tests {
                 let worktree = store
                     .project(project_id)
                     .unwrap()
+                    .share
+                    .as_ref()
+                    .unwrap()
                     .worktrees
                     .get(&worktree_id.to_proto())
                     .unwrap();
 
-                !worktree
-                    .share
-                    .as_ref()
-                    .unwrap()
-                    .diagnostic_summaries
-                    .is_empty()
+                !worktree.diagnostic_summaries.is_empty()
             })
             .await;
 

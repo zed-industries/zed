@@ -262,6 +262,7 @@ entity_messages!(
     UpdateBuffer,
     UpdateBufferFile,
     UpdateDiagnosticSummary,
+    RegisterWorktree,
     UpdateWorktree,
 );
 

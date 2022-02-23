@@ -169,7 +169,7 @@ impl DiagnosticSummary {
         this
     }
 
-    pub fn to_proto(&self, path: Arc<Path>) -> proto::DiagnosticSummary {
+    pub fn to_proto(&self, path: &Path) -> proto::DiagnosticSummary {
         proto::DiagnosticSummary {
             path: path.to_string_lossy().to_string(),
             error_count: self.error_count as u32,
@@ -195,7 +195,7 @@ impl Project {
         client.add_entity_message_handler(Self::handle_disk_based_diagnostics_updated);
         client.add_entity_message_handler(Self::handle_disk_based_diagnostics_updating);
         client.add_entity_message_handler(Self::handle_remove_collaborator);
-        client.add_entity_message_handler(Self::handle_share_worktree);
+        client.add_entity_message_handler(Self::handle_register_worktree);
         client.add_entity_message_handler(Self::handle_unregister_worktree);
         client.add_entity_message_handler(Self::handle_unshare_project);
         client.add_entity_message_handler(Self::handle_update_buffer_file);
@@ -2347,19 +2347,22 @@ impl Project {
         })
     }
 
-    async fn handle_share_worktree(
+    async fn handle_register_worktree(
         this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::ShareWorktree>,
+        envelope: TypedEnvelope<proto::RegisterWorktree>,
         client: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let remote_id = this.remote_id().ok_or_else(|| anyhow!("invalid project"))?;
             let replica_id = this.replica_id();
-            let worktree = envelope
-                .payload
-                .worktree
-                .ok_or_else(|| anyhow!("invalid worktree"))?;
+            let worktree = proto::Worktree {
+                id: envelope.payload.worktree_id,
+                root_name: envelope.payload.root_name,
+                entries: Default::default(),
+                diagnostic_summaries: Default::default(),
+                weak: envelope.payload.weak,
+            };
             let (worktree, load_task) =
                 Worktree::remote(remote_id, replica_id, worktree, client, cx);
             this.add_worktree(&worktree, cx);

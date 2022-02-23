@@ -771,12 +771,10 @@ impl LocalWorktree {
             let worktree_id = cx.model_id() as u64;
             let (snapshots_to_send_tx, snapshots_to_send_rx) =
                 smol::channel::unbounded::<LocalSnapshot>();
-            let (mut share_tx, mut share_rx) = oneshot::channel();
             let maintain_remote_snapshot = cx.background().spawn({
                 let rpc = rpc.clone();
                 let snapshot = snapshot.clone();
                 let diagnostic_summaries = self.diagnostic_summaries.clone();
-                let weak = self.weak;
                 async move {
                     if let Err(error) = rpc
                         .request(proto::UpdateWorktree {
@@ -799,6 +797,14 @@ impl LocalWorktree {
                         let _ = share_tx.try_send(Ok(()));
                     }
 
+                    for (path, summary) in diagnostic_summaries.iter() {
+                        rpc.send(proto::UpdateDiagnosticSummary {
+                            project_id,
+                            worktree_id,
+                            summary: Some(summary.to_proto(&path.0)),
+                        })?;
+                    }
+
                     let mut prev_snapshot = snapshot;
                     while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
                         let message =
@@ -819,7 +825,10 @@ impl LocalWorktree {
         }
 
         async move {
-            share_rx.next().await;
+            share_rx
+                .next()
+                .await
+                .unwrap_or_else(|| Err(anyhow!("share ended")))
         }
     }
 
@@ -1014,6 +1023,7 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
+    #[cfg(test)]
     pub(crate) fn to_proto(
         &self,
         diagnostic_summaries: &TreeMap<PathKey, DiagnosticSummary>,
@@ -1031,7 +1041,7 @@ impl LocalSnapshot {
                 .collect(),
             diagnostic_summaries: diagnostic_summaries
                 .iter()
-                .map(|(path, summary)| summary.to_proto(path.0.clone()))
+                .map(|(path, summary)| summary.to_proto(&path.0))
                 .collect(),
             weak,
         }
