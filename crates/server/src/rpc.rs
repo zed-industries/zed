@@ -16,7 +16,7 @@ use rpc::{
     Connection, ConnectionId, Peer, TypedEnvelope,
 };
 use sha1::{Digest as _, Sha1};
-use std::{any::TypeId, future::Future, path::PathBuf, sync::Arc, time::Instant};
+use std::{any::TypeId, future::Future, sync::Arc, time::Instant};
 use store::{Store, Worktree};
 use surf::StatusCode;
 use tide::log;
@@ -73,7 +73,6 @@ impl Server {
             .add_message_handler(Server::leave_project)
             .add_request_handler(Server::register_worktree)
             .add_message_handler(Server::unregister_worktree)
-            .add_request_handler(Server::share_worktree)
             .add_request_handler(Server::update_worktree)
             .add_message_handler(Server::update_diagnostic_summary)
             .add_message_handler(Server::disk_based_diagnostics_updating)
@@ -419,23 +418,34 @@ impl Server {
 
         let mut contact_user_ids = HashSet::default();
         contact_user_ids.insert(host_user_id);
-        for github_login in request.payload.authorized_logins {
-            let contact_user_id = self.app_state.db.create_user(&github_login, false).await?;
+        for github_login in &request.payload.authorized_logins {
+            let contact_user_id = self.app_state.db.create_user(github_login, false).await?;
             contact_user_ids.insert(contact_user_id);
         }
 
         let contact_user_ids = contact_user_ids.into_iter().collect::<Vec<_>>();
-        self.state_mut().register_worktree(
-            request.payload.project_id,
-            request.payload.worktree_id,
-            request.sender_id,
-            Worktree {
-                authorized_user_ids: contact_user_ids.clone(),
-                root_name: request.payload.root_name,
-                share: None,
-                weak: false,
-            },
-        )?;
+        let guest_connection_ids;
+        {
+            let mut state = self.state_mut();
+            guest_connection_ids = state
+                .read_project(request.payload.project_id, request.sender_id)?
+                .guest_connection_ids();
+            state.register_worktree(
+                request.payload.project_id,
+                request.payload.worktree_id,
+                request.sender_id,
+                Worktree {
+                    authorized_user_ids: contact_user_ids.clone(),
+                    root_name: request.payload.root_name.clone(),
+                    share: None,
+                    weak: request.payload.weak,
+                },
+            )?;
+        }
+        broadcast(request.sender_id, guest_connection_ids, |connection_id| {
+            self.peer
+                .forward_send(request.sender_id, connection_id, request.payload.clone())
+        })?;
         self.update_contacts_for_users(&contact_user_ids)?;
         Ok(proto::Ack {})
     }
@@ -460,47 +470,6 @@ impl Server {
         })?;
         self.update_contacts_for_users(&worktree.authorized_user_ids)?;
         Ok(())
-    }
-
-    async fn share_worktree(
-        mut self: Arc<Server>,
-        mut request: TypedEnvelope<proto::ShareWorktree>,
-    ) -> tide::Result<proto::Ack> {
-        let worktree = request
-            .payload
-            .worktree
-            .as_mut()
-            .ok_or_else(|| anyhow!("missing worktree"))?;
-        let entries = worktree
-            .entries
-            .iter()
-            .map(|entry| (entry.id, entry.clone()))
-            .collect();
-        let diagnostic_summaries = worktree
-            .diagnostic_summaries
-            .iter()
-            .map(|summary| (PathBuf::from(summary.path.clone()), summary.clone()))
-            .collect();
-
-        let shared_worktree = self.state_mut().share_worktree(
-            request.payload.project_id,
-            worktree.id,
-            request.sender_id,
-            entries,
-            diagnostic_summaries,
-        )?;
-
-        broadcast(
-            request.sender_id,
-            shared_worktree.connection_ids,
-            |connection_id| {
-                self.peer
-                    .forward_send(request.sender_id, connection_id, request.payload.clone())
-            },
-        )?;
-        self.update_contacts_for_users(&shared_worktree.authorized_user_ids)?;
-
-        Ok(proto::Ack {})
     }
 
     async fn update_worktree(

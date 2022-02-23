@@ -43,7 +43,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap};
-use util::ResultExt;
+use util::{ResultExt, TryFutureExt};
 
 lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
@@ -137,7 +137,7 @@ enum Registration {
 struct ShareState {
     project_id: u64,
     snapshots_tx: Sender<LocalSnapshot>,
-    _maintain_remote_snapshot: Option<Task<()>>,
+    _maintain_remote_snapshot: Option<Task<Option<()>>>,
 }
 
 #[derive(Default, Deserialize)]
@@ -737,6 +737,7 @@ impl LocalWorktree {
             worktree_id: self.id().to_proto(),
             root_name: self.root_name().to_string(),
             authorized_logins: self.authorized_logins(),
+            weak: self.weak,
         };
         cx.spawn(|this, mut cx| async move {
             let response = client.request(register_message).await;
@@ -760,61 +761,66 @@ impl LocalWorktree {
         &mut self,
         project_id: u64,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<anyhow::Result<()>> {
+    ) -> impl Future<Output = Result<()>> {
+        let (mut share_tx, mut share_rx) = oneshot::channel();
         if self.share.is_some() {
-            return Task::ready(Ok(()));
+            let _ = share_tx.try_send(Ok(()));
+        } else {
+            let snapshot = self.snapshot();
+            let rpc = self.client.clone();
+            let worktree_id = cx.model_id() as u64;
+            let (snapshots_to_send_tx, snapshots_to_send_rx) =
+                smol::channel::unbounded::<LocalSnapshot>();
+            let (mut share_tx, mut share_rx) = oneshot::channel();
+            let maintain_remote_snapshot = cx.background().spawn({
+                let rpc = rpc.clone();
+                let snapshot = snapshot.clone();
+                let diagnostic_summaries = self.diagnostic_summaries.clone();
+                let weak = self.weak;
+                async move {
+                    if let Err(error) = rpc
+                        .request(proto::UpdateWorktree {
+                            project_id,
+                            worktree_id,
+                            root_name: snapshot.root_name().to_string(),
+                            updated_entries: snapshot
+                                .entries_by_path
+                                .iter()
+                                .filter(|e| !e.is_ignored)
+                                .map(Into::into)
+                                .collect(),
+                            removed_entries: Default::default(),
+                        })
+                        .await
+                    {
+                        let _ = share_tx.try_send(Err(error));
+                        return Err(anyhow!("failed to send initial update worktree"));
+                    } else {
+                        let _ = share_tx.try_send(Ok(()));
+                    }
+
+                    let mut prev_snapshot = snapshot;
+                    while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
+                        let message =
+                            snapshot.build_update(&prev_snapshot, project_id, worktree_id, false);
+                        rpc.request(message).await?;
+                        prev_snapshot = snapshot;
+                    }
+
+                    Ok::<_, anyhow::Error>(())
+                }
+                .log_err()
+            });
+            self.share = Some(ShareState {
+                project_id,
+                snapshots_tx: snapshots_to_send_tx,
+                _maintain_remote_snapshot: Some(maintain_remote_snapshot),
+            });
         }
 
-        let snapshot = self.snapshot();
-        let rpc = self.client.clone();
-        let worktree_id = cx.model_id() as u64;
-        let (snapshots_to_send_tx, snapshots_to_send_rx) =
-            smol::channel::unbounded::<LocalSnapshot>();
-        let (mut share_tx, mut share_rx) = oneshot::channel();
-        let maintain_remote_snapshot = cx.background().spawn({
-            let rpc = rpc.clone();
-            let snapshot = snapshot.clone();
-            let diagnostic_summaries = self.diagnostic_summaries.clone();
-            let weak = self.weak;
-            async move {
-                if let Err(error) = rpc
-                    .request(proto::ShareWorktree {
-                        project_id,
-                        worktree: Some(snapshot.to_proto(&diagnostic_summaries, weak)),
-                    })
-                    .await
-                {
-                    let _ = share_tx.try_send(Err(error));
-                    return;
-                } else {
-                    let _ = share_tx.try_send(Ok(()));
-                }
-
-                let mut prev_snapshot = snapshot;
-                while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
-                    let message =
-                        snapshot.build_update(&prev_snapshot, project_id, worktree_id, false);
-                    match rpc.request(message).await {
-                        Ok(_) => {
-                            prev_snapshot = snapshot;
-                        }
-                        Err(err) => log::error!("error sending snapshot diff {}", err),
-                    }
-                }
-            }
-        });
-        self.share = Some(ShareState {
-            project_id,
-            snapshots_tx: snapshots_to_send_tx,
-            _maintain_remote_snapshot: Some(maintain_remote_snapshot),
-        });
-
-        cx.foreground().spawn(async move {
-            match share_rx.next().await {
-                Some(result) => result,
-                None => Err(anyhow!("unshared before sharing completed")),
-            }
-        })
+        async move {
+            share_rx.next().await;
+        }
     }
 
     pub fn unshare(&mut self) {

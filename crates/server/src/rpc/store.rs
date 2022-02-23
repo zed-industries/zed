@@ -396,36 +396,6 @@ impl Store {
         }
     }
 
-    pub fn share_worktree(
-        &mut self,
-        project_id: u64,
-        worktree_id: u64,
-        connection_id: ConnectionId,
-        entries: HashMap<u64, proto::Entry>,
-        diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
-    ) -> tide::Result<SharedWorktree> {
-        let project = self
-            .projects
-            .get_mut(&project_id)
-            .ok_or_else(|| anyhow!("no such project"))?;
-        let worktree = project
-            .worktrees
-            .get_mut(&worktree_id)
-            .ok_or_else(|| anyhow!("no such worktree"))?;
-        if project.host_connection_id == connection_id && project.share.is_some() {
-            worktree.share = Some(WorktreeShare {
-                entries,
-                diagnostic_summaries,
-            });
-            Ok(SharedWorktree {
-                authorized_user_ids: project.authorized_user_ids(),
-                connection_ids: project.guest_connection_ids(),
-            })
-        } else {
-            Err(anyhow!("no such worktree"))?
-        }
-    }
-
     pub fn update_diagnostic_summary(
         &mut self,
         project_id: u64,
