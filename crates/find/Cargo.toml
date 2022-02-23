@@ -10,6 +10,7 @@ path = "src/find.rs"
 collections = { path = "../collections" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
+project = { path = "../project" }
 theme = { path = "../theme" }
 workspace = { path = "../workspace" }
 aho-corasick = "0.7"

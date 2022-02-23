@@ -1,3 +1,5 @@
+mod project_find;
+
 use aho_corasick::AhoCorasickBuilder;
 use anyhow::Result;
 use collections::HashMap;

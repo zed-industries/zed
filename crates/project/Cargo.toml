@@ -29,6 +29,7 @@ util = { path = "../util" }
 anyhow = "1.0.38"
 async-trait = "0.1"
 futures = "0.3"
+grep = "0.2"
 ignore = "0.4"
 lazy_static = "1.4.0"
 libc = "0.2"

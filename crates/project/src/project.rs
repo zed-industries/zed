@@ -7,7 +7,7 @@ use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
-use futures::{future::Shared, Future, FutureExt};
+use futures::{future::Shared, Future, FutureExt, StreamExt};
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
@@ -16,7 +16,7 @@ use gpui::{
 use language::{
     range_from_lsp, Anchor, AnchorRangeExt, Bias, Buffer, CodeAction, CodeLabel, Completion,
     Diagnostic, DiagnosticEntry, File as _, Language, LanguageRegistry, Operation, PointUtf16,
-    ToLspPosition, ToOffset, ToPointUtf16, Transaction,
+    Rope, ToLspPosition, ToOffset, ToPointUtf16, Transaction,
 };
 use lsp::{DiagnosticSeverity, DocumentHighlightKind, LanguageServer};
 use lsp_command::*;
@@ -2040,6 +2040,111 @@ impl Project {
             },
             cx,
         )
+    }
+
+    pub fn search(&self, query: &str, cx: &mut ModelContext<Self>) {
+        if self.is_local() {
+            enum SearchItem {
+                Path(PathBuf),
+                Buffer((WeakModelHandle<Buffer>, Rope)),
+            }
+
+            let (queue_tx, queue_rx) = smol::channel::bounded(1024);
+
+            // Submit all worktree paths to the queue.
+            let snapshots = self
+                .strong_worktrees(cx)
+                .filter_map(|tree| {
+                    let tree = tree.read(cx).as_local()?;
+                    Some((tree.abs_path().clone(), tree.snapshot()))
+                })
+                .collect::<Vec<_>>();
+            cx.background()
+                .spawn({
+                    let queue_tx = queue_tx.clone();
+                    async move {
+                        for (snapshot_abs_path, snapshot) in snapshots {
+                            for file in snapshot.files(false, 0) {
+                                if queue_tx
+                                    .send(SearchItem::Path(snapshot_abs_path.join(&file.path)))
+                                    .await
+                                    .is_err()
+                                {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                })
+                .detach();
+
+            // Submit all the currently-open buffers that are dirty to the queue.
+            let buffers = self
+                .open_buffers
+                .values()
+                .filter_map(|buffer| {
+                    if let OpenBuffer::Loaded(buffer) = buffer {
+                        Some(buffer.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            cx.spawn_weak(|_, cx| async move {
+                for buffer in buffers.into_iter().filter_map(|buffer| buffer.upgrade(&cx)) {
+                    let text = buffer.read_with(&cx, |buffer, _| {
+                        if buffer.is_dirty() {
+                            Some(buffer.as_rope().clone())
+                        } else {
+                            None
+                        }
+                    });
+
+                    if let Some(text) = text {
+                        if queue_tx
+                            .send(SearchItem::Buffer((buffer.downgrade(), text)))
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                }
+            })
+            .detach();
+
+            let background = cx.background().clone();
+            cx.background()
+                .spawn(async move {
+                    let workers = background.num_cpus();
+                    background
+                        .scoped(|scope| {
+                            for _ in 0..workers {
+                                let mut paths_rx = queue_rx.clone();
+                                scope.spawn(async move {
+                                    while let Some(item) = paths_rx.next().await {
+                                        match item {
+                                            SearchItem::Path(_) => todo!(),
+                                            SearchItem::Buffer(_) => todo!(),
+                                        }
+                                    }
+                                });
+                            }
+                        })
+                        .await;
+                })
+                .detach();
+            // let multiline = query.contains('\n');
+            // let searcher = grep::searcher::SearcherBuilder::new()
+            //     .multi_line(multiline)
+            //     .build();
+            // searcher.search_path(
+            //     "hey".to_string(),
+            //     "/hello/world",
+            //     grep::searcher::sinks::Lossy(|row, mat| {}),
+            // );
+        } else {
+        }
     }
 
     fn request_lsp<R: LspCommand>(
