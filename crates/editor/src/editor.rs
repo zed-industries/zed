@@ -442,6 +442,7 @@ pub struct Editor {
     next_completion_id: CompletionId,
     available_code_actions: Option<(ModelHandle<Buffer>, Arc<[CodeAction]>)>,
     code_actions_task: Option<Task<()>>,
+    document_highlights_task: Option<Task<()>>,
     pending_rename: Option<RenameState>,
 }
 
@@ -903,6 +904,7 @@ impl Editor {
             next_completion_id: 0,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
+            document_highlights_task: Default::default(),
             pending_rename: Default::default(),
         };
         this.end_selection(cx);
@@ -2290,6 +2292,76 @@ impl Editor {
                     });
                     cx.notify();
                 })
+            }
+        }));
+        None
+    }
+
+    fn refresh_document_highlights(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
+        let project = self.project.as_ref()?;
+        let buffer = self.buffer.read(cx);
+        let newest_selection = self.newest_anchor_selection().clone();
+        let cursor_position = newest_selection.head();
+        let (cursor_buffer, cursor_buffer_position) =
+            buffer.text_anchor_for_position(cursor_position.clone(), cx)?;
+        let (tail_buffer, _) = buffer.text_anchor_for_position(newest_selection.tail(), cx)?;
+        if cursor_buffer != tail_buffer {
+            return None;
+        }
+
+        let highlights = project.update(cx, |project, cx| {
+            project.document_highlights(&cursor_buffer, cursor_buffer_position, cx)
+        });
+
+        enum DocumentHighlightRead {}
+        enum DocumentHighlightWrite {}
+
+        self.document_highlights_task = Some(cx.spawn_weak(|this, mut cx| async move {
+            let highlights = highlights.log_err().await;
+            if let Some((this, highlights)) = this.upgrade(&cx).zip(highlights) {
+                this.update(&mut cx, |this, cx| {
+                    let buffer_id = cursor_position.buffer_id;
+                    let excerpt_id = cursor_position.excerpt_id.clone();
+                    let settings = (this.build_settings)(cx);
+                    let buffer = this.buffer.read(cx);
+                    if !buffer
+                        .text_anchor_for_position(cursor_position, cx)
+                        .map_or(false, |(buffer, _)| buffer == cursor_buffer)
+                    {
+                        return;
+                    }
+
+                    let mut write_ranges = Vec::new();
+                    let mut read_ranges = Vec::new();
+                    for highlight in highlights {
+                        let range = Anchor {
+                            buffer_id,
+                            excerpt_id: excerpt_id.clone(),
+                            text_anchor: highlight.range.start,
+                        }..Anchor {
+                            buffer_id,
+                            excerpt_id: excerpt_id.clone(),
+                            text_anchor: highlight.range.end,
+                        };
+                        if highlight.kind == lsp::DocumentHighlightKind::WRITE {
+                            write_ranges.push(range);
+                        } else {
+                            read_ranges.push(range);
+                        }
+                    }
+
+                    this.highlight_ranges::<DocumentHighlightRead>(
+                        read_ranges,
+                        settings.style.document_highlight_read_background,
+                        cx,
+                    );
+                    this.highlight_ranges::<DocumentHighlightWrite>(
+                        write_ranges,
+                        settings.style.document_highlight_write_background,
+                        cx,
+                    );
+                    cx.notify();
+                });
             }
         }));
         None
@@ -4840,6 +4912,7 @@ impl Editor {
             self.available_code_actions.take();
         }
         self.refresh_code_actions(cx);
+        self.refresh_document_highlights(cx);
 
         self.pause_cursor_blinking(cx);
         cx.emit(Event::SelectionsChanged);
@@ -5294,6 +5367,8 @@ impl EditorSettings {
                     highlighted_line_background: Default::default(),
                     diff_background_deleted: Default::default(),
                     diff_background_inserted: Default::default(),
+                    document_highlight_read_background: Default::default(),
+                    document_highlight_write_background: Default::default(),
                     line_number: Default::default(),
                     line_number_active: Default::default(),
                     selection: Default::default(),

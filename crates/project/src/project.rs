@@ -18,7 +18,7 @@ use language::{
     Diagnostic, DiagnosticEntry, File as _, Language, LanguageRegistry, Operation, PointUtf16,
     ToLspPosition, ToOffset, ToPointUtf16, Transaction,
 };
-use lsp::{DiagnosticSeverity, LanguageServer};
+use lsp::{DiagnosticSeverity, DocumentHighlightKind, LanguageServer};
 use lsp_command::*;
 use postage::{broadcast, prelude::Stream, sink::Sink, watch};
 use rand::prelude::*;
@@ -123,6 +123,12 @@ pub struct Location {
     pub range: Range<language::Anchor>,
 }
 
+#[derive(Debug)]
+pub struct DocumentHighlight {
+    pub range: Range<language::Anchor>,
+    pub kind: DocumentHighlightKind,
+}
+
 #[derive(Clone, Debug)]
 pub struct Symbol {
     pub source_worktree_id: WorktreeId,
@@ -202,6 +208,7 @@ impl Project {
         client.add_entity_request_handler(Self::handle_get_code_actions);
         client.add_entity_request_handler(Self::handle_get_completions);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDefinition>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetReferences>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
@@ -1267,6 +1274,16 @@ impl Project {
     ) -> Task<Result<Vec<Location>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(buffer.clone(), GetReferences { position }, cx)
+    }
+
+    pub fn document_highlights<T: ToPointUtf16>(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<DocumentHighlight>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.request_lsp(buffer.clone(), GetDocumentHighlights { position }, cx)
     }
 
     pub fn symbols(&self, query: &str, cx: &mut ModelContext<Self>) -> Task<Result<Vec<Symbol>>> {
