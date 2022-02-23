@@ -530,10 +530,13 @@ impl Client {
                 let cx = cx.clone();
                 let this = self.clone();
                 async move {
+                    let mut message_id = 0_usize;
                     while let Some(message) = incoming.next().await {
                         let mut state = this.state.write();
-                        let payload_type_id = message.payload_type_id();
+                        message_id += 1;
                         let type_name = message.payload_type_name();
+                        let payload_type_id = message.payload_type_id();
+                        let sender_id = message.original_sender_id().map(|id| id.0);
 
                         let model = state
                             .models_by_message_type
@@ -575,8 +578,10 @@ impl Client {
 
                             let client_id = this.id;
                             log::debug!(
-                                "rpc message received. client_id:{}, name:{}",
+                                "rpc message received. client_id:{}, message_id:{}, sender_id:{:?}, type:{}",
                                 client_id,
+                                message_id,
+                                sender_id,
                                 type_name
                             );
                             cx.foreground()
@@ -584,15 +589,19 @@ impl Client {
                                     match future.await {
                                         Ok(()) => {
                                             log::debug!(
-                                                "rpc message handled. client_id:{}, name:{}",
+                                                "rpc message handled. client_id:{}, message_id:{}, sender_id:{:?}, type:{}",
                                                 client_id,
+                                                message_id,
+                                                sender_id,
                                                 type_name
                                             );
                                         }
                                         Err(error) => {
                                             log::error!(
-                                                "error handling message. client_id:{}, name:{}, {}",
+                                                "error handling message. client_id:{}, message_id:{}, sender_id:{:?}, type:{}, error:{:?}",
                                                 client_id,
+                                                message_id,
+                                                sender_id,
                                                 type_name,
                                                 error
                                             );
