@@ -4856,6 +4856,8 @@ mod tests {
                     cx.background().simulate_random_delay().await;
                 }
 
+                log::info!("Host done");
+
                 self.project = Some(project);
                 (self, cx)
             }
@@ -4887,15 +4889,25 @@ mod tests {
                     };
 
                     operations.set(operations.get() + 1);
-                    let project_path = worktree.read_with(&cx, |worktree, _| {
-                        let entry = worktree
-                            .entries(false)
-                            .filter(|e| e.is_file())
-                            .choose(&mut *rng.lock())
-                            .unwrap();
-                        (worktree.id(), entry.path.clone())
-                    });
-                    log::info!("Guest {}: opening path {:?}", guest_id, project_path);
+                    let (worktree_root_name, project_path) =
+                        worktree.read_with(&cx, |worktree, _| {
+                            let entry = worktree
+                                .entries(false)
+                                .filter(|e| e.is_file())
+                                .choose(&mut *rng.lock())
+                                .unwrap();
+                            (
+                                worktree.root_name().to_string(),
+                                (worktree.id(), entry.path.clone()),
+                            )
+                        });
+                    log::info!(
+                        "Guest {}: opening path in worktree {:?} {:?} {:?}",
+                        guest_id,
+                        project_path.0,
+                        worktree_root_name,
+                        project_path.1
+                    );
                     let buffer = project
                         .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))
                         .await
@@ -5061,6 +5073,8 @@ mod tests {
                 }
                 cx.background().simulate_random_delay().await;
             }
+
+            log::info!("Guest {} done", guest_id);
 
             self.project = Some(project);
             (self, cx)
