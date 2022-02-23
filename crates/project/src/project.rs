@@ -3885,7 +3885,6 @@ mod tests {
                 &initial_snapshot,
                 1,
                 1,
-                0,
                 true,
             );
             remote

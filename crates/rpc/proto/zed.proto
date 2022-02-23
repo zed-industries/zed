@@ -145,12 +145,11 @@ message ShareWorktree {
 }
 
 message UpdateWorktree {
-    uint64 id = 1;
-    uint64 project_id = 2;
-    uint64 worktree_id = 3;
-    string root_name = 4;
-    repeated Entry updated_entries = 5;
-    repeated uint64 removed_entries = 6;
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string root_name = 3;
+    repeated Entry updated_entries = 4;
+    repeated uint64 removed_entries = 5;
 }
 
 message AddProjectCollaborator {
@@ -494,7 +493,6 @@ message Worktree {
     repeated Entry entries = 3;
     repeated DiagnosticSummary diagnostic_summaries = 4;
     bool weak = 5;
-    uint64 next_update_id = 6;
 }
 
 message File {

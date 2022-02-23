@@ -350,7 +350,6 @@ impl Server {
                                 .cloned()
                                 .collect(),
                             weak: worktree.weak,
-                            next_update_id: share.next_update_id as u64,
                         })
                     })
                     .collect();
@@ -489,7 +488,6 @@ impl Server {
             request.sender_id,
             entries,
             diagnostic_summaries,
-            worktree.next_update_id,
         )?;
 
         broadcast(
@@ -513,7 +511,6 @@ impl Server {
             request.sender_id,
             request.payload.project_id,
             request.payload.worktree_id,
-            request.payload.id,
             &request.payload.removed_entries,
             &request.payload.updated_entries,
         )?;

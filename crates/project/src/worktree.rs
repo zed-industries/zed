@@ -84,7 +84,6 @@ pub struct RemoteWorktree {
     queued_operations: Vec<(u64, Operation)>,
     diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
     weak: bool,
-    next_update_id: u64,
     pending_updates: VecDeque<proto::UpdateWorktree>,
 }
 
@@ -239,7 +238,6 @@ impl Worktree {
                     }),
                 ),
                 weak,
-                next_update_id: worktree.next_update_id,
                 pending_updates: Default::default(),
             })
         });
@@ -792,20 +790,13 @@ impl LocalWorktree {
                     let _ = share_tx.try_send(Ok(()));
                 }
 
-                let mut update_id = 0;
                 let mut prev_snapshot = snapshot;
                 while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
-                    let message = snapshot.build_update(
-                        &prev_snapshot,
-                        project_id,
-                        worktree_id,
-                        update_id,
-                        false,
-                    );
+                    let message =
+                        snapshot.build_update(&prev_snapshot, project_id, worktree_id, false);
                     match rpc.request(message).await {
                         Ok(_) => {
                             prev_snapshot = snapshot;
-                            update_id += 1;
                         }
                         Err(err) => log::error!("error sending snapshot diff {}", err),
                     }
@@ -844,30 +835,9 @@ impl RemoteWorktree {
         &mut self,
         envelope: TypedEnvelope<proto::UpdateWorktree>,
     ) -> Result<()> {
-        let update = envelope.payload;
-        if update.id > self.next_update_id {
-            let ix = match self
-                .pending_updates
-                .binary_search_by_key(&update.id, |pending| pending.id)
-            {
-                Ok(ix) | Err(ix) => ix,
-            };
-            self.pending_updates.insert(ix, update);
-        } else {
-            let tx = self.updates_tx.clone();
-            self.next_update_id += 1;
-            tx.unbounded_send(update)
-                .expect("consumer runs to completion");
-            while let Some(update) = self.pending_updates.front() {
-                if update.id == self.next_update_id {
-                    self.next_update_id += 1;
-                    tx.unbounded_send(self.pending_updates.pop_front().unwrap())
-                        .expect("consumer runs to completion");
-                } else {
-                    break;
-                }
-            }
-        }
+        self.updates_tx
+            .unbounded_send(envelope.payload)
+            .expect("consumer runs to completion");
 
         Ok(())
     }
@@ -1058,7 +1028,6 @@ impl LocalSnapshot {
                 .map(|(path, summary)| summary.to_proto(path.0.clone()))
                 .collect(),
             weak,
-            next_update_id: 0,
         }
     }
 
@@ -1067,7 +1036,6 @@ impl LocalSnapshot {
         other: &Self,
         project_id: u64,
         worktree_id: u64,
-        update_id: u64,
         include_ignored: bool,
     ) -> proto::UpdateWorktree {
         let mut updated_entries = Vec::new();
@@ -1120,7 +1088,6 @@ impl LocalSnapshot {
         }
 
         proto::UpdateWorktree {
-            id: update_id as u64,
             project_id,
             worktree_id,
             root_name: self.root_name().to_string(),
@@ -2461,7 +2428,7 @@ mod tests {
         fmt::Write,
         time::{SystemTime, UNIX_EPOCH},
     };
-    use util::{post_inc, test::temp_tree};
+    use util::test::temp_tree;
 
     #[gpui::test]
     async fn test_traversal(cx: gpui::TestAppContext) {
@@ -2646,7 +2613,6 @@ mod tests {
             new_scanner.snapshot().to_vec(true)
         );
 
-        let mut update_id = 0;
         for mut prev_snapshot in snapshots {
             let include_ignored = rng.gen::<bool>();
             if !include_ignored {
@@ -2667,13 +2633,9 @@ mod tests {
                 prev_snapshot.entries_by_id.edit(entries_by_id_edits, &());
             }
 
-            let update = scanner.snapshot().build_update(
-                &prev_snapshot,
-                0,
-                0,
-                post_inc(&mut update_id),
-                include_ignored,
-            );
+            let update = scanner
+                .snapshot()
+                .build_update(&prev_snapshot, 0, 0, include_ignored);
             prev_snapshot.apply_remote_update(update).unwrap();
             assert_eq!(
                 prev_snapshot.to_vec(true),
