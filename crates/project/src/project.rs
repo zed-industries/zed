@@ -13,10 +13,11 @@ use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
     UpgradeModelHandle, WeakModelHandle,
 };
+use grep::{matcher::Matcher, searcher::Searcher};
 use language::{
     range_from_lsp, Anchor, AnchorRangeExt, Bias, Buffer, CodeAction, CodeLabel, Completion,
     Diagnostic, DiagnosticEntry, File as _, Language, LanguageRegistry, Operation, PointUtf16,
-    Rope, ToLspPosition, ToOffset, ToPointUtf16, Transaction,
+    ToLspPosition, ToOffset, ToPointUtf16, Transaction,
 };
 use lsp::{DiagnosticSeverity, DocumentHighlightKind, LanguageServer};
 use lsp_command::*;
@@ -2042,13 +2043,15 @@ impl Project {
         )
     }
 
-    pub fn search(&self, query: &str, cx: &mut ModelContext<Self>) {
+    pub fn search<T>(
+        &self,
+        query: SearchQuery,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<HashMap<ModelHandle<Buffer>, Vec<Range<Anchor>>>>
+    where
+        T: Matcher,
+    {
         if self.is_local() {
-            enum SearchItem {
-                Path(PathBuf),
-                Buffer((WeakModelHandle<Buffer>, Rope)),
-            }
-
             let (queue_tx, queue_rx) = smol::channel::bounded(1024);
 
             // Submit all worktree paths to the queue.
@@ -2066,7 +2069,7 @@ impl Project {
                         for (snapshot_abs_path, snapshot) in snapshots {
                             for file in snapshot.files(false, 0) {
                                 if queue_tx
-                                    .send(SearchItem::Path(snapshot_abs_path.join(&file.path)))
+                                    .send((snapshot_abs_path.clone(), file.path.clone()))
                                     .await
                                     .is_err()
                                 {
@@ -2078,73 +2081,49 @@ impl Project {
                 })
                 .detach();
 
-            // Submit all the currently-open buffers that are dirty to the queue.
-            let buffers = self
-                .open_buffers
-                .values()
-                .filter_map(|buffer| {
-                    if let OpenBuffer::Loaded(buffer) = buffer {
-                        Some(buffer.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-            cx.spawn_weak(|_, cx| async move {
-                for buffer in buffers.into_iter().filter_map(|buffer| buffer.upgrade(&cx)) {
-                    let text = buffer.read_with(&cx, |buffer, _| {
-                        if buffer.is_dirty() {
-                            Some(buffer.as_rope().clone())
-                        } else {
-                            None
-                        }
-                    });
-
-                    if let Some(text) = text {
-                        if queue_tx
-                            .send(SearchItem::Buffer((buffer.downgrade(), text)))
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                }
-            })
-            .detach();
-
-            let background = cx.background().clone();
+            let matcher = Arc::new(matcher);
             cx.background()
-                .spawn(async move {
+                .spawn({
+                    let background = cx.background().clone();
                     let workers = background.num_cpus();
-                    background
-                        .scoped(|scope| {
-                            for _ in 0..workers {
-                                let mut paths_rx = queue_rx.clone();
-                                scope.spawn(async move {
-                                    while let Some(item) = paths_rx.next().await {
-                                        match item {
-                                            SearchItem::Path(_) => todo!(),
-                                            SearchItem::Buffer(_) => todo!(),
+                    let searcher = searcher.clone();
+                    let matcher = matcher.clone();
+                    async move {
+                        background
+                            .scoped(|scope| {
+                                for _ in 0..workers {
+                                    let mut paths_rx = queue_rx.clone();
+                                    scope.spawn(async move {
+                                        let mut path = PathBuf::new();
+                                        while let Some((snapshot_abs_path, file_path)) =
+                                            paths_rx.next().await
+                                        {
+                                            path.clear();
+                                            path.push(snapshot_abs_path);
+                                            path.push(file_path);
+                                            let mut matched = false;
+                                            // searcher.search_path(
+                                            //     matcher.as_ref(),
+                                            //     &path,
+                                            //     grep::searcher::sinks::Bytes(|_, _| {
+                                            //         matched = true;
+                                            //         Ok(false)
+                                            //     }),
+                                            // );
+
+                                            if matched {}
                                         }
-                                    }
-                                });
-                            }
-                        })
-                        .await;
+                                    });
+                                }
+                            })
+                            .await;
+                    }
                 })
                 .detach();
-            // let multiline = query.contains('\n');
-            // let searcher = grep::searcher::SearcherBuilder::new()
-            //     .multi_line(multiline)
-            //     .build();
-            // searcher.search_path(
-            //     "hey".to_string(),
-            //     "/hello/world",
-            //     grep::searcher::sinks::Lossy(|row, mat| {}),
-            // );
         } else {
         }
+
+        todo!()
     }
 
     fn request_lsp<R: LspCommand>(
