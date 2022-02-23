@@ -776,7 +776,7 @@ impl Project {
         }
     }
 
-    fn get_open_buffer(
+    pub fn get_open_buffer(
         &mut self,
         path: &ProjectPath,
         cx: &mut ModelContext<Self>,
@@ -2047,7 +2047,7 @@ impl Project {
         }
     }
 
-    fn find_local_worktree(
+    pub fn find_local_worktree(
         &self,
         abs_path: &Path,
         cx: &AppContext,

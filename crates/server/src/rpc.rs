@@ -1218,7 +1218,7 @@ mod tests {
         fs::{FakeFs, Fs as _},
         language::{
             tree_sitter_rust, AnchorRangeExt, Diagnostic, DiagnosticEntry, Language,
-            LanguageConfig, LanguageRegistry, LanguageServerConfig, Point,
+            LanguageConfig, LanguageRegistry, LanguageServerConfig, Point, ToLspPosition,
         },
         lsp,
         project::{DiagnosticSummary, Project, ProjectPath},
@@ -4688,6 +4688,7 @@ mod tests {
             language_server_config.set_fake_initializer({
                 let rng = rng.clone();
                 let files = files.clone();
+                let project = project.clone();
                 move |fake_server| {
                     fake_server.handle_request::<lsp::request::Completion, _>(|_, _| {
                         Some(lsp::CompletionResponse::Array(vec![lsp::CompletionItem {
@@ -4738,6 +4739,44 @@ mod tests {
                                     })
                                     .collect(),
                             ))
+                        }
+                    });
+
+                    fake_server.handle_request::<lsp::request::DocumentHighlightRequest, _>({
+                        let rng = rng.clone();
+                        let project = project.clone();
+                        move |params, mut cx| {
+                            project.update(&mut cx, |project, cx| {
+                                let path = params
+                                    .text_document_position_params
+                                    .text_document
+                                    .uri
+                                    .to_file_path()
+                                    .unwrap();
+                                let (worktree, relative_path) =
+                                    project.find_local_worktree(&path, cx)?;
+                                let project_path =
+                                    ProjectPath::from((worktree.read(cx).id(), relative_path));
+                                let buffer = project.get_open_buffer(&project_path, cx)?.read(cx);
+
+                                let mut highlights = Vec::new();
+                                let highlight_count = rng.lock().gen_range(1..=5);
+                                let mut prev_end = 0;
+                                for _ in 0..highlight_count {
+                                    let range =
+                                        buffer.random_byte_range(prev_end, &mut *rng.lock());
+                                    let start =
+                                        buffer.offset_to_point_utf16(range.start).to_lsp_position();
+                                    let end =
+                                        buffer.offset_to_point_utf16(range.end).to_lsp_position();
+                                    highlights.push(lsp::DocumentHighlight {
+                                        range: lsp::Range::new(start, end),
+                                        kind: Some(lsp::DocumentHighlightKind::READ),
+                                    });
+                                    prev_end = range.end;
+                                }
+                                Some(highlights)
+                            })
                         }
                     });
                 }
@@ -5024,6 +5063,26 @@ mod tests {
                             definitions.detach();
                         } else {
                             definitions.await;
+                        }
+                    }
+                    50..=55 => {
+                        let highlights = project.update(&mut cx, |project, cx| {
+                            log::info!(
+                                "Guest {}: requesting highlights for buffer {:?}",
+                                guest_id,
+                                buffer.read(cx).file().unwrap().full_path(cx)
+                            );
+                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                            project.document_highlights(&buffer, offset, cx)
+                        });
+                        let highlights = cx.background().spawn(async move {
+                            highlights.await.expect("highlights request failed");
+                        });
+                        if rng.lock().gen_bool(0.3) {
+                            log::info!("Guest {}: detaching highlights request", guest_id);
+                            highlights.detach();
+                        } else {
+                            highlights.await;
                         }
                     }
                     _ => {
