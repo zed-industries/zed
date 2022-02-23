@@ -3612,7 +3612,7 @@ mod tests {
             .unwrap();
 
         let mut fake_server = fake_servers.next().await.unwrap();
-        fake_server.handle_request::<lsp::request::GotoDefinition, _>(move |params| {
+        fake_server.handle_request::<lsp::request::GotoDefinition, _>(move |params, _| {
             let params = params.text_document_position_params;
             assert_eq!(
                 params.text_document.uri.to_file_path().unwrap(),
@@ -4504,7 +4504,7 @@ mod tests {
             project.prepare_rename(buffer.clone(), 7, cx)
         });
         fake_server
-            .handle_request::<lsp::request::PrepareRenameRequest, _>(|params| {
+            .handle_request::<lsp::request::PrepareRenameRequest, _>(|params, _| {
                 assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
                 assert_eq!(params.position, lsp::Position::new(0, 7));
                 Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
@@ -4523,7 +4523,7 @@ mod tests {
             project.perform_rename(buffer.clone(), 7, "THREE".to_string(), true, cx)
         });
         fake_server
-            .handle_request::<lsp::request::Rename, _>(|params| {
+            .handle_request::<lsp::request::Rename, _>(|params, _| {
                 assert_eq!(
                     params.text_document_position.text_document.uri.as_str(),
                     "file:///dir/one.rs"
