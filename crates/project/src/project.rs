@@ -2108,10 +2108,7 @@ impl Project {
                                             let matches = if let Some(file) =
                                                 fs.open_sync(&path).await.log_err()
                                             {
-                                                query
-                                                    .search(file)
-                                                    .next()
-                                                    .map_or(false, |range| range.is_ok())
+                                                query.is_contained_in_stream(file).unwrap_or(false)
                                             } else {
                                                 false
                                             };
@@ -2176,10 +2173,12 @@ impl Project {
                             let mut buffers_rx = buffers_rx.clone();
                             scope.spawn(async move {
                                 while let Some((buffer, snapshot)) = buffers_rx.next().await {
-                                    for range in query.search(
-                                        snapshot.as_rope().bytes_in_range(0..snapshot.len()),
-                                    ) {
-                                        let range = range.unwrap();
+                                    for range in query
+                                        .search(
+                                            snapshot.as_rope().bytes_in_range(0..snapshot.len()),
+                                        )
+                                        .unwrap()
+                                    {
                                         let range = snapshot.anchor_before(range.start)
                                             ..snapshot.anchor_after(range.end);
                                         worker_matched_buffers
