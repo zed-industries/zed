@@ -4880,7 +4880,8 @@ mod tests {
                         project
                             .worktrees(&cx)
                             .filter(|worktree| {
-                                worktree.read(cx).entries(false).any(|e| e.is_file())
+                                let worktree = worktree.read(cx);
+                                !worktree.is_weak() && worktree.entries(false).any(|e| e.is_file())
                             })
                             .choose(&mut *rng.lock())
                     }) {
@@ -5033,13 +5034,14 @@ mod tests {
                             project.definition(&buffer, offset, cx)
                         });
                         let definitions = cx.background().spawn(async move {
-                            definitions.await.expect("definitions request failed");
+                            definitions.await.expect("definitions request failed")
                         });
                         if rng.lock().gen_bool(0.3) {
                             log::info!("Guest {}: detaching definitions request", guest_id);
                             definitions.detach();
                         } else {
-                            definitions.await;
+                            self.buffers
+                                .extend(definitions.await.into_iter().map(|loc| loc.buffer));
                         }
                     }
                     50..=55 => {
