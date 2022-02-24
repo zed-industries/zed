@@ -4440,9 +4440,11 @@ mod tests {
                 assert_eq!(
                     guest_buffer.read_with(guest_cx, |buffer, _| buffer.text()),
                     host_buffer.read_with(&host_cx, |buffer, _| buffer.text()),
-                    "guest {} buffer {} differs from the host's buffer",
+                    "guest {}, buffer {}, path {:?}, differs from the host's buffer",
                     guest_id,
                     buffer_id,
+                    host_buffer
+                        .read_with(&host_cx, |buffer, cx| buffer.file().unwrap().full_path(cx))
                 );
             }
         }
@@ -4691,14 +4693,16 @@ mod tests {
                             let files = files.lock();
                             let mut rng = rng.lock();
                             let count = rng.gen_range::<usize, _>(1..3);
+                            let files = (0..count)
+                                .map(|_| files.choose(&mut *rng).unwrap())
+                                .collect::<Vec<_>>();
+                            log::info!("LSP: Returning definitions in files {:?}", &files);
                             Some(lsp::GotoDefinitionResponse::Array(
-                                (0..count)
-                                    .map(|_| {
-                                        let file = files.choose(&mut *rng).unwrap().as_path();
-                                        lsp::Location {
-                                            uri: lsp::Url::from_file_path(file).unwrap(),
-                                            range: Default::default(),
-                                        }
+                                files
+                                    .into_iter()
+                                    .map(|file| lsp::Location {
+                                        uri: lsp::Url::from_file_path(file).unwrap(),
+                                        range: Default::default(),
                                     })
                                     .collect(),
                             ))
@@ -4787,13 +4791,17 @@ mod tests {
                                 let file = files.lock().choose(&mut *rng.lock()).unwrap().clone();
                                 let (worktree, path) = project
                                     .update(&mut cx, |project, cx| {
-                                        project.find_or_create_local_worktree(file, false, cx)
+                                        project.find_or_create_local_worktree(
+                                            file.clone(),
+                                            false,
+                                            cx,
+                                        )
                                     })
                                     .await
                                     .unwrap();
                                 let project_path =
                                     worktree.read_with(&cx, |worktree, _| (worktree.id(), path));
-                                log::info!("Host: opening path {:?}", project_path);
+                                log::info!("Host: opening path {:?}, {:?}", file, project_path);
                                 let buffer = project
                                     .update(&mut cx, |project, cx| {
                                         project.open_buffer(project_path, cx)
