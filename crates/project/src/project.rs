@@ -2055,7 +2055,6 @@ impl Project {
         if self.is_local() {
             let (paths_to_search_tx, paths_to_search_rx) = smol::channel::bounded(1024);
 
-            // Submit all worktree paths to the queue.
             let snapshots = self
                 .strong_worktrees(cx)
                 .filter_map(|tree| {
@@ -2068,7 +2067,7 @@ impl Project {
                     for (snapshot_abs_path, snapshot) in snapshots {
                         for file in snapshot.files(false, 0) {
                             if paths_to_search_tx
-                                .send((snapshot_abs_path.clone(), file.path.clone()))
+                                .send((snapshot.id(), snapshot_abs_path.clone(), file.path.clone()))
                                 .await
                                 .is_err()
                             {
@@ -2086,12 +2085,12 @@ impl Project {
                     // .ascii_case_insensitive(!case_sensitive)
                     .build(&[&query]),
             );
-            let (matching_paths_tx, matching_paths_rx) = smol::channel::bounded(1024);
+            let (matching_paths_tx, mut matching_paths_rx) = smol::channel::bounded(1024);
+            let workers = cx.background().num_cpus();
             cx.background()
                 .spawn({
                     let fs = self.fs.clone();
                     let background = cx.background().clone();
-                    let workers = background.num_cpus();
                     let search = search.clone();
                     async move {
                         let fs = &fs;
@@ -2103,8 +2102,11 @@ impl Project {
                                     let mut paths_to_search_rx = paths_to_search_rx.clone();
                                     scope.spawn(async move {
                                         let mut path = PathBuf::new();
-                                        while let Some((snapshot_abs_path, file_path)) =
-                                            paths_to_search_rx.next().await
+                                        while let Some((
+                                            worktree_id,
+                                            snapshot_abs_path,
+                                            file_path,
+                                        )) = paths_to_search_rx.next().await
                                         {
                                             if matching_paths_tx.is_closed() {
                                                 break;
@@ -2126,7 +2128,7 @@ impl Project {
 
                                             if matches {
                                                 if matching_paths_tx
-                                                    .send((snapshot_abs_path, file_path))
+                                                    .send((worktree_id, file_path))
                                                     .await
                                                     .is_err()
                                                 {
@@ -2141,10 +2143,70 @@ impl Project {
                     }
                 })
                 .detach();
-        } else {
-        }
 
-        todo!()
+            let (buffers_tx, buffers_rx) = smol::channel::bounded(1024);
+            let buffers = self
+                .buffers_state
+                .borrow()
+                .open_buffers
+                .values()
+                .filter_map(|b| b.upgrade(cx))
+                .collect::<HashSet<_>>();
+            cx.spawn(|this, mut cx| async move {
+                for buffer in buffers {
+                    let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+                    buffers_tx.send((buffer, snapshot)).await?;
+                }
+
+                while let Some(project_path) = matching_paths_rx.next().await {
+                    if let Some(buffer) = this
+                        .update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
+                        .await
+                        .log_err()
+                    {
+                        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+                        buffers_tx.send((buffer, snapshot)).await?;
+                    }
+                }
+
+                Ok::<_, anyhow::Error>(())
+            })
+            .detach_and_log_err(cx);
+
+            let background = cx.background().clone();
+            cx.background().spawn(async move {
+                let search = &search;
+                let mut matched_buffers = Vec::new();
+                for _ in 0..workers {
+                    matched_buffers.push(HashMap::default());
+                }
+                background
+                    .scoped(|scope| {
+                        for worker_matched_buffers in matched_buffers.iter_mut() {
+                            let mut buffers_rx = buffers_rx.clone();
+                            scope.spawn(async move {
+                                while let Some((buffer, snapshot)) = buffers_rx.next().await {
+                                    for mat in search.stream_find_iter(
+                                        snapshot.as_rope().bytes_in_range(0..snapshot.len()),
+                                    ) {
+                                        let mat = mat.unwrap();
+                                        let range = snapshot.anchor_before(mat.start())
+                                            ..snapshot.anchor_after(mat.end());
+                                        worker_matched_buffers
+                                            .entry(buffer.clone())
+                                            .or_insert(Vec::new())
+                                            .push(range);
+                                    }
+                                }
+                            });
+                        }
+                    })
+                    .await;
+                matched_buffers.into_iter().flatten().collect()
+            })
+        } else {
+            todo!()
+        }
     }
 
     fn request_lsp<R: LspCommand>(
@@ -4813,5 +4875,79 @@ mod tests {
                 .read_with(&cx, |buffer, _| buffer.text()),
             "const TWO: usize = one::THREE + one::THREE;"
         );
+    }
+
+    #[gpui::test]
+    async fn test_search(mut cx: gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+                "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+                "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), &mut cx);
+        let (tree, _) = project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_local_worktree("/dir", false, cx)
+            })
+            .await
+            .unwrap();
+        let worktree_id = tree.read_with(&cx, |tree, _| tree.id());
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+
+        assert_eq!(
+            search(&project, SearchQuery::Plain("TWO".to_string()), &mut cx).await,
+            HashMap::from_iter([
+                ("two.rs".to_string(), vec![6..9]),
+                ("three.rs".to_string(), vec![37..40])
+            ])
+        );
+
+        let buffer_4 = project
+            .update(&mut cx, |project, cx| {
+                project.open_buffer((worktree_id, "four.rs"), cx)
+            })
+            .await
+            .unwrap();
+        buffer_4.update(&mut cx, |buffer, cx| {
+            buffer.edit([20..28, 31..43], "two::TWO", cx);
+        });
+
+        assert_eq!(
+            search(&project, SearchQuery::Plain("TWO".to_string()), &mut cx).await,
+            HashMap::from_iter([
+                ("two.rs".to_string(), vec![6..9]),
+                ("three.rs".to_string(), vec![37..40]),
+                ("four.rs".to_string(), vec![25..28, 36..39])
+            ])
+        );
+
+        async fn search(
+            project: &ModelHandle<Project>,
+            query: SearchQuery,
+            cx: &mut gpui::TestAppContext,
+        ) -> HashMap<String, Vec<Range<usize>>> {
+            project
+                .update(cx, |project, cx| project.search(query, cx))
+                .await
+                .into_iter()
+                .map(|(buffer, ranges)| {
+                    buffer.read_with(cx, |buffer, _| {
+                        let path = buffer.file().unwrap().path().to_string_lossy().to_string();
+                        let ranges = ranges
+                            .into_iter()
+                            .map(|range| range.to_offset(buffer))
+                            .collect::<Vec<_>>();
+                        (path, ranges)
+                    })
+                })
+                .collect()
+        }
     }
 }
