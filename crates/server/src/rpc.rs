@@ -4380,12 +4380,6 @@ mod tests {
                             .worktrees(cx)
                             .map(|worktree| {
                                 let worktree = worktree.read(cx);
-                                assert!(
-                                    !worktree.as_remote().unwrap().has_pending_updates(),
-                                    "Guest {} worktree {:?} contains deferred updates",
-                                    guest_id,
-                                    worktree.id()
-                                );
                                 (worktree.id(), worktree.snapshot())
                             })
                             .collect::<BTreeMap<_, _>>()

@@ -7,7 +7,7 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, TypedEnvelope};
 use clock::ReplicaId;
-use collections::{HashMap, VecDeque};
+use collections::HashMap;
 use futures::{
     channel::mpsc::{self, UnboundedSender},
     Stream, StreamExt,
@@ -84,7 +84,6 @@ pub struct RemoteWorktree {
     queued_operations: Vec<(u64, Operation)>,
     diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
     weak: bool,
-    pending_updates: VecDeque<proto::UpdateWorktree>,
 }
 
 #[derive(Clone)]
@@ -238,7 +237,6 @@ impl Worktree {
                     }),
                 ),
                 weak,
-                pending_updates: Default::default(),
             })
         });
 
@@ -855,10 +853,6 @@ impl RemoteWorktree {
             .expect("consumer runs to completion");
 
         Ok(())
-    }
-
-    pub fn has_pending_updates(&self) -> bool {
-        !self.pending_updates.is_empty()
     }
 
     pub fn update_diagnostic_summary(
