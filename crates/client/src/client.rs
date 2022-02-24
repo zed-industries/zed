@@ -836,7 +836,7 @@ impl Client {
     ) -> impl Future<Output = Result<T::Response>> {
         let client_id = self.id;
         log::debug!(
-            "rpc request start. client_id: {}. name:{}",
+            "rpc request start. client_id:{}. name:{}",
             client_id,
             T::NAME
         );
@@ -846,7 +846,7 @@ impl Client {
         async move {
             let response = response?.await;
             log::debug!(
-                "rpc request finish. client_id: {}. name:{}",
+                "rpc request finish. client_id:{}. name:{}",
                 client_id,
                 T::NAME
             );
@@ -855,7 +855,7 @@ impl Client {
     }
 
     fn respond<T: RequestMessage>(&self, receipt: Receipt<T>, response: T::Response) -> Result<()> {
-        log::debug!("rpc respond. client_id: {}. name:{}", self.id, T::NAME);
+        log::debug!("rpc respond. client_id:{}. name:{}", self.id, T::NAME);
         self.peer.respond(receipt, response)
     }
 
@@ -864,7 +864,7 @@ impl Client {
         receipt: Receipt<T>,
         error: proto::Error,
     ) -> Result<()> {
-        log::debug!("rpc respond. client_id: {}. name:{}", self.id, T::NAME);
+        log::debug!("rpc respond. client_id:{}. name:{}", self.id, T::NAME);
         self.peer.respond_with_error(receipt, error)
     }
 }
