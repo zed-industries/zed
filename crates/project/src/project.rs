@@ -3,6 +3,7 @@ mod ignore;
 mod lsp_command;
 pub mod worktree;
 
+use aho_corasick::AhoCorasickBuilder;
 use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
@@ -13,7 +14,6 @@ use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
     UpgradeModelHandle, WeakModelHandle,
 };
-use grep::{matcher::Matcher, searcher::Searcher};
 use language::{
     range_from_lsp, Anchor, AnchorRangeExt, Bias, Buffer, CodeAction, CodeLabel, Completion,
     Diagnostic, DiagnosticEntry, File as _, Language, LanguageRegistry, Operation, PointUtf16,
@@ -150,6 +150,10 @@ pub struct Symbol {
     pub kind: lsp::SymbolKind,
     pub range: Range<PointUtf16>,
     pub signature: [u8; 32],
+}
+
+pub enum SearchQuery {
+    Plain(String),
 }
 
 pub struct BufferRequestHandle(Rc<RefCell<ProjectBuffers>>);
@@ -2043,16 +2047,13 @@ impl Project {
         )
     }
 
-    pub fn search<T>(
+    pub fn search(
         &self,
         query: SearchQuery,
         cx: &mut ModelContext<Self>,
-    ) -> Task<HashMap<ModelHandle<Buffer>, Vec<Range<Anchor>>>>
-    where
-        T: Matcher,
-    {
+    ) -> Task<HashMap<ModelHandle<Buffer>, Vec<Range<Anchor>>>> {
         if self.is_local() {
-            let (queue_tx, queue_rx) = smol::channel::bounded(1024);
+            let (paths_to_search_tx, paths_to_search_rx) = smol::channel::bounded(1024);
 
             // Submit all worktree paths to the queue.
             let snapshots = self
@@ -2063,55 +2064,75 @@ impl Project {
                 })
                 .collect::<Vec<_>>();
             cx.background()
-                .spawn({
-                    let queue_tx = queue_tx.clone();
-                    async move {
-                        for (snapshot_abs_path, snapshot) in snapshots {
-                            for file in snapshot.files(false, 0) {
-                                if queue_tx
-                                    .send((snapshot_abs_path.clone(), file.path.clone()))
-                                    .await
-                                    .is_err()
-                                {
-                                    return;
-                                }
+                .spawn(async move {
+                    for (snapshot_abs_path, snapshot) in snapshots {
+                        for file in snapshot.files(false, 0) {
+                            if paths_to_search_tx
+                                .send((snapshot_abs_path.clone(), file.path.clone()))
+                                .await
+                                .is_err()
+                            {
+                                return;
                             }
                         }
                     }
                 })
                 .detach();
 
-            let matcher = Arc::new(matcher);
+            let SearchQuery::Plain(query) = query;
+            let search = Arc::new(
+                AhoCorasickBuilder::new()
+                    .auto_configure(&[&query])
+                    // .ascii_case_insensitive(!case_sensitive)
+                    .build(&[&query]),
+            );
+            let (matching_paths_tx, matching_paths_rx) = smol::channel::bounded(1024);
             cx.background()
                 .spawn({
+                    let fs = self.fs.clone();
                     let background = cx.background().clone();
                     let workers = background.num_cpus();
-                    let searcher = searcher.clone();
-                    let matcher = matcher.clone();
+                    let search = search.clone();
                     async move {
+                        let fs = &fs;
+                        let search = &search;
+                        let matching_paths_tx = &matching_paths_tx;
                         background
                             .scoped(|scope| {
                                 for _ in 0..workers {
-                                    let mut paths_rx = queue_rx.clone();
+                                    let mut paths_to_search_rx = paths_to_search_rx.clone();
                                     scope.spawn(async move {
                                         let mut path = PathBuf::new();
                                         while let Some((snapshot_abs_path, file_path)) =
-                                            paths_rx.next().await
+                                            paths_to_search_rx.next().await
                                         {
-                                            path.clear();
-                                            path.push(snapshot_abs_path);
-                                            path.push(file_path);
-                                            let mut matched = false;
-                                            // searcher.search_path(
-                                            //     matcher.as_ref(),
-                                            //     &path,
-                                            //     grep::searcher::sinks::Bytes(|_, _| {
-                                            //         matched = true;
-                                            //         Ok(false)
-                                            //     }),
-                                            // );
+                                            if matching_paths_tx.is_closed() {
+                                                break;
+                                            }
 
-                                            if matched {}
+                                            path.clear();
+                                            path.push(&snapshot_abs_path);
+                                            path.push(&file_path);
+                                            let matches = if let Some(file) =
+                                                fs.open_sync(&path).await.log_err()
+                                            {
+                                                search
+                                                    .stream_find_iter(file)
+                                                    .next()
+                                                    .map_or(false, |mat| mat.is_ok())
+                                            } else {
+                                                false
+                                            };
+
+                                            if matches {
+                                                if matching_paths_tx
+                                                    .send((snapshot_abs_path, file_path))
+                                                    .await
+                                                    .is_err()
+                                                {
+                                                    break;
+                                                }
+                                            }
                                         }
                                     });
                                 }

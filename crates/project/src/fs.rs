@@ -18,6 +18,7 @@ pub trait Fs: Send + Sync {
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
+    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
     async fn load(&self, path: &Path) -> Result<String>;
     async fn save(&self, path: &Path, text: &Rope) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
@@ -121,6 +122,10 @@ impl Fs for RealFs {
         }
     }
 
+    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {
+        Ok(Box::new(std::fs::File::open(path)?))
+    }
+
     async fn load(&self, path: &Path) -> Result<String> {
         let mut file = smol::fs::File::open(path).await?;
         let mut text = String::new();
@@ -203,7 +208,6 @@ impl Fs for RealFs {
     fn is_fake(&self) -> bool {
         false
     }
-
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeFs {
         panic!("called `RealFs::as_fake`")
@@ -533,6 +537,11 @@ impl Fs for FakeFs {
             return Err(anyhow!("{path:?} does not exist"));
         }
         Ok(())
+    }
+
+    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {
+        let text = self.load(path).await?;
+        Ok(Box::new(io::Cursor::new(text)))
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
