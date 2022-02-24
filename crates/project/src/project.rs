@@ -2108,7 +2108,7 @@ impl Project {
                                             let matches = if let Some(file) =
                                                 fs.open_sync(&path).await.log_err()
                                             {
-                                                query.is_contained_in_stream(file).unwrap_or(false)
+                                                query.detect(file).unwrap_or(false)
                                             } else {
                                                 false
                                             };
@@ -2132,7 +2132,7 @@ impl Project {
                 .detach();
 
             let (buffers_tx, buffers_rx) = smol::channel::bounded(1024);
-            let buffers = self
+            let open_buffers = self
                 .buffers_state
                 .borrow()
                 .open_buffers
@@ -2140,9 +2140,9 @@ impl Project {
                 .filter_map(|b| b.upgrade(cx))
                 .collect::<HashSet<_>>();
             cx.spawn(|this, mut cx| async move {
-                for buffer in buffers {
+                for buffer in &open_buffers {
                     let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                    buffers_tx.send((buffer, snapshot)).await?;
+                    buffers_tx.send((buffer.clone(), snapshot)).await?;
                 }
 
                 while let Some(project_path) = matching_paths_rx.next().await {
@@ -2151,8 +2151,10 @@ impl Project {
                         .await
                         .log_err()
                     {
-                        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                        buffers_tx.send((buffer, snapshot)).await?;
+                        if !open_buffers.contains(&buffer) {
+                            let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+                            buffers_tx.send((buffer, snapshot)).await?;
+                        }
                     }
                 }
 

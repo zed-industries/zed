@@ -42,7 +42,7 @@ impl SearchQuery {
         Ok(Self::Regex { multiline, regex })
     }
 
-    pub fn is_contained_in_stream<T: Read>(&self, stream: T) -> Result<bool> {
+    pub fn detect<T: Read>(&self, stream: T) -> Result<bool> {
         match self {
             SearchQuery::Text { search } => {
                 let mat = search.stream_find_iter(stream).next();
