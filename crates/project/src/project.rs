@@ -2523,6 +2523,8 @@ impl Project {
                     OpenBuffer::Loaded(buffer) => {
                         if let Some(buffer) = buffer.upgrade(cx) {
                             buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
+                        } else if is_remote && buffer_request_count > 0 {
+                            e.insert(OpenBuffer::Loading(ops));
                         }
                     }
                     OpenBuffer::Loading(operations) => operations.extend_from_slice(&ops),
