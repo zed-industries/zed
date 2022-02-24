@@ -1,6 +1,6 @@
 use editor::{
     combine_syntax_and_fuzzy_match_highlights, display_map::ToDisplayPoint, Anchor, AnchorRangeExt,
-    Autoscroll, DisplayPoint, Editor, EditorSettings, ToPoint,
+    Autoscroll, DisplayPoint, Editor, ToPoint,
 };
 use fuzzy::StringMatch;
 use gpui::{
@@ -14,10 +14,7 @@ use gpui::{
 use language::Outline;
 use ordered_float::OrderedFloat;
 use postage::watch;
-use std::{
-    cmp::{self, Reverse},
-    sync::Arc,
-};
+use std::cmp::{self, Reverse};
 use workspace::{
     menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev},
     Settings, Workspace,
@@ -107,17 +104,8 @@ impl OutlineView {
     ) -> Self {
         let query_editor = cx.add_view(|cx| {
             Editor::single_line(
-                {
-                    let settings = settings.clone();
-                    Arc::new(move |_| {
-                        let settings = settings.borrow();
-                        EditorSettings {
-                            style: settings.theme.selector.input_editor.as_editor(),
-                            tab_size: settings.tab_size,
-                            soft_wrap: editor::SoftWrap::None,
-                        }
-                    })
-                },
+                settings.clone(),
+                Some(|theme| theme.selector.input_editor.clone()),
                 cx,
             )
         });

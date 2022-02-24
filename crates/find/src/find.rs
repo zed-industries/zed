@@ -2,8 +2,7 @@ use aho_corasick::AhoCorasickBuilder;
 use anyhow::Result;
 use collections::HashMap;
 use editor::{
-    char_kind, display_map::ToDisplayPoint, Anchor, Autoscroll, Bias, Editor, EditorSettings,
-    MultiBufferSnapshot,
+    char_kind, display_map::ToDisplayPoint, Anchor, Autoscroll, Bias, Editor, MultiBufferSnapshot,
 };
 use gpui::{
     action, elements::*, keymap::Binding, platform::CursorStyle, Entity, MutableAppContext,
@@ -15,7 +14,6 @@ use smol::future::yield_now;
 use std::{
     cmp::{self, Ordering},
     ops::Range,
-    sync::Arc,
 };
 use workspace::{ItemViewHandle, Pane, Settings, Toolbar, Workspace};
 
@@ -179,17 +177,8 @@ impl FindBar {
         let query_editor = cx.add_view(|cx| {
             Editor::auto_height(
                 2,
-                {
-                    let settings = settings.clone();
-                    Arc::new(move |_| {
-                        let settings = settings.borrow();
-                        EditorSettings {
-                            style: settings.theme.find.editor.input.as_editor(),
-                            tab_size: settings.tab_size,
-                            soft_wrap: editor::SoftWrap::None,
-                        }
-                    })
-                },
+                settings.clone(),
+                Some(|theme| theme.find.editor.input.clone()),
                 cx,
             )
         });
@@ -645,7 +634,7 @@ async fn regex_search(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::{DisplayPoint, Editor, EditorSettings, MultiBuffer};
+    use editor::{DisplayPoint, Editor, MultiBuffer};
     use gpui::{color::Color, TestAppContext};
     use std::sync::Arc;
     use unindent::Unindent as _;
@@ -656,6 +645,7 @@ mod tests {
         let mut theme = gpui::fonts::with_font_cache(fonts.clone(), || theme::Theme::default());
         theme.find.match_background = Color::red();
         let settings = Settings::new("Courier", &fonts, Arc::new(theme)).unwrap();
+        let settings = watch::channel_with(settings).1;
 
         let buffer = cx.update(|cx| {
             MultiBuffer::build_simple(
@@ -670,11 +660,11 @@ mod tests {
             )
         });
         let editor = cx.add_view(Default::default(), |cx| {
-            Editor::new(buffer.clone(), Arc::new(EditorSettings::test), None, cx)
+            Editor::for_buffer(buffer.clone(), None, settings.clone(), cx)
         });
 
         let find_bar = cx.add_view(Default::default(), |cx| {
-            let mut find_bar = FindBar::new(watch::channel_with(settings).1, cx);
+            let mut find_bar = FindBar::new(settings, cx);
             find_bar.active_item_changed(Some(Box::new(editor.clone())), cx);
             find_bar
         });

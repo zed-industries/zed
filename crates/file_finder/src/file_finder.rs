@@ -1,4 +1,4 @@
-use editor::{Editor, EditorSettings};
+use editor::Editor;
 use fuzzy::PathMatch;
 use gpui::{
     action,
@@ -266,17 +266,8 @@ impl FileFinder {
 
         let query_editor = cx.add_view(|cx| {
             Editor::single_line(
-                {
-                    let settings = settings.clone();
-                    Arc::new(move |_| {
-                        let settings = settings.borrow();
-                        EditorSettings {
-                            style: settings.theme.selector.input_editor.as_editor(),
-                            tab_size: settings.tab_size,
-                            soft_wrap: editor::SoftWrap::None,
-                        }
-                    })
-                },
+                settings.clone(),
+                Some(|theme| theme.selector.input_editor.clone()),
                 cx,
             )
         });

@@ -1,6 +1,6 @@
 use editor::{
     combine_syntax_and_fuzzy_match_highlights, items::BufferItemHandle, styled_runs_for_code_label,
-    Autoscroll, Bias, Editor, EditorSettings,
+    Autoscroll, Bias, Editor,
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -16,7 +16,6 @@ use project::{Project, Symbol};
 use std::{
     borrow::Cow,
     cmp::{self, Reverse},
-    sync::Arc,
 };
 use util::ResultExt;
 use workspace::{
@@ -105,17 +104,8 @@ impl ProjectSymbolsView {
     ) -> Self {
         let query_editor = cx.add_view(|cx| {
             Editor::single_line(
-                {
-                    let settings = settings.clone();
-                    Arc::new(move |_| {
-                        let settings = settings.borrow();
-                        EditorSettings {
-                            style: settings.theme.selector.input_editor.as_editor(),
-                            tab_size: settings.tab_size,
-                            soft_wrap: editor::SoftWrap::None,
-                        }
-                    })
-                },
+                settings.clone(),
+                Some(|theme| theme.selector.input_editor.clone()),
                 cx,
             )
         });
