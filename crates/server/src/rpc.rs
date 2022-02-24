@@ -16,7 +16,7 @@ use rpc::{
     Connection, ConnectionId, Peer, TypedEnvelope,
 };
 use sha1::{Digest as _, Sha1};
-use std::{any::TypeId, future::Future, path::PathBuf, sync::Arc, time::Instant};
+use std::{any::TypeId, future::Future, sync::Arc, time::Instant};
 use store::{Store, Worktree};
 use surf::StatusCode;
 use tide::log;
@@ -73,7 +73,6 @@ impl Server {
             .add_message_handler(Server::leave_project)
             .add_request_handler(Server::register_worktree)
             .add_message_handler(Server::unregister_worktree)
-            .add_request_handler(Server::share_worktree)
             .add_request_handler(Server::update_worktree)
             .add_message_handler(Server::update_diagnostic_summary)
             .add_message_handler(Server::disk_based_diagnostics_updating)
@@ -335,22 +334,21 @@ impl Server {
                     replica_id: 0,
                     user_id: joined.project.host_user_id.to_proto(),
                 });
-                let worktrees = joined
-                    .project
+                let worktrees = share
                     .worktrees
                     .iter()
-                    .filter_map(|(id, worktree)| {
-                        worktree.share.as_ref().map(|share| proto::Worktree {
+                    .filter_map(|(id, shared_worktree)| {
+                        let worktree = joined.project.worktrees.get(&id)?;
+                        Some(proto::Worktree {
                             id: *id,
                             root_name: worktree.root_name.clone(),
-                            entries: share.entries.values().cloned().collect(),
-                            diagnostic_summaries: share
+                            entries: shared_worktree.entries.values().cloned().collect(),
+                            diagnostic_summaries: shared_worktree
                                 .diagnostic_summaries
                                 .values()
                                 .cloned()
                                 .collect(),
                             weak: worktree.weak,
-                            next_update_id: share.next_update_id as u64,
                         })
                     })
                     .collect();
@@ -420,23 +418,33 @@ impl Server {
 
         let mut contact_user_ids = HashSet::default();
         contact_user_ids.insert(host_user_id);
-        for github_login in request.payload.authorized_logins {
-            let contact_user_id = self.app_state.db.create_user(&github_login, false).await?;
+        for github_login in &request.payload.authorized_logins {
+            let contact_user_id = self.app_state.db.create_user(github_login, false).await?;
             contact_user_ids.insert(contact_user_id);
         }
 
         let contact_user_ids = contact_user_ids.into_iter().collect::<Vec<_>>();
-        self.state_mut().register_worktree(
-            request.payload.project_id,
-            request.payload.worktree_id,
-            request.sender_id,
-            Worktree {
-                authorized_user_ids: contact_user_ids.clone(),
-                root_name: request.payload.root_name,
-                share: None,
-                weak: false,
-            },
-        )?;
+        let guest_connection_ids;
+        {
+            let mut state = self.state_mut();
+            guest_connection_ids = state
+                .read_project(request.payload.project_id, request.sender_id)?
+                .guest_connection_ids();
+            state.register_worktree(
+                request.payload.project_id,
+                request.payload.worktree_id,
+                request.sender_id,
+                Worktree {
+                    authorized_user_ids: contact_user_ids.clone(),
+                    root_name: request.payload.root_name.clone(),
+                    weak: request.payload.weak,
+                },
+            )?;
+        }
+        broadcast(request.sender_id, guest_connection_ids, |connection_id| {
+            self.peer
+                .forward_send(request.sender_id, connection_id, request.payload.clone())
+        })?;
         self.update_contacts_for_users(&contact_user_ids)?;
         Ok(proto::Ack {})
     }
@@ -463,48 +471,6 @@ impl Server {
         Ok(())
     }
 
-    async fn share_worktree(
-        mut self: Arc<Server>,
-        mut request: TypedEnvelope<proto::ShareWorktree>,
-    ) -> tide::Result<proto::Ack> {
-        let worktree = request
-            .payload
-            .worktree
-            .as_mut()
-            .ok_or_else(|| anyhow!("missing worktree"))?;
-        let entries = worktree
-            .entries
-            .iter()
-            .map(|entry| (entry.id, entry.clone()))
-            .collect();
-        let diagnostic_summaries = worktree
-            .diagnostic_summaries
-            .iter()
-            .map(|summary| (PathBuf::from(summary.path.clone()), summary.clone()))
-            .collect();
-
-        let shared_worktree = self.state_mut().share_worktree(
-            request.payload.project_id,
-            worktree.id,
-            request.sender_id,
-            entries,
-            diagnostic_summaries,
-            worktree.next_update_id,
-        )?;
-
-        broadcast(
-            request.sender_id,
-            shared_worktree.connection_ids,
-            |connection_id| {
-                self.peer
-                    .forward_send(request.sender_id, connection_id, request.payload.clone())
-            },
-        )?;
-        self.update_contacts_for_users(&shared_worktree.authorized_user_ids)?;
-
-        Ok(proto::Ack {})
-    }
-
     async fn update_worktree(
         mut self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateWorktree>,
@@ -513,7 +479,6 @@ impl Server {
             request.sender_id,
             request.payload.project_id,
             request.payload.worktree_id,
-            request.payload.id,
             &request.payload.removed_entries,
             &request.payload.updated_entries,
         )?;
@@ -1198,7 +1163,7 @@ mod tests {
         cell::Cell,
         env,
         ops::Deref,
-        path::Path,
+        path::{Path, PathBuf},
         rc::Rc,
         sync::{
             atomic::{AtomicBool, Ordering::SeqCst},
@@ -1218,7 +1183,7 @@ mod tests {
         fs::{FakeFs, Fs as _},
         language::{
             tree_sitter_rust, AnchorRangeExt, Diagnostic, DiagnosticEntry, Language,
-            LanguageConfig, LanguageRegistry, LanguageServerConfig, Point,
+            LanguageConfig, LanguageRegistry, LanguageServerConfig, Point, ToLspPosition,
         },
         lsp,
         project::{DiagnosticSummary, Project, ProjectPath},
@@ -2149,16 +2114,14 @@ mod tests {
                 let worktree = store
                     .project(project_id)
                     .unwrap()
+                    .share
+                    .as_ref()
+                    .unwrap()
                     .worktrees
                     .get(&worktree_id.to_proto())
                     .unwrap();
 
-                !worktree
-                    .share
-                    .as_ref()
-                    .unwrap()
-                    .diagnostic_summaries
-                    .is_empty()
+                !worktree.diagnostic_summaries.is_empty()
             })
             .await;
 
@@ -2389,7 +2352,7 @@ mod tests {
         // Return some completions from the host's language server.
         cx_a.foreground().start_waiting();
         fake_language_server
-            .handle_request::<lsp::request::Completion, _>(|params| {
+            .handle_request::<lsp::request::Completion, _>(|params, _| {
                 assert_eq!(
                     params.text_document_position.text_document.uri,
                     lsp::Url::from_file_path("/a/main.rs").unwrap(),
@@ -2455,23 +2418,28 @@ mod tests {
 
         // Return a resolved completion from the host's language server.
         // The resolved completion has an additional text edit.
-        fake_language_server.handle_request::<lsp::request::ResolveCompletionItem, _>(|params| {
-            assert_eq!(params.label, "first_method(…)");
-            lsp::CompletionItem {
-                label: "first_method(…)".into(),
-                detail: Some("fn(&mut self, B) -> C".into()),
-                text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                    new_text: "first_method($1)".to_string(),
-                    range: lsp::Range::new(lsp::Position::new(0, 14), lsp::Position::new(0, 14)),
-                })),
-                additional_text_edits: Some(vec![lsp::TextEdit {
-                    new_text: "use d::SomeTrait;\n".to_string(),
-                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
-                }]),
-                insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                ..Default::default()
-            }
-        });
+        fake_language_server.handle_request::<lsp::request::ResolveCompletionItem, _>(
+            |params, _| {
+                assert_eq!(params.label, "first_method(…)");
+                lsp::CompletionItem {
+                    label: "first_method(…)".into(),
+                    detail: Some("fn(&mut self, B) -> C".into()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        new_text: "first_method($1)".to_string(),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 14),
+                            lsp::Position::new(0, 14),
+                        ),
+                    })),
+                    additional_text_edits: Some(vec![lsp::TextEdit {
+                        new_text: "use d::SomeTrait;\n".to_string(),
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                    }]),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    ..Default::default()
+                }
+            },
+        );
 
         // The additional edit is applied.
         buffer_a
@@ -2568,7 +2536,7 @@ mod tests {
         });
 
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
-        fake_language_server.handle_request::<lsp::request::Formatting, _>(|_| {
+        fake_language_server.handle_request::<lsp::request::Formatting, _>(|_, _| {
             Some(vec![
                 lsp::TextEdit {
                     range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
@@ -2677,7 +2645,7 @@ mod tests {
         let definitions_1 = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b, 23, cx));
 
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
-        fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_| {
+        fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_, _| {
             Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
                 lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
                 lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
@@ -2702,7 +2670,7 @@ mod tests {
         // Try getting more definitions for the same buffer, ensuring the buffer gets reused from
         // the previous call to `definition`.
         let definitions_2 = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b, 33, cx));
-        fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_| {
+        fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_, _| {
             Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
                 lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
                 lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
@@ -2826,7 +2794,7 @@ mod tests {
         let references = project_b.update(&mut cx_b, |p, cx| p.references(&buffer_b, 7, cx));
 
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
-        fake_language_server.handle_request::<lsp::request::References, _>(|params| {
+        fake_language_server.handle_request::<lsp::request::References, _>(|params, _| {
             assert_eq!(
                 params.text_document_position.text_document.uri.as_str(),
                 "file:///root-1/one.rs"
@@ -2954,7 +2922,7 @@ mod tests {
 
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::DocumentHighlightRequest, _>(
-            |params| {
+            |params, _| {
                 assert_eq!(
                     params
                         .text_document_position_params
@@ -3103,7 +3071,7 @@ mod tests {
         // Request the definition of a symbol as the guest.
         let symbols = project_b.update(&mut cx_b, |p, cx| p.symbols("two", cx));
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
-        fake_language_server.handle_request::<lsp::request::WorkspaceSymbol, _>(|_| {
+        fake_language_server.handle_request::<lsp::request::WorkspaceSymbol, _>(|_, _| {
             #[allow(deprecated)]
             Some(vec![lsp::SymbolInformation {
                 name: "TWO".into(),
@@ -3245,7 +3213,7 @@ mod tests {
         }
 
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
-        fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_| {
+        fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_, _| {
             Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
                 lsp::Url::from_file_path("/root/b.rs").unwrap(),
                 lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
@@ -3353,7 +3321,7 @@ mod tests {
 
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server
-            .handle_request::<lsp::request::CodeActionRequest, _>(|params| {
+            .handle_request::<lsp::request::CodeActionRequest, _>(|params, _| {
                 assert_eq!(
                     params.text_document.uri,
                     lsp::Url::from_file_path("/a/main.rs").unwrap(),
@@ -3372,7 +3340,7 @@ mod tests {
         });
 
         fake_language_server
-            .handle_request::<lsp::request::CodeActionRequest, _>(|params| {
+            .handle_request::<lsp::request::CodeActionRequest, _>(|params, _| {
                 assert_eq!(
                     params.text_document.uri,
                     lsp::Url::from_file_path("/a/main.rs").unwrap(),
@@ -3443,7 +3411,7 @@ mod tests {
                 Editor::confirm_code_action(workspace, &ConfirmCodeAction(Some(0)), cx)
             })
             .unwrap();
-        fake_language_server.handle_request::<lsp::request::CodeActionResolveRequest, _>(|_| {
+        fake_language_server.handle_request::<lsp::request::CodeActionResolveRequest, _>(|_, _| {
             lsp::CodeAction {
                 title: "Inline into all callers".to_string(),
                 edit: Some(lsp::WorkspaceEdit {
@@ -3598,7 +3566,7 @@ mod tests {
         });
 
         fake_language_server
-            .handle_request::<lsp::request::PrepareRenameRequest, _>(|params| {
+            .handle_request::<lsp::request::PrepareRenameRequest, _>(|params, _| {
                 assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
                 assert_eq!(params.position, lsp::Position::new(0, 7));
                 Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
@@ -3628,7 +3596,7 @@ mod tests {
             Editor::confirm_rename(workspace, &ConfirmRename, cx).unwrap()
         });
         fake_language_server
-            .handle_request::<lsp::request::Rename, _>(|params| {
+            .handle_request::<lsp::request::Rename, _>(|params, _| {
                 assert_eq!(
                     params.text_document_position.text_document.uri.as_str(),
                     "file:///dir/one.rs"
@@ -4412,12 +4380,6 @@ mod tests {
                             .worktrees(cx)
                             .map(|worktree| {
                                 let worktree = worktree.read(cx);
-                                assert!(
-                                    !worktree.as_remote().unwrap().has_pending_updates(),
-                                    "Guest {} worktree {:?} contains deferred updates",
-                                    guest_id,
-                                    worktree.id()
-                                );
                                 (worktree.id(), worktree.snapshot())
                             })
                             .collect::<BTreeMap<_, _>>()
@@ -4472,9 +4434,11 @@ mod tests {
                 assert_eq!(
                     guest_buffer.read_with(guest_cx, |buffer, _| buffer.text()),
                     host_buffer.read_with(&host_cx, |buffer, _| buffer.text()),
-                    "guest {} buffer {} differs from the host's buffer",
+                    "guest {}, buffer {}, path {:?}, differs from the host's buffer",
                     guest_id,
                     buffer_id,
+                    host_buffer
+                        .read_with(&host_cx, |buffer, cx| buffer.file().unwrap().full_path(cx))
                 );
             }
         }
@@ -4683,8 +4647,9 @@ mod tests {
             language_server_config.set_fake_initializer({
                 let rng = rng.clone();
                 let files = files.clone();
+                let project = project.clone();
                 move |fake_server| {
-                    fake_server.handle_request::<lsp::request::Completion, _>(|_| {
+                    fake_server.handle_request::<lsp::request::Completion, _>(|_, _| {
                         Some(lsp::CompletionResponse::Array(vec![lsp::CompletionItem {
                             text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
                                 range: lsp::Range::new(
@@ -4697,7 +4662,7 @@ mod tests {
                         }]))
                     });
 
-                    fake_server.handle_request::<lsp::request::CodeActionRequest, _>(|_| {
+                    fake_server.handle_request::<lsp::request::CodeActionRequest, _>(|_, _| {
                         Some(vec![lsp::CodeActionOrCommand::CodeAction(
                             lsp::CodeAction {
                                 title: "the-code-action".to_string(),
@@ -4706,31 +4671,73 @@ mod tests {
                         )])
                     });
 
-                    fake_server.handle_request::<lsp::request::PrepareRenameRequest, _>(|params| {
-                        Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
-                            params.position,
-                            params.position,
-                        )))
-                    });
+                    fake_server.handle_request::<lsp::request::PrepareRenameRequest, _>(
+                        |params, _| {
+                            Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                                params.position,
+                                params.position,
+                            )))
+                        },
+                    );
 
                     fake_server.handle_request::<lsp::request::GotoDefinition, _>({
                         let files = files.clone();
                         let rng = rng.clone();
-                        move |_| {
+                        move |_, _| {
                             let files = files.lock();
                             let mut rng = rng.lock();
                             let count = rng.gen_range::<usize, _>(1..3);
+                            let files = (0..count)
+                                .map(|_| files.choose(&mut *rng).unwrap())
+                                .collect::<Vec<_>>();
+                            log::info!("LSP: Returning definitions in files {:?}", &files);
                             Some(lsp::GotoDefinitionResponse::Array(
-                                (0..count)
-                                    .map(|_| {
-                                        let file = files.choose(&mut *rng).unwrap().as_path();
-                                        lsp::Location {
-                                            uri: lsp::Url::from_file_path(file).unwrap(),
-                                            range: Default::default(),
-                                        }
+                                files
+                                    .into_iter()
+                                    .map(|file| lsp::Location {
+                                        uri: lsp::Url::from_file_path(file).unwrap(),
+                                        range: Default::default(),
                                     })
                                     .collect(),
                             ))
+                        }
+                    });
+
+                    fake_server.handle_request::<lsp::request::DocumentHighlightRequest, _>({
+                        let rng = rng.clone();
+                        let project = project.clone();
+                        move |params, mut cx| {
+                            project.update(&mut cx, |project, cx| {
+                                let path = params
+                                    .text_document_position_params
+                                    .text_document
+                                    .uri
+                                    .to_file_path()
+                                    .unwrap();
+                                let (worktree, relative_path) =
+                                    project.find_local_worktree(&path, cx)?;
+                                let project_path =
+                                    ProjectPath::from((worktree.read(cx).id(), relative_path));
+                                let buffer = project.get_open_buffer(&project_path, cx)?.read(cx);
+
+                                let mut highlights = Vec::new();
+                                let highlight_count = rng.lock().gen_range(1..=5);
+                                let mut prev_end = 0;
+                                for _ in 0..highlight_count {
+                                    let range =
+                                        buffer.random_byte_range(prev_end, &mut *rng.lock());
+                                    let start =
+                                        buffer.offset_to_point_utf16(range.start).to_lsp_position();
+                                    let end =
+                                        buffer.offset_to_point_utf16(range.end).to_lsp_position();
+                                    highlights.push(lsp::DocumentHighlight {
+                                        range: lsp::Range::new(start, end),
+                                        kind: Some(lsp::DocumentHighlightKind::READ),
+                                    });
+                                    prev_end = range.end;
+                                }
+                                Some(highlights)
+                            })
                         }
                     });
                 }
@@ -4778,13 +4785,17 @@ mod tests {
                                 let file = files.lock().choose(&mut *rng.lock()).unwrap().clone();
                                 let (worktree, path) = project
                                     .update(&mut cx, |project, cx| {
-                                        project.find_or_create_local_worktree(file, false, cx)
+                                        project.find_or_create_local_worktree(
+                                            file.clone(),
+                                            false,
+                                            cx,
+                                        )
                                     })
                                     .await
                                     .unwrap();
                                 let project_path =
                                     worktree.read_with(&cx, |worktree, _| (worktree.id(), path));
-                                log::info!("Host: opening path {:?}", project_path);
+                                log::info!("Host: opening path {:?}, {:?}", file, project_path);
                                 let buffer = project
                                     .update(&mut cx, |project, cx| {
                                         project.open_buffer(project_path, cx)
@@ -4847,6 +4858,8 @@ mod tests {
                     cx.background().simulate_random_delay().await;
                 }
 
+                log::info!("Host done");
+
                 self.project = Some(project);
                 (self, cx)
             }
@@ -4867,7 +4880,8 @@ mod tests {
                         project
                             .worktrees(&cx)
                             .filter(|worktree| {
-                                worktree.read(cx).entries(false).any(|e| e.is_file())
+                                let worktree = worktree.read(cx);
+                                !worktree.is_weak() && worktree.entries(false).any(|e| e.is_file())
                             })
                             .choose(&mut *rng.lock())
                     }) {
@@ -4878,15 +4892,25 @@ mod tests {
                     };
 
                     operations.set(operations.get() + 1);
-                    let project_path = worktree.read_with(&cx, |worktree, _| {
-                        let entry = worktree
-                            .entries(false)
-                            .filter(|e| e.is_file())
-                            .choose(&mut *rng.lock())
-                            .unwrap();
-                        (worktree.id(), entry.path.clone())
-                    });
-                    log::info!("Guest {}: opening path {:?}", guest_id, project_path);
+                    let (worktree_root_name, project_path) =
+                        worktree.read_with(&cx, |worktree, _| {
+                            let entry = worktree
+                                .entries(false)
+                                .filter(|e| e.is_file())
+                                .choose(&mut *rng.lock())
+                                .unwrap();
+                            (
+                                worktree.root_name().to_string(),
+                                (worktree.id(), entry.path.clone()),
+                            )
+                        });
+                    log::info!(
+                        "Guest {}: opening path in worktree {:?} {:?} {:?}",
+                        guest_id,
+                        project_path.0,
+                        worktree_root_name,
+                        project_path.1
+                    );
                     let buffer = project
                         .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))
                         .await
@@ -5010,13 +5034,34 @@ mod tests {
                             project.definition(&buffer, offset, cx)
                         });
                         let definitions = cx.background().spawn(async move {
-                            definitions.await.expect("definitions request failed");
+                            definitions.await.expect("definitions request failed")
                         });
                         if rng.lock().gen_bool(0.3) {
                             log::info!("Guest {}: detaching definitions request", guest_id);
                             definitions.detach();
                         } else {
-                            definitions.await;
+                            self.buffers
+                                .extend(definitions.await.into_iter().map(|loc| loc.buffer));
+                        }
+                    }
+                    50..=55 => {
+                        let highlights = project.update(&mut cx, |project, cx| {
+                            log::info!(
+                                "Guest {}: requesting highlights for buffer {:?}",
+                                guest_id,
+                                buffer.read(cx).file().unwrap().full_path(cx)
+                            );
+                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                            project.document_highlights(&buffer, offset, cx)
+                        });
+                        let highlights = cx.background().spawn(async move {
+                            highlights.await.expect("highlights request failed");
+                        });
+                        if rng.lock().gen_bool(0.3) {
+                            log::info!("Guest {}: detaching highlights request", guest_id);
+                            highlights.detach();
+                        } else {
+                            highlights.await;
                         }
                     }
                     _ => {
@@ -5032,6 +5077,8 @@ mod tests {
                 }
                 cx.background().simulate_random_delay().await;
             }
+
+            log::info!("Guest {} done", guest_id);
 
             self.project = Some(project);
             (self, cx)

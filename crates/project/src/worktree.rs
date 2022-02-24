@@ -7,7 +7,7 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, TypedEnvelope};
 use clock::ReplicaId;
-use collections::{HashMap, VecDeque};
+use collections::HashMap;
 use futures::{
     channel::mpsc::{self, UnboundedSender},
     Stream, StreamExt,
@@ -43,7 +43,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap};
-use util::ResultExt;
+use util::{ResultExt, TryFutureExt};
 
 lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
@@ -84,8 +84,6 @@ pub struct RemoteWorktree {
     queued_operations: Vec<(u64, Operation)>,
     diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
     weak: bool,
-    next_update_id: u64,
-    pending_updates: VecDeque<proto::UpdateWorktree>,
 }
 
 #[derive(Clone)]
@@ -138,7 +136,7 @@ enum Registration {
 struct ShareState {
     project_id: u64,
     snapshots_tx: Sender<LocalSnapshot>,
-    _maintain_remote_snapshot: Option<Task<()>>,
+    _maintain_remote_snapshot: Option<Task<Option<()>>>,
 }
 
 #[derive(Default, Deserialize)]
@@ -239,8 +237,6 @@ impl Worktree {
                     }),
                 ),
                 weak,
-                next_update_id: worktree.next_update_id,
-                pending_updates: Default::default(),
             })
         });
 
@@ -739,6 +735,7 @@ impl LocalWorktree {
             worktree_id: self.id().to_proto(),
             root_name: self.root_name().to_string(),
             authorized_logins: self.authorized_logins(),
+            weak: self.weak,
         };
         cx.spawn(|this, mut cx| async move {
             let response = client.request(register_message).await;
@@ -762,68 +759,75 @@ impl LocalWorktree {
         &mut self,
         project_id: u64,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<anyhow::Result<()>> {
+    ) -> impl Future<Output = Result<()>> {
+        let (mut share_tx, mut share_rx) = oneshot::channel();
         if self.share.is_some() {
-            return Task::ready(Ok(()));
+            let _ = share_tx.try_send(Ok(()));
+        } else {
+            let snapshot = self.snapshot();
+            let rpc = self.client.clone();
+            let worktree_id = cx.model_id() as u64;
+            let (snapshots_to_send_tx, snapshots_to_send_rx) =
+                smol::channel::unbounded::<LocalSnapshot>();
+            let maintain_remote_snapshot = cx.background().spawn({
+                let rpc = rpc.clone();
+                let snapshot = snapshot.clone();
+                let diagnostic_summaries = self.diagnostic_summaries.clone();
+                async move {
+                    if let Err(error) = rpc
+                        .request(proto::UpdateWorktree {
+                            project_id,
+                            worktree_id,
+                            root_name: snapshot.root_name().to_string(),
+                            updated_entries: snapshot
+                                .entries_by_path
+                                .iter()
+                                .filter(|e| !e.is_ignored)
+                                .map(Into::into)
+                                .collect(),
+                            removed_entries: Default::default(),
+                        })
+                        .await
+                    {
+                        let _ = share_tx.try_send(Err(error));
+                        return Err(anyhow!("failed to send initial update worktree"));
+                    } else {
+                        let _ = share_tx.try_send(Ok(()));
+                    }
+
+                    for (path, summary) in diagnostic_summaries.iter() {
+                        rpc.send(proto::UpdateDiagnosticSummary {
+                            project_id,
+                            worktree_id,
+                            summary: Some(summary.to_proto(&path.0)),
+                        })?;
+                    }
+
+                    let mut prev_snapshot = snapshot;
+                    while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
+                        let message =
+                            snapshot.build_update(&prev_snapshot, project_id, worktree_id, false);
+                        rpc.request(message).await?;
+                        prev_snapshot = snapshot;
+                    }
+
+                    Ok::<_, anyhow::Error>(())
+                }
+                .log_err()
+            });
+            self.share = Some(ShareState {
+                project_id,
+                snapshots_tx: snapshots_to_send_tx,
+                _maintain_remote_snapshot: Some(maintain_remote_snapshot),
+            });
         }
 
-        let snapshot = self.snapshot();
-        let rpc = self.client.clone();
-        let worktree_id = cx.model_id() as u64;
-        let (snapshots_to_send_tx, snapshots_to_send_rx) =
-            smol::channel::unbounded::<LocalSnapshot>();
-        let (mut share_tx, mut share_rx) = oneshot::channel();
-        let maintain_remote_snapshot = cx.background().spawn({
-            let rpc = rpc.clone();
-            let snapshot = snapshot.clone();
-            let diagnostic_summaries = self.diagnostic_summaries.clone();
-            let weak = self.weak;
-            async move {
-                if let Err(error) = rpc
-                    .request(proto::ShareWorktree {
-                        project_id,
-                        worktree: Some(snapshot.to_proto(&diagnostic_summaries, weak)),
-                    })
-                    .await
-                {
-                    let _ = share_tx.try_send(Err(error));
-                    return;
-                } else {
-                    let _ = share_tx.try_send(Ok(()));
-                }
-
-                let mut update_id = 0;
-                let mut prev_snapshot = snapshot;
-                while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
-                    let message = snapshot.build_update(
-                        &prev_snapshot,
-                        project_id,
-                        worktree_id,
-                        update_id,
-                        false,
-                    );
-                    match rpc.request(message).await {
-                        Ok(_) => {
-                            prev_snapshot = snapshot;
-                            update_id += 1;
-                        }
-                        Err(err) => log::error!("error sending snapshot diff {}", err),
-                    }
-                }
-            }
-        });
-        self.share = Some(ShareState {
-            project_id,
-            snapshots_tx: snapshots_to_send_tx,
-            _maintain_remote_snapshot: Some(maintain_remote_snapshot),
-        });
-
-        cx.foreground().spawn(async move {
-            match share_rx.next().await {
-                Some(result) => result,
-                None => Err(anyhow!("unshared before sharing completed")),
-            }
-        })
+        async move {
+            share_rx
+                .next()
+                .await
+                .unwrap_or_else(|| Err(anyhow!("share ended")))
+        }
     }
 
     pub fn unshare(&mut self) {
@@ -844,36 +848,11 @@ impl RemoteWorktree {
         &mut self,
         envelope: TypedEnvelope<proto::UpdateWorktree>,
     ) -> Result<()> {
-        let update = envelope.payload;
-        if update.id > self.next_update_id {
-            let ix = match self
-                .pending_updates
-                .binary_search_by_key(&update.id, |pending| pending.id)
-            {
-                Ok(ix) | Err(ix) => ix,
-            };
-            self.pending_updates.insert(ix, update);
-        } else {
-            let tx = self.updates_tx.clone();
-            self.next_update_id += 1;
-            tx.unbounded_send(update)
-                .expect("consumer runs to completion");
-            while let Some(update) = self.pending_updates.front() {
-                if update.id == self.next_update_id {
-                    self.next_update_id += 1;
-                    tx.unbounded_send(self.pending_updates.pop_front().unwrap())
-                        .expect("consumer runs to completion");
-                } else {
-                    break;
-                }
-            }
-        }
+        self.updates_tx
+            .unbounded_send(envelope.payload)
+            .expect("consumer runs to completion");
 
         Ok(())
-    }
-
-    pub fn has_pending_updates(&self) -> bool {
-        !self.pending_updates.is_empty()
     }
 
     pub fn update_diagnostic_summary(
@@ -1038,6 +1017,7 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
+    #[cfg(test)]
     pub(crate) fn to_proto(
         &self,
         diagnostic_summaries: &TreeMap<PathKey, DiagnosticSummary>,
@@ -1055,10 +1035,9 @@ impl LocalSnapshot {
                 .collect(),
             diagnostic_summaries: diagnostic_summaries
                 .iter()
-                .map(|(path, summary)| summary.to_proto(path.0.clone()))
+                .map(|(path, summary)| summary.to_proto(&path.0))
                 .collect(),
             weak,
-            next_update_id: 0,
         }
     }
 
@@ -1067,7 +1046,6 @@ impl LocalSnapshot {
         other: &Self,
         project_id: u64,
         worktree_id: u64,
-        update_id: u64,
         include_ignored: bool,
     ) -> proto::UpdateWorktree {
         let mut updated_entries = Vec::new();
@@ -1120,7 +1098,6 @@ impl LocalSnapshot {
         }
 
         proto::UpdateWorktree {
-            id: update_id as u64,
             project_id,
             worktree_id,
             root_name: self.root_name().to_string(),
@@ -2461,7 +2438,7 @@ mod tests {
         fmt::Write,
         time::{SystemTime, UNIX_EPOCH},
     };
-    use util::{post_inc, test::temp_tree};
+    use util::test::temp_tree;
 
     #[gpui::test]
     async fn test_traversal(cx: gpui::TestAppContext) {
@@ -2646,7 +2623,6 @@ mod tests {
             new_scanner.snapshot().to_vec(true)
         );
 
-        let mut update_id = 0;
         for mut prev_snapshot in snapshots {
             let include_ignored = rng.gen::<bool>();
             if !include_ignored {
@@ -2667,13 +2643,9 @@ mod tests {
                 prev_snapshot.entries_by_id.edit(entries_by_id_edits, &());
             }
 
-            let update = scanner.snapshot().build_update(
-                &prev_snapshot,
-                0,
-                0,
-                post_inc(&mut update_id),
-                include_ignored,
-            );
+            let update = scanner
+                .snapshot()
+                .build_update(&prev_snapshot, 0, 0, include_ignored);
             prev_snapshot.apply_remote_update(update).unwrap();
             assert_eq!(
                 prev_snapshot.to_vec(true),

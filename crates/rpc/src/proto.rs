@@ -37,6 +37,7 @@ pub trait AnyTypedEnvelope: 'static + Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
     fn is_background(&self) -> bool;
+    fn original_sender_id(&self) -> Option<PeerId>;
 }
 
 pub enum MessagePriority {
@@ -63,6 +64,10 @@ impl<T: EnvelopedMessage> AnyTypedEnvelope for TypedEnvelope<T> {
 
     fn is_background(&self) -> bool {
         matches!(T::PRIORITY, MessagePriority::Background)
+    }
+
+    fn original_sender_id(&self) -> Option<PeerId> {
+        self.original_sender_id
     }
 }
 
@@ -157,8 +162,8 @@ messages!(
     (GetCompletionsResponse, Foreground),
     (GetDefinition, Foreground),
     (GetDefinitionResponse, Foreground),
-    (GetDocumentHighlights, Foreground),
-    (GetDocumentHighlightsResponse, Foreground),
+    (GetDocumentHighlights, Background),
+    (GetDocumentHighlightsResponse, Background),
     (GetReferences, Foreground),
     (GetReferencesResponse, Foreground),
     (GetProjectSymbols, Background),
@@ -188,7 +193,6 @@ messages!(
     (SendChannelMessage, Foreground),
     (SendChannelMessageResponse, Foreground),
     (ShareProject, Foreground),
-    (ShareWorktree, Foreground),
     (Test, Foreground),
     (UnregisterProject, Foreground),
     (UnregisterWorktree, Foreground),
@@ -228,7 +232,6 @@ request_messages!(
     (SaveBuffer, BufferSaved),
     (SendChannelMessage, SendChannelMessageResponse),
     (ShareProject, Ack),
-    (ShareWorktree, Ack),
     (Test, Test),
     (UpdateBuffer, Ack),
     (UpdateWorktree, Ack),
@@ -259,12 +262,12 @@ entity_messages!(
     PrepareRename,
     RemoveProjectCollaborator,
     SaveBuffer,
-    ShareWorktree,
     UnregisterWorktree,
     UnshareProject,
     UpdateBuffer,
     UpdateBufferFile,
     UpdateDiagnosticSummary,
+    RegisterWorktree,
     UpdateWorktree,
 );
 

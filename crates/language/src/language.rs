@@ -13,7 +13,7 @@ use futures::{
     future::{BoxFuture, Shared},
     FutureExt, TryFutureExt,
 };
-use gpui::{AppContext, Task};
+use gpui::{MutableAppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
@@ -225,7 +225,7 @@ impl LanguageRegistry {
         language: &Arc<Language>,
         root_path: Arc<Path>,
         http_client: Arc<dyn HttpClient>,
-        cx: &AppContext,
+        cx: &mut MutableAppContext,
     ) -> Option<Task<Result<Arc<lsp::LanguageServer>>>> {
         #[cfg(any(test, feature = "test-support"))]
         if let Some(config) = &language.config.language_server {
@@ -234,7 +234,7 @@ impl LanguageRegistry {
 
                 let (server, mut fake_server) = lsp::LanguageServer::fake_with_capabilities(
                     fake_config.capabilities.clone(),
-                    cx.background().clone(),
+                    cx,
                 );
 
                 if let Some(initalizer) = &fake_config.initializer {

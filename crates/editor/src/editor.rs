@@ -8143,16 +8143,18 @@ mod tests {
     #[gpui::test]
     async fn test_completion(mut cx: gpui::TestAppContext) {
         let settings = cx.read(EditorSettings::test);
-        let (language_server, mut fake) = lsp::LanguageServer::fake_with_capabilities(
-            lsp::ServerCapabilities {
-                completion_provider: Some(lsp::CompletionOptions {
-                    trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+        let (language_server, mut fake) = cx.update(|cx| {
+            lsp::LanguageServer::fake_with_capabilities(
+                lsp::ServerCapabilities {
+                    completion_provider: Some(lsp::CompletionOptions {
+                        trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                ..Default::default()
-            },
-            cx.background(),
-        );
+                },
+                cx,
+            )
+        });
 
         let text = "
             one
@@ -8318,7 +8320,7 @@ mod tests {
             position: Point,
             completions: Vec<(Range<Point>, &'static str)>,
         ) {
-            fake.handle_request::<lsp::request::Completion, _>(move |params| {
+            fake.handle_request::<lsp::request::Completion, _>(move |params, _| {
                 assert_eq!(
                     params.text_document_position.text_document.uri,
                     lsp::Url::from_file_path(path).unwrap()
@@ -8352,7 +8354,7 @@ mod tests {
             fake: &mut FakeLanguageServer,
             edit: Option<(Range<Point>, &'static str)>,
         ) {
-            fake.handle_request::<lsp::request::ResolveCompletionItem, _>(move |_| {
+            fake.handle_request::<lsp::request::ResolveCompletionItem, _>(move |_, _| {
                 lsp::CompletionItem {
                     additional_text_edits: edit.clone().map(|(range, new_text)| {
                         vec![lsp::TextEdit::new(

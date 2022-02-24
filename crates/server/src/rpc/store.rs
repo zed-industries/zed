@@ -30,7 +30,6 @@ pub struct Project {
 pub struct Worktree {
     pub authorized_user_ids: Vec<UserId>,
     pub root_name: String,
-    pub share: Option<WorktreeShare>,
     pub weak: bool,
 }
 
@@ -38,12 +37,13 @@ pub struct Worktree {
 pub struct ProjectShare {
     pub guests: HashMap<ConnectionId, (ReplicaId, UserId)>,
     pub active_replica_ids: HashSet<ReplicaId>,
+    pub worktrees: HashMap<u64, WorktreeShare>,
 }
 
+#[derive(Default)]
 pub struct WorktreeShare {
     pub entries: HashMap<u64, proto::Entry>,
     pub diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
-    pub next_update_id: u64,
 }
 
 #[derive(Default)]
@@ -73,11 +73,6 @@ pub struct UnsharedProject {
 pub struct LeftProject {
     pub connection_ids: Vec<ConnectionId>,
     pub authorized_user_ids: Vec<UserId>,
-}
-
-pub struct SharedWorktree {
-    pub authorized_user_ids: Vec<UserId>,
-    pub connection_ids: Vec<ConnectionId>,
 }
 
 impl Store {
@@ -273,6 +268,9 @@ impl Store {
                 connection.projects.insert(project_id);
             }
             project.worktrees.insert(worktree_id, worktree);
+            if let Ok(share) = project.share_mut() {
+                share.worktrees.insert(worktree_id, Default::default());
+            }
 
             #[cfg(test)]
             self.check_invariants();
@@ -327,8 +325,9 @@ impl Store {
             .ok_or_else(|| anyhow!("no such worktree"))?;
 
         let mut guest_connection_ids = Vec::new();
-        if let Some(share) = &project.share {
+        if let Ok(share) = project.share_mut() {
             guest_connection_ids.extend(share.guests.keys());
+            share.worktrees.remove(&worktree_id);
         }
 
         for authorized_user_id in &worktree.authorized_user_ids {
@@ -350,7 +349,11 @@ impl Store {
     pub fn share_project(&mut self, project_id: u64, connection_id: ConnectionId) -> bool {
         if let Some(project) = self.projects.get_mut(&project_id) {
             if project.host_connection_id == connection_id {
-                project.share = Some(ProjectShare::default());
+                let mut share = ProjectShare::default();
+                for worktree_id in project.worktrees.keys() {
+                    share.worktrees.insert(*worktree_id, Default::default());
+                }
+                project.share = Some(share);
                 return true;
             }
         }
@@ -381,10 +384,6 @@ impl Store {
                 }
             }
 
-            for worktree in project.worktrees.values_mut() {
-                worktree.share.take();
-            }
-
             #[cfg(test)]
             self.check_invariants();
 
@@ -394,38 +393,6 @@ impl Store {
             })
         } else {
             Err(anyhow!("project is not shared"))?
-        }
-    }
-
-    pub fn share_worktree(
-        &mut self,
-        project_id: u64,
-        worktree_id: u64,
-        connection_id: ConnectionId,
-        entries: HashMap<u64, proto::Entry>,
-        diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
-        next_update_id: u64,
-    ) -> tide::Result<SharedWorktree> {
-        let project = self
-            .projects
-            .get_mut(&project_id)
-            .ok_or_else(|| anyhow!("no such project"))?;
-        let worktree = project
-            .worktrees
-            .get_mut(&worktree_id)
-            .ok_or_else(|| anyhow!("no such worktree"))?;
-        if project.host_connection_id == connection_id && project.share.is_some() {
-            worktree.share = Some(WorktreeShare {
-                entries,
-                diagnostic_summaries,
-                next_update_id,
-            });
-            Ok(SharedWorktree {
-                authorized_user_ids: project.authorized_user_ids(),
-                connection_ids: project.guest_connection_ids(),
-            })
-        } else {
-            Err(anyhow!("no such worktree"))?
         }
     }
 
@@ -440,17 +407,16 @@ impl Store {
             .projects
             .get_mut(&project_id)
             .ok_or_else(|| anyhow!("no such project"))?;
-        let worktree = project
-            .worktrees
-            .get_mut(&worktree_id)
-            .ok_or_else(|| anyhow!("no such worktree"))?;
         if project.host_connection_id == connection_id {
-            if let Some(share) = worktree.share.as_mut() {
-                share
-                    .diagnostic_summaries
-                    .insert(summary.path.clone().into(), summary);
-                return Ok(project.connection_ids());
-            }
+            let worktree = project
+                .share_mut()?
+                .worktrees
+                .get_mut(&worktree_id)
+                .ok_or_else(|| anyhow!("no such worktree"))?;
+            worktree
+                .diagnostic_summaries
+                .insert(summary.path.clone().into(), summary);
+            return Ok(project.connection_ids());
         }
 
         Err(anyhow!("no such worktree"))?
@@ -537,28 +503,20 @@ impl Store {
         connection_id: ConnectionId,
         project_id: u64,
         worktree_id: u64,
-        update_id: u64,
         removed_entries: &[u64],
         updated_entries: &[proto::Entry],
     ) -> tide::Result<Vec<ConnectionId>> {
         let project = self.write_project(project_id, connection_id)?;
-        let share = project
+        let worktree = project
+            .share_mut()?
             .worktrees
             .get_mut(&worktree_id)
-            .ok_or_else(|| anyhow!("no such worktree"))?
-            .share
-            .as_mut()
-            .ok_or_else(|| anyhow!("worktree is not shared"))?;
-        if share.next_update_id != update_id {
-            return Err(anyhow!("received worktree updates out-of-order"))?;
-        }
-
-        share.next_update_id = update_id + 1;
+            .ok_or_else(|| anyhow!("no such worktree"))?;
         for entry_id in removed_entries {
-            share.entries.remove(&entry_id);
+            worktree.entries.remove(&entry_id);
         }
         for entry in updated_entries {
-            share.entries.insert(entry.id, entry.clone());
+            worktree.entries.insert(entry.id, entry.clone());
         }
         Ok(project.connection_ids())
     }
