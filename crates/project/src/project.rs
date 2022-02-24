@@ -1,9 +1,9 @@
 pub mod fs;
 mod ignore;
 mod lsp_command;
+mod search;
 pub mod worktree;
 
-use aho_corasick::AhoCorasickBuilder;
 use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
@@ -23,6 +23,7 @@ use lsp::{DiagnosticSeverity, DocumentHighlightKind, LanguageServer};
 use lsp_command::*;
 use postage::{broadcast, prelude::Stream, sink::Sink, watch};
 use rand::prelude::*;
+use search::SearchQuery;
 use sha2::{Digest, Sha256};
 use smol::block_on;
 use std::{
@@ -150,10 +151,6 @@ pub struct Symbol {
     pub kind: lsp::SymbolKind,
     pub range: Range<PointUtf16>,
     pub signature: [u8; 32],
-}
-
-pub enum SearchQuery {
-    Plain(String),
 }
 
 pub struct BufferRequestHandle(Rc<RefCell<ProjectBuffers>>);
@@ -2078,23 +2075,16 @@ impl Project {
                 })
                 .detach();
 
-            let SearchQuery::Plain(query) = query;
-            let search = Arc::new(
-                AhoCorasickBuilder::new()
-                    .auto_configure(&[&query])
-                    // .ascii_case_insensitive(!case_sensitive)
-                    .build(&[&query]),
-            );
             let (matching_paths_tx, mut matching_paths_rx) = smol::channel::bounded(1024);
             let workers = cx.background().num_cpus();
             cx.background()
                 .spawn({
                     let fs = self.fs.clone();
                     let background = cx.background().clone();
-                    let search = search.clone();
+                    let query = query.clone();
                     async move {
                         let fs = &fs;
-                        let search = &search;
+                        let query = &query;
                         let matching_paths_tx = &matching_paths_tx;
                         background
                             .scoped(|scope| {
@@ -2118,10 +2108,10 @@ impl Project {
                                             let matches = if let Some(file) =
                                                 fs.open_sync(&path).await.log_err()
                                             {
-                                                search
-                                                    .stream_find_iter(file)
+                                                query
+                                                    .search(file)
                                                     .next()
-                                                    .map_or(false, |mat| mat.is_ok())
+                                                    .map_or(false, |range| range.is_ok())
                                             } else {
                                                 false
                                             };
@@ -2175,7 +2165,7 @@ impl Project {
 
             let background = cx.background().clone();
             cx.background().spawn(async move {
-                let search = &search;
+                let query = &query;
                 let mut matched_buffers = Vec::new();
                 for _ in 0..workers {
                     matched_buffers.push(HashMap::default());
@@ -2186,12 +2176,12 @@ impl Project {
                             let mut buffers_rx = buffers_rx.clone();
                             scope.spawn(async move {
                                 while let Some((buffer, snapshot)) = buffers_rx.next().await {
-                                    for mat in search.stream_find_iter(
+                                    for range in query.search(
                                         snapshot.as_rope().bytes_in_range(0..snapshot.len()),
                                     ) {
-                                        let mat = mat.unwrap();
-                                        let range = snapshot.anchor_before(mat.start())
-                                            ..snapshot.anchor_after(mat.end());
+                                        let range = range.unwrap();
+                                        let range = snapshot.anchor_before(range.start)
+                                            ..snapshot.anchor_after(range.end);
                                         worker_matched_buffers
                                             .entry(buffer.clone())
                                             .or_insert(Vec::new())
@@ -4902,7 +4892,7 @@ mod tests {
             .await;
 
         assert_eq!(
-            search(&project, SearchQuery::Plain("TWO".to_string()), &mut cx).await,
+            search(&project, SearchQuery::text("TWO"), &mut cx).await,
             HashMap::from_iter([
                 ("two.rs".to_string(), vec![6..9]),
                 ("three.rs".to_string(), vec![37..40])
@@ -4920,7 +4910,7 @@ mod tests {
         });
 
         assert_eq!(
-            search(&project, SearchQuery::Plain("TWO".to_string()), &mut cx).await,
+            search(&project, SearchQuery::text("TWO"), &mut cx).await,
             HashMap::from_iter([
                 ("two.rs".to_string(), vec![6..9]),
                 ("three.rs".to_string(), vec![37..40]),
