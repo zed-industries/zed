@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufWriter, AsyncRead, AsyncWrite};
-use gpui::{executor, AsyncAppContext, Task};
+use gpui::{executor, Task};
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, oneshot, prelude::Stream, sink::Sink, watch};
 use serde::{Deserialize, Serialize};
@@ -485,7 +485,10 @@ impl Drop for Subscription {
 pub struct FakeLanguageServer {
     handlers: Arc<
         Mutex<
-            HashMap<&'static str, Box<dyn Send + FnMut(usize, &[u8], AsyncAppContext) -> Vec<u8>>>,
+            HashMap<
+                &'static str,
+                Box<dyn Send + FnMut(usize, &[u8], gpui::AsyncAppContext) -> Vec<u8>>,
+            >,
         >,
     >,
     outgoing_tx: futures::channel::mpsc::UnboundedSender<Vec<u8>>,
@@ -625,7 +628,7 @@ impl FakeLanguageServer {
     ) -> futures::channel::mpsc::UnboundedReceiver<()>
     where
         T: 'static + request::Request,
-        F: 'static + Send + FnMut(T::Params, AsyncAppContext) -> T::Result,
+        F: 'static + Send + FnMut(T::Params, gpui::AsyncAppContext) -> T::Result,
     {
         let (responded_tx, responded_rx) = futures::channel::mpsc::unbounded();
         self.handlers.lock().insert(
