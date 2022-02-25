@@ -598,7 +598,11 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         matches!(event, Event::Saved | Event::Dirtied | Event::TitleChanged)
     }
 
-    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
+    fn clone_on_split(
+        &self,
+        nav_history: ItemNavHistory,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Self>
     where
         Self: Sized,
     {
@@ -608,13 +612,8 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
             self.settings.clone(),
             cx,
         );
-        diagnostics.editor.update(cx, |editor, cx| {
-            let nav_history = self
-                .editor
-                .read(cx)
-                .nav_history()
-                .map(|nav_history| ItemNavHistory::new(nav_history.history(), &cx.handle()));
-            editor.set_nav_history(nav_history);
+        diagnostics.editor.update(cx, |editor, _| {
+            editor.set_nav_history(Some(nav_history));
         });
         Some(diagnostics)
     }

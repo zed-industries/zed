@@ -156,7 +156,7 @@ pub trait ItemView: View {
     fn item_id(&self, cx: &AppContext) -> usize;
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
-    fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
+    fn clone_on_split(&self, _: ItemNavHistory, _: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
     {
@@ -229,7 +229,11 @@ pub trait ItemViewHandle: 'static {
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle>;
-    fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemViewHandle>>;
+    fn clone_on_split(
+        &self,
+        nav_history: Rc<RefCell<NavHistory>>,
+        cx: &mut MutableAppContext,
+    ) -> Option<Box<dyn ItemViewHandle>>;
     fn added_to_pane(&mut self, cx: &mut ViewContext<Pane>);
     fn deactivated(&self, cx: &mut MutableAppContext);
     fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext);
@@ -373,9 +377,15 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         Box::new(self.clone())
     }
 
-    fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemViewHandle>> {
+    fn clone_on_split(
+        &self,
+        nav_history: Rc<RefCell<NavHistory>>,
+        cx: &mut MutableAppContext,
+    ) -> Option<Box<dyn ItemViewHandle>> {
         self.update(cx, |item, cx| {
-            cx.add_option_view(|cx| item.clone_on_split(cx))
+            cx.add_option_view(|cx| {
+                item.clone_on_split(ItemNavHistory::new(nav_history, &cx.handle()), cx)
+            })
         })
         .map(|handle| Box::new(handle) as Box<dyn ItemViewHandle>)
     }
@@ -1047,7 +1057,8 @@ impl Workspace {
         let new_pane = self.add_pane(cx);
         self.activate_pane(new_pane.clone(), cx);
         if let Some(item) = pane.read(cx).active_item() {
-            if let Some(clone) = item.clone_on_split(cx.as_mut()) {
+            let nav_history = new_pane.read(cx).nav_history().clone();
+            if let Some(clone) = item.clone_on_split(nav_history, cx.as_mut()) {
                 new_pane.update(cx, |new_pane, cx| new_pane.add_item_view(clone, cx));
             }
         }

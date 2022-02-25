@@ -834,7 +834,7 @@ impl Editor {
         Self::new(EditorMode::Full, buffer, project, settings, None, cx)
     }
 
-    pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
+    pub fn clone(&self, nav_history: ItemNavHistory, cx: &mut ViewContext<Self>) -> Self {
         let mut clone = Self::new(
             self.mode,
             self.buffer.clone(),
@@ -845,10 +845,7 @@ impl Editor {
         );
         clone.scroll_position = self.scroll_position;
         clone.scroll_top_anchor = self.scroll_top_anchor.clone();
-        clone.nav_history = self
-            .nav_history
-            .as_ref()
-            .map(|nav_history| ItemNavHistory::new(nav_history.history(), &cx.handle()));
+        clone.nav_history = Some(nav_history);
         clone
     }
 

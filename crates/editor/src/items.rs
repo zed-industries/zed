@@ -194,11 +194,15 @@ impl ItemView for Editor {
         })
     }
 
-    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
+    fn clone_on_split(
+        &self,
+        nav_history: ItemNavHistory,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Self>
     where
         Self: Sized,
     {
-        Some(self.clone(cx))
+        Some(self.clone(nav_history, cx))
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {

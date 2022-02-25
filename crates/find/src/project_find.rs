@@ -1,14 +1,18 @@
+use crate::SearchOption;
 use editor::{Anchor, Autoscroll, Editor, MultiBuffer};
 use gpui::{
-    action, elements::*, keymap::Binding, platform::CursorStyle, ElementBox, Entity, ModelContext,
-    ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
+    action, elements::*, keymap::Binding, platform::CursorStyle, AppContext, ElementBox, Entity,
+    ModelContext, ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext,
+    ViewHandle,
 };
 use postage::watch;
 use project::{search::SearchQuery, Project};
-use std::{any::TypeId, ops::Range};
-use workspace::{Settings, Workspace};
-
-use crate::SearchOption;
+use std::{
+    any::{Any, TypeId},
+    ops::Range,
+    path::PathBuf,
+};
+use workspace::{Item, ItemNavHistory, ItemView, Settings, Workspace};
 
 action!(Deploy);
 action!(Search);
@@ -98,13 +102,13 @@ impl ProjectFind {
     }
 }
 
-impl workspace::Item for ProjectFind {
+impl Item for ProjectFind {
     type View = ProjectFindView;
 
     fn build_view(
         model: ModelHandle<Self>,
-        workspace: &workspace::Workspace,
-        nav_history: workspace::ItemNavHistory,
+        workspace: &Workspace,
+        nav_history: ItemNavHistory,
         cx: &mut gpui::ViewContext<Self::View>,
     ) -> Self::View {
         let settings = workspace.settings();
@@ -186,7 +190,7 @@ impl View for ProjectFindView {
     }
 }
 
-impl workspace::ItemView for ProjectFindView {
+impl ItemView for ProjectFindView {
     fn act_as_type(
         &self,
         type_id: TypeId,
@@ -200,6 +204,11 @@ impl workspace::ItemView for ProjectFindView {
         } else {
             None
         }
+    }
+
+    fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
+        self.results_editor
+            .update(cx, |editor, cx| editor.deactivated(cx));
     }
 
     fn item_id(&self, _: &gpui::AppContext) -> usize {
@@ -234,13 +243,17 @@ impl workspace::ItemView for ProjectFindView {
     fn save_as(
         &mut self,
         _: ModelHandle<Project>,
-        _: std::path::PathBuf,
+        _: PathBuf,
         _: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
         unreachable!("save_as should not have been called")
     }
 
-    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
+    fn clone_on_split(
+        &self,
+        nav_history: ItemNavHistory,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Self>
     where
         Self: Sized,
     {
@@ -251,8 +264,8 @@ impl workspace::ItemView for ProjectFindView {
                 cx,
             )
         });
-        let results_editor = self.results_editor.update(cx, |editor, cx| {
-            cx.add_view(|cx| editor.clone_on_split(cx).unwrap())
+        let results_editor = self.results_editor.update(cx, |results_editor, cx| {
+            cx.add_view(|cx| results_editor.clone(nav_history, cx))
         });
         cx.observe(&self.model, |this, _, cx| this.model_changed(true, cx))
             .detach();
@@ -268,6 +281,11 @@ impl workspace::ItemView for ProjectFindView {
         };
         view.model_changed(false, cx);
         Some(view)
+    }
+
+    fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) {
+        self.results_editor
+            .update(cx, |editor, cx| editor.navigate(data, cx));
     }
 }
 

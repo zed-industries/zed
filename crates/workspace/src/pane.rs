@@ -149,6 +149,10 @@ impl Pane {
         }
     }
 
+    pub(crate) fn nav_history(&self) -> &Rc<RefCell<NavHistory>> {
+        &self.nav_history
+    }
+
     pub fn activate(&self, cx: &mut ViewContext<Self>) {
         cx.emit(Event::Activate);
     }
