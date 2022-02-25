@@ -13,15 +13,18 @@ use crate::SearchOption;
 action!(Deploy);
 action!(Search);
 action!(ToggleSearchOption, SearchOption);
+action!(ToggleFocus);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
-        Binding::new("cmd-shift-F", Deploy, None),
+        Binding::new("cmd-shift-F", ToggleFocus, Some("ProjectFindView")),
+        Binding::new("cmd-shift-F", Deploy, Some("Workspace")),
         Binding::new("enter", Search, Some("ProjectFindView")),
     ]);
     cx.add_action(ProjectFindView::deploy);
     cx.add_action(ProjectFindView::search);
     cx.add_action(ProjectFindView::toggle_search_option);
+    cx.add_action(ProjectFindView::toggle_focus);
 }
 
 struct ProjectFind {
@@ -251,6 +254,14 @@ impl ProjectFindView {
         *value = !*value;
         self.search(&Search, cx);
         cx.notify();
+    }
+
+    fn toggle_focus(&mut self, _: &ToggleFocus, cx: &mut ViewContext<Self>) {
+        if self.query_editor.is_focused(cx) {
+            cx.focus(&self.results_editor);
+        } else {
+            cx.focus(&self.query_editor);
+        }
     }
 
     fn on_model_changed(&mut self, _: ModelHandle<ProjectFind>, cx: &mut ViewContext<Self>) {
