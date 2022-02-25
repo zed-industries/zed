@@ -34,7 +34,6 @@ pub fn init(cx: &mut MutableAppContext) {
 struct ProjectFind {
     project: ModelHandle<Project>,
     excerpts: ModelHandle<MultiBuffer>,
-    query: Option<SearchQuery>,
     pending_search: Option<Task<Option<()>>>,
     highlighted_ranges: Vec<Range<Anchor>>,
 }
@@ -60,9 +59,19 @@ impl ProjectFind {
         Self {
             project,
             excerpts: cx.add_model(|_| MultiBuffer::new(replica_id)),
-            query: Default::default(),
             pending_search: Default::default(),
             highlighted_ranges: Default::default(),
+        }
+    }
+
+    fn clone(&self, new_cx: &mut ModelContext<Self>) -> Self {
+        Self {
+            project: self.project.clone(),
+            excerpts: self
+                .excerpts
+                .update(new_cx, |excerpts, cx| cx.add_model(|cx| excerpts.clone(cx))),
+            pending_search: Default::default(),
+            highlighted_ranges: self.highlighted_ranges.clone(),
         }
     }
 
@@ -70,7 +79,6 @@ impl ProjectFind {
         let search = self
             .project
             .update(cx, |project, cx| project.search(query.clone(), cx));
-        self.query = Some(query.clone());
         self.highlighted_ranges.clear();
         self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
             let matches = search.await;
@@ -270,19 +278,38 @@ impl ItemView for ProjectFindView {
         Self: Sized,
     {
         let query_editor = cx.add_view(|cx| {
-            Editor::single_line(
+            let query = self.query_editor.read(cx).text(cx);
+            let editor = Editor::single_line(
                 self.settings.clone(),
                 Some(|theme| theme.find.editor.input.clone()),
                 cx,
-            )
+            );
+            editor
+                .buffer()
+                .update(cx, |buffer, cx| buffer.edit([0..0], query, cx));
+            editor
         });
-        let results_editor = self.results_editor.update(cx, |results_editor, cx| {
-            cx.add_view(|cx| results_editor.clone(nav_history, cx))
-        });
-        cx.observe(&self.model, |this, _, cx| this.model_changed(true, cx))
+        let model = self
+            .model
+            .update(cx, |model, cx| cx.add_model(|cx| model.clone(cx)));
+
+        cx.observe(&model, |this, _, cx| this.model_changed(true, cx))
             .detach();
+        let results_editor = cx.add_view(|cx| {
+            let model = model.read(cx);
+            let excerpts = model.excerpts.clone();
+            let project = model.project.clone();
+            let scroll_position = self
+                .results_editor
+                .update(cx, |editor, cx| editor.scroll_position(cx));
+
+            let mut editor = Editor::for_buffer(excerpts, Some(project), self.settings.clone(), cx);
+            editor.set_nav_history(Some(nav_history));
+            editor.set_scroll_position(scroll_position, cx);
+            editor
+        });
         let mut view = Self {
-            model: self.model.clone(),
+            model,
             query_editor,
             results_editor,
             case_sensitive: self.case_sensitive,
@@ -349,22 +376,7 @@ impl ProjectFindView {
     }
 
     fn model_changed(&mut self, reset_selections: bool, cx: &mut ViewContext<Self>) {
-        let model = self.model.read(cx);
-        let highlighted_ranges = model.highlighted_ranges.clone();
-        if let Some(query) = model.query.clone() {
-            self.case_sensitive = query.case_sensitive();
-            self.whole_word = query.whole_word();
-            self.regex = query.is_regex();
-            self.query_editor.update(cx, |query_editor, cx| {
-                if query_editor.text(cx) != query.as_str() {
-                    query_editor.buffer().update(cx, |query_buffer, cx| {
-                        let len = query_buffer.read(cx).len();
-                        query_buffer.edit([0..len], query.as_str(), cx);
-                    });
-                }
-            });
-        }
-
+        let highlighted_ranges = self.model.read(cx).highlighted_ranges.clone();
         if !highlighted_ranges.is_empty() {
             let theme = &self.settings.borrow().theme.find;
             self.results_editor.update(cx, |editor, cx| {

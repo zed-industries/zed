@@ -43,6 +43,7 @@ pub struct MultiBuffer {
     title: Option<String>,
 }
 
+#[derive(Clone)]
 struct History {
     next_transaction_id: TransactionId,
     undo_stack: Vec<Transaction>,
@@ -165,6 +166,37 @@ impl MultiBuffer {
                 group_interval: Duration::from_millis(300),
             },
             title: Default::default(),
+        }
+    }
+
+    pub fn clone(&self, new_cx: &mut ModelContext<Self>) -> Self {
+        let mut buffers = HashMap::default();
+        for (buffer_id, buffer_state) in self.buffers.borrow().iter() {
+            buffers.insert(
+                *buffer_id,
+                BufferState {
+                    buffer: buffer_state.buffer.clone(),
+                    last_version: buffer_state.last_version.clone(),
+                    last_parse_count: buffer_state.last_parse_count,
+                    last_selections_update_count: buffer_state.last_selections_update_count,
+                    last_diagnostics_update_count: buffer_state.last_diagnostics_update_count,
+                    last_file_update_count: buffer_state.last_file_update_count,
+                    excerpts: buffer_state.excerpts.clone(),
+                    _subscriptions: [
+                        new_cx.observe(&buffer_state.buffer, |_, _, cx| cx.notify()),
+                        new_cx.subscribe(&buffer_state.buffer, Self::on_buffer_event),
+                    ],
+                },
+            );
+        }
+        Self {
+            snapshot: RefCell::new(self.snapshot.borrow().clone()),
+            buffers: RefCell::new(buffers),
+            subscriptions: Default::default(),
+            singleton: self.singleton,
+            replica_id: self.replica_id,
+            history: self.history.clone(),
+            title: self.title.clone(),
         }
     }
 
