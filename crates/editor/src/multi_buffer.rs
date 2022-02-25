@@ -687,6 +687,11 @@ impl MultiBuffer {
         O: text::ToOffset,
     {
         assert_eq!(self.history.transaction_depth, 0);
+        let mut ranges = ranges.into_iter().peekable();
+        if ranges.peek().is_none() {
+            return Default::default();
+        }
+
         self.sync(cx);
 
         let buffer_id = buffer.id();
@@ -715,7 +720,7 @@ impl MultiBuffer {
         let edit_start = new_excerpts.summary().text.bytes;
         new_excerpts.update_last(
             |excerpt| {
-                excerpt.has_trailing_newline = true;
+                excerpt.has_trailing_newline = ranges.peek().is_some();
                 prev_id = excerpt.id.clone();
             },
             &(),
@@ -727,7 +732,6 @@ impl MultiBuffer {
         }
 
         let mut ids = Vec::new();
-        let mut ranges = ranges.into_iter().peekable();
         while let Some(range) = ranges.next() {
             let id = ExcerptId::between(&prev_id, &next_id);
             if let Err(ix) = buffer_state.excerpts.binary_search(&id) {
@@ -1210,16 +1214,26 @@ impl MultiBuffer {
                 };
 
                 let buffer = buffer_handle.read(cx);
-                let end_ix = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Right);
-                let start_ix = buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
+                let buffer_text = buffer.text();
+                let ranges = (0..rng.gen_range(0..5))
+                    .map(|_| {
+                        let end_ix =
+                            buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Right);
+                        let start_ix = buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
+                        start_ix..end_ix
+                    })
+                    .collect::<Vec<_>>();
                 log::info!(
-                    "Inserting excerpt from buffer {} and range {:?}: {:?}",
+                    "Inserting excerpts from buffer {} and ranges {:?}: {:?}",
                     buffer_handle.id(),
-                    start_ix..end_ix,
-                    &buffer.text()[start_ix..end_ix]
+                    ranges,
+                    ranges
+                        .iter()
+                        .map(|range| &buffer_text[range.clone()])
+                        .collect::<Vec<_>>()
                 );
 
-                let excerpt_id = self.push_excerpts(buffer_handle.clone(), [start_ix..end_ix], cx);
+                let excerpt_id = self.push_excerpts(buffer_handle.clone(), ranges, cx);
                 log::info!("Inserted with id: {:?}", excerpt_id);
             } else {
                 let remove_count = rng.gen_range(1..=excerpt_ids.len());
