@@ -264,6 +264,7 @@ impl ProjectFindView {
             );
             editor.select_ranges([0..0], Some(Autoscroll::Fit), cx);
         });
+        cx.focus(&self.results_editor);
     }
 
     fn render_query_editor(&self, cx: &mut RenderContext<Self>) -> ElementBox {
