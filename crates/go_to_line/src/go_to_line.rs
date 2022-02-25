@@ -1,10 +1,9 @@
-use editor::{display_map::ToDisplayPoint, Autoscroll, DisplayPoint, Editor, EditorSettings};
+use editor::{display_map::ToDisplayPoint, Autoscroll, DisplayPoint, Editor};
 use gpui::{
     action, elements::*, geometry::vector::Vector2F, keymap::Binding, Axis, Entity,
     MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
 };
 use postage::watch;
-use std::sync::Arc;
 use text::{Bias, Point};
 use workspace::{Settings, Workspace};
 
@@ -42,17 +41,8 @@ impl GoToLine {
     ) -> Self {
         let line_editor = cx.add_view(|cx| {
             Editor::single_line(
-                {
-                    let settings = settings.clone();
-                    Arc::new(move |_| {
-                        let settings = settings.borrow();
-                        EditorSettings {
-                            tab_size: settings.tab_size,
-                            style: settings.theme.selector.input_editor.as_editor(),
-                            soft_wrap: editor::SoftWrap::None,
-                        }
-                    })
-                },
+                settings.clone(),
+                Some(|theme| theme.selector.input_editor.clone()),
                 cx,
             )
         });

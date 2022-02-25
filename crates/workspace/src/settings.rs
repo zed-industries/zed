@@ -72,4 +72,17 @@ impl Settings {
             .and_then(|settings| settings.preferred_line_length)
             .unwrap_or(self.preferred_line_length)
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test(cx: &gpui::AppContext) -> Settings {
+        Settings {
+            buffer_font_family: cx.font_cache().load_family(&["Monaco"]).unwrap(),
+            buffer_font_size: 14.,
+            tab_size: 4,
+            soft_wrap: SoftWrap::None,
+            preferred_line_length: 80,
+            overrides: Default::default(),
+            theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), || Default::default()),
+        }
+    }
 }

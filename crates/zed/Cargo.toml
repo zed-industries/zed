@@ -92,6 +92,7 @@ time = "0.3"
 tiny_http = "0.8"
 toml = "0.5"
 tree-sitter = "0.20.4"
+tree-sitter-c = "0.20.1"
 tree-sitter-rust = "0.20.1"
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
 url = "2.2"

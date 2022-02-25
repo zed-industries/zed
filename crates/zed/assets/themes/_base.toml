@@ -243,7 +243,7 @@ background = "$state.hover"
 text = "$text.0"
 
 [editor]
-text = "$text.1"
+text_color = "$text.1.color"
 background = "$surface.1"
 gutter_background = "$surface.1"
 gutter_padding_factor = 2.5
@@ -282,8 +282,8 @@ header.border = { width = 1, top = true, color = "$border.0" }
 text_scale_factor = 0.857
 
 [editor.error_diagnostic.message]
-text = { extends = "$editor.text", size = 14, color = "$status.bad" }
-highlight_text = { extends = "$editor.text", size = 14, color = "$status.bad", weight = "bold" }
+text = { extends = "$text.1", size = 14, color = "$status.bad" }
+highlight_text = { extends = "$text.1", size = 14, color = "$status.bad", weight = "bold" }
 
 [editor.warning_diagnostic]
 extends = "$editor.error_diagnostic"

@@ -2,7 +2,7 @@ use client::{
     channel::{Channel, ChannelEvent, ChannelList, ChannelMessage},
     Client,
 };
-use editor::{Editor, EditorSettings};
+use editor::Editor;
 use gpui::{
     action,
     elements::*,
@@ -16,7 +16,7 @@ use postage::{prelude::Stream, watch};
 use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
 use util::{ResultExt, TryFutureExt};
-use workspace::Settings;
+use workspace::{settings::SoftWrap, Settings};
 
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
 
@@ -52,21 +52,14 @@ impl ChatPanel {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let input_editor = cx.add_view(|cx| {
-            Editor::auto_height(
+            let mut editor = Editor::auto_height(
                 4,
-                {
-                    let settings = settings.clone();
-                    Arc::new(move |_| {
-                        let settings = settings.borrow();
-                        EditorSettings {
-                            tab_size: settings.tab_size,
-                            style: settings.theme.chat_panel.input_editor.as_editor(),
-                            soft_wrap: editor::SoftWrap::EditorWidth,
-                        }
-                    })
-                },
+                settings.clone(),
+                Some(|theme| theme.chat_panel.input_editor.clone()),
                 cx,
-            )
+            );
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+            editor
         });
         let channel_select = cx.add_view(|cx| {
             let channel_list = channel_list.clone();

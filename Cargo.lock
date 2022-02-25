@@ -5279,6 +5279,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-c"
+version = "0.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7bdc5574c6cbc39c409246caeb1dd4d3c4bd6d30d4e9b399776086c20365fd24"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-markdown"
 version = "0.0.1"
 source = "git+https://github.com/MDeiml/tree-sitter-markdown?rev=330ecab87a3e3a7211ac69bbadc19eabecdb1cca#330ecab87a3e3a7211ac69bbadc19eabecdb1cca"
@@ -5887,6 +5897,7 @@ dependencies = [
  "tiny_http",
  "toml",
  "tree-sitter",
+ "tree-sitter-c",
  "tree-sitter-markdown",
  "tree-sitter-rust",
  "unindent",

@@ -1,9 +1,9 @@
 use super::{
     display_map::{BlockContext, ToDisplayPoint},
-    Anchor, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, Input,
-    Scroll, Select, SelectPhase, SoftWrap, ToPoint, MAX_LINE_LEN,
+    Anchor, DisplayPoint, Editor, EditorMode, EditorSnapshot, Input, Scroll, Select, SelectPhase,
+    SoftWrap, ToPoint, MAX_LINE_LEN,
 };
-use crate::display_map::TransformBlock;
+use crate::{display_map::TransformBlock, EditorStyle};
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
 use gpui::{
@@ -31,12 +31,12 @@ use std::{
 
 pub struct EditorElement {
     view: WeakViewHandle<Editor>,
-    settings: EditorSettings,
+    style: EditorStyle,
 }
 
 impl EditorElement {
-    pub fn new(view: WeakViewHandle<Editor>, settings: EditorSettings) -> Self {
-        Self { view, settings }
+    pub fn new(view: WeakViewHandle<Editor>, style: EditorStyle) -> Self {
+        Self { view, style }
     }
 
     fn view<'a>(&self, cx: &'a AppContext) -> &'a Editor {
@@ -209,16 +209,15 @@ impl EditorElement {
         let bounds = gutter_bounds.union_rect(text_bounds);
         let scroll_top = layout.snapshot.scroll_position().y() * layout.line_height;
         let editor = self.view(cx.app);
-        let style = &self.settings.style;
         cx.scene.push_quad(Quad {
             bounds: gutter_bounds,
-            background: Some(style.gutter_background),
+            background: Some(self.style.gutter_background),
             border: Border::new(0., Color::transparent_black()),
             corner_radius: 0.,
         });
         cx.scene.push_quad(Quad {
             bounds: text_bounds,
-            background: Some(style.background),
+            background: Some(self.style.background),
             border: Border::new(0., Color::transparent_black()),
             corner_radius: 0.,
         });
@@ -245,7 +244,7 @@ impl EditorElement {
                     );
                     cx.scene.push_quad(Quad {
                         bounds: RectF::new(origin, size),
-                        background: Some(style.active_line_background),
+                        background: Some(self.style.active_line_background),
                         border: Border::default(),
                         corner_radius: 0.,
                     });
@@ -264,7 +263,7 @@ impl EditorElement {
                 );
                 cx.scene.push_quad(Quad {
                     bounds: RectF::new(origin, size),
-                    background: Some(style.highlighted_line_background),
+                    background: Some(self.style.highlighted_line_background),
                     border: Border::default(),
                     corner_radius: 0.,
                 });
@@ -308,7 +307,7 @@ impl EditorElement {
         cx: &mut PaintContext,
     ) {
         let view = self.view(cx.app);
-        let style = &self.settings.style;
+        let style = &self.style;
         let local_replica_id = view.replica_id(cx);
         let scroll_position = layout.snapshot.scroll_position();
         let start_row = scroll_position.y() as u32;
@@ -498,7 +497,7 @@ impl EditorElement {
 
     fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &LayoutContext) -> f32 {
         let digit_count = (snapshot.max_buffer_row() as f32).log10().floor() as usize + 1;
-        let style = &self.settings.style;
+        let style = &self.style;
 
         cx.text_layout_cache
             .layout_str(
@@ -523,7 +522,7 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         cx: &LayoutContext,
     ) -> Vec<Option<text_layout::Line>> {
-        let style = &self.settings.style;
+        let style = &self.style;
         let include_line_numbers = snapshot.mode == EditorMode::Full;
         let mut line_number_layouts = Vec::with_capacity(rows.len());
         let mut line_number = String::new();
@@ -576,7 +575,11 @@ impl EditorElement {
 
         // When the editor is empty and unfocused, then show the placeholder.
         if snapshot.is_empty() && !snapshot.is_focused() {
-            let placeholder_style = self.settings.style.placeholder_text();
+            let placeholder_style = self
+                .style
+                .placeholder_text
+                .as_ref()
+                .unwrap_or_else(|| &self.style.text);
             let placeholder_text = snapshot.placeholder_text();
             let placeholder_lines = placeholder_text
                 .as_ref()
@@ -601,7 +604,7 @@ impl EditorElement {
                 })
                 .collect();
         } else {
-            let style = &self.settings.style;
+            let style = &self.style;
             let chunks = snapshot.chunks(rows.clone(), true).map(|chunk| {
                 let highlight_style = chunk
                     .highlight_id
@@ -688,10 +691,9 @@ impl EditorElement {
                         ..
                     } => {
                         if *starts_new_buffer {
-                            let style = &self.settings.style.diagnostic_path_header;
-                            let font_size = (style.text_scale_factor
-                                * self.settings.style.text.font_size)
-                                .round();
+                            let style = &self.style.diagnostic_path_header;
+                            let font_size =
+                                (style.text_scale_factor * self.style.text.font_size).round();
 
                             let mut filename = None;
                             let mut parent_path = None;
@@ -729,7 +731,7 @@ impl EditorElement {
                                 .expanded()
                                 .named("path header block")
                         } else {
-                            let text_style = self.settings.style.text.clone();
+                            let text_style = self.style.text.clone();
                             Label::new("…".to_string(), text_style)
                                 .contained()
                                 .with_padding_left(gutter_padding + scroll_x * em_width)
@@ -766,7 +768,7 @@ impl Element for EditorElement {
         }
 
         let snapshot = self.snapshot(cx.app);
-        let style = self.settings.style.clone();
+        let style = self.style.clone();
         let line_height = style.text.line_height(cx.font_cache);
 
         let gutter_padding;
@@ -786,12 +788,15 @@ impl Element for EditorElement {
         let em_width = style.text.em_width(cx.font_cache);
         let em_advance = style.text.em_advance(cx.font_cache);
         let overscroll = vec2f(em_width, 0.);
-        let wrap_width = match self.settings.soft_wrap {
-            SoftWrap::None => None,
-            SoftWrap::EditorWidth => Some(text_width - gutter_margin - overscroll.x() - em_width),
-            SoftWrap::Column(column) => Some(column as f32 * em_advance),
-        };
         let snapshot = self.update_view(cx.app, |view, cx| {
+            let wrap_width = match view.soft_wrap_mode(cx) {
+                SoftWrap::None => None,
+                SoftWrap::EditorWidth => {
+                    Some(text_width - gutter_margin - overscroll.x() - em_width)
+                }
+                SoftWrap::Column(column) => Some(column as f32 * em_advance),
+            };
+
             if view.set_wrap_width(wrap_width, cx) {
                 view.snapshot(cx)
             } else {
@@ -907,7 +912,7 @@ impl Element for EditorElement {
             }
         }
 
-        let style = self.settings.style.clone();
+        let style = self.style.clone();
         let longest_line_width = layout_line(
             snapshot.longest_row(),
             &snapshot,
@@ -951,12 +956,14 @@ impl Element for EditorElement {
                 .to_display_point(&snapshot);
 
             if (start_row..end_row).contains(&newest_selection_head.row()) {
+                let style = view.style(cx);
                 if view.context_menu_visible() {
-                    context_menu = view.render_context_menu(newest_selection_head, cx);
+                    context_menu =
+                        view.render_context_menu(newest_selection_head, style.clone(), cx);
                 }
 
                 code_actions_indicator = view
-                    .render_code_actions_indicator(cx)
+                    .render_code_actions_indicator(&style, cx)
                     .map(|indicator| (newest_selection_head.row(), indicator));
             }
         });
@@ -1370,26 +1377,19 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Editor, EditorSettings, MultiBuffer};
-    use std::sync::Arc;
+    use crate::{Editor, MultiBuffer};
+    use postage::watch;
     use util::test::sample_text;
+    use workspace::Settings;
 
     #[gpui::test]
     fn test_layout_line_numbers(cx: &mut gpui::MutableAppContext) {
-        let settings = EditorSettings::test(cx);
+        let settings = watch::channel_with(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
         let (window_id, editor) = cx.add_window(Default::default(), |cx| {
-            Editor::for_buffer(
-                buffer,
-                {
-                    let settings = settings.clone();
-                    Arc::new(move |_| settings.clone())
-                },
-                None,
-                cx,
-            )
+            Editor::new(EditorMode::Full, buffer, None, settings.1, None, cx)
         });
-        let element = EditorElement::new(editor.downgrade(), settings);
+        let element = EditorElement::new(editor.downgrade(), editor.read(cx).style(cx));
 
         let layouts = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);

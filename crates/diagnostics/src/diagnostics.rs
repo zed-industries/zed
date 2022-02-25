@@ -7,7 +7,7 @@ use editor::{
     display_map::{BlockDisposition, BlockId, BlockProperties, RenderBlock},
     highlight_diagnostic_message,
     items::BufferItemHandle,
-    Autoscroll, BuildSettings, Editor, ExcerptId, MultiBuffer, ToOffset,
+    Autoscroll, Editor, ExcerptId, MultiBuffer, ToOffset,
 };
 use gpui::{
     action, elements::*, fonts::TextStyle, keymap::Binding, AnyViewHandle, AppContext, Entity,
@@ -62,7 +62,6 @@ struct ProjectDiagnosticsEditor {
     excerpts: ModelHandle<MultiBuffer>,
     path_states: Vec<PathState>,
     paths_to_update: BTreeSet<ProjectPath>,
-    build_settings: BuildSettings,
     settings: watch::Receiver<workspace::Settings>,
 }
 
@@ -142,12 +141,11 @@ impl ProjectDiagnosticsEditor {
         .detach();
 
         let excerpts = cx.add_model(|cx| MultiBuffer::new(project.read(cx).replica_id()));
-        let build_settings = editor::settings_builder(excerpts.downgrade(), settings.clone());
         let editor = cx.add_view(|cx| {
             let mut editor = Editor::for_buffer(
                 excerpts.clone(),
-                build_settings.clone(),
                 Some(project.clone()),
+                settings.clone(),
                 cx,
             );
             editor.set_vertical_scroll_margin(5, cx);
@@ -164,7 +162,6 @@ impl ProjectDiagnosticsEditor {
             workspace,
             excerpts,
             editor,
-            build_settings,
             settings,
             path_states: Default::default(),
             paths_to_update,
@@ -360,7 +357,7 @@ impl ProjectDiagnosticsEditor {
                                     height: 2,
                                     render: diagnostic_header_renderer(
                                         primary,
-                                        self.build_settings.clone(),
+                                        self.settings.clone(),
                                     ),
                                     disposition: BlockDisposition::Above,
                                 });
@@ -382,7 +379,7 @@ impl ProjectDiagnosticsEditor {
                                         render: diagnostic_block_renderer(
                                             diagnostic,
                                             true,
-                                            self.build_settings.clone(),
+                                            self.settings.clone(),
                                         ),
                                         disposition: BlockDisposition::Below,
                                     });
@@ -644,20 +641,21 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
 
 fn diagnostic_header_renderer(
     diagnostic: Diagnostic,
-    build_settings: BuildSettings,
+    settings: watch::Receiver<workspace::Settings>,
 ) -> RenderBlock {
     let (message, highlights) = highlight_diagnostic_message(&diagnostic.message);
     Arc::new(move |cx| {
-        let settings = build_settings(cx);
-        let style = &settings.style.diagnostic_header;
-        let font_size = (style.text_scale_factor * settings.style.text.font_size).round();
+        let settings = settings.borrow();
+        let theme = &settings.theme.editor;
+        let style = &theme.diagnostic_header;
+        let font_size = (style.text_scale_factor * settings.buffer_font_size).round();
         let icon_width = cx.em_width * style.icon_width_factor;
         let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
             Svg::new("icons/diagnostic-error-10.svg")
-                .with_color(settings.style.error_diagnostic.message.text.color)
+                .with_color(theme.error_diagnostic.message.text.color)
         } else {
             Svg::new("icons/diagnostic-warning-10.svg")
-                .with_color(settings.style.warning_diagnostic.message.text.color)
+                .with_color(theme.warning_diagnostic.message.text.color)
         };
 
         Flex::row()

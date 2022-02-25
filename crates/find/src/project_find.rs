@@ -1,11 +1,10 @@
 use anyhow::Result;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    action, elements::*, keymap::Binding, ElementBox, Entity, Handle, ModelContext, ModelHandle,
+    action, elements::*, keymap::Binding, ElementBox, Entity, ModelContext, ModelHandle,
     MutableAppContext, Task, View, ViewContext, ViewHandle,
 };
 use project::Project;
-use std::{borrow::Borrow, sync::Arc};
 use workspace::Workspace;
 
 action!(Deploy);
@@ -75,15 +74,20 @@ impl workspace::Item for ProjectFind {
     ) -> Self::View {
         let settings = workspace.settings();
         let excerpts = model.read(cx).excerpts.clone();
-        let build_settings = editor::settings_builder(excerpts.downgrade(), workspace.settings());
         ProjectFindView {
             model,
-            query_editor: cx.add_view(|cx| Editor::single_line(build_settings.clone(), cx)),
+            query_editor: cx.add_view(|cx| {
+                Editor::single_line(
+                    settings.clone(),
+                    Some(|theme| theme.find.editor.input.clone()),
+                    cx,
+                )
+            }),
             results_editor: cx.add_view(|cx| {
                 Editor::for_buffer(
                     excerpts,
-                    build_settings,
                     Some(workspace.project().clone()),
+                    settings.clone(),
                     cx,
                 )
             }),

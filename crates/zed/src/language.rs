@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use client::http::{self, HttpClient, Method};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
@@ -22,6 +22,7 @@ use util::{ResultExt, TryFutureExt};
 struct LanguageDir;
 
 struct RustLsp;
+struct CLsp;
 
 #[derive(Deserialize)]
 struct GithubRelease {
@@ -291,6 +292,135 @@ impl LspExt for RustLsp {
     }
 }
 
+impl LspExt for CLsp {
+    fn fetch_latest_server_version(
+        &self,
+        http: Arc<dyn HttpClient>,
+    ) -> BoxFuture<'static, Result<LspBinaryVersion>> {
+        async move {
+            let release = http
+                .send(
+                    surf::RequestBuilder::new(
+                        Method::Get,
+                        http::Url::parse(
+                            "https://api.github.com/repos/clangd/clangd/releases/latest",
+                        )
+                        .unwrap(),
+                    )
+                    .middleware(surf::middleware::Redirect::default())
+                    .build(),
+                )
+                .await
+                .map_err(|err| anyhow!("error fetching latest release: {}", err))?
+                .body_json::<GithubRelease>()
+                .await
+                .map_err(|err| anyhow!("error parsing latest release: {}", err))?;
+            let asset_name = format!("clangd-mac-{}.zip", release.name);
+            let asset = release
+                .assets
+                .iter()
+                .find(|asset| asset.name == asset_name)
+                .ok_or_else(|| anyhow!("no release found matching {:?}", asset_name))?;
+            Ok(LspBinaryVersion {
+                name: release.name,
+                url: asset.browser_download_url.clone(),
+            })
+        }
+        .boxed()
+    }
+
+    fn fetch_server_binary(
+        &self,
+        version: LspBinaryVersion,
+        http: Arc<dyn HttpClient>,
+        download_dir: Arc<Path>,
+    ) -> BoxFuture<'static, Result<PathBuf>> {
+        async move {
+            let container_dir = download_dir.join("clangd");
+            fs::create_dir_all(&container_dir)
+                .await
+                .context("failed to create container directory")?;
+
+            let zip_path = container_dir.join(format!("clangd_{}.zip", version.name));
+            let version_dir = container_dir.join(format!("clangd_{}", version.name));
+            let binary_path = version_dir.join("bin/clangd");
+
+            if fs::metadata(&binary_path).await.is_err() {
+                let response = http
+                    .send(
+                        surf::RequestBuilder::new(Method::Get, version.url)
+                            .middleware(surf::middleware::Redirect::default())
+                            .build(),
+                    )
+                    .await
+                    .map_err(|err| anyhow!("error downloading release: {}", err))?;
+                let mut file = File::create(&zip_path).await?;
+                if !response.status().is_success() {
+                    Err(anyhow!(
+                        "download failed with status {}",
+                        response.status().to_string()
+                    ))?;
+                }
+                futures::io::copy(response, &mut file).await?;
+
+                let unzip_status = smol::process::Command::new("unzip")
+                    .current_dir(&container_dir)
+                    .arg(&zip_path)
+                    .output()
+                    .await?
+                    .status;
+                if !unzip_status.success() {
+                    Err(anyhow!("failed to unzip clangd archive"))?;
+                }
+
+                if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
+                    while let Some(entry) = entries.next().await {
+                        if let Some(entry) = entry.log_err() {
+                            let entry_path = entry.path();
+                            if entry_path.as_path() != version_dir {
+                                fs::remove_dir_all(&entry_path).await.log_err();
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(binary_path)
+        }
+        .boxed()
+    }
+
+    fn cached_server_binary(&self, download_dir: Arc<Path>) -> BoxFuture<'static, Option<PathBuf>> {
+        async move {
+            let destination_dir_path = download_dir.join("clangd");
+            fs::create_dir_all(&destination_dir_path).await?;
+
+            let mut last_clangd_dir = None;
+            let mut entries = fs::read_dir(&destination_dir_path).await?;
+            while let Some(entry) = entries.next().await {
+                let entry = entry?;
+                if entry.file_type().await?.is_dir() {
+                    last_clangd_dir = Some(entry.path());
+                }
+            }
+            let clangd_dir = last_clangd_dir.ok_or_else(|| anyhow!("no cached binary"))?;
+            let clangd_bin = clangd_dir.join("bin/clangd");
+            if clangd_bin.exists() {
+                Ok(clangd_bin)
+            } else {
+                Err(anyhow!(
+                    "missing clangd binary in directory {:?}",
+                    clangd_dir
+                ))
+            }
+        }
+        .log_err()
+        .boxed()
+    }
+
+    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+}
+
 pub fn build_language_registry() -> LanguageRegistry {
     let mut languages = LanguageRegistry::new();
     languages.set_language_server_download_dir(
@@ -298,6 +428,7 @@ pub fn build_language_registry() -> LanguageRegistry {
             .expect("failed to determine home directory")
             .join(".zed"),
     );
+    languages.add(Arc::new(c()));
     languages.add(Arc::new(rust()));
     languages.add(Arc::new(markdown()));
     languages
@@ -316,6 +447,19 @@ fn rust() -> Language {
         .with_outline_query(load_query("rust/outline.scm").as_ref())
         .unwrap()
         .with_lsp_ext(RustLsp)
+}
+
+fn c() -> Language {
+    let grammar = tree_sitter_c::language();
+    let config = toml::from_slice(&LanguageDir::get("c/config.toml").unwrap().data).unwrap();
+    Language::new(config, Some(grammar))
+        .with_highlights_query(load_query("c/highlights.scm").as_ref())
+        .unwrap()
+        .with_indents_query(load_query("c/indents.scm").as_ref())
+        .unwrap()
+        .with_outline_query(load_query("c/outline.scm").as_ref())
+        .unwrap()
+        .with_lsp_ext(CLsp)
 }
 
 fn markdown() -> Language {
