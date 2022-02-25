@@ -186,7 +186,11 @@ impl View for ProjectFindView {
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.query_editor);
+        if self.model.read(cx).highlighted_ranges.is_empty() {
+            cx.focus(&self.query_editor);
+        } else {
+            cx.focus(&self.results_editor);
+        }
     }
 }
 
@@ -225,6 +229,14 @@ impl ItemView for ProjectFindView {
 
     fn can_save(&self, _: &gpui::AppContext) -> bool {
         true
+    }
+
+    fn is_dirty(&self, cx: &AppContext) -> bool {
+        self.results_editor.read(cx).is_dirty(cx)
+    }
+
+    fn has_conflict(&self, cx: &AppContext) -> bool {
+        self.results_editor.read(cx).has_conflict(cx)
     }
 
     fn save(
