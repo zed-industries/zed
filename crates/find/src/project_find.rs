@@ -30,6 +30,7 @@ pub fn init(cx: &mut MutableAppContext) {
 struct ProjectFind {
     project: ModelHandle<Project>,
     excerpts: ModelHandle<MultiBuffer>,
+    query: Option<SearchQuery>,
     pending_search: Option<Task<Option<()>>>,
     highlighted_ranges: Vec<Range<Anchor>>,
 }
@@ -55,7 +56,8 @@ impl ProjectFind {
         Self {
             project,
             excerpts: cx.add_model(|_| MultiBuffer::new(replica_id)),
-            pending_search: None,
+            query: Default::default(),
+            pending_search: Default::default(),
             highlighted_ranges: Default::default(),
         }
     }
@@ -63,7 +65,8 @@ impl ProjectFind {
     fn search(&mut self, query: SearchQuery, cx: &mut ModelContext<Self>) {
         let search = self
             .project
-            .update(cx, |project, cx| project.search(query, cx));
+            .update(cx, |project, cx| project.search(query.clone(), cx));
+        self.query = Some(query.clone());
         self.highlighted_ranges.clear();
         self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
             let matches = search.await;
@@ -106,7 +109,7 @@ impl workspace::Item for ProjectFind {
     ) -> Self::View {
         let settings = workspace.settings();
         let excerpts = model.read(cx).excerpts.clone();
-        cx.observe(&model, ProjectFindView::on_model_changed)
+        cx.observe(&model, |this, _, cx| this.model_changed(true, cx))
             .detach();
         ProjectFindView {
             model,
@@ -236,6 +239,36 @@ impl workspace::ItemView for ProjectFindView {
     ) -> Task<anyhow::Result<()>> {
         unreachable!("save_as should not have been called")
     }
+
+    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        let query_editor = cx.add_view(|cx| {
+            Editor::single_line(
+                self.settings.clone(),
+                Some(|theme| theme.find.editor.input.clone()),
+                cx,
+            )
+        });
+        let results_editor = self.results_editor.update(cx, |editor, cx| {
+            cx.add_view(|cx| editor.clone_on_split(cx).unwrap())
+        });
+        cx.observe(&self.model, |this, _, cx| this.model_changed(true, cx))
+            .detach();
+        let mut view = Self {
+            model: self.model.clone(),
+            query_editor,
+            results_editor,
+            case_sensitive: self.case_sensitive,
+            whole_word: self.whole_word,
+            regex: self.regex,
+            query_contains_error: self.query_contains_error,
+            settings: self.settings.clone(),
+        };
+        view.model_changed(false, cx);
+        Some(view)
+    }
 }
 
 impl ProjectFindView {
@@ -247,7 +280,7 @@ impl ProjectFindView {
     fn search(&mut self, _: &Search, cx: &mut ViewContext<Self>) {
         let text = self.query_editor.read(cx).text(cx);
         let query = if self.regex {
-            match SearchQuery::regex(text, self.case_sensitive, self.whole_word) {
+            match SearchQuery::regex(text, self.whole_word, self.case_sensitive) {
                 Ok(query) => query,
                 Err(_) => {
                     self.query_contains_error = true;
@@ -256,7 +289,7 @@ impl ProjectFindView {
                 }
             }
         } else {
-            SearchQuery::text(text, self.case_sensitive, self.whole_word)
+            SearchQuery::text(text, self.whole_word, self.case_sensitive)
         };
 
         self.model.update(cx, |model, cx| model.search(query, cx));
@@ -285,16 +318,36 @@ impl ProjectFindView {
         }
     }
 
-    fn on_model_changed(&mut self, _: ModelHandle<ProjectFind>, cx: &mut ViewContext<Self>) {
-        let highlighted_ranges = self.model.read(cx).highlighted_ranges.clone();
+    fn model_changed(&mut self, reset_selections: bool, cx: &mut ViewContext<Self>) {
+        let model = self.model.read(cx);
+        let highlighted_ranges = model.highlighted_ranges.clone();
+        if let Some(query) = model.query.clone() {
+            self.case_sensitive = query.case_sensitive();
+            self.whole_word = query.whole_word();
+            self.regex = query.is_regex();
+            self.query_editor.update(cx, |query_editor, cx| {
+                if query_editor.text(cx) != query.as_str() {
+                    query_editor.buffer().update(cx, |query_buffer, cx| {
+                        let len = query_buffer.read(cx).len();
+                        query_buffer.edit([0..len], query.as_str(), cx);
+                    });
+                }
+            });
+        }
+
         if !highlighted_ranges.is_empty() {
             let theme = &self.settings.borrow().theme.find;
             self.results_editor.update(cx, |editor, cx| {
                 editor.highlight_ranges::<Self>(highlighted_ranges, theme.match_background, cx);
-                editor.select_ranges([0..0], Some(Autoscroll::Fit), cx);
+                if reset_selections {
+                    editor.select_ranges([0..0], Some(Autoscroll::Fit), cx);
+                }
             });
-            cx.focus(&self.results_editor);
+            if self.query_editor.is_focused(cx) {
+                cx.focus(&self.results_editor);
+            }
         }
+
         cx.notify();
     }
 

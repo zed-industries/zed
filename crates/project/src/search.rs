@@ -13,12 +13,16 @@ use std::{
 pub enum SearchQuery {
     Text {
         search: Arc<AhoCorasick<usize>>,
-        query: String,
+        query: Arc<str>,
         whole_word: bool,
+        case_sensitive: bool,
     },
     Regex {
-        multiline: bool,
         regex: Regex,
+        query: Arc<str>,
+        multiline: bool,
+        whole_word: bool,
+        case_sensitive: bool,
     },
 }
 
@@ -31,13 +35,15 @@ impl SearchQuery {
             .build(&[&query]);
         Self::Text {
             search: Arc::new(search),
-            query,
+            query: Arc::from(query),
             whole_word,
+            case_sensitive,
         }
     }
 
     pub fn regex(query: impl ToString, whole_word: bool, case_sensitive: bool) -> Result<Self> {
         let mut query = query.to_string();
+        let initial_query = Arc::from(query.as_str());
         if whole_word {
             let mut word_query = String::new();
             word_query.push_str("\\b");
@@ -51,7 +57,13 @@ impl SearchQuery {
             .case_insensitive(!case_sensitive)
             .multi_line(multiline)
             .build()?;
-        Ok(Self::Regex { multiline, regex })
+        Ok(Self::Regex {
+            regex,
+            query: initial_query,
+            multiline,
+            whole_word,
+            case_sensitive,
+        })
     }
 
     pub fn detect<T: Read>(&self, stream: T) -> Result<bool> {
@@ -60,7 +72,7 @@ impl SearchQuery {
         }
 
         match self {
-            SearchQuery::Text { search, .. } => {
+            Self::Text { search, .. } => {
                 let mat = search.stream_find_iter(stream).next();
                 match mat {
                     Some(Ok(_)) => Ok(true),
@@ -68,7 +80,9 @@ impl SearchQuery {
                     None => Ok(false),
                 }
             }
-            SearchQuery::Regex { multiline, regex } => {
+            Self::Regex {
+                regex, multiline, ..
+            } => {
                 let mut reader = BufReader::new(stream);
                 if *multiline {
                     let mut text = String::new();
@@ -99,7 +113,7 @@ impl SearchQuery {
 
         let mut matches = Vec::new();
         match self {
-            SearchQuery::Text {
+            Self::Text {
                 search, whole_word, ..
             } => {
                 for (ix, mat) in search
@@ -123,7 +137,9 @@ impl SearchQuery {
                     matches.push(mat.start()..mat.end())
                 }
             }
-            SearchQuery::Regex { multiline, regex } => {
+            Self::Regex {
+                regex, multiline, ..
+            } => {
                 if *multiline {
                     let text = rope.to_string();
                     for (ix, mat) in regex.find_iter(&text).enumerate() {
@@ -161,10 +177,28 @@ impl SearchQuery {
         matches
     }
 
-    fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         match self {
-            SearchQuery::Text { query, .. } => query.as_str(),
-            SearchQuery::Regex { regex, .. } => regex.as_str(),
+            Self::Text { query, .. } => query.as_ref(),
+            Self::Regex { query, .. } => query.as_ref(),
         }
+    }
+
+    pub fn whole_word(&self) -> bool {
+        match self {
+            Self::Text { whole_word, .. } => *whole_word,
+            Self::Regex { whole_word, .. } => *whole_word,
+        }
+    }
+
+    pub fn case_sensitive(&self) -> bool {
+        match self {
+            Self::Text { case_sensitive, .. } => *case_sensitive,
+            Self::Regex { case_sensitive, .. } => *case_sensitive,
+        }
+    }
+
+    pub fn is_regex(&self) -> bool {
+        matches!(self, Self::Regex { .. })
     }
 }
