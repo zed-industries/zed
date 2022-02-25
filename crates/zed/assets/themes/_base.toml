@@ -352,7 +352,7 @@ tab_summary_spacing = 10
 match_background = "$state.highlighted_line"
 background = "$surface.1"
 
-[find.mode_button]
+[find.option_button]
 extends = "$text.1"
 padding = { left = 6, right = 6, top = 1, bottom = 1 }
 corner_radius = 6
@@ -361,19 +361,19 @@ border = { width = 1, color = "$border.0" }
 margin.left = 1
 margin.right = 1
 
-[find.mode_button_group]
+[find.option_button_group]
 padding = { left = 2, right = 2 }
 
-[find.active_mode_button]
-extends = "$find.mode_button"
+[find.active_option_button]
+extends = "$find.option_button"
 background = "$surface.2"
 
-[find.hovered_mode_button]
-extends = "$find.mode_button"
+[find.hovered_option_button]
+extends = "$find.option_button"
 background = "$surface.2"
 
-[find.active_hovered_mode_button]
-extends = "$find.mode_button"
+[find.active_hovered_option_button]
+extends = "$find.option_button"
 background = "$surface.2"
 
 [find.match_index]

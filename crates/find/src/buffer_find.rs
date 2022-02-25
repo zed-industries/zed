@@ -1,17 +1,13 @@
 use crate::SearchOption;
-use aho_corasick::AhoCorasickBuilder;
-use anyhow::Result;
 use collections::HashMap;
-use editor::{
-    char_kind, display_map::ToDisplayPoint, Anchor, Autoscroll, Bias, Editor, MultiBufferSnapshot,
-};
+use editor::{display_map::ToDisplayPoint, Anchor, Autoscroll, Bias, Editor};
 use gpui::{
     action, elements::*, keymap::Binding, platform::CursorStyle, Entity, MutableAppContext,
     RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
+use language::AnchorRangeExt;
 use postage::watch;
-use regex::RegexBuilder;
-use smol::future::yield_now;
+use project::search::SearchQuery;
 use std::{
     cmp::{self, Ordering},
     ops::Range,
@@ -21,7 +17,7 @@ use workspace::{ItemViewHandle, Pane, Settings, Toolbar, Workspace};
 action!(Deploy, bool);
 action!(Dismiss);
 action!(FocusEditor);
-action!(ToggleMode, SearchOption);
+action!(ToggleSearchOption, SearchOption);
 action!(GoToMatch, Direction);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -44,7 +40,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(FindBar::deploy);
     cx.add_action(FindBar::dismiss);
     cx.add_action(FindBar::focus_editor);
-    cx.add_action(FindBar::toggle_mode);
+    cx.add_action(FindBar::toggle_search_option);
     cx.add_action(FindBar::go_to_match);
     cx.add_action(FindBar::go_to_match_on_pane);
 }
@@ -57,9 +53,9 @@ struct FindBar {
     active_editor_subscription: Option<Subscription>,
     editors_with_matches: HashMap<WeakViewHandle<Editor>, Vec<Range<Anchor>>>,
     pending_search: Option<Task<()>>,
-    case_sensitive_mode: bool,
-    whole_word_mode: bool,
-    regex_mode: bool,
+    case_sensitive: bool,
+    whole_word: bool,
+    regex: bool,
     query_contains_error: bool,
     dismissed: bool,
 }
@@ -96,11 +92,11 @@ impl View for FindBar {
             )
             .with_child(
                 Flex::row()
-                    .with_child(self.render_mode_button("Case", SearchOption::CaseSensitive, cx))
-                    .with_child(self.render_mode_button("Word", SearchOption::WholeWord, cx))
-                    .with_child(self.render_mode_button("Regex", SearchOption::Regex, cx))
+                    .with_child(self.render_search_option("Case", SearchOption::CaseSensitive, cx))
+                    .with_child(self.render_search_option("Word", SearchOption::WholeWord, cx))
+                    .with_child(self.render_search_option("Regex", SearchOption::Regex, cx))
                     .contained()
-                    .with_style(theme.find.mode_button_group)
+                    .with_style(theme.find.option_button_group)
                     .aligned()
                     .boxed(),
             )
@@ -185,9 +181,9 @@ impl FindBar {
             active_editor_subscription: None,
             active_match_index: None,
             editors_with_matches: Default::default(),
-            case_sensitive_mode: false,
-            whole_word_mode: false,
-            regex_mode: false,
+            case_sensitive: false,
+            whole_word: false,
+            regex: false,
             settings,
             pending_search: None,
             query_contains_error: false,
@@ -204,27 +200,27 @@ impl FindBar {
         });
     }
 
-    fn render_mode_button(
+    fn render_search_option(
         &self,
         icon: &str,
-        mode: SearchOption,
+        search_option: SearchOption,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         let theme = &self.settings.borrow().theme.find;
-        let is_active = self.is_mode_enabled(mode);
-        MouseEventHandler::new::<Self, _, _>(mode as usize, cx, |state, _| {
+        let is_active = self.is_search_option_enabled(search_option);
+        MouseEventHandler::new::<Self, _, _>(search_option as usize, cx, |state, _| {
             let style = match (is_active, state.hovered) {
-                (false, false) => &theme.mode_button,
-                (false, true) => &theme.hovered_mode_button,
-                (true, false) => &theme.active_mode_button,
-                (true, true) => &theme.active_hovered_mode_button,
+                (false, false) => &theme.option_button,
+                (false, true) => &theme.hovered_option_button,
+                (true, false) => &theme.active_option_button,
+                (true, true) => &theme.active_hovered_option_button,
             };
             Label::new(icon.to_string(), style.text.clone())
                 .contained()
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |cx| cx.dispatch_action(ToggleMode(mode)))
+        .on_click(move |cx| cx.dispatch_action(ToggleSearchOption(search_option)))
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
     }
@@ -239,9 +235,9 @@ impl FindBar {
         enum NavButton {}
         MouseEventHandler::new::<NavButton, _, _>(direction as usize, cx, |state, _| {
             let style = if state.hovered {
-                &theme.hovered_mode_button
+                &theme.hovered_option_button
             } else {
-                &theme.mode_button
+                &theme.option_button
             };
             Label::new(icon.to_string(), style.text.clone())
                 .contained()
@@ -315,19 +311,23 @@ impl FindBar {
         }
     }
 
-    fn is_mode_enabled(&self, mode: SearchOption) -> bool {
-        match mode {
-            SearchOption::WholeWord => self.whole_word_mode,
-            SearchOption::CaseSensitive => self.case_sensitive_mode,
-            SearchOption::Regex => self.regex_mode,
+    fn is_search_option_enabled(&self, search_option: SearchOption) -> bool {
+        match search_option {
+            SearchOption::WholeWord => self.whole_word,
+            SearchOption::CaseSensitive => self.case_sensitive,
+            SearchOption::Regex => self.regex,
         }
     }
 
-    fn toggle_mode(&mut self, ToggleMode(mode): &ToggleMode, cx: &mut ViewContext<Self>) {
-        let value = match mode {
-            SearchOption::WholeWord => &mut self.whole_word_mode,
-            SearchOption::CaseSensitive => &mut self.case_sensitive_mode,
-            SearchOption::Regex => &mut self.regex_mode,
+    fn toggle_search_option(
+        &mut self,
+        ToggleSearchOption(search_option): &ToggleSearchOption,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let value = match search_option {
+            SearchOption::WholeWord => &mut self.whole_word,
+            SearchOption::CaseSensitive => &mut self.case_sensitive,
+            SearchOption::Regex => &mut self.regex,
         };
         *value = !*value;
         self.update_matches(true, cx);
@@ -436,56 +436,81 @@ impl FindBar {
                 editor.update(cx, |editor, cx| editor.clear_highlighted_ranges::<Self>(cx));
             } else {
                 let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
-                let case_sensitive = self.case_sensitive_mode;
-                let whole_word = self.whole_word_mode;
-                let ranges = if self.regex_mode {
-                    cx.background()
-                        .spawn(regex_search(buffer, query, case_sensitive, whole_word))
+                let query = if self.regex {
+                    match SearchQuery::regex(query, self.whole_word, self.case_sensitive) {
+                        Ok(query) => query,
+                        Err(_) => {
+                            self.query_contains_error = true;
+                            cx.notify();
+                            return;
+                        }
+                    }
                 } else {
-                    cx.background().spawn(async move {
-                        Ok(search(buffer, query, case_sensitive, whole_word).await)
-                    })
+                    SearchQuery::text(query, self.whole_word, self.case_sensitive)
                 };
 
+                let ranges = cx.background().spawn(async move {
+                    let mut ranges = Vec::new();
+                    if let Some((_, _, excerpt_buffer)) = buffer.as_singleton() {
+                        ranges.extend(
+                            query
+                                .search(excerpt_buffer.as_rope())
+                                .await
+                                .into_iter()
+                                .map(|range| {
+                                    buffer.anchor_after(range.start)
+                                        ..buffer.anchor_before(range.end)
+                                }),
+                        );
+                    } else {
+                        for excerpt in buffer.excerpt_boundaries_in_range(0..buffer.len()) {
+                            let excerpt_range = excerpt.range.to_offset(&excerpt.buffer);
+                            let rope = excerpt.buffer.as_rope().slice(excerpt_range.clone());
+                            ranges.extend(query.search(&rope).await.into_iter().map(|range| {
+                                let start = excerpt
+                                    .buffer
+                                    .anchor_after(excerpt_range.start + range.start);
+                                let end = excerpt
+                                    .buffer
+                                    .anchor_before(excerpt_range.start + range.end);
+                                buffer.anchor_in_excerpt(excerpt.id.clone(), start)
+                                    ..buffer.anchor_in_excerpt(excerpt.id.clone(), end)
+                            }));
+                        }
+                    }
+                    ranges
+                });
+
                 let editor = editor.downgrade();
-                self.pending_search = Some(cx.spawn(|this, mut cx| async move {
-                    match ranges.await {
-                        Ok(ranges) => {
-                            if let Some(editor) = editor.upgrade(&cx) {
-                                this.update(&mut cx, |this, cx| {
-                                    this.editors_with_matches
-                                        .insert(editor.downgrade(), ranges.clone());
-                                    this.update_match_index(cx);
-                                    if !this.dismissed {
-                                        editor.update(cx, |editor, cx| {
-                                            let theme = &this.settings.borrow().theme.find;
+                self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
+                    let ranges = ranges.await;
+                    if let Some((this, editor)) = this.upgrade(&cx).zip(editor.upgrade(&cx)) {
+                        this.update(&mut cx, |this, cx| {
+                            this.editors_with_matches
+                                .insert(editor.downgrade(), ranges.clone());
+                            this.update_match_index(cx);
+                            if !this.dismissed {
+                                editor.update(cx, |editor, cx| {
+                                    let theme = &this.settings.borrow().theme.find;
 
-                                            if select_closest_match {
-                                                if let Some(match_ix) = this.active_match_index {
-                                                    editor.select_ranges(
-                                                        [ranges[match_ix].clone()],
-                                                        Some(Autoscroll::Fit),
-                                                        cx,
-                                                    );
-                                                }
-                                            }
-
-                                            editor.highlight_ranges::<Self>(
-                                                ranges,
-                                                theme.match_background,
+                                    if select_closest_match {
+                                        if let Some(match_ix) = this.active_match_index {
+                                            editor.select_ranges(
+                                                [ranges[match_ix].clone()],
+                                                Some(Autoscroll::Fit),
                                                 cx,
                                             );
-                                        });
+                                        }
                                     }
+
+                                    editor.highlight_ranges::<Self>(
+                                        ranges,
+                                        theme.match_background,
+                                        cx,
+                                    );
                                 });
                             }
-                        }
-                        Err(_) => {
-                            this.update(&mut cx, |this, cx| {
-                                this.query_contains_error = true;
-                                cx.notify();
-                            });
-                        }
+                        });
                     }
                 }));
             }
@@ -519,110 +544,6 @@ impl FindBar {
             }
         }
     }
-}
-
-const YIELD_INTERVAL: usize = 20000;
-
-async fn search(
-    buffer: MultiBufferSnapshot,
-    query: String,
-    case_sensitive: bool,
-    whole_word: bool,
-) -> Vec<Range<Anchor>> {
-    let mut ranges = Vec::new();
-
-    let search = AhoCorasickBuilder::new()
-        .auto_configure(&[&query])
-        .ascii_case_insensitive(!case_sensitive)
-        .build(&[&query]);
-    for (ix, mat) in search
-        .stream_find_iter(buffer.bytes_in_range(0..buffer.len()))
-        .enumerate()
-    {
-        if (ix + 1) % YIELD_INTERVAL == 0 {
-            yield_now().await;
-        }
-
-        let mat = mat.unwrap();
-
-        if whole_word {
-            let prev_kind = buffer.reversed_chars_at(mat.start()).next().map(char_kind);
-            let start_kind = char_kind(buffer.chars_at(mat.start()).next().unwrap());
-            let end_kind = char_kind(buffer.reversed_chars_at(mat.end()).next().unwrap());
-            let next_kind = buffer.chars_at(mat.end()).next().map(char_kind);
-            if Some(start_kind) == prev_kind || Some(end_kind) == next_kind {
-                continue;
-            }
-        }
-
-        ranges.push(buffer.anchor_after(mat.start())..buffer.anchor_before(mat.end()));
-    }
-
-    ranges
-}
-
-async fn regex_search(
-    buffer: MultiBufferSnapshot,
-    mut query: String,
-    case_sensitive: bool,
-    whole_word: bool,
-) -> Result<Vec<Range<Anchor>>> {
-    if whole_word {
-        let mut word_query = String::new();
-        word_query.push_str("\\b");
-        word_query.push_str(&query);
-        word_query.push_str("\\b");
-        query = word_query;
-    }
-
-    let mut ranges = Vec::new();
-
-    if query.contains("\n") || query.contains("\\n") {
-        let regex = RegexBuilder::new(&query)
-            .case_insensitive(!case_sensitive)
-            .multi_line(true)
-            .build()?;
-        for (ix, mat) in regex.find_iter(&buffer.text()).enumerate() {
-            if (ix + 1) % YIELD_INTERVAL == 0 {
-                yield_now().await;
-            }
-
-            ranges.push(buffer.anchor_after(mat.start())..buffer.anchor_before(mat.end()));
-        }
-    } else {
-        let regex = RegexBuilder::new(&query)
-            .case_insensitive(!case_sensitive)
-            .build()?;
-
-        let mut line = String::new();
-        let mut line_offset = 0;
-        for (chunk_ix, chunk) in buffer
-            .chunks(0..buffer.len(), false)
-            .map(|c| c.text)
-            .chain(["\n"])
-            .enumerate()
-        {
-            if (chunk_ix + 1) % YIELD_INTERVAL == 0 {
-                yield_now().await;
-            }
-
-            for (newline_ix, text) in chunk.split('\n').enumerate() {
-                if newline_ix > 0 {
-                    for mat in regex.find_iter(&line) {
-                        let start = line_offset + mat.start();
-                        let end = line_offset + mat.end();
-                        ranges.push(buffer.anchor_after(start)..buffer.anchor_before(end));
-                    }
-
-                    line_offset += line.len() + 1;
-                    line.clear();
-                }
-                line.push_str(text);
-            }
-        }
-    }
-
-    Ok(ranges)
 }
 
 #[cfg(test)]
@@ -687,7 +608,7 @@ mod tests {
 
         // Switch to a case sensitive search.
         find_bar.update(&mut cx, |find_bar, cx| {
-            find_bar.toggle_mode(&ToggleMode(SearchOption::CaseSensitive), cx);
+            find_bar.toggle_search_option(&ToggleSearchOption(SearchOption::CaseSensitive), cx);
         });
         editor.next_notification(&cx).await;
         editor.update(&mut cx, |editor, cx| {
@@ -744,7 +665,7 @@ mod tests {
 
         // Switch to a whole word search.
         find_bar.update(&mut cx, |find_bar, cx| {
-            find_bar.toggle_mode(&ToggleMode(SearchOption::WholeWord), cx);
+            find_bar.toggle_search_option(&ToggleSearchOption(SearchOption::WholeWord), cx);
         });
         editor.next_notification(&cx).await;
         editor.update(&mut cx, |editor, cx| {

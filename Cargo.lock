@@ -1776,15 +1776,13 @@ dependencies = [
 name = "find"
 version = "0.1.0"
 dependencies = [
- "aho-corasick",
  "anyhow",
  "collections",
  "editor",
  "gpui",
+ "language",
  "postage",
  "project",
- "regex",
- "smol",
  "theme",
  "unindent",
  "workspace",

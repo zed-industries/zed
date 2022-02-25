@@ -1,7 +1,7 @@
 pub mod fs;
 mod ignore;
 mod lsp_command;
-mod search;
+pub mod search;
 pub mod worktree;
 
 use anyhow::{anyhow, Context, Result};
@@ -2175,12 +2175,7 @@ impl Project {
                             let mut buffers_rx = buffers_rx.clone();
                             scope.spawn(async move {
                                 while let Some((buffer, snapshot)) = buffers_rx.next().await {
-                                    for range in query
-                                        .search(
-                                            snapshot.as_rope().bytes_in_range(0..snapshot.len()),
-                                        )
-                                        .unwrap()
-                                    {
+                                    for range in query.search(snapshot.as_rope()).await {
                                         let range = snapshot.anchor_before(range.start)
                                             ..snapshot.anchor_after(range.end);
                                         worker_matched_buffers
@@ -4893,7 +4888,7 @@ mod tests {
             .await;
 
         assert_eq!(
-            search(&project, SearchQuery::text("TWO"), &mut cx).await,
+            search(&project, SearchQuery::text("TWO", false, false), &mut cx).await,
             HashMap::from_iter([
                 ("two.rs".to_string(), vec![6..9]),
                 ("three.rs".to_string(), vec![37..40])
@@ -4911,7 +4906,7 @@ mod tests {
         });
 
         assert_eq!(
-            search(&project, SearchQuery::text("TWO"), &mut cx).await,
+            search(&project, SearchQuery::text("TWO", false, false), &mut cx).await,
             HashMap::from_iter([
                 ("two.rs".to_string(), vec![6..9]),
                 ("three.rs".to_string(), vec![37..40]),

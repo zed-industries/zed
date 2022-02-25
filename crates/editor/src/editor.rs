@@ -30,14 +30,14 @@ use gpui::{
 };
 use items::{BufferItemHandle, MultiBufferItemHandle};
 use itertools::Itertools as _;
+pub use language::{char_kind, CharKind};
 use language::{
     AnchorRangeExt as _, BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic,
     DiagnosticSeverity, Language, Point, Selection, SelectionGoal, TransactionId,
 };
 use multi_buffer::MultiBufferChunks;
 pub use multi_buffer::{
-    char_kind, Anchor, AnchorRangeExt, CharKind, ExcerptId, MultiBuffer, MultiBufferSnapshot,
-    ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use ordered_float::OrderedFloat;
 use postage::watch;

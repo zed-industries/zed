@@ -365,6 +365,14 @@ pub(crate) struct DiagnosticEndpoint {
     severity: DiagnosticSeverity,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug)]
+pub enum CharKind {
+    Newline,
+    Punctuation,
+    Whitespace,
+    Word,
+}
+
 impl Buffer {
     pub fn new<T: Into<Arc<str>>>(
         replica_id: ReplicaId,
@@ -2658,4 +2666,16 @@ pub fn contiguous_ranges(
             return current_range.take();
         }
     })
+}
+
+pub fn char_kind(c: char) -> CharKind {
+    if c == '\n' {
+        CharKind::Newline
+    } else if c.is_whitespace() {
+        CharKind::Whitespace
+    } else if c.is_alphanumeric() || c == '_' {
+        CharKind::Word
+    } else {
+        CharKind::Punctuation
+    }
 }

@@ -48,6 +48,12 @@ impl Rope {
         *self = new_rope;
     }
 
+    pub fn slice(&self, range: Range<usize>) -> Rope {
+        let mut cursor = self.cursor(0);
+        cursor.seek_forward(range.start);
+        cursor.slice(range.end)
+    }
+
     pub fn push(&mut self, text: &str) {
         let mut new_chunks = SmallVec::<[_; 16]>::new();
         let mut new_chunk = ArrayString::new();
