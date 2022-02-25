@@ -21,6 +21,7 @@ message Envelope {
         LeaveProject leave_project = 15;
         AddProjectCollaborator add_project_collaborator = 16;
         RemoveProjectCollaborator remove_project_collaborator = 17;
+
         GetDefinition get_definition = 18;
         GetDefinitionResponse get_definition_response = 19;
         GetReferences get_references = 20;
@@ -61,22 +62,24 @@ message Envelope {
         PrepareRenameResponse prepare_rename_response = 54;
         PerformRename perform_rename = 55;
         PerformRenameResponse perform_rename_response = 56;
+        SearchProject search_project = 57;
+        SearchProjectResponse search_project_response = 58;
 
-        GetChannels get_channels = 57;
-        GetChannelsResponse get_channels_response = 58;
-        JoinChannel join_channel = 59;
-        JoinChannelResponse join_channel_response = 60;
-        LeaveChannel leave_channel = 61;
-        SendChannelMessage send_channel_message = 62;
-        SendChannelMessageResponse send_channel_message_response = 63;
-        ChannelMessageSent channel_message_sent = 64;
-        GetChannelMessages get_channel_messages = 65;
-        GetChannelMessagesResponse get_channel_messages_response = 66;
+        GetChannels get_channels = 59;
+        GetChannelsResponse get_channels_response = 60;
+        JoinChannel join_channel = 61;
+        JoinChannelResponse join_channel_response = 62;
+        LeaveChannel leave_channel = 63;
+        SendChannelMessage send_channel_message = 64;
+        SendChannelMessageResponse send_channel_message_response = 65;
+        ChannelMessageSent channel_message_sent = 66;
+        GetChannelMessages get_channel_messages = 67;
+        GetChannelMessagesResponse get_channel_messages_response = 68;
 
-        UpdateContacts update_contacts = 67;
+        UpdateContacts update_contacts = 69;
 
-        GetUsers get_users = 68;
-        GetUsersResponse get_users_response = 69;
+        GetUsers get_users = 70;
+        GetUsersResponse get_users_response = 71;
     }
 }
 
@@ -364,6 +367,18 @@ message PerformRename {
 
 message PerformRenameResponse {
     ProjectTransaction transaction = 2;
+}
+
+message SearchProject {
+    uint64 project_id = 1;
+    string query = 2;
+    bool regex = 3;
+    bool whole_word = 4;
+    bool case_sensitive = 5;
+}
+
+message SearchProjectResponse {
+    repeated Location locations = 1;
 }
 
 message CodeAction {
