@@ -12,7 +12,7 @@ use collections::{HashMap, HashSet};
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, SinkExt, StreamExt};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use rpc::{
-    proto::{self, AnyTypedEnvelope, EnvelopedMessage, RequestMessage},
+    proto::{self, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},
     Connection, ConnectionId, Peer, TypedEnvelope,
 };
 use sha1::{Digest as _, Sha1};
@@ -77,26 +77,28 @@ impl Server {
             .add_message_handler(Server::update_diagnostic_summary)
             .add_message_handler(Server::disk_based_diagnostics_updating)
             .add_message_handler(Server::disk_based_diagnostics_updated)
-            .add_request_handler(Server::get_definition)
-            .add_request_handler(Server::get_references)
-            .add_request_handler(Server::search_project)
-            .add_request_handler(Server::get_document_highlights)
-            .add_request_handler(Server::get_project_symbols)
-            .add_request_handler(Server::open_buffer_for_symbol)
-            .add_request_handler(Server::open_buffer)
+            .add_request_handler(Server::forward_project_request::<proto::GetDefinition>)
+            .add_request_handler(Server::forward_project_request::<proto::GetReferences>)
+            .add_request_handler(Server::forward_project_request::<proto::SearchProject>)
+            .add_request_handler(Server::forward_project_request::<proto::GetDocumentHighlights>)
+            .add_request_handler(Server::forward_project_request::<proto::GetProjectSymbols>)
+            .add_request_handler(Server::forward_project_request::<proto::OpenBufferForSymbol>)
+            .add_request_handler(Server::forward_project_request::<proto::OpenBuffer>)
+            .add_request_handler(Server::forward_project_request::<proto::GetCompletions>)
+            .add_request_handler(
+                Server::forward_project_request::<proto::ApplyCompletionAdditionalEdits>,
+            )
+            .add_request_handler(Server::forward_project_request::<proto::GetCodeActions>)
+            .add_request_handler(Server::forward_project_request::<proto::ApplyCodeAction>)
+            .add_request_handler(Server::forward_project_request::<proto::PrepareRename>)
+            .add_request_handler(Server::forward_project_request::<proto::PerformRename>)
+            .add_request_handler(Server::forward_project_request::<proto::FormatBuffers>)
             .add_message_handler(Server::close_buffer)
             .add_request_handler(Server::update_buffer)
             .add_message_handler(Server::update_buffer_file)
             .add_message_handler(Server::buffer_reloaded)
             .add_message_handler(Server::buffer_saved)
             .add_request_handler(Server::save_buffer)
-            .add_request_handler(Server::format_buffers)
-            .add_request_handler(Server::get_completions)
-            .add_request_handler(Server::apply_additional_edits_for_completion)
-            .add_request_handler(Server::get_code_actions)
-            .add_request_handler(Server::apply_code_action)
-            .add_request_handler(Server::prepare_rename)
-            .add_request_handler(Server::perform_rename)
             .add_request_handler(Server::get_channels)
             .add_request_handler(Server::get_users)
             .add_request_handler(Server::join_channel)
@@ -543,97 +545,16 @@ impl Server {
         Ok(())
     }
 
-    async fn get_definition(
+    async fn forward_project_request<T>(
         self: Arc<Server>,
-        request: TypedEnvelope<proto::GetDefinition>,
-    ) -> tide::Result<proto::GetDefinitionResponse> {
+        request: TypedEnvelope<T>,
+    ) -> tide::Result<T::Response>
+    where
+        T: EntityMessage + RequestMessage,
+    {
         let host_connection_id = self
             .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host_connection_id, request.payload)
-            .await?)
-    }
-
-    async fn get_references(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::GetReferences>,
-    ) -> tide::Result<proto::GetReferencesResponse> {
-        let host_connection_id = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host_connection_id, request.payload)
-            .await?)
-    }
-
-    async fn search_project(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::SearchProject>,
-    ) -> tide::Result<proto::SearchProjectResponse> {
-        let host_connection_id = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host_connection_id, request.payload)
-            .await?)
-    }
-
-    async fn get_document_highlights(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::GetDocumentHighlights>,
-    ) -> tide::Result<proto::GetDocumentHighlightsResponse> {
-        let host_connection_id = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host_connection_id, request.payload)
-            .await?)
-    }
-
-    async fn get_project_symbols(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::GetProjectSymbols>,
-    ) -> tide::Result<proto::GetProjectSymbolsResponse> {
-        let host_connection_id = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host_connection_id, request.payload)
-            .await?)
-    }
-
-    async fn open_buffer_for_symbol(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::OpenBufferForSymbol>,
-    ) -> tide::Result<proto::OpenBufferForSymbolResponse> {
-        let host_connection_id = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host_connection_id, request.payload)
-            .await?)
-    }
-
-    async fn open_buffer(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::OpenBuffer>,
-    ) -> tide::Result<proto::OpenBufferResponse> {
-        let host_connection_id = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
+            .read_project(request.payload.remote_entity_id(), request.sender_id)?
             .host_connection_id;
         Ok(self
             .peer
@@ -678,104 +599,6 @@ impl Server {
         })?;
 
         Ok(response)
-    }
-
-    async fn format_buffers(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::FormatBuffers>,
-    ) -> tide::Result<proto::FormatBuffersResponse> {
-        let host = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host, request.payload.clone())
-            .await?)
-    }
-
-    async fn get_completions(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::GetCompletions>,
-    ) -> tide::Result<proto::GetCompletionsResponse> {
-        let host = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host, request.payload.clone())
-            .await?)
-    }
-
-    async fn apply_additional_edits_for_completion(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::ApplyCompletionAdditionalEdits>,
-    ) -> tide::Result<proto::ApplyCompletionAdditionalEditsResponse> {
-        let host = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host, request.payload.clone())
-            .await?)
-    }
-
-    async fn get_code_actions(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::GetCodeActions>,
-    ) -> tide::Result<proto::GetCodeActionsResponse> {
-        let host = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host, request.payload.clone())
-            .await?)
-    }
-
-    async fn apply_code_action(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::ApplyCodeAction>,
-    ) -> tide::Result<proto::ApplyCodeActionResponse> {
-        let host = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host, request.payload.clone())
-            .await?)
-    }
-
-    async fn prepare_rename(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::PrepareRename>,
-    ) -> tide::Result<proto::PrepareRenameResponse> {
-        let host = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host, request.payload.clone())
-            .await?)
-    }
-
-    async fn perform_rename(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::PerformRename>,
-    ) -> tide::Result<proto::PerformRenameResponse> {
-        let host = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host, request.payload.clone())
-            .await?)
     }
 
     async fn update_buffer(
