@@ -867,7 +867,7 @@ dependencies = [
  "gpui",
  "postage",
  "theme",
- "time 0.3.2",
+ "time 0.3.7",
  "util",
  "workspace",
 ]
@@ -988,7 +988,7 @@ dependencies = [
  "sum_tree",
  "surf",
  "thiserror",
- "time 0.3.2",
+ "time 0.3.7",
  "tiny_http",
  "util",
 ]
@@ -1134,7 +1134,7 @@ dependencies = [
  "percent-encoding",
  "rand 0.8.3",
  "sha2 0.9.5",
- "time 0.2.25",
+ "time 0.2.27",
  "version_check",
 ]
 
@@ -2231,7 +2231,7 @@ dependencies = [
  "smallvec",
  "smol",
  "sum_tree",
- "time 0.3.2",
+ "time 0.3.7",
  "tiny-skia",
  "tree-sitter",
  "usvg",
@@ -3085,6 +3085,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05499f3756671c15885fee9034446956fff3f243d6077b91e5767df161f766b3"
 dependencies = [
  "hermit-abi",
+ "libc",
+]
+
+[[package]]
+name = "num_threads"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97ba99ba6393e2c3734791401b66902d981cb03bf190af674ca69949b6d5fb15"
+dependencies = [
  "libc",
 ]
 
@@ -4679,7 +4688,7 @@ dependencies = [
  "sqlx-rt 0.5.5",
  "stringprep",
  "thiserror",
- "time 0.2.25",
+ "time 0.2.27",
  "url",
  "uuid",
  "webpki",
@@ -5127,9 +5136,9 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.2.25"
+version = "0.2.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1195b046942c221454c2539395f85413b33383a067449d78aab2b7b052a142f7"
+checksum = "4752a97f8eebd6854ff91f1c1824cd6160626ac4bd44287f7f4ea2035a02a242"
 dependencies = [
  "const_fn",
  "libc",
@@ -5142,11 +5151,12 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.3.2"
+version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e0a10c9a9fb3a5dce8c2239ed670f1a2569fcf42da035f5face1b19860d52b0"
+checksum = "004cbc98f30fa233c61a38bc77e96a9106e65c88f2d3bef182ae952027e5753d"
 dependencies = [
  "libc",
+ "num_threads",
 ]
 
 [[package]]
@@ -5161,9 +5171,9 @@ dependencies = [
 
 [[package]]
 name = "time-macros-impl"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5c3be1edfad6027c69f5491cf4cb310d1a71ecd6af742788c6ff8bced86b8fa"
+checksum = "fd3c141a1b43194f3f56a1411225df8646c55781d5f26db825b3d98507eb482f"
 dependencies = [
  "proc-macro-hack",
  "proc-macro2",
@@ -5891,7 +5901,6 @@ dependencies = [
  "theme",
  "theme_selector",
  "thiserror",
- "time 0.3.2",
  "tiny_http",
  "toml",
  "tree-sitter",
@@ -5943,7 +5952,7 @@ dependencies = [
  "surf",
  "tide",
  "tide-compress",
- "time 0.2.25",
+ "time 0.2.27",
  "toml",
  "util",
  "zed",
