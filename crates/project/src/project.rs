@@ -28,6 +28,7 @@ use sha2::{Digest, Sha256};
 use smol::block_on;
 use std::{
     cell::RefCell,
+    cmp,
     convert::TryInto,
     hash::Hash,
     mem,
@@ -2050,33 +2051,18 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<HashMap<ModelHandle<Buffer>, Vec<Range<Anchor>>>> {
         if self.is_local() {
-            let (paths_to_search_tx, paths_to_search_rx) = smol::channel::bounded(1024);
-
             let snapshots = self
                 .strong_worktrees(cx)
                 .filter_map(|tree| {
                     let tree = tree.read(cx).as_local()?;
-                    Some((tree.abs_path().clone(), tree.snapshot()))
+                    Some(tree.snapshot())
                 })
                 .collect::<Vec<_>>();
-            cx.background()
-                .spawn(async move {
-                    for (snapshot_abs_path, snapshot) in snapshots {
-                        for file in snapshot.files(false, 0) {
-                            if paths_to_search_tx
-                                .send((snapshot.id(), snapshot_abs_path.clone(), file.path.clone()))
-                                .await
-                                .is_err()
-                            {
-                                return;
-                            }
-                        }
-                    }
-                })
-                .detach();
 
+            let background = cx.background().clone();
+            let path_count: usize = snapshots.iter().map(|s| s.visible_file_count()).sum();
+            let workers = background.num_cpus().min(path_count);
             let (matching_paths_tx, mut matching_paths_rx) = smol::channel::bounded(1024);
-            let workers = cx.background().num_cpus();
             cx.background()
                 .spawn({
                     let fs = self.fs.clone();
@@ -2086,41 +2072,64 @@ impl Project {
                         let fs = &fs;
                         let query = &query;
                         let matching_paths_tx = &matching_paths_tx;
+                        let paths_per_worker = (path_count + workers - 1) / workers;
+                        let snapshots = &snapshots;
                         background
                             .scoped(|scope| {
-                                for _ in 0..workers {
-                                    let mut paths_to_search_rx = paths_to_search_rx.clone();
+                                for worker_ix in 0..workers {
+                                    let worker_start_ix = worker_ix * paths_per_worker;
+                                    let worker_end_ix = worker_start_ix + paths_per_worker;
                                     scope.spawn(async move {
-                                        let mut path = PathBuf::new();
-                                        while let Some((
-                                            worktree_id,
-                                            snapshot_abs_path,
-                                            file_path,
-                                        )) = paths_to_search_rx.next().await
-                                        {
-                                            if matching_paths_tx.is_closed() {
+                                        let mut snapshot_start_ix = 0;
+                                        let mut abs_path = PathBuf::new();
+                                        for snapshot in snapshots {
+                                            let snapshot_end_ix =
+                                                snapshot_start_ix + snapshot.visible_file_count();
+                                            if worker_end_ix <= snapshot_start_ix {
                                                 break;
-                                            }
-
-                                            path.clear();
-                                            path.push(&snapshot_abs_path);
-                                            path.push(&file_path);
-                                            let matches = if let Some(file) =
-                                                fs.open_sync(&path).await.log_err()
-                                            {
-                                                query.detect(file).unwrap_or(false)
+                                            } else if worker_start_ix > snapshot_end_ix {
+                                                snapshot_start_ix = snapshot_end_ix;
+                                                continue;
                                             } else {
-                                                false
-                                            };
+                                                let start_in_snapshot = worker_start_ix
+                                                    .saturating_sub(snapshot_start_ix);
+                                                let end_in_snapshot =
+                                                    cmp::min(worker_end_ix, snapshot_end_ix)
+                                                        - snapshot_start_ix;
 
-                                            if matches {
-                                                if matching_paths_tx
-                                                    .send((worktree_id, file_path))
-                                                    .await
-                                                    .is_err()
+                                                for entry in snapshot
+                                                    .files(false, start_in_snapshot)
+                                                    .take(end_in_snapshot - start_in_snapshot)
                                                 {
-                                                    break;
+                                                    if matching_paths_tx.is_closed() {
+                                                        break;
+                                                    }
+
+                                                    abs_path.clear();
+                                                    abs_path.push(&snapshot.abs_path());
+                                                    abs_path.push(&entry.path);
+                                                    let matches = if let Some(file) =
+                                                        fs.open_sync(&abs_path).await.log_err()
+                                                    {
+                                                        query.detect(file).unwrap_or(false)
+                                                    } else {
+                                                        false
+                                                    };
+
+                                                    if matches {
+                                                        let project_path =
+                                                            (snapshot.id(), entry.path.clone());
+                                                        if matching_paths_tx
+                                                            .send(project_path)
+                                                            .await
+                                                            .is_err()
+                                                        {
+                                                            break;
+                                                        }
+                                                    }
                                                 }
+
+                                                snapshot_start_ix = snapshot_end_ix;
                                             }
                                         }
                                     });
@@ -2175,14 +2184,16 @@ impl Project {
                             let mut buffers_rx = buffers_rx.clone();
                             scope.spawn(async move {
                                 while let Some((buffer, snapshot)) = buffers_rx.next().await {
-                                    for range in query.search(snapshot.as_rope()).await {
-                                        let range = snapshot.anchor_before(range.start)
-                                            ..snapshot.anchor_after(range.end);
-                                        worker_matched_buffers
-                                            .entry(buffer.clone())
-                                            .or_insert(Vec::new())
-                                            .push(range);
-                                    }
+                                    let buffer_matches = query
+                                        .search(snapshot.as_rope())
+                                        .await
+                                        .iter()
+                                        .map(|range| {
+                                            snapshot.anchor_before(range.start)
+                                                ..snapshot.anchor_after(range.end)
+                                        })
+                                        .collect();
+                                    worker_matched_buffers.insert(buffer.clone(), buffer_matches);
                                 }
                             });
                         }
@@ -4888,7 +4899,7 @@ mod tests {
             .await;
 
         assert_eq!(
-            search(&project, SearchQuery::text("TWO", false, false), &mut cx).await,
+            search(&project, SearchQuery::text("TWO", false, true), &mut cx).await,
             HashMap::from_iter([
                 ("two.rs".to_string(), vec![6..9]),
                 ("three.rs".to_string(), vec![37..40])
@@ -4906,7 +4917,7 @@ mod tests {
         });
 
         assert_eq!(
-            search(&project, SearchQuery::text("TWO", false, false), &mut cx).await,
+            search(&project, SearchQuery::text("TWO", false, true), &mut cx).await,
             HashMap::from_iter([
                 ("two.rs".to_string(), vec![6..9]),
                 ("three.rs".to_string(), vec![37..40]),

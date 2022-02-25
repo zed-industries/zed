@@ -554,10 +554,6 @@ impl LocalWorktree {
         Ok((tree, scan_states_tx))
     }
 
-    pub fn abs_path(&self) -> &Arc<Path> {
-        &self.abs_path
-    }
-
     pub fn contains_abs_path(&self, path: &Path) -> bool {
         path.starts_with(&self.abs_path)
     }
@@ -1017,6 +1013,10 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
+    pub fn abs_path(&self) -> &Arc<Path> {
+        &self.abs_path
+    }
+
     #[cfg(test)]
     pub(crate) fn to_proto(
         &self,
