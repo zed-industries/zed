@@ -76,6 +76,19 @@ pub enum MatchResult {
     Action(Box<dyn AnyAction>),
 }
 
+impl Debug for MatchResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MatchResult::None => f.debug_struct("MatchResult::None").finish(),
+            MatchResult::Pending => f.debug_struct("MatchResult::Pending").finish(),
+            MatchResult::Action(action) => f
+                .debug_tuple("MatchResult::Action")
+                .field(&action.name())
+                .finish(),
+        }
+    }
+}
+
 impl Matcher {
     pub fn new(keymap: Keymap) -> Self {
         Self {
