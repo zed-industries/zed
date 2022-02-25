@@ -55,6 +55,10 @@ impl SearchQuery {
     }
 
     pub fn detect<T: Read>(&self, stream: T) -> Result<bool> {
+        if self.as_str().is_empty() {
+            return Ok(false);
+        }
+
         match self {
             SearchQuery::Text { search, .. } => {
                 let mat = search.stream_find_iter(stream).next();
@@ -88,6 +92,10 @@ impl SearchQuery {
 
     pub async fn search(&self, rope: &Rope) -> Vec<Range<usize>> {
         const YIELD_INTERVAL: usize = 20000;
+
+        if self.as_str().is_empty() {
+            return Default::default();
+        }
 
         let mut matches = Vec::new();
         match self {
@@ -151,5 +159,12 @@ impl SearchQuery {
             }
         }
         matches
+    }
+
+    fn as_str(&self) -> &str {
+        match self {
+            SearchQuery::Text { query, .. } => query.as_str(),
+            SearchQuery::Regex { regex, .. } => regex.as_str(),
+        }
     }
 }
