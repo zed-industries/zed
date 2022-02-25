@@ -446,6 +446,7 @@ pub struct Editor {
     code_actions_task: Option<Task<()>>,
     document_highlights_task: Option<Task<()>>,
     pending_rename: Option<RenameState>,
+    searchable: bool,
 }
 
 pub struct EditorSnapshot {
@@ -924,6 +925,7 @@ impl Editor {
             code_actions_task: Default::default(),
             document_highlights_task: Default::default(),
             pending_rename: Default::default(),
+            searchable: true,
         };
         this.end_selection(cx);
         this
@@ -5340,6 +5342,14 @@ impl Editor {
 
     fn on_display_map_changed(&mut self, _: ModelHandle<DisplayMap>, cx: &mut ViewContext<Self>) {
         cx.notify();
+    }
+
+    pub fn set_searchable(&mut self, searchable: bool) {
+        self.searchable = searchable;
+    }
+
+    pub fn searchable(&self) -> bool {
+        self.searchable
     }
 }
 

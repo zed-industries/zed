@@ -23,6 +23,7 @@ action!(ToggleFocus);
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
         Binding::new("cmd-shift-F", ToggleFocus, Some("ProjectFindView")),
+        Binding::new("cmd-f", ToggleFocus, Some("ProjectFindView")),
         Binding::new("cmd-shift-F", Deploy, Some("Workspace")),
         Binding::new("enter", Search, Some("ProjectFindView")),
     ]);
@@ -140,6 +141,7 @@ impl Item for ProjectFind {
                     settings.clone(),
                     cx,
                 );
+                editor.set_searchable(false);
                 editor.set_nav_history(Some(nav_history));
                 editor
             }),
@@ -305,6 +307,7 @@ impl ItemView for ProjectFindView {
                 .update(cx, |editor, cx| editor.scroll_position(cx));
 
             let mut editor = Editor::for_buffer(excerpts, Some(project), self.settings.clone(), cx);
+            editor.set_searchable(false);
             editor.set_nav_history(Some(nav_history));
             editor.set_scroll_position(scroll_position, cx);
             editor

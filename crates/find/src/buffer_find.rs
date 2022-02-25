@@ -142,14 +142,15 @@ impl Toolbar for FindBar {
         self.pending_search.take();
 
         if let Some(editor) = item.and_then(|item| item.act_as::<Editor>(cx)) {
-            self.active_editor_subscription =
-                Some(cx.subscribe(&editor, Self::on_active_editor_event));
-            self.active_editor = Some(editor);
-            self.update_matches(false, cx);
-            true
-        } else {
-            false
+            if editor.read(cx).searchable() {
+                self.active_editor_subscription =
+                    Some(cx.subscribe(&editor, Self::on_active_editor_event));
+                self.active_editor = Some(editor);
+                self.update_matches(false, cx);
+                return true;
+            }
         }
+        false
     }
 
     fn on_dismiss(&mut self, cx: &mut ViewContext<Self>) {
@@ -295,6 +296,8 @@ impl FindBar {
                     });
                     cx.focus(&find_bar);
                 }
+            } else {
+                cx.propagate_action();
             }
         });
     }
