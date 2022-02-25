@@ -1,12 +1,12 @@
 use crate::{assets::Assets, build_window_options, build_workspace, AppState};
 use client::{test::FakeHttpClient, ChannelList, Client, UserStore};
-use gpui::{AssetSource, MutableAppContext};
+use gpui::MutableAppContext;
 use language::LanguageRegistry;
 use parking_lot::Mutex;
 use postage::watch;
 use project::fs::FakeFs;
 use std::sync::Arc;
-use theme::{Theme, ThemeRegistry, DEFAULT_THEME_NAME};
+use theme::ThemeRegistry;
 use workspace::Settings;
 
 #[cfg(test)]
@@ -20,7 +20,7 @@ fn init_logger() {
 pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
     let mut path_openers = Vec::new();
     editor::init(cx, &mut path_openers);
-    let (settings_tx, settings) = watch::channel_with(build_settings(cx));
+    let (settings_tx, settings) = watch::channel_with(Settings::test(cx));
     let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
     let http = FakeHttpClient::with_404_response();
     let client = Client::new(http.clone());
@@ -47,28 +47,4 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
         build_window_options: &build_window_options,
         build_workspace: &build_workspace,
     })
-}
-
-fn build_settings(cx: &gpui::AppContext) -> Settings {
-    lazy_static::lazy_static! {
-        static ref DEFAULT_THEME: parking_lot::Mutex<Option<Arc<Theme>>> = Default::default();
-        static ref FONTS: Vec<Arc<Vec<u8>>> = vec![
-            Assets.load("fonts/zed-sans/zed-sans-regular.ttf").unwrap().to_vec().into()
-        ];
-    }
-
-    cx.platform().fonts().add_fonts(&FONTS).unwrap();
-
-    let mut theme_guard = DEFAULT_THEME.lock();
-    let theme = if let Some(theme) = theme_guard.as_ref() {
-        theme.clone()
-    } else {
-        let theme = ThemeRegistry::new(Assets, cx.font_cache().clone())
-            .get(DEFAULT_THEME_NAME)
-            .expect("failed to load default theme in tests");
-        *theme_guard = Some(theme.clone());
-        theme
-    };
-
-    Settings::new("Zed Sans", cx.font_cache(), theme).unwrap()
 }

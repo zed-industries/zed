@@ -23,7 +23,7 @@ pub struct Theme {
     pub contacts_panel: ContactsPanel,
     pub project_panel: ProjectPanel,
     pub selector: Selector,
-    pub editor: EditorStyle,
+    pub editor: Editor,
     pub find: Find,
     pub project_diagnostics: ProjectDiagnostics,
 }
@@ -112,7 +112,7 @@ pub struct Find {
 #[derive(Clone, Deserialize, Default)]
 pub struct FindEditor {
     #[serde(flatten)]
-    pub input: InputEditorStyle,
+    pub input: FieldEditor,
     pub max_width: f32,
 }
 
@@ -151,7 +151,7 @@ pub struct ChatPanel {
     pub message: ChatMessage,
     pub pending_message: ChatMessage,
     pub channel_select: ChannelSelect,
-    pub input_editor: InputEditorStyle,
+    pub input_editor: FieldEditor,
     pub sign_in_prompt: TextStyle,
     pub hovered_sign_in_prompt: TextStyle,
 }
@@ -236,7 +236,7 @@ pub struct Selector {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub empty: ContainedLabel,
-    pub input_editor: InputEditorStyle,
+    pub input_editor: FieldEditor,
     pub item: ContainedLabel,
     pub active_item: ContainedLabel,
 }
@@ -269,10 +269,9 @@ pub struct ProjectDiagnostics {
 }
 
 #[derive(Clone, Deserialize, Default)]
-pub struct EditorStyle {
-    pub text: TextStyle,
+pub struct Editor {
+    pub text_color: Color,
     #[serde(default)]
-    pub placeholder_text: Option<TextStyle>,
     pub background: Color,
     pub selection: SelectionStyle,
     pub gutter_background: Color,
@@ -345,7 +344,7 @@ pub struct SelectionStyle {
 }
 
 #[derive(Clone, Deserialize, Default)]
-pub struct InputEditorStyle {
+pub struct FieldEditor {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub text: TextStyle,
@@ -354,83 +353,13 @@ pub struct InputEditorStyle {
     pub selection: SelectionStyle,
 }
 
-impl EditorStyle {
-    pub fn placeholder_text(&self) -> &TextStyle {
-        self.placeholder_text.as_ref().unwrap_or(&self.text)
-    }
-
+impl Editor {
     pub fn replica_selection_style(&self, replica_id: u16) -> &SelectionStyle {
         let style_ix = replica_id as usize % (self.guest_selections.len() + 1);
         if style_ix == 0 {
             &self.selection
         } else {
             &self.guest_selections[style_ix - 1]
-        }
-    }
-}
-
-impl InputEditorStyle {
-    pub fn as_editor(&self) -> EditorStyle {
-        let default_diagnostic_style = DiagnosticStyle {
-            message: self.text.clone().into(),
-            header: Default::default(),
-            text_scale_factor: 1.,
-        };
-        EditorStyle {
-            text: self.text.clone(),
-            placeholder_text: self.placeholder_text.clone(),
-            background: self
-                .container
-                .background_color
-                .unwrap_or(Color::transparent_black()),
-            selection: self.selection,
-            gutter_background: Default::default(),
-            gutter_padding_factor: Default::default(),
-            active_line_background: Default::default(),
-            highlighted_line_background: Default::default(),
-            document_highlight_read_background: Default::default(),
-            document_highlight_write_background: Default::default(),
-            diff_background_deleted: Default::default(),
-            diff_background_inserted: Default::default(),
-            line_number: Default::default(),
-            line_number_active: Default::default(),
-            guest_selections: Default::default(),
-            syntax: Default::default(),
-            diagnostic_path_header: DiagnosticPathHeader {
-                container: Default::default(),
-                filename: ContainedText {
-                    container: Default::default(),
-                    text: self.text.clone(),
-                },
-                path: ContainedText {
-                    container: Default::default(),
-                    text: self.text.clone(),
-                },
-                text_scale_factor: 1.,
-            },
-            diagnostic_header: DiagnosticHeader {
-                container: Default::default(),
-                message: ContainedLabel {
-                    container: Default::default(),
-                    label: self.text.clone().into(),
-                },
-                code: ContainedText {
-                    container: Default::default(),
-                    text: self.text.clone(),
-                },
-                icon_width_factor: Default::default(),
-                text_scale_factor: 1.,
-            },
-            error_diagnostic: default_diagnostic_style.clone(),
-            invalid_error_diagnostic: default_diagnostic_style.clone(),
-            warning_diagnostic: default_diagnostic_style.clone(),
-            invalid_warning_diagnostic: default_diagnostic_style.clone(),
-            information_diagnostic: default_diagnostic_style.clone(),
-            invalid_information_diagnostic: default_diagnostic_style.clone(),
-            hint_diagnostic: default_diagnostic_style.clone(),
-            invalid_hint_diagnostic: default_diagnostic_style.clone(),
-            autocomplete: Default::default(),
-            code_actions_indicator: Default::default(),
         }
     }
 }

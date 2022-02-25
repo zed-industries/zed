@@ -1,4 +1,4 @@
-use editor::{Editor, EditorSettings};
+use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     action,
@@ -63,17 +63,8 @@ impl ThemeSelector {
     ) -> Self {
         let query_editor = cx.add_view(|cx| {
             Editor::single_line(
-                {
-                    let settings = settings.clone();
-                    Arc::new(move |_| {
-                        let settings = settings.borrow();
-                        EditorSettings {
-                            tab_size: settings.tab_size,
-                            style: settings.theme.selector.input_editor.as_editor(),
-                            soft_wrap: editor::SoftWrap::None,
-                        }
-                    })
-                },
+                settings.clone(),
+                Some(|theme| theme.selector.input_editor.clone()),
                 cx,
             )
         });

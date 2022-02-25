@@ -133,9 +133,11 @@ fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
 
 #[cfg(test)]
 mod tests {
+    use crate::assets::Assets;
+
     use super::*;
     use editor::{DisplayPoint, Editor};
-    use gpui::{MutableAppContext, TestAppContext, ViewHandle};
+    use gpui::{AssetSource, MutableAppContext, TestAppContext, ViewHandle};
     use project::{Fs, ProjectPath};
     use serde_json::json;
     use std::{
@@ -143,7 +145,7 @@ mod tests {
         path::{Path, PathBuf},
     };
     use test::test_app_state;
-    use theme::DEFAULT_THEME_NAME;
+    use theme::{Theme, ThemeRegistry, DEFAULT_THEME_NAME};
     use util::test::temp_tree;
     use workspace::{
         open_paths, pane, ItemView, ItemViewHandle, OpenNew, Pane, SplitDirection, WorkspaceHandle,
@@ -862,10 +864,20 @@ mod tests {
 
     #[gpui::test]
     fn test_bundled_themes(cx: &mut MutableAppContext) {
-        let app_state = test_app_state(cx);
+        let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
+
+        lazy_static::lazy_static! {
+            static ref DEFAULT_THEME: parking_lot::Mutex<Option<Arc<Theme>>> = Default::default();
+            static ref FONTS: Vec<Arc<Vec<u8>>> = vec![
+                Assets.load("fonts/zed-sans/zed-sans-regular.ttf").unwrap().to_vec().into()
+            ];
+        }
+
+        cx.platform().fonts().add_fonts(&FONTS).unwrap();
+
         let mut has_default_theme = false;
-        for theme_name in app_state.themes.list() {
-            let theme = app_state.themes.get(&theme_name).unwrap();
+        for theme_name in themes.list() {
+            let theme = themes.get(&theme_name).unwrap();
             if theme.name == DEFAULT_THEME_NAME {
                 has_default_theme = true;
             }

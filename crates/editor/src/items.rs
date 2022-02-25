@@ -56,12 +56,11 @@ impl ItemHandle for BufferItemHandle {
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(self.0.clone(), cx));
-        let weak_buffer = buffer.downgrade();
         Box::new(cx.add_view(window_id, |cx| {
             let mut editor = Editor::for_buffer(
                 buffer,
-                crate::settings_builder(weak_buffer, workspace.settings()),
                 Some(workspace.project().clone()),
+                workspace.settings(),
                 cx,
             );
             editor.nav_history = Some(ItemNavHistory::new(nav_history, &cx.handle()));
@@ -101,12 +100,11 @@ impl ItemHandle for MultiBufferItemHandle {
         nav_history: Rc<RefCell<NavHistory>>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
-        let weak_buffer = self.0.downgrade();
         Box::new(cx.add_view(window_id, |cx| {
             let mut editor = Editor::for_buffer(
                 self.0.clone(),
-                crate::settings_builder(weak_buffer, workspace.settings()),
                 Some(workspace.project().clone()),
+                workspace.settings(),
                 cx,
             );
             editor.nav_history = Some(ItemNavHistory::new(nav_history, &cx.handle()));

@@ -1177,8 +1177,8 @@ mod tests {
             EstablishConnectionError, UserStore,
         },
         editor::{
-            self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, EditorSettings,
-            Input, MultiBuffer, Redo, Rename, ToOffset, ToggleCodeActions, Undo,
+            self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Input, MultiBuffer,
+            Redo, Rename, ToOffset, ToggleCodeActions, Undo,
         },
         fs::{FakeFs, Fs as _},
         language::{
@@ -1187,7 +1187,7 @@ mod tests {
         },
         lsp,
         project::{DiagnosticSummary, Project, ProjectPath},
-        workspace::{Workspace, WorkspaceParams},
+        workspace::{Settings, Workspace, WorkspaceParams},
     };
 
     #[cfg(test)]
@@ -1298,7 +1298,12 @@ mod tests {
             .unwrap();
 
         let editor_b = cx_b.add_view(window_b, |cx| {
-            Editor::for_buffer(buffer_b, Arc::new(|cx| EditorSettings::test(cx)), None, cx)
+            Editor::for_buffer(
+                buffer_b,
+                None,
+                watch::channel_with(Settings::test(cx)).1,
+                cx,
+            )
         });
 
         // TODO
@@ -2330,8 +2335,8 @@ mod tests {
         let editor_b = cx_b.add_view(window_b, |cx| {
             Editor::for_buffer(
                 cx.add_model(|cx| MultiBuffer::singleton(buffer_b.clone(), cx)),
-                Arc::new(|cx| EditorSettings::test(cx)),
                 Some(project_b.clone()),
+                watch::channel_with(Settings::test(cx)).1,
                 cx,
             )
         });
