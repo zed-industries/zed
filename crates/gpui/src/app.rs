@@ -710,7 +710,7 @@ impl ReadViewWith for TestAppContext {
 }
 
 type ActionCallback =
-    dyn FnMut(&mut dyn AnyView, &dyn AnyAction, &mut MutableAppContext, usize, usize) -> bool;
+    dyn FnMut(&mut dyn AnyView, &dyn AnyAction, &mut MutableAppContext, usize, usize);
 type GlobalActionCallback = dyn FnMut(&dyn AnyAction, &mut MutableAppContext);
 
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
@@ -741,6 +741,7 @@ pub struct MutableAppContext {
     pending_flushes: usize,
     flushing_effects: bool,
     next_cursor_style_handle_id: Arc<AtomicUsize>,
+    halt_action_dispatch: bool,
 }
 
 impl MutableAppContext {
@@ -785,6 +786,7 @@ impl MutableAppContext {
             pending_flushes: 0,
             flushing_effects: false,
             next_cursor_style_handle_id: Default::default(),
+            halt_action_dispatch: false,
         }
     }
 
@@ -876,7 +878,6 @@ impl MutableAppContext {
                     action,
                     &mut cx,
                 );
-                cx.halt_action_dispatch
             },
         );
 
@@ -1167,7 +1168,7 @@ impl MutableAppContext {
         action: &dyn AnyAction,
     ) -> bool {
         self.update(|this| {
-            let mut halted_dispatch = false;
+            this.halt_action_dispatch = false;
             for view_id in path.iter().rev() {
                 if let Some(mut view) = this.cx.views.remove(&(window_id, *view_id)) {
                     let type_id = view.as_any().type_id();
@@ -1178,10 +1179,9 @@ impl MutableAppContext {
                         .and_then(|h| h.remove_entry(&action.id()))
                     {
                         for handler in handlers.iter_mut().rev() {
-                            let halt_dispatch =
-                                handler(view.as_mut(), action, this, window_id, *view_id);
-                            if halt_dispatch {
-                                halted_dispatch = true;
+                            this.halt_action_dispatch = true;
+                            handler(view.as_mut(), action, this, window_id, *view_id);
+                            if this.halt_action_dispatch {
                                 break;
                             }
                         }
@@ -1193,16 +1193,16 @@ impl MutableAppContext {
 
                     this.cx.views.insert((window_id, *view_id), view);
 
-                    if halted_dispatch {
+                    if this.halt_action_dispatch {
                         break;
                     }
                 }
             }
 
-            if !halted_dispatch {
-                halted_dispatch = this.dispatch_global_action_any(action);
+            if !this.halt_action_dispatch {
+                this.dispatch_global_action_any(action);
             }
-            halted_dispatch
+            this.halt_action_dispatch
         })
     }
 
@@ -2344,7 +2344,6 @@ pub struct ViewContext<'a, T: ?Sized> {
     window_id: usize,
     view_id: usize,
     view_type: PhantomData<T>,
-    halt_action_dispatch: bool,
 }
 
 impl<'a, T: View> ViewContext<'a, T> {
@@ -2354,7 +2353,6 @@ impl<'a, T: View> ViewContext<'a, T> {
             window_id,
             view_id,
             view_type: PhantomData,
-            halt_action_dispatch: true,
         }
     }
 
@@ -2529,7 +2527,7 @@ impl<'a, T: View> ViewContext<'a, T> {
     }
 
     pub fn propagate_action(&mut self) {
-        self.halt_action_dispatch = false;
+        self.app.halt_action_dispatch = false;
     }
 
     pub fn spawn<F, Fut, S>(&self, f: F) -> Task<S>
@@ -4337,7 +4335,10 @@ mod tests {
         let actions_clone = actions.clone();
         cx.add_action(move |view: &mut ViewA, _: &Action, cx| {
             if view.id != 1 {
-                cx.propagate_action();
+                cx.add_view(|cx| {
+                    cx.propagate_action(); // Still works on a nested ViewContext
+                    ViewB { id: 5 }
+                });
             }
             actions_clone.borrow_mut().push(format!("{} b", view.id));
         });
