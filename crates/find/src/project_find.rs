@@ -330,8 +330,12 @@ impl ItemView for ProjectFindView {
 
 impl ProjectFindView {
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
-        let model = cx.add_model(|cx| ProjectFind::new(workspace.project().clone(), cx));
-        workspace.open_item(model, cx);
+        if let Some(existing) = workspace.item_of_type::<ProjectFind>(cx) {
+            workspace.activate_item(&existing, cx);
+        } else {
+            let model = cx.add_model(|cx| ProjectFind::new(workspace.project().clone(), cx));
+            workspace.open_item(model, cx);
+        }
     }
 
     fn search(&mut self, _: &Search, cx: &mut ViewContext<Self>) {
