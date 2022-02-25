@@ -1175,6 +1175,12 @@ impl MultiBuffer {
 
         let mut buffers = Vec::new();
         for _ in 0..mutation_count {
+            if rng.gen_bool(0.05) {
+                log::info!("Clearing multi-buffer");
+                self.clear(cx);
+                continue;
+            }
+
             let excerpt_ids = self
                 .buffers
                 .borrow()

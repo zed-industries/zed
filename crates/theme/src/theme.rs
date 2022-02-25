@@ -107,6 +107,7 @@ pub struct Find {
     pub active_hovered_option_button: ContainedText,
     pub match_background: Color,
     pub match_index: ContainedText,
+    pub results_status: TextStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]

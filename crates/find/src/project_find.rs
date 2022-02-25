@@ -30,7 +30,7 @@ pub fn init(cx: &mut MutableAppContext) {
 struct ProjectFind {
     project: ModelHandle<Project>,
     excerpts: ModelHandle<MultiBuffer>,
-    pending_search: Task<Option<()>>,
+    pending_search: Option<Task<Option<()>>>,
     highlighted_ranges: Vec<Range<Anchor>>,
 }
 
@@ -55,7 +55,7 @@ impl ProjectFind {
         Self {
             project,
             excerpts: cx.add_model(|_| MultiBuffer::new(replica_id)),
-            pending_search: Task::ready(None),
+            pending_search: None,
             highlighted_ranges: Default::default(),
         }
     }
@@ -64,7 +64,8 @@ impl ProjectFind {
         let search = self
             .project
             .update(cx, |project, cx| project.search(query, cx));
-        self.pending_search = cx.spawn_weak(|this, mut cx| async move {
+        self.highlighted_ranges.clear();
+        self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
             let matches = search.await;
             if let Some(this) = this.upgrade(&cx) {
                 this.update(&mut cx, |this, cx| {
@@ -84,11 +85,13 @@ impl ProjectFind {
                             this.highlighted_ranges.extend(ranges_to_highlight);
                         }
                     });
+                    this.pending_search.take();
                     cx.notify();
                 });
             }
             None
-        });
+        }));
+        cx.notify();
     }
 }
 
@@ -147,13 +150,31 @@ impl View for ProjectFindView {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        let model = &self.model.read(cx);
+        let results = if model.highlighted_ranges.is_empty() {
+            let theme = &self.settings.borrow().theme;
+            let text = if self.query_editor.read(cx).text(cx).is_empty() {
+                ""
+            } else if model.pending_search.is_some() {
+                "Searching..."
+            } else {
+                "No results"
+            };
+            Label::new(text.to_string(), theme.find.results_status.clone())
+                .aligned()
+                .contained()
+                .with_background_color(theme.editor.background)
+                .flexible(1., true)
+                .boxed()
+        } else {
+            ChildView::new(&self.results_editor)
+                .flexible(1., true)
+                .boxed()
+        };
+
         Flex::column()
             .with_child(self.render_query_editor(cx))
-            .with_child(
-                ChildView::new(&self.results_editor)
-                    .flexible(1., true)
-                    .boxed(),
-            )
+            .with_child(results)
             .boxed()
     }
 
@@ -265,17 +286,16 @@ impl ProjectFindView {
     }
 
     fn on_model_changed(&mut self, _: ModelHandle<ProjectFind>, cx: &mut ViewContext<Self>) {
-        let theme = &self.settings.borrow().theme.find;
-        self.results_editor.update(cx, |editor, cx| {
-            let model = self.model.read(cx);
-            editor.highlight_ranges::<Self>(
-                model.highlighted_ranges.clone(),
-                theme.match_background,
-                cx,
-            );
-            editor.select_ranges([0..0], Some(Autoscroll::Fit), cx);
-        });
-        cx.focus(&self.results_editor);
+        let highlighted_ranges = self.model.read(cx).highlighted_ranges.clone();
+        if !highlighted_ranges.is_empty() {
+            let theme = &self.settings.borrow().theme.find;
+            self.results_editor.update(cx, |editor, cx| {
+                editor.highlight_ranges::<Self>(highlighted_ranges, theme.match_background, cx);
+                editor.select_ranges([0..0], Some(Autoscroll::Fit), cx);
+            });
+            cx.focus(&self.results_editor);
+        }
+        cx.notify();
     }
 
     fn render_query_editor(&self, cx: &mut RenderContext<Self>) -> ElementBox {
