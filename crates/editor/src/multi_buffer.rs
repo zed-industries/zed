@@ -772,6 +772,7 @@ impl MultiBuffer {
     }
 
     pub fn clear(&mut self, cx: &mut ModelContext<Self>) {
+        self.sync(cx);
         self.buffers.borrow_mut().clear();
         let mut snapshot = self.snapshot.borrow_mut();
         let prev_len = snapshot.len();
@@ -853,6 +854,7 @@ impl MultiBuffer {
         excerpt_ids: impl IntoIterator<Item = &'a ExcerptId>,
         cx: &mut ModelContext<Self>,
     ) {
+        self.sync(cx);
         let mut buffers = self.buffers.borrow_mut();
         let mut snapshot = self.snapshot.borrow_mut();
         let mut new_excerpts = SumTree::new();
