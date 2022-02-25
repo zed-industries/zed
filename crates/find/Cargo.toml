@@ -13,6 +13,7 @@ gpui = { path = "../gpui" }
 language = { path = "../language" }
 project = { path = "../project" }
 theme = { path = "../theme" }
+util = { path = "../util" }
 workspace = { path = "../workspace" }
 anyhow = "1.0"
 postage = { version = "0.4.1", features = ["futures-traits"] }

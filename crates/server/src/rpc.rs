@@ -79,6 +79,7 @@ impl Server {
             .add_message_handler(Server::disk_based_diagnostics_updated)
             .add_request_handler(Server::get_definition)
             .add_request_handler(Server::get_references)
+            .add_request_handler(Server::search_project)
             .add_request_handler(Server::get_document_highlights)
             .add_request_handler(Server::get_project_symbols)
             .add_request_handler(Server::open_buffer_for_symbol)
@@ -560,6 +561,20 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetReferences>,
     ) -> tide::Result<proto::GetReferencesResponse> {
+        let host_connection_id = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .host_connection_id;
+        Ok(self
+            .peer
+            .forward_request(request.sender_id, host_connection_id, request.payload)
+            .await?)
+    }
+
+    async fn search_project(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::SearchProject>,
+    ) -> tide::Result<proto::SearchProjectResponse> {
         let host_connection_id = self
             .state()
             .read_project(request.payload.project_id, request.sender_id)?
@@ -1186,7 +1201,7 @@ mod tests {
             LanguageConfig, LanguageRegistry, LanguageServerConfig, Point, ToLspPosition,
         },
         lsp,
-        project::{DiagnosticSummary, Project, ProjectPath},
+        project::{search::SearchQuery, DiagnosticSummary, Project, ProjectPath},
         workspace::{Settings, Workspace, WorkspaceParams},
     };
 
@@ -2841,6 +2856,118 @@ mod tests {
             assert_eq!(references[1].range.to_offset(&two_buffer), 35..38);
             assert_eq!(references[2].range.to_offset(&three_buffer), 37..40);
         });
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_project_search(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+        cx_a.foreground().forbid_parking();
+        let lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = FakeFs::new(cx_a.background());
+        fs.insert_tree(
+            "/root-1",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "a": "hello world",
+                "b": "goodnight moon",
+                "c": "a world of goo",
+                "d": "world champion of clown world",
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/root-2",
+            json!({
+                "e": "disney world is fun",
+            }),
+        )
+        .await;
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let client_a = server.create_client(&mut cx_a, "user_a").await;
+        let client_b = server.create_client(&mut cx_b, "user_b").await;
+
+        // Share a project as client A
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+
+        let (worktree_1, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/root-1", false, cx)
+            })
+            .await
+            .unwrap();
+        worktree_1
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let (worktree_2, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/root-2", false, cx)
+            })
+            .await
+            .unwrap();
+        worktree_2
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+
+        eprintln!("sharing");
+
+        project_a
+            .update(&mut cx_a, |p, cx| p.share(cx))
+            .await
+            .unwrap();
+
+        // Join the worktree as client B.
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        let results = project_b
+            .update(&mut cx_b, |project, cx| {
+                project.search(SearchQuery::text("world", false, false), cx)
+            })
+            .await
+            .unwrap();
+
+        let mut ranges_by_path = results
+            .into_iter()
+            .map(|(buffer, ranges)| {
+                buffer.read_with(&cx_b, |buffer, cx| {
+                    let path = buffer.file().unwrap().full_path(cx);
+                    let offset_ranges = ranges
+                        .into_iter()
+                        .map(|range| range.to_offset(buffer))
+                        .collect::<Vec<_>>();
+                    (path, offset_ranges)
+                })
+            })
+            .collect::<Vec<_>>();
+        ranges_by_path.sort_by_key(|(path, _)| path.clone());
+
+        assert_eq!(
+            ranges_by_path,
+            &[
+                (PathBuf::from("root-1/a"), vec![6..11]),
+                (PathBuf::from("root-1/c"), vec![2..7]),
+                (PathBuf::from("root-1/d"), vec![0..5, 24..29]),
+                (PathBuf::from("root-2/e"), vec![7..12]),
+            ]
+        );
     }
 
     #[gpui::test(iterations = 10)]

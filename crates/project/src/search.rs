@@ -1,5 +1,6 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::Result;
+use client::proto;
 use language::{char_kind, Rope};
 use regex::{Regex, RegexBuilder};
 use smol::future::yield_now;
@@ -64,6 +65,28 @@ impl SearchQuery {
             whole_word,
             case_sensitive,
         })
+    }
+
+    pub fn from_proto(message: proto::SearchProject) -> Result<Self> {
+        if message.regex {
+            Self::regex(message.query, message.whole_word, message.case_sensitive)
+        } else {
+            Ok(Self::text(
+                message.query,
+                message.whole_word,
+                message.case_sensitive,
+            ))
+        }
+    }
+
+    pub fn to_proto(&self, project_id: u64) -> proto::SearchProject {
+        proto::SearchProject {
+            project_id,
+            query: self.as_str().to_string(),
+            regex: self.is_regex(),
+            whole_word: self.whole_word(),
+            case_sensitive: self.case_sensitive(),
+        }
     }
 
     pub fn detect<T: Read>(&self, stream: T) -> Result<bool> {

@@ -12,6 +12,7 @@ use std::{
     ops::Range,
     path::PathBuf,
 };
+use util::ResultExt as _;
 use workspace::{Item, ItemHandle, ItemNavHistory, ItemView, Settings, Workspace};
 
 action!(Deploy);
@@ -81,7 +82,7 @@ impl ProjectFind {
             .update(cx, |project, cx| project.search(query.clone(), cx));
         self.highlighted_ranges.clear();
         self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
-            let matches = search.await;
+            let matches = search.await.log_err()?;
             if let Some(this) = this.upgrade(&cx) {
                 this.update(&mut cx, |this, cx| {
                     this.highlighted_ranges.clear();

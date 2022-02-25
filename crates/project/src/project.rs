@@ -15,6 +15,7 @@ use gpui::{
     UpgradeModelHandle, WeakModelHandle,
 };
 use language::{
+    proto::{deserialize_anchor, serialize_anchor},
     range_from_lsp, Anchor, AnchorRangeExt, Bias, Buffer, CodeAction, CodeLabel, Completion,
     Diagnostic, DiagnosticEntry, File as _, Language, LanguageRegistry, Operation, PointUtf16,
     ToLspPosition, ToOffset, ToPointUtf16, Transaction,
@@ -226,6 +227,7 @@ impl Project {
         client.add_entity_request_handler(Self::handle_lsp_command::<GetReferences>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
+        client.add_entity_request_handler(Self::handle_search_project);
         client.add_entity_request_handler(Self::handle_get_project_symbols);
         client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_entity_request_handler(Self::handle_open_buffer);
@@ -2049,7 +2051,7 @@ impl Project {
         &self,
         query: SearchQuery,
         cx: &mut ModelContext<Self>,
-    ) -> Task<HashMap<ModelHandle<Buffer>, Vec<Range<Anchor>>>> {
+    ) -> Task<Result<HashMap<ModelHandle<Buffer>, Vec<Range<Anchor>>>>> {
         if self.is_local() {
             let snapshots = self
                 .strong_worktrees(cx)
@@ -2215,10 +2217,38 @@ impl Project {
                         }
                     })
                     .await;
-                matched_buffers.into_iter().flatten().collect()
+                Ok(matched_buffers.into_iter().flatten().collect())
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            let request = self.client.request(query.to_proto(project_id));
+            let request_handle = self.start_buffer_request(cx);
+            cx.spawn(|this, mut cx| async move {
+                let response = request.await?;
+                let mut result = HashMap::default();
+                for location in response.locations {
+                    let buffer = location.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
+                    let target_buffer = this
+                        .update(&mut cx, |this, cx| {
+                            this.deserialize_buffer(buffer, request_handle.clone(), cx)
+                        })
+                        .await?;
+                    let start = location
+                        .start
+                        .and_then(deserialize_anchor)
+                        .ok_or_else(|| anyhow!("missing target start"))?;
+                    let end = location
+                        .end
+                        .and_then(deserialize_anchor)
+                        .ok_or_else(|| anyhow!("missing target end"))?;
+                    result
+                        .entry(target_buffer)
+                        .or_insert(Vec::new())
+                        .push(start..end)
+                }
+                Ok(result)
             })
         } else {
-            todo!()
+            Task::ready(Ok(Default::default()))
         }
     }
 
@@ -3009,6 +3039,36 @@ impl Project {
 
         Ok(proto::GetProjectSymbolsResponse {
             symbols: symbols.iter().map(serialize_symbol).collect(),
+        })
+    }
+
+    async fn handle_search_project(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::SearchProject>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::SearchProjectResponse> {
+        let peer_id = envelope.original_sender_id()?;
+        let query = SearchQuery::from_proto(envelope.payload)?;
+        let result = this
+            .update(&mut cx, |this, cx| this.search(query, cx))
+            .await?;
+
+        this.update(&mut cx, |this, cx| {
+            let mut locations = Vec::new();
+            for (buffer, ranges) in result {
+                for range in ranges {
+                    let start = serialize_anchor(&range.start);
+                    let end = serialize_anchor(&range.end);
+                    let buffer = this.serialize_buffer_for_peer(&buffer, peer_id, cx);
+                    locations.push(proto::Location {
+                        buffer: Some(buffer),
+                        start: Some(start),
+                        end: Some(end),
+                    });
+                }
+            }
+            Ok(proto::SearchProjectResponse { locations })
         })
     }
 
@@ -4915,7 +4975,9 @@ mod tests {
             .await;
 
         assert_eq!(
-            search(&project, SearchQuery::text("TWO", false, true), &mut cx).await,
+            search(&project, SearchQuery::text("TWO", false, true), &mut cx)
+                .await
+                .unwrap(),
             HashMap::from_iter([
                 ("two.rs".to_string(), vec![6..9]),
                 ("three.rs".to_string(), vec![37..40])
@@ -4933,7 +4995,9 @@ mod tests {
         });
 
         assert_eq!(
-            search(&project, SearchQuery::text("TWO", false, true), &mut cx).await,
+            search(&project, SearchQuery::text("TWO", false, true), &mut cx)
+                .await
+                .unwrap(),
             HashMap::from_iter([
                 ("two.rs".to_string(), vec![6..9]),
                 ("three.rs".to_string(), vec![37..40]),
@@ -4945,10 +5009,12 @@ mod tests {
             project: &ModelHandle<Project>,
             query: SearchQuery,
             cx: &mut gpui::TestAppContext,
-        ) -> HashMap<String, Vec<Range<usize>>> {
-            project
+        ) -> Result<HashMap<String, Vec<Range<usize>>>> {
+            let results = project
                 .update(cx, |project, cx| project.search(query, cx))
-                .await
+                .await?;
+
+            Ok(results
                 .into_iter()
                 .map(|(buffer, ranges)| {
                     buffer.read_with(cx, |buffer, _| {
@@ -4960,7 +5026,7 @@ mod tests {
                         (path, ranges)
                     })
                 })
-                .collect()
+                .collect())
         }
     }
 }
