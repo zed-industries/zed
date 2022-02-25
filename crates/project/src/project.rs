@@ -2148,23 +2148,36 @@ impl Project {
                 .values()
                 .filter_map(|b| b.upgrade(cx))
                 .collect::<HashSet<_>>();
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn(|this, cx| async move {
                 for buffer in &open_buffers {
                     let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
                     buffers_tx.send((buffer.clone(), snapshot)).await?;
                 }
 
+                let open_buffers = Rc::new(RefCell::new(open_buffers));
                 while let Some(project_path) = matching_paths_rx.next().await {
-                    if let Some(buffer) = this
-                        .update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
-                        .await
-                        .log_err()
-                    {
-                        if !open_buffers.contains(&buffer) {
-                            let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                            buffers_tx.send((buffer, snapshot)).await?;
-                        }
+                    if buffers_tx.is_closed() {
+                        break;
                     }
+
+                    let this = this.clone();
+                    let open_buffers = open_buffers.clone();
+                    let buffers_tx = buffers_tx.clone();
+                    cx.spawn(|mut cx| async move {
+                        if let Some(buffer) = this
+                            .update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
+                            .await
+                            .log_err()
+                        {
+                            if open_buffers.borrow_mut().insert(buffer.clone()) {
+                                let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+                                buffers_tx.send((buffer, snapshot)).await?;
+                            }
+                        }
+
+                        Ok::<_, anyhow::Error>(())
+                    })
+                    .detach();
                 }
 
                 Ok::<_, anyhow::Error>(())
