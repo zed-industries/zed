@@ -1,13 +1,11 @@
 pub mod items;
 
 use anyhow::Result;
-use collections::{BTreeSet, HashMap, HashSet};
+use collections::{BTreeSet, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, RenderBlock},
-    highlight_diagnostic_message,
-    items::BufferItemHandle,
-    Autoscroll, Editor, ExcerptId, MultiBuffer, ToOffset,
+    highlight_diagnostic_message, Editor, ExcerptId, MultiBuffer, ToOffset,
 };
 use gpui::{
     action, elements::*, fonts::TextStyle, keymap::Binding, AnyViewHandle, AppContext, Entity,
@@ -31,21 +29,12 @@ use util::TryFutureExt;
 use workspace::{ItemHandle, ItemNavHistory, ItemViewHandle as _, Workspace};
 
 action!(Deploy);
-action!(OpenExcerpts);
 
 const CONTEXT_LINE_COUNT: u32 = 1;
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_bindings([
-        Binding::new("alt-shift-D", Deploy, Some("Workspace")),
-        Binding::new(
-            "alt-shift-D",
-            OpenExcerpts,
-            Some("ProjectDiagnosticsEditor"),
-        ),
-    ]);
+    cx.add_bindings([Binding::new("alt-shift-D", Deploy, Some("Workspace"))]);
     cx.add_action(ProjectDiagnosticsEditor::deploy);
-    cx.add_action(ProjectDiagnosticsEditor::open_excerpts);
 }
 
 type Event = editor::Event;
@@ -177,47 +166,6 @@ impl ProjectDiagnosticsEditor {
             let diagnostics =
                 cx.add_model(|_| ProjectDiagnostics::new(workspace.project().clone()));
             workspace.open_item(diagnostics, cx);
-        }
-    }
-
-    fn open_excerpts(&mut self, _: &OpenExcerpts, cx: &mut ViewContext<Self>) {
-        if let Some(workspace) = self.workspace.upgrade(cx) {
-            let editor = self.editor.read(cx);
-            let excerpts = self.excerpts.read(cx);
-            let mut new_selections_by_buffer = HashMap::default();
-
-            for selection in editor.local_selections::<usize>(cx) {
-                for (buffer, mut range) in
-                    excerpts.range_to_buffer_ranges(selection.start..selection.end, cx)
-                {
-                    if selection.reversed {
-                        mem::swap(&mut range.start, &mut range.end);
-                    }
-                    new_selections_by_buffer
-                        .entry(buffer)
-                        .or_insert(Vec::new())
-                        .push(range)
-                }
-            }
-
-            // We defer the pane interaction because we ourselves are a workspace item
-            // and activating a new item causes the pane to call a method on us reentrantly,
-            // which panics if we're on the stack.
-            workspace.defer(cx, |workspace, cx| {
-                for (buffer, ranges) in new_selections_by_buffer {
-                    let buffer = BufferItemHandle(buffer);
-                    if !workspace.activate_pane_for_item(&buffer, cx) {
-                        workspace.activate_next_pane(cx);
-                    }
-                    let editor = workspace
-                        .open_item(buffer, cx)
-                        .downcast::<Editor>()
-                        .unwrap();
-                    editor.update(cx, |editor, cx| {
-                        editor.select_ranges(ranges, Some(Autoscroll::Center), cx)
-                    });
-                }
-            });
         }
     }
 

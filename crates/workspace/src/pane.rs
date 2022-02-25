@@ -649,6 +649,14 @@ impl<T: Toolbar> ToolbarHandle for ViewHandle<T> {
 }
 
 impl ItemNavHistory {
+    pub fn len(&self) -> usize {
+        self.history.borrow().len()
+    }
+
+    pub fn truncate(&self, len: usize) {
+        self.history.borrow_mut().truncate(len)
+    }
+
     pub fn new<T: ItemView>(history: Rc<RefCell<NavHistory>>, item_view: &ViewHandle<T>) -> Self {
         Self {
             history,
@@ -666,6 +674,14 @@ impl ItemNavHistory {
 }
 
 impl NavHistory {
+    pub fn len(&self) -> usize {
+        self.backward_stack.len()
+    }
+
+    pub fn truncate(&mut self, len: usize) {
+        self.backward_stack.truncate(len);
+    }
+
     pub fn pop_backward(&mut self) -> Option<NavigationEntry> {
         self.backward_stack.pop_back()
     }

@@ -132,6 +132,7 @@ action!(ShowCompletions);
 action!(ToggleCodeActions, bool);
 action!(ConfirmCompletion, Option<usize>);
 action!(ConfirmCodeAction, Option<usize>);
+action!(OpenExcerpts);
 
 pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpener>>) {
     path_openers.push(Box::new(items::BufferOpener));
@@ -259,6 +260,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
         Binding::new("alt-cmd-f", FoldSelectedRanges, Some("Editor")),
         Binding::new("ctrl-space", ShowCompletions, Some("Editor")),
         Binding::new("cmd-.", ToggleCodeActions(false), Some("Editor")),
+        Binding::new("alt-enter", OpenExcerpts, Some("Editor")),
     ]);
 
     cx.add_action(Editor::open_new);
@@ -324,6 +326,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_action(Editor::fold_selected_ranges);
     cx.add_action(Editor::show_completions);
     cx.add_action(Editor::toggle_code_actions);
+    cx.add_action(Editor::open_excerpts);
     cx.add_async_action(Editor::confirm_completion);
     cx.add_async_action(Editor::confirm_code_action);
     cx.add_async_action(Editor::rename);
@@ -4179,14 +4182,14 @@ impl Editor {
                     target_editor_handle.update(cx, |target_editor, cx| {
                         // When selecting a definition in a different buffer, disable the nav history
                         // to avoid creating a history entry at the previous cursor location.
-                        let disabled_history = if editor_handle == target_editor_handle {
-                            None
-                        } else {
-                            target_editor.nav_history.take()
-                        };
+                        let prev_nav_history_len = target_editor
+                            .nav_history()
+                            .map_or(0, |history| history.len());
                         target_editor.select_ranges([range], Some(Autoscroll::Center), cx);
-                        if disabled_history.is_some() {
-                            target_editor.nav_history = disabled_history;
+                        if editor_handle != target_editor_handle {
+                            if let Some(history) = target_editor.nav_history() {
+                                history.truncate(prev_nav_history_len);
+                            }
                         }
                     });
                 }
@@ -5350,6 +5353,65 @@ impl Editor {
 
     pub fn searchable(&self) -> bool {
         self.searchable
+    }
+
+    fn open_excerpts(workspace: &mut Workspace, _: &OpenExcerpts, cx: &mut ViewContext<Workspace>) {
+        let active_item = workspace.active_item(cx);
+        let editor_handle = if let Some(editor) = active_item
+            .as_ref()
+            .and_then(|item| item.act_as::<Self>(cx))
+        {
+            editor
+        } else {
+            cx.propagate_action();
+            return;
+        };
+
+        let editor = editor_handle.read(cx);
+        let buffer = editor.buffer.read(cx);
+        if buffer.is_singleton() {
+            cx.propagate_action();
+            return;
+        }
+
+        let mut new_selections_by_buffer = HashMap::default();
+        for selection in editor.local_selections::<usize>(cx) {
+            for (buffer, mut range) in
+                buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
+            {
+                if selection.reversed {
+                    mem::swap(&mut range.start, &mut range.end);
+                }
+                new_selections_by_buffer
+                    .entry(buffer)
+                    .or_insert(Vec::new())
+                    .push(range)
+            }
+        }
+
+        // We defer the pane interaction because we ourselves are a workspace item
+        // and activating a new item causes the pane to call a method on us reentrantly,
+        // which panics if we're on the stack.
+        cx.defer(|workspace, cx| {
+            for (buffer, ranges) in new_selections_by_buffer {
+                let buffer = BufferItemHandle(buffer);
+                if !workspace.activate_pane_for_item(&buffer, cx) {
+                    workspace.activate_next_pane(cx);
+                }
+                let editor = workspace
+                    .open_item(buffer, cx)
+                    .downcast::<Editor>()
+                    .unwrap();
+                editor.update(cx, |editor, cx| {
+                    let prev_nav_history_len =
+                        editor.nav_history().map_or(0, |history| history.len());
+                    editor.select_ranges(ranges, Some(Autoscroll::Newest), cx);
+                    if let Some(history) = editor.nav_history() {
+                        history.truncate(prev_nav_history_len);
+                    }
+                });
+            }
+        });
     }
 }
 
