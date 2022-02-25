@@ -12,7 +12,7 @@ use std::{
     ops::Range,
     path::PathBuf,
 };
-use workspace::{Item, ItemNavHistory, ItemView, Settings, Workspace};
+use workspace::{Item, ItemHandle, ItemNavHistory, ItemView, Settings, Workspace};
 
 action!(Deploy);
 action!(Search);
@@ -223,8 +223,8 @@ impl ItemView for ProjectFindView {
             .update(cx, |editor, cx| editor.deactivated(cx));
     }
 
-    fn item_id(&self, _: &gpui::AppContext) -> usize {
-        self.model.id()
+    fn item(&self, _: &gpui::AppContext) -> Box<dyn ItemHandle> {
+        Box::new(self.model.clone())
     }
 
     fn tab_content(&self, style: &theme::Tab, _: &gpui::AppContext) -> ElementBox {

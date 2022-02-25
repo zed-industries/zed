@@ -153,7 +153,7 @@ pub trait Item: Entity + Sized {
 pub trait ItemView: View {
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) {}
-    fn item_id(&self, cx: &AppContext) -> usize;
+    fn item(&self, cx: &AppContext) -> Box<dyn ItemHandle>;
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn clone_on_split(&self, _: ItemNavHistory, _: &mut ViewContext<Self>) -> Option<Self>
@@ -225,7 +225,7 @@ pub trait WeakItemHandle {
 }
 
 pub trait ItemViewHandle: 'static {
-    fn item_id(&self, cx: &AppContext) -> usize;
+    fn item(&self, cx: &AppContext) -> Box<dyn ItemHandle>;
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle>;
@@ -361,8 +361,8 @@ impl dyn ItemViewHandle {
 }
 
 impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
-    fn item_id(&self, cx: &AppContext) -> usize {
-        self.read(cx).item_id(cx)
+    fn item(&self, cx: &AppContext) -> Box<dyn ItemHandle> {
+        self.read(cx).item(cx)
     }
 
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox {
@@ -1059,6 +1059,7 @@ impl Workspace {
         if let Some(item) = pane.read(cx).active_item() {
             let nav_history = new_pane.read(cx).nav_history().clone();
             if let Some(clone) = item.clone_on_split(nav_history, cx.as_mut()) {
+                self.items.insert(clone.item(cx).downgrade());
                 new_pane.update(cx, |new_pane, cx| new_pane.add_item_view(clone, cx));
             }
         }

@@ -158,11 +158,11 @@ impl WeakItemHandle for WeakMultiBufferItemHandle {
 }
 
 impl ItemView for Editor {
-    fn item_id(&self, cx: &AppContext) -> usize {
+    fn item(&self, cx: &AppContext) -> Box<dyn ItemHandle> {
         if let Some(buffer) = self.buffer.read(cx).as_singleton() {
-            buffer.id()
+            Box::new(BufferItemHandle(buffer))
         } else {
-            self.buffer.id()
+            Box::new(MultiBufferItemHandle(self.buffer.clone()))
         }
     }
 

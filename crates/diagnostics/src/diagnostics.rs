@@ -28,7 +28,7 @@ use std::{
     sync::Arc,
 };
 use util::TryFutureExt;
-use workspace::{ItemNavHistory, ItemViewHandle as _, Workspace};
+use workspace::{ItemHandle, ItemNavHistory, ItemViewHandle as _, Workspace};
 
 action!(Deploy);
 action!(OpenExcerpts);
@@ -536,8 +536,8 @@ impl workspace::Item for ProjectDiagnostics {
 }
 
 impl workspace::ItemView for ProjectDiagnosticsEditor {
-    fn item_id(&self, _: &AppContext) -> usize {
-        self.model.id()
+    fn item(&self, _: &AppContext) -> Box<dyn ItemHandle> {
+        Box::new(self.model.clone())
     }
 
     fn tab_content(&self, style: &theme::Tab, _: &AppContext) -> ElementBox {
