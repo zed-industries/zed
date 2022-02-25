@@ -153,6 +153,10 @@ impl View for ProjectFindView {
             )
             .boxed()
     }
+
+    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+        cx.focus(&self.query_editor);
+    }
 }
 
 impl workspace::ItemView for ProjectFindView {
