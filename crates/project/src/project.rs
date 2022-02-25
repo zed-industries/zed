@@ -2205,8 +2205,11 @@ impl Project {
                                             snapshot.anchor_before(range.start)
                                                 ..snapshot.anchor_after(range.end)
                                         })
-                                        .collect();
-                                    worker_matched_buffers.insert(buffer.clone(), buffer_matches);
+                                        .collect::<Vec<_>>();
+                                    if !buffer_matches.is_empty() {
+                                        worker_matched_buffers
+                                            .insert(buffer.clone(), buffer_matches);
+                                    }
                                 }
                             });
                         }
