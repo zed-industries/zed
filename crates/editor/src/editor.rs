@@ -5463,9 +5463,14 @@ fn build_style(
     get_field_editor_theme: Option<GetFieldEditorTheme>,
     cx: &AppContext,
 ) -> EditorStyle {
-    let theme = settings.theme.editor.clone();
+    let mut theme = settings.theme.editor.clone();
     if let Some(get_field_editor_theme) = get_field_editor_theme {
         let field_editor_theme = get_field_editor_theme(&settings.theme);
+        if let Some(background) = field_editor_theme.container.background_color {
+            theme.background = background;
+        }
+        theme.text_color = field_editor_theme.text.color;
+        theme.selection = field_editor_theme.selection;
         EditorStyle {
             text: field_editor_theme.text,
             placeholder_text: field_editor_theme.placeholder_text,
