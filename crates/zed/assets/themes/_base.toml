@@ -352,6 +352,8 @@ tab_summary_spacing = 10
 match_background = "$state.highlighted_line"
 background = "$surface.1"
 results_status = { extends = "$text.0", size = 18 }
+tab_icon_width = 14
+tab_icon_spacing = 4
 
 [find.option_button]
 extends = "$text.1"

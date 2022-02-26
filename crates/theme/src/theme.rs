@@ -108,6 +108,8 @@ pub struct Find {
     pub match_background: Color,
     pub match_index: ContainedText,
     pub results_status: TextStyle,
+    pub tab_icon_width: f32,
+    pub tab_icon_spacing: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]

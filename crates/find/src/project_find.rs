@@ -39,6 +39,7 @@ struct ProjectFind {
     excerpts: ModelHandle<MultiBuffer>,
     pending_search: Option<Task<Option<()>>>,
     highlighted_ranges: Vec<Range<Anchor>>,
+    active_query: Option<SearchQuery>,
 }
 
 struct ProjectFindView {
@@ -64,6 +65,7 @@ impl ProjectFind {
             excerpts: cx.add_model(|_| MultiBuffer::new(replica_id)),
             pending_search: Default::default(),
             highlighted_ranges: Default::default(),
+            active_query: None,
         }
     }
 
@@ -75,6 +77,7 @@ impl ProjectFind {
                 .update(new_cx, |excerpts, cx| cx.add_model(|cx| excerpts.clone(cx))),
             pending_search: Default::default(),
             highlighted_ranges: self.highlighted_ranges.clone(),
+            active_query: self.active_query.clone(),
         }
     }
 
@@ -104,6 +107,7 @@ impl ProjectFind {
                         }
                     });
                     this.pending_search.take();
+                    this.active_query = Some(query);
                     cx.notify();
                 });
             }
@@ -124,8 +128,22 @@ impl Item for ProjectFind {
     ) -> Self::View {
         let settings = workspace.settings();
         let excerpts = model.read(cx).excerpts.clone();
+        let results_editor = cx.add_view(|cx| {
+            let mut editor = Editor::for_buffer(
+                excerpts,
+                Some(workspace.project().clone()),
+                settings.clone(),
+                cx,
+            );
+            editor.set_searchable(false);
+            editor.set_nav_history(Some(nav_history));
+            editor
+        });
+        cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab))
+            .detach();
         cx.observe(&model, |this, _, cx| this.model_changed(true, cx))
             .detach();
+
         ProjectFindView {
             model,
             query_editor: cx.add_view(|cx| {
@@ -135,17 +153,7 @@ impl Item for ProjectFind {
                     cx,
                 )
             }),
-            results_editor: cx.add_view(|cx| {
-                let mut editor = Editor::for_buffer(
-                    excerpts,
-                    Some(workspace.project().clone()),
-                    settings.clone(),
-                    cx,
-                );
-                editor.set_searchable(false);
-                editor.set_nav_history(Some(nav_history));
-                editor
-            }),
+            results_editor,
             case_sensitive: false,
             whole_word: false,
             regex: false,
@@ -159,8 +167,12 @@ impl Item for ProjectFind {
     }
 }
 
+enum ViewEvent {
+    UpdateTab,
+}
+
 impl Entity for ProjectFindView {
-    type Event = ();
+    type Event = ViewEvent;
 }
 
 impl View for ProjectFindView {
@@ -231,8 +243,26 @@ impl ItemView for ProjectFindView {
         Box::new(self.model.clone())
     }
 
-    fn tab_content(&self, style: &theme::Tab, _: &gpui::AppContext) -> ElementBox {
-        Label::new("Project Find".to_string(), style.label.clone()).boxed()
+    fn tab_content(&self, style: &theme::Tab, cx: &gpui::AppContext) -> ElementBox {
+        let settings = self.settings.borrow();
+        let find_theme = &settings.theme.find;
+        Flex::row()
+            .with_child(
+                Svg::new("icons/magnifier.svg")
+                    .with_color(style.label.text.color)
+                    .constrained()
+                    .with_width(find_theme.tab_icon_width)
+                    .aligned()
+                    .boxed(),
+            )
+            .with_children(self.model.read(cx).active_query.as_ref().map(|query| {
+                Label::new(query.as_str().to_string(), style.label.clone())
+                    .aligned()
+                    .contained()
+                    .with_margin_left(find_theme.tab_icon_spacing)
+                    .boxed()
+            }))
+            .boxed()
     }
 
     fn project_path(&self, _: &gpui::AppContext) -> Option<project::ProjectPath> {
@@ -331,6 +361,10 @@ impl ItemView for ProjectFindView {
         self.results_editor
             .update(cx, |editor, cx| editor.navigate(data, cx));
     }
+
+    fn should_update_tab_on_event(event: &ViewEvent) -> bool {
+        matches!(event, ViewEvent::UpdateTab)
+    }
 }
 
 impl ProjectFindView {
@@ -407,6 +441,7 @@ impl ProjectFindView {
             }
         }
 
+        cx.emit(ViewEvent::UpdateTab);
         cx.notify();
     }
 
