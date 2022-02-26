@@ -1,5 +1,5 @@
 use crate::SearchOption;
-use editor::{Anchor, Autoscroll, Editor, MultiBuffer};
+use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll};
 use gpui::{
     action, elements::*, keymap::Binding, platform::CursorStyle, AppContext, ElementBox, Entity,
     ModelContext, ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext,
@@ -230,7 +230,7 @@ impl View for ProjectFindView {
         if self.model.read(cx).highlighted_ranges.is_empty() {
             cx.focus(&self.query_editor);
         } else {
-            cx.focus(&self.results_editor);
+            self.focus_results_editor(cx);
         }
     }
 }
@@ -471,11 +471,22 @@ impl ProjectFindView {
     fn toggle_focus(&mut self, _: &ToggleFocus, cx: &mut ViewContext<Self>) {
         if self.query_editor.is_focused(cx) {
             if !self.model.read(cx).highlighted_ranges.is_empty() {
-                cx.focus(&self.results_editor);
+                self.focus_results_editor(cx);
             }
         } else {
+            self.query_editor.update(cx, |query_editor, cx| {
+                query_editor.select_all(&SelectAll, cx);
+            });
             cx.focus(&self.query_editor);
         }
+    }
+
+    fn focus_results_editor(&self, cx: &mut ViewContext<Self>) {
+        self.query_editor.update(cx, |query_editor, cx| {
+            let head = query_editor.newest_anchor_selection().head();
+            query_editor.select_ranges([head.clone()..head], None, cx);
+        });
+        cx.focus(&self.results_editor);
     }
 
     fn model_changed(&mut self, reset_selections: bool, cx: &mut ViewContext<Self>) {
@@ -489,7 +500,7 @@ impl ProjectFindView {
                 }
             });
             if self.query_editor.is_focused(cx) {
-                cx.focus(&self.results_editor);
+                self.focus_results_editor(cx);
             }
         }
 
