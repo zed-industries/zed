@@ -123,6 +123,7 @@ enum NavigationMode {
     Normal,
     GoingBack,
     GoingForward,
+    Disabled,
 }
 
 impl Default for NavigationMode {
@@ -149,7 +150,7 @@ impl Pane {
         }
     }
 
-    pub(crate) fn nav_history(&self) -> &Rc<RefCell<NavHistory>> {
+    pub fn nav_history(&self) -> &Rc<RefCell<NavHistory>> {
         &self.nav_history
     }
 
@@ -649,14 +650,6 @@ impl<T: Toolbar> ToolbarHandle for ViewHandle<T> {
 }
 
 impl ItemNavHistory {
-    pub fn len(&self) -> usize {
-        self.history.borrow().len()
-    }
-
-    pub fn truncate(&self, len: usize) {
-        self.history.borrow_mut().truncate(len)
-    }
-
     pub fn new<T: ItemView>(history: Rc<RefCell<NavHistory>>, item_view: &ViewHandle<T>) -> Self {
         Self {
             history,
@@ -674,12 +667,12 @@ impl ItemNavHistory {
 }
 
 impl NavHistory {
-    pub fn len(&self) -> usize {
-        self.backward_stack.len()
+    pub fn disable(&mut self) {
+        self.mode = NavigationMode::Disabled;
     }
 
-    pub fn truncate(&mut self, len: usize) {
-        self.backward_stack.truncate(len);
+    pub fn enable(&mut self) {
+        self.mode = NavigationMode::Normal;
     }
 
     pub fn pop_backward(&mut self) -> Option<NavigationEntry> {
@@ -692,7 +685,7 @@ impl NavHistory {
 
     fn pop(&mut self, mode: NavigationMode) -> Option<NavigationEntry> {
         match mode {
-            NavigationMode::Normal => None,
+            NavigationMode::Normal | NavigationMode::Disabled => None,
             NavigationMode::GoingBack => self.pop_backward(),
             NavigationMode::GoingForward => self.pop_forward(),
         }
@@ -708,6 +701,7 @@ impl NavHistory {
         item_view: Rc<dyn WeakItemViewHandle>,
     ) {
         match self.mode {
+            NavigationMode::Disabled => {}
             NavigationMode::Normal => {
                 if self.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
                     self.backward_stack.pop_front();

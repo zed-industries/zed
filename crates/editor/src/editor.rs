@@ -4172,6 +4172,7 @@ impl Editor {
         cx.spawn(|workspace, mut cx| async move {
             let definitions = definitions.await?;
             workspace.update(&mut cx, |workspace, cx| {
+                let nav_history = workspace.active_pane().read(cx).nav_history().clone();
                 for definition in definitions {
                     let range = definition.range.to_offset(definition.buffer.read(cx));
                     let target_editor_handle = workspace
@@ -4182,15 +4183,11 @@ impl Editor {
                     target_editor_handle.update(cx, |target_editor, cx| {
                         // When selecting a definition in a different buffer, disable the nav history
                         // to avoid creating a history entry at the previous cursor location.
-                        let prev_nav_history_len = target_editor
-                            .nav_history()
-                            .map_or(0, |history| history.len());
-                        target_editor.select_ranges([range], Some(Autoscroll::Center), cx);
                         if editor_handle != target_editor_handle {
-                            if let Some(history) = target_editor.nav_history() {
-                                history.truncate(prev_nav_history_len);
-                            }
+                            nav_history.borrow_mut().disable();
                         }
+                        target_editor.select_ranges([range], Some(Autoscroll::Center), cx);
+                        nav_history.borrow_mut().enable();
                     });
                 }
             });
@@ -5389,28 +5386,33 @@ impl Editor {
             }
         }
 
+        editor_handle.update(cx, |editor, cx| {
+            editor.push_to_nav_history(editor.newest_anchor_selection().head(), None, cx);
+        });
+        let nav_history = workspace.active_pane().read(cx).nav_history().clone();
+        nav_history.borrow_mut().disable();
+
         // We defer the pane interaction because we ourselves are a workspace item
         // and activating a new item causes the pane to call a method on us reentrantly,
         // which panics if we're on the stack.
-        cx.defer(|workspace, cx| {
-            for (buffer, ranges) in new_selections_by_buffer {
+        cx.defer(move |workspace, cx| {
+            for (ix, (buffer, ranges)) in new_selections_by_buffer.into_iter().enumerate() {
                 let buffer = BufferItemHandle(buffer);
-                if !workspace.activate_pane_for_item(&buffer, cx) {
+                if ix == 0 && !workspace.activate_pane_for_item(&buffer, cx) {
                     workspace.activate_next_pane(cx);
                 }
+
                 let editor = workspace
                     .open_item(buffer, cx)
                     .downcast::<Editor>()
                     .unwrap();
+
                 editor.update(cx, |editor, cx| {
-                    let prev_nav_history_len =
-                        editor.nav_history().map_or(0, |history| history.len());
                     editor.select_ranges(ranges, Some(Autoscroll::Newest), cx);
-                    if let Some(history) = editor.nav_history() {
-                        history.truncate(prev_nav_history_len);
-                    }
                 });
             }
+
+            nav_history.borrow_mut().enable();
         });
     }
 }
