@@ -752,7 +752,7 @@ impl MultiBuffer {
         let edit_start = new_excerpts.summary().text.bytes;
         new_excerpts.update_last(
             |excerpt| {
-                excerpt.has_trailing_newline = ranges.peek().is_some();
+                excerpt.has_trailing_newline = true;
                 prev_id = excerpt.id.clone();
             },
             &(),
