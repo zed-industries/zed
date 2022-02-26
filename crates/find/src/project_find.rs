@@ -15,8 +15,9 @@ use std::{
 use util::ResultExt as _;
 use workspace::{Item, ItemHandle, ItemNavHistory, ItemView, Settings, Workspace};
 
-action!(Deploy, bool);
+action!(Deploy);
 action!(Search);
+action!(SearchInNew);
 action!(ToggleSearchOption, SearchOption);
 action!(ToggleFocus);
 
@@ -24,12 +25,13 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
         Binding::new("cmd-shift-F", ToggleFocus, Some("ProjectFindView")),
         Binding::new("cmd-f", ToggleFocus, Some("ProjectFindView")),
-        Binding::new("cmd-shift-F", Deploy(true), Some("Workspace")),
-        Binding::new("cmd-alt-shift-F", Deploy(false), Some("Workspace")),
+        Binding::new("cmd-shift-F", Deploy, Some("Workspace")),
         Binding::new("enter", Search, Some("ProjectFindView")),
+        Binding::new("cmd-enter", SearchInNew, Some("ProjectFindView")),
     ]);
     cx.add_action(ProjectFindView::deploy);
     cx.add_action(ProjectFindView::search);
+    cx.add_action(ProjectFindView::search_in_new);
     cx.add_action(ProjectFindView::toggle_search_option);
     cx.add_action(ProjectFindView::toggle_focus);
 }
@@ -85,6 +87,7 @@ impl ProjectFind {
         let search = self
             .project
             .update(cx, |project, cx| project.search(query.clone(), cx));
+        self.active_query = Some(query);
         self.highlighted_ranges.clear();
         self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
             let matches = search.await.log_err()?;
@@ -107,7 +110,6 @@ impl ProjectFind {
                         }
                     });
                     this.pending_search.take();
-                    this.active_query = Some(query);
                     cx.notify();
                 });
             }
@@ -128,6 +130,27 @@ impl Item for ProjectFind {
     ) -> Self::View {
         let settings = workspace.settings();
         let excerpts = model.read(cx).excerpts.clone();
+
+        let mut query_text = String::new();
+        let mut regex = false;
+        let mut case_sensitive = false;
+        let mut whole_word = false;
+        if let Some(active_query) = model.read(cx).active_query.as_ref() {
+            query_text = active_query.as_str().to_string();
+            regex = active_query.is_regex();
+            case_sensitive = active_query.case_sensitive();
+            whole_word = active_query.whole_word();
+        }
+
+        let query_editor = cx.add_view(|cx| {
+            let mut editor = Editor::single_line(
+                settings.clone(),
+                Some(|theme| theme.find.editor.input.clone()),
+                cx,
+            );
+            editor.set_text(query_text, cx);
+            editor
+        });
         let results_editor = cx.add_view(|cx| {
             let mut editor = Editor::for_buffer(
                 excerpts,
@@ -146,17 +169,11 @@ impl Item for ProjectFind {
 
         ProjectFindView {
             model,
-            query_editor: cx.add_view(|cx| {
-                Editor::single_line(
-                    settings.clone(),
-                    Some(|theme| theme.find.editor.input.clone()),
-                    cx,
-                )
-            }),
+            query_editor,
             results_editor,
-            case_sensitive: false,
-            whole_word: false,
-            regex: false,
+            case_sensitive,
+            whole_word,
+            regex,
             query_contains_error: false,
             settings,
         }
@@ -368,37 +385,69 @@ impl ItemView for ProjectFindView {
 }
 
 impl ProjectFindView {
-    fn deploy(
-        workspace: &mut Workspace,
-        &Deploy(activate_existing): &Deploy,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        if activate_existing {
-            if let Some(existing) = workspace.item_of_type::<ProjectFind>(cx) {
-                workspace.activate_item(&existing, cx);
-                return;
-            }
+    fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
+        if let Some(existing) = workspace.item_of_type::<ProjectFind>(cx) {
+            workspace.activate_item(&existing, cx);
+        } else {
+            let model = cx.add_model(|cx| ProjectFind::new(workspace.project().clone(), cx));
+            workspace.open_item(model, cx);
         }
-        let model = cx.add_model(|cx| ProjectFind::new(workspace.project().clone(), cx));
-        workspace.open_item(model, cx);
     }
 
     fn search(&mut self, _: &Search, cx: &mut ViewContext<Self>) {
+        if let Some(query) = self.build_search_query(cx) {
+            self.model.update(cx, |model, cx| model.search(query, cx));
+        }
+    }
+
+    fn search_in_new(workspace: &mut Workspace, _: &SearchInNew, cx: &mut ViewContext<Workspace>) {
+        if let Some(find_view) = workspace
+            .active_item(cx)
+            .and_then(|item| item.downcast::<ProjectFindView>())
+        {
+            let new_query = find_view.update(cx, |find_view, cx| {
+                let new_query = find_view.build_search_query(cx);
+                if new_query.is_some() {
+                    if let Some(old_query) = find_view.model.read(cx).active_query.clone() {
+                        find_view.query_editor.update(cx, |editor, cx| {
+                            editor.set_text(old_query.as_str(), cx);
+                        });
+                        find_view.regex = old_query.is_regex();
+                        find_view.whole_word = old_query.whole_word();
+                        find_view.case_sensitive = old_query.case_sensitive();
+                    }
+                }
+                new_query
+            });
+            if let Some(new_query) = new_query {
+                let model = cx.add_model(|cx| {
+                    let mut model = ProjectFind::new(workspace.project().clone(), cx);
+                    model.search(new_query, cx);
+                    model
+                });
+                workspace.open_item(model, cx);
+            }
+        }
+    }
+
+    fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
         let text = self.query_editor.read(cx).text(cx);
-        let query = if self.regex {
+        if self.regex {
             match SearchQuery::regex(text, self.whole_word, self.case_sensitive) {
-                Ok(query) => query,
+                Ok(query) => Some(query),
                 Err(_) => {
                     self.query_contains_error = true;
                     cx.notify();
-                    return;
+                    None
                 }
             }
         } else {
-            SearchQuery::text(text, self.whole_word, self.case_sensitive)
-        };
-
-        self.model.update(cx, |model, cx| model.search(query, cx));
+            Some(SearchQuery::text(
+                text,
+                self.whole_word,
+                self.case_sensitive,
+            ))
+        }
     }
 
     fn toggle_search_option(

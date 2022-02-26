@@ -5144,6 +5144,14 @@ impl Editor {
         self.buffer.read(cx).read(cx).text()
     }
 
+    pub fn set_text(&mut self, text: impl Into<String>, cx: &mut ViewContext<Self>) {
+        self.buffer
+            .read(cx)
+            .as_singleton()
+            .expect("you can only call set_text on editors for singleton buffers")
+            .update(cx, |buffer, cx| buffer.set_text(text, cx));
+    }
+
     pub fn display_text(&self, cx: &mut MutableAppContext) -> String {
         self.display_map
             .update(cx, |map, cx| map.snapshot(cx))

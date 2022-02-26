@@ -1345,6 +1345,13 @@ impl Buffer {
         let _ = language_server.latest_snapshot.blocking_send(snapshot);
     }
 
+    pub fn set_text<T>(&mut self, text: T, cx: &mut ModelContext<Self>) -> Option<clock::Local>
+    where
+        T: Into<String>,
+    {
+        self.edit_internal([0..self.len()], text, false, cx)
+    }
+
     pub fn edit<I, S, T>(
         &mut self,
         ranges_iter: I,
