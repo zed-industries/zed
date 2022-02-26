@@ -23,7 +23,6 @@ action!(ToggleFocus);
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
         Binding::new("cmd-shift-F", ToggleFocus, Some("ProjectFindView")),
-        Binding::new("cmd-shift-F", ToggleFocus, Some("ProjectFindView")),
         Binding::new("cmd-f", ToggleFocus, Some("ProjectFindView")),
         Binding::new("cmd-shift-F", Deploy(true), Some("Workspace")),
         Binding::new("cmd-alt-shift-F", Deploy(false), Some("Workspace")),
@@ -385,7 +384,9 @@ impl ProjectFindView {
 
     fn toggle_focus(&mut self, _: &ToggleFocus, cx: &mut ViewContext<Self>) {
         if self.query_editor.is_focused(cx) {
-            cx.focus(&self.results_editor);
+            if !self.model.read(cx).highlighted_ranges.is_empty() {
+                cx.focus(&self.results_editor);
+            }
         } else {
             cx.focus(&self.query_editor);
         }
