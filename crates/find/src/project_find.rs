@@ -15,7 +15,7 @@ use std::{
 use util::ResultExt as _;
 use workspace::{Item, ItemHandle, ItemNavHistory, ItemView, Settings, Workspace};
 
-action!(Deploy);
+action!(Deploy, bool);
 action!(Search);
 action!(ToggleSearchOption, SearchOption);
 action!(ToggleFocus);
@@ -23,8 +23,10 @@ action!(ToggleFocus);
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
         Binding::new("cmd-shift-F", ToggleFocus, Some("ProjectFindView")),
+        Binding::new("cmd-shift-F", ToggleFocus, Some("ProjectFindView")),
         Binding::new("cmd-f", ToggleFocus, Some("ProjectFindView")),
-        Binding::new("cmd-shift-F", Deploy, Some("Workspace")),
+        Binding::new("cmd-shift-F", Deploy(true), Some("Workspace")),
+        Binding::new("cmd-alt-shift-F", Deploy(false), Some("Workspace")),
         Binding::new("enter", Search, Some("ProjectFindView")),
     ]);
     cx.add_action(ProjectFindView::deploy);
@@ -333,13 +335,19 @@ impl ItemView for ProjectFindView {
 }
 
 impl ProjectFindView {
-    fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
-        if let Some(existing) = workspace.item_of_type::<ProjectFind>(cx) {
-            workspace.activate_item(&existing, cx);
-        } else {
-            let model = cx.add_model(|cx| ProjectFind::new(workspace.project().clone(), cx));
-            workspace.open_item(model, cx);
+    fn deploy(
+        workspace: &mut Workspace,
+        &Deploy(activate_existing): &Deploy,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        if activate_existing {
+            if let Some(existing) = workspace.item_of_type::<ProjectFind>(cx) {
+                workspace.activate_item(&existing, cx);
+                return;
+            }
         }
+        let model = cx.add_model(|cx| ProjectFind::new(workspace.project().clone(), cx));
+        workspace.open_item(model, cx);
     }
 
     fn search(&mut self, _: &Search, cx: &mut ViewContext<Self>) {
