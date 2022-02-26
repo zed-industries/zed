@@ -826,6 +826,15 @@ impl Workspace {
             .find_map(|i| i.upgrade(cx).and_then(|i| i.to_any().downcast()))
     }
 
+    pub fn items_of_type<'a, T: Item>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = ModelHandle<T>> {
+        self.items
+            .iter()
+            .filter_map(|i| i.upgrade(cx).and_then(|i| i.to_any().downcast()))
+    }
+
     pub fn active_item(&self, cx: &AppContext) -> Option<Box<dyn ItemViewHandle>> {
         self.active_pane().read(cx).active_item()
     }

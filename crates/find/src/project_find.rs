@@ -386,7 +386,10 @@ impl ItemView for ProjectFindView {
 
 impl ProjectFindView {
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
-        if let Some(existing) = workspace.item_of_type::<ProjectFind>(cx) {
+        if let Some(existing) = workspace
+            .items_of_type::<ProjectFind>(cx)
+            .max_by_key(|existing| existing.id())
+        {
             workspace.activate_item(&existing, cx);
         } else {
             let model = cx.add_model(|cx| ProjectFind::new(workspace.project().clone(), cx));
