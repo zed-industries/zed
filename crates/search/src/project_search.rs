@@ -73,16 +73,16 @@ impl ProjectSearch {
         }
     }
 
-    fn clone(&self, new_cx: &mut ModelContext<Self>) -> Self {
-        Self {
+    fn clone(&self, cx: &mut ModelContext<Self>) -> ModelHandle<Self> {
+        cx.add_model(|cx| Self {
             project: self.project.clone(),
             excerpts: self
                 .excerpts
-                .update(new_cx, |excerpts, cx| cx.add_model(|cx| excerpts.clone(cx))),
+                .update(cx, |excerpts, cx| cx.add_model(|cx| excerpts.clone(cx))),
             pending_search: Default::default(),
             highlighted_ranges: self.highlighted_ranges.clone(),
             active_query: self.active_query.clone(),
-        }
+        })
     }
 
     fn search(&mut self, query: SearchQuery, cx: &mut ModelContext<Self>) {
@@ -130,55 +130,7 @@ impl Item for ProjectSearch {
         nav_history: ItemNavHistory,
         cx: &mut gpui::ViewContext<Self::View>,
     ) -> Self::View {
-        let settings = workspace.settings();
-        let excerpts = model.read(cx).excerpts.clone();
-
-        let mut query_text = String::new();
-        let mut regex = false;
-        let mut case_sensitive = false;
-        let mut whole_word = false;
-        if let Some(active_query) = model.read(cx).active_query.as_ref() {
-            query_text = active_query.as_str().to_string();
-            regex = active_query.is_regex();
-            case_sensitive = active_query.case_sensitive();
-            whole_word = active_query.whole_word();
-        }
-
-        let query_editor = cx.add_view(|cx| {
-            let mut editor = Editor::single_line(
-                settings.clone(),
-                Some(|theme| theme.search.editor.input.clone()),
-                cx,
-            );
-            editor.set_text(query_text, cx);
-            editor
-        });
-        let results_editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_buffer(
-                excerpts,
-                Some(workspace.project().clone()),
-                settings.clone(),
-                cx,
-            );
-            editor.set_searchable(false);
-            editor.set_nav_history(Some(nav_history));
-            editor
-        });
-        cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab))
-            .detach();
-        cx.observe(&model, |this, _, cx| this.model_changed(true, cx))
-            .detach();
-
-        ProjectSearchView {
-            model,
-            query_editor,
-            results_editor,
-            case_sensitive,
-            whole_word,
-            regex,
-            query_contains_error: false,
-            settings,
-        }
+        ProjectSearchView::new(model, nav_history, workspace.settings(), cx)
     }
 
     fn project_path(&self) -> Option<project::ProjectPath> {
@@ -336,50 +288,8 @@ impl ItemView for ProjectSearchView {
     where
         Self: Sized,
     {
-        let query_editor = cx.add_view(|cx| {
-            let query = self.query_editor.read(cx).text(cx);
-            let editor = Editor::single_line(
-                self.settings.clone(),
-                Some(|theme| theme.search.editor.input.clone()),
-                cx,
-            );
-            editor
-                .buffer()
-                .update(cx, |buffer, cx| buffer.edit([0..0], query, cx));
-            editor
-        });
-        let model = self
-            .model
-            .update(cx, |model, cx| cx.add_model(|cx| model.clone(cx)));
-
-        cx.observe(&model, |this, _, cx| this.model_changed(true, cx))
-            .detach();
-        let results_editor = cx.add_view(|cx| {
-            let model = model.read(cx);
-            let excerpts = model.excerpts.clone();
-            let project = model.project.clone();
-            let scroll_position = self
-                .results_editor
-                .update(cx, |editor, cx| editor.scroll_position(cx));
-
-            let mut editor = Editor::for_buffer(excerpts, Some(project), self.settings.clone(), cx);
-            editor.set_searchable(false);
-            editor.set_nav_history(Some(nav_history));
-            editor.set_scroll_position(scroll_position, cx);
-            editor
-        });
-        let mut view = Self {
-            model,
-            query_editor,
-            results_editor,
-            case_sensitive: self.case_sensitive,
-            whole_word: self.whole_word,
-            regex: self.regex,
-            query_contains_error: self.query_contains_error,
-            settings: self.settings.clone(),
-        };
-        view.model_changed(false, cx);
-        Some(view)
+        let model = self.model.update(cx, |model, cx| model.clone(cx));
+        Some(Self::new(model, nav_history, self.settings.clone(), cx))
     }
 
     fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) {
@@ -393,6 +303,66 @@ impl ItemView for ProjectSearchView {
 }
 
 impl ProjectSearchView {
+    fn new(
+        model: ModelHandle<ProjectSearch>,
+        nav_history: ItemNavHistory,
+        settings: watch::Receiver<Settings>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let project;
+        let excerpts;
+        let mut query_text = String::new();
+        let mut regex = false;
+        let mut case_sensitive = false;
+        let mut whole_word = false;
+
+        {
+            let model = model.read(cx);
+            project = model.project.clone();
+            excerpts = model.excerpts.clone();
+            if let Some(active_query) = model.active_query.as_ref() {
+                query_text = active_query.as_str().to_string();
+                regex = active_query.is_regex();
+                case_sensitive = active_query.case_sensitive();
+                whole_word = active_query.whole_word();
+            }
+        }
+        cx.observe(&model, |this, _, cx| this.model_changed(true, cx))
+            .detach();
+
+        let query_editor = cx.add_view(|cx| {
+            let mut editor = Editor::single_line(
+                settings.clone(),
+                Some(|theme| theme.search.editor.input.clone()),
+                cx,
+            );
+            editor.set_text(query_text, cx);
+            editor
+        });
+
+        let results_editor = cx.add_view(|cx| {
+            let mut editor = Editor::for_buffer(excerpts, Some(project), settings.clone(), cx);
+            editor.set_searchable(false);
+            editor.set_nav_history(Some(nav_history));
+            editor
+        });
+        cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab))
+            .detach();
+
+        let mut this = ProjectSearchView {
+            model,
+            query_editor,
+            results_editor,
+            case_sensitive,
+            whole_word,
+            regex,
+            query_contains_error: false,
+            settings,
+        };
+        this.model_changed(false, cx);
+        this
+    }
+
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         if let Some(existing) = workspace
             .items_of_type::<ProjectSearch>(cx)
