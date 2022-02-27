@@ -850,6 +850,7 @@ impl Editor {
         clone.scroll_position = self.scroll_position;
         clone.scroll_top_anchor = self.scroll_top_anchor.clone();
         clone.nav_history = Some(nav_history);
+        clone.searchable = self.searchable;
         clone
     }
 
