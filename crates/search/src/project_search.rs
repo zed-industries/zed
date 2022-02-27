@@ -536,10 +536,10 @@ impl ProjectSearchView {
         } else {
             let theme = &self.settings.borrow().theme.search;
             self.results_editor.update(cx, |editor, cx| {
-                editor.highlight_ranges::<Self>(match_ranges, theme.match_background, cx);
                 if reset_selections {
-                    editor.select_ranges([0..0], Some(Autoscroll::Fit), cx);
+                    editor.select_ranges(match_ranges.first().cloned(), Some(Autoscroll::Fit), cx);
                 }
+                editor.highlight_ranges::<Self>(match_ranges, theme.match_background, cx);
             });
             if self.query_editor.is_focused(cx) {
                 self.focus_results_editor(cx);
