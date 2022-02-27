@@ -4172,6 +4172,7 @@ dependencies = [
  "editor",
  "gpui",
  "language",
+ "log",
  "postage",
  "project",
  "theme",
