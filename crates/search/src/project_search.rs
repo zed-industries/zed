@@ -45,8 +45,9 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectSearchView::search);
     cx.add_action(ProjectSearchView::search_in_new);
     cx.add_action(ProjectSearchView::toggle_search_option);
-    cx.add_action(ProjectSearchView::toggle_focus);
     cx.add_action(ProjectSearchView::select_match);
+    cx.add_action(ProjectSearchView::toggle_focus);
+    cx.capture_action(ProjectSearchView::tab);
 }
 
 struct ProjectSearch {
@@ -518,6 +519,16 @@ impl ProjectSearchView {
                 query_editor.select_all(&SelectAll, cx);
             });
             cx.focus(&self.query_editor);
+        }
+    }
+
+    fn tab(&mut self, _: &editor::Tab, cx: &mut ViewContext<Self>) {
+        if self.query_editor.is_focused(cx) {
+            if !self.model.read(cx).match_ranges.is_empty() {
+                self.focus_results_editor(cx);
+            }
+        } else {
+            cx.propagate_action()
         }
     }
 
