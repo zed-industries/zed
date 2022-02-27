@@ -36,7 +36,7 @@ contacts_panel = { path = "../contacts_panel" }
 diagnostics = { path = "../diagnostics" }
 editor = { path = "../editor" }
 file_finder = { path = "../file_finder" }
-find = { path = "../find" }
+search = { path = "../search" }
 fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
 go_to_line = { path = "../go_to_line" }

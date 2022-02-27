@@ -60,7 +60,7 @@ fn main() {
         project_symbols::init(cx);
         project_panel::init(cx);
         diagnostics::init(cx);
-        find::init(cx);
+        search::init(cx);
         cx.spawn({
             let client = client.clone();
             |cx| async move {

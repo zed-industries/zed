@@ -24,7 +24,7 @@ pub struct Theme {
     pub project_panel: ProjectPanel,
     pub selector: Selector,
     pub editor: Editor,
-    pub find: Find,
+    pub search: Search,
     pub project_diagnostics: ProjectDiagnostics,
 }
 
@@ -95,7 +95,7 @@ pub struct Toolbar {
 }
 
 #[derive(Clone, Deserialize, Default)]
-pub struct Find {
+pub struct Search {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub editor: FindEditor,

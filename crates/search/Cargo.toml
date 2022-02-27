@@ -1,10 +1,10 @@
 [package]
-name = "find"
+name = "search"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-path = "src/find.rs"
+path = "src/search.rs"
 
 [dependencies]
 collections = { path = "../collections" }

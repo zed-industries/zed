@@ -23,20 +23,20 @@ action!(ToggleFocus);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
-        Binding::new("cmd-shift-F", ToggleFocus, Some("ProjectFindView")),
-        Binding::new("cmd-f", ToggleFocus, Some("ProjectFindView")),
+        Binding::new("cmd-shift-F", ToggleFocus, Some("ProjectSearchView")),
+        Binding::new("cmd-f", ToggleFocus, Some("ProjectSearchView")),
         Binding::new("cmd-shift-F", Deploy, Some("Workspace")),
-        Binding::new("enter", Search, Some("ProjectFindView")),
-        Binding::new("cmd-enter", SearchInNew, Some("ProjectFindView")),
+        Binding::new("enter", Search, Some("ProjectSearchView")),
+        Binding::new("cmd-enter", SearchInNew, Some("ProjectSearchView")),
     ]);
-    cx.add_action(ProjectFindView::deploy);
-    cx.add_action(ProjectFindView::search);
-    cx.add_action(ProjectFindView::search_in_new);
-    cx.add_action(ProjectFindView::toggle_search_option);
-    cx.add_action(ProjectFindView::toggle_focus);
+    cx.add_action(ProjectSearchView::deploy);
+    cx.add_action(ProjectSearchView::search);
+    cx.add_action(ProjectSearchView::search_in_new);
+    cx.add_action(ProjectSearchView::toggle_search_option);
+    cx.add_action(ProjectSearchView::toggle_focus);
 }
 
-struct ProjectFind {
+struct ProjectSearch {
     project: ModelHandle<Project>,
     excerpts: ModelHandle<MultiBuffer>,
     pending_search: Option<Task<Option<()>>>,
@@ -44,8 +44,8 @@ struct ProjectFind {
     active_query: Option<SearchQuery>,
 }
 
-struct ProjectFindView {
-    model: ModelHandle<ProjectFind>,
+struct ProjectSearchView {
+    model: ModelHandle<ProjectSearch>,
     query_editor: ViewHandle<Editor>,
     results_editor: ViewHandle<Editor>,
     case_sensitive: bool,
@@ -55,11 +55,11 @@ struct ProjectFindView {
     settings: watch::Receiver<Settings>,
 }
 
-impl Entity for ProjectFind {
+impl Entity for ProjectSearch {
     type Event = ();
 }
 
-impl ProjectFind {
+impl ProjectSearch {
     fn new(project: ModelHandle<Project>, cx: &mut ModelContext<Self>) -> Self {
         let replica_id = project.read(cx).replica_id();
         Self {
@@ -119,8 +119,8 @@ impl ProjectFind {
     }
 }
 
-impl Item for ProjectFind {
-    type View = ProjectFindView;
+impl Item for ProjectSearch {
+    type View = ProjectSearchView;
 
     fn build_view(
         model: ModelHandle<Self>,
@@ -145,7 +145,7 @@ impl Item for ProjectFind {
         let query_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(
                 settings.clone(),
-                Some(|theme| theme.find.editor.input.clone()),
+                Some(|theme| theme.search.editor.input.clone()),
                 cx,
             );
             editor.set_text(query_text, cx);
@@ -167,7 +167,7 @@ impl Item for ProjectFind {
         cx.observe(&model, |this, _, cx| this.model_changed(true, cx))
             .detach();
 
-        ProjectFindView {
+        ProjectSearchView {
             model,
             query_editor,
             results_editor,
@@ -188,13 +188,13 @@ enum ViewEvent {
     UpdateTab,
 }
 
-impl Entity for ProjectFindView {
+impl Entity for ProjectSearchView {
     type Event = ViewEvent;
 }
 
-impl View for ProjectFindView {
+impl View for ProjectSearchView {
     fn ui_name() -> &'static str {
-        "ProjectFindView"
+        "ProjectSearchView"
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
@@ -208,7 +208,7 @@ impl View for ProjectFindView {
             } else {
                 "No results"
             };
-            Label::new(text.to_string(), theme.find.results_status.clone())
+            Label::new(text.to_string(), theme.search.results_status.clone())
                 .aligned()
                 .contained()
                 .with_background_color(theme.editor.background)
@@ -235,7 +235,7 @@ impl View for ProjectFindView {
     }
 }
 
-impl ItemView for ProjectFindView {
+impl ItemView for ProjectSearchView {
     fn act_as_type(
         &self,
         type_id: TypeId,
@@ -260,23 +260,23 @@ impl ItemView for ProjectFindView {
         Box::new(self.model.clone())
     }
 
-    fn tab_content(&self, style: &theme::Tab, cx: &gpui::AppContext) -> ElementBox {
+    fn tab_content(&self, tab_theme: &theme::Tab, cx: &gpui::AppContext) -> ElementBox {
         let settings = self.settings.borrow();
-        let find_theme = &settings.theme.find;
+        let search_theme = &settings.theme.search;
         Flex::row()
             .with_child(
                 Svg::new("icons/magnifier.svg")
-                    .with_color(style.label.text.color)
+                    .with_color(tab_theme.label.text.color)
                     .constrained()
-                    .with_width(find_theme.tab_icon_width)
+                    .with_width(search_theme.tab_icon_width)
                     .aligned()
                     .boxed(),
             )
             .with_children(self.model.read(cx).active_query.as_ref().map(|query| {
-                Label::new(query.as_str().to_string(), style.label.clone())
+                Label::new(query.as_str().to_string(), tab_theme.label.clone())
                     .aligned()
                     .contained()
-                    .with_margin_left(find_theme.tab_icon_spacing)
+                    .with_margin_left(search_theme.tab_icon_spacing)
                     .boxed()
             }))
             .boxed()
@@ -332,7 +332,7 @@ impl ItemView for ProjectFindView {
             let query = self.query_editor.read(cx).text(cx);
             let editor = Editor::single_line(
                 self.settings.clone(),
-                Some(|theme| theme.find.editor.input.clone()),
+                Some(|theme| theme.search.editor.input.clone()),
                 cx,
             );
             editor
@@ -384,15 +384,15 @@ impl ItemView for ProjectFindView {
     }
 }
 
-impl ProjectFindView {
+impl ProjectSearchView {
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         if let Some(existing) = workspace
-            .items_of_type::<ProjectFind>(cx)
+            .items_of_type::<ProjectSearch>(cx)
             .max_by_key(|existing| existing.id())
         {
             workspace.activate_item(&existing, cx);
         } else {
-            let model = cx.add_model(|cx| ProjectFind::new(workspace.project().clone(), cx));
+            let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
             workspace.open_item(model, cx);
         }
     }
@@ -404,27 +404,27 @@ impl ProjectFindView {
     }
 
     fn search_in_new(workspace: &mut Workspace, _: &SearchInNew, cx: &mut ViewContext<Workspace>) {
-        if let Some(find_view) = workspace
+        if let Some(search_view) = workspace
             .active_item(cx)
-            .and_then(|item| item.downcast::<ProjectFindView>())
+            .and_then(|item| item.downcast::<ProjectSearchView>())
         {
-            let new_query = find_view.update(cx, |find_view, cx| {
-                let new_query = find_view.build_search_query(cx);
+            let new_query = search_view.update(cx, |search_view, cx| {
+                let new_query = search_view.build_search_query(cx);
                 if new_query.is_some() {
-                    if let Some(old_query) = find_view.model.read(cx).active_query.clone() {
-                        find_view.query_editor.update(cx, |editor, cx| {
+                    if let Some(old_query) = search_view.model.read(cx).active_query.clone() {
+                        search_view.query_editor.update(cx, |editor, cx| {
                             editor.set_text(old_query.as_str(), cx);
                         });
-                        find_view.regex = old_query.is_regex();
-                        find_view.whole_word = old_query.whole_word();
-                        find_view.case_sensitive = old_query.case_sensitive();
+                        search_view.regex = old_query.is_regex();
+                        search_view.whole_word = old_query.whole_word();
+                        search_view.case_sensitive = old_query.case_sensitive();
                     }
                 }
                 new_query
             });
             if let Some(new_query) = new_query {
                 let model = cx.add_model(|cx| {
-                    let mut model = ProjectFind::new(workspace.project().clone(), cx);
+                    let mut model = ProjectSearch::new(workspace.project().clone(), cx);
                     model.search(new_query, cx);
                     model
                 });
@@ -492,7 +492,7 @@ impl ProjectFindView {
     fn model_changed(&mut self, reset_selections: bool, cx: &mut ViewContext<Self>) {
         let highlighted_ranges = self.model.read(cx).highlighted_ranges.clone();
         if !highlighted_ranges.is_empty() {
-            let theme = &self.settings.borrow().theme.find;
+            let theme = &self.settings.borrow().theme.search;
             self.results_editor.update(cx, |editor, cx| {
                 editor.highlight_ranges::<Self>(highlighted_ranges, theme.match_background, cx);
                 if reset_selections {
@@ -511,9 +511,9 @@ impl ProjectFindView {
     fn render_query_editor(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme;
         let editor_container = if self.query_contains_error {
-            theme.find.invalid_editor
+            theme.search.invalid_editor
         } else {
-            theme.find.editor.input.container
+            theme.search.editor.input.container
         };
         Flex::row()
             .with_child(
@@ -522,7 +522,7 @@ impl ProjectFindView {
                     .with_style(editor_container)
                     .aligned()
                     .constrained()
-                    .with_max_width(theme.find.editor.max_width)
+                    .with_max_width(theme.search.editor.max_width)
                     .boxed(),
             )
             .with_child(
@@ -531,15 +531,15 @@ impl ProjectFindView {
                     .with_child(self.render_option_button("Word", SearchOption::WholeWord, cx))
                     .with_child(self.render_option_button("Regex", SearchOption::Regex, cx))
                     .contained()
-                    .with_style(theme.find.option_button_group)
+                    .with_style(theme.search.option_button_group)
                     .aligned()
                     .boxed(),
             )
             .contained()
-            .with_style(theme.find.container)
+            .with_style(theme.search.container)
             .constrained()
             .with_height(theme.workspace.toolbar.height)
-            .named("find bar")
+            .named("project search")
     }
 
     fn render_option_button(
@@ -548,7 +548,7 @@ impl ProjectFindView {
         option: SearchOption,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        let theme = &self.settings.borrow().theme.find;
+        let theme = &self.settings.borrow().theme.search;
         let is_active = self.is_option_enabled(option);
         MouseEventHandler::new::<Self, _, _>(option as usize, cx, |state, _| {
             let style = match (is_active, state.hovered) {

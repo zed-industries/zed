@@ -30,22 +30,22 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
         Binding::new("cmd-f", Deploy(true), Some("Editor && mode == full")),
         Binding::new("cmd-e", Deploy(false), Some("Editor && mode == full")),
-        Binding::new("escape", Dismiss, Some("FindBar")),
-        Binding::new("cmd-f", FocusEditor, Some("FindBar")),
-        Binding::new("enter", GoToMatch(Direction::Next), Some("FindBar")),
-        Binding::new("shift-enter", GoToMatch(Direction::Prev), Some("FindBar")),
+        Binding::new("escape", Dismiss, Some("SearchBar")),
+        Binding::new("cmd-f", FocusEditor, Some("SearchBar")),
+        Binding::new("enter", GoToMatch(Direction::Next), Some("SearchBar")),
+        Binding::new("shift-enter", GoToMatch(Direction::Prev), Some("SearchBar")),
         Binding::new("cmd-g", GoToMatch(Direction::Next), Some("Pane")),
         Binding::new("cmd-shift-G", GoToMatch(Direction::Prev), Some("Pane")),
     ]);
-    cx.add_action(FindBar::deploy);
-    cx.add_action(FindBar::dismiss);
-    cx.add_action(FindBar::focus_editor);
-    cx.add_action(FindBar::toggle_search_option);
-    cx.add_action(FindBar::go_to_match);
-    cx.add_action(FindBar::go_to_match_on_pane);
+    cx.add_action(SearchBar::deploy);
+    cx.add_action(SearchBar::dismiss);
+    cx.add_action(SearchBar::focus_editor);
+    cx.add_action(SearchBar::toggle_search_option);
+    cx.add_action(SearchBar::go_to_match);
+    cx.add_action(SearchBar::go_to_match_on_pane);
 }
 
-struct FindBar {
+struct SearchBar {
     settings: watch::Receiver<Settings>,
     query_editor: ViewHandle<Editor>,
     active_editor: Option<ViewHandle<Editor>>,
@@ -60,13 +60,13 @@ struct FindBar {
     dismissed: bool,
 }
 
-impl Entity for FindBar {
+impl Entity for SearchBar {
     type Event = ();
 }
 
-impl View for FindBar {
+impl View for SearchBar {
     fn ui_name() -> &'static str {
-        "FindBar"
+        "SearchBar"
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
@@ -76,9 +76,9 @@ impl View for FindBar {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme;
         let editor_container = if self.query_contains_error {
-            theme.find.invalid_editor
+            theme.search.invalid_editor
         } else {
-            theme.find.editor.input.container
+            theme.search.editor.input.container
         };
         Flex::row()
             .with_child(
@@ -87,7 +87,7 @@ impl View for FindBar {
                     .with_style(editor_container)
                     .aligned()
                     .constrained()
-                    .with_max_width(theme.find.editor.max_width)
+                    .with_max_width(theme.search.editor.max_width)
                     .boxed(),
             )
             .with_child(
@@ -96,7 +96,7 @@ impl View for FindBar {
                     .with_child(self.render_search_option("Word", SearchOption::WholeWord, cx))
                     .with_child(self.render_search_option("Regex", SearchOption::Regex, cx))
                     .contained()
-                    .with_style(theme.find.option_button_group)
+                    .with_style(theme.search.option_button_group)
                     .aligned()
                     .boxed(),
             )
@@ -116,22 +116,22 @@ impl View for FindBar {
                 };
 
                 Some(
-                    Label::new(message, theme.find.match_index.text.clone())
+                    Label::new(message, theme.search.match_index.text.clone())
                         .contained()
-                        .with_style(theme.find.match_index.container)
+                        .with_style(theme.search.match_index.container)
                         .aligned()
                         .boxed(),
                 )
             }))
             .contained()
-            .with_style(theme.find.container)
+            .with_style(theme.search.container)
             .constrained()
             .with_height(theme.workspace.toolbar.height)
-            .named("find bar")
+            .named("search bar")
     }
 }
 
-impl Toolbar for FindBar {
+impl Toolbar for SearchBar {
     fn active_item_changed(
         &mut self,
         item: Option<Box<dyn ItemViewHandle>>,
@@ -163,13 +163,13 @@ impl Toolbar for FindBar {
     }
 }
 
-impl FindBar {
+impl SearchBar {
     fn new(settings: watch::Receiver<Settings>, cx: &mut ViewContext<Self>) -> Self {
         let query_editor = cx.add_view(|cx| {
             Editor::auto_height(
                 2,
                 settings.clone(),
-                Some(|theme| theme.find.editor.input.clone()),
+                Some(|theme| theme.search.editor.input.clone()),
                 cx,
             )
         });
@@ -207,7 +207,7 @@ impl FindBar {
         search_option: SearchOption,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        let theme = &self.settings.borrow().theme.find;
+        let theme = &self.settings.borrow().theme.search;
         let is_active = self.is_search_option_enabled(search_option);
         MouseEventHandler::new::<Self, _, _>(search_option as usize, cx, |state, _| {
             let style = match (is_active, state.hovered) {
@@ -232,7 +232,7 @@ impl FindBar {
         direction: Direction,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        let theme = &self.settings.borrow().theme.find;
+        let theme = &self.settings.borrow().theme.search;
         enum NavButton {}
         MouseEventHandler::new::<NavButton, _, _>(direction as usize, cx, |state, _| {
             let style = if state.hovered {
@@ -253,13 +253,13 @@ impl FindBar {
     fn deploy(workspace: &mut Workspace, Deploy(focus): &Deploy, cx: &mut ViewContext<Workspace>) {
         let settings = workspace.settings();
         workspace.active_pane().update(cx, |pane, cx| {
-            pane.show_toolbar(cx, |cx| FindBar::new(settings, cx));
+            pane.show_toolbar(cx, |cx| SearchBar::new(settings, cx));
 
-            if let Some(find_bar) = pane
+            if let Some(search_bar) = pane
                 .active_toolbar()
                 .and_then(|toolbar| toolbar.downcast::<Self>())
             {
-                find_bar.update(cx, |find_bar, _| find_bar.dismissed = false);
+                search_bar.update(cx, |search_bar, _| search_bar.dismissed = false);
                 let editor = pane.active_item().unwrap().act_as::<Editor>(cx).unwrap();
                 let display_map = editor
                     .update(cx, |editor, cx| editor.snapshot(cx))
@@ -286,15 +286,15 @@ impl FindBar {
                 }
 
                 if !text.is_empty() {
-                    find_bar.update(cx, |find_bar, cx| find_bar.set_query(&text, cx));
+                    search_bar.update(cx, |search_bar, cx| search_bar.set_query(&text, cx));
                 }
 
                 if *focus {
-                    let query_editor = find_bar.read(cx).query_editor.clone();
+                    let query_editor = search_bar.read(cx).query_editor.clone();
                     query_editor.update(cx, |query_editor, cx| {
                         query_editor.select_all(&editor::SelectAll, cx);
                     });
-                    cx.focus(&find_bar);
+                    cx.focus(&search_bar);
                 }
             } else {
                 cx.propagate_action();
@@ -303,7 +303,7 @@ impl FindBar {
     }
 
     fn dismiss(pane: &mut Pane, _: &Dismiss, cx: &mut ViewContext<Pane>) {
-        if pane.toolbar::<FindBar>().is_some() {
+        if pane.toolbar::<SearchBar>().is_some() {
             pane.dismiss_toolbar(cx);
         }
     }
@@ -381,8 +381,8 @@ impl FindBar {
     }
 
     fn go_to_match_on_pane(pane: &mut Pane, action: &GoToMatch, cx: &mut ViewContext<Pane>) {
-        if let Some(find_bar) = pane.toolbar::<FindBar>() {
-            find_bar.update(cx, |find_bar, cx| find_bar.go_to_match(action, cx));
+        if let Some(search_bar) = pane.toolbar::<SearchBar>() {
+            search_bar.update(cx, |search_bar, cx| search_bar.go_to_match(action, cx));
         }
     }
 
@@ -494,7 +494,7 @@ impl FindBar {
                             this.update_match_index(cx);
                             if !this.dismissed {
                                 editor.update(cx, |editor, cx| {
-                                    let theme = &this.settings.borrow().theme.find;
+                                    let theme = &this.settings.borrow().theme.search;
 
                                     if select_closest_match {
                                         if let Some(match_ix) = this.active_match_index {
@@ -558,10 +558,10 @@ mod tests {
     use unindent::Unindent as _;
 
     #[gpui::test]
-    async fn test_find_simple(mut cx: TestAppContext) {
+    async fn test_search_simple(mut cx: TestAppContext) {
         let fonts = cx.font_cache();
         let mut theme = gpui::fonts::with_font_cache(fonts.clone(), || theme::Theme::default());
-        theme.find.match_background = Color::red();
+        theme.search.match_background = Color::red();
         let settings = Settings::new("Courier", &fonts, Arc::new(theme)).unwrap();
         let settings = watch::channel_with(settings).1;
 
@@ -581,16 +581,16 @@ mod tests {
             Editor::for_buffer(buffer.clone(), None, settings.clone(), cx)
         });
 
-        let find_bar = cx.add_view(Default::default(), |cx| {
-            let mut find_bar = FindBar::new(settings, cx);
-            find_bar.active_item_changed(Some(Box::new(editor.clone())), cx);
-            find_bar
+        let search_bar = cx.add_view(Default::default(), |cx| {
+            let mut search_bar = SearchBar::new(settings, cx);
+            search_bar.active_item_changed(Some(Box::new(editor.clone())), cx);
+            search_bar
         });
 
         // Search for a string that appears with different casing.
         // By default, search is case-insensitive.
-        find_bar.update(&mut cx, |find_bar, cx| {
-            find_bar.set_query("us", cx);
+        search_bar.update(&mut cx, |search_bar, cx| {
+            search_bar.set_query("us", cx);
         });
         editor.next_notification(&cx).await;
         editor.update(&mut cx, |editor, cx| {
@@ -610,8 +610,8 @@ mod tests {
         });
 
         // Switch to a case sensitive search.
-        find_bar.update(&mut cx, |find_bar, cx| {
-            find_bar.toggle_search_option(&ToggleSearchOption(SearchOption::CaseSensitive), cx);
+        search_bar.update(&mut cx, |search_bar, cx| {
+            search_bar.toggle_search_option(&ToggleSearchOption(SearchOption::CaseSensitive), cx);
         });
         editor.next_notification(&cx).await;
         editor.update(&mut cx, |editor, cx| {
@@ -626,8 +626,8 @@ mod tests {
 
         // Search for a string that appears both as a whole word and
         // within other words. By default, all results are found.
-        find_bar.update(&mut cx, |find_bar, cx| {
-            find_bar.set_query("or", cx);
+        search_bar.update(&mut cx, |search_bar, cx| {
+            search_bar.set_query("or", cx);
         });
         editor.next_notification(&cx).await;
         editor.update(&mut cx, |editor, cx| {
@@ -667,8 +667,8 @@ mod tests {
         });
 
         // Switch to a whole word search.
-        find_bar.update(&mut cx, |find_bar, cx| {
-            find_bar.toggle_search_option(&ToggleSearchOption(SearchOption::WholeWord), cx);
+        search_bar.update(&mut cx, |search_bar, cx| {
+            search_bar.toggle_search_option(&ToggleSearchOption(SearchOption::WholeWord), cx);
         });
         editor.next_notification(&cx).await;
         editor.update(&mut cx, |editor, cx| {
@@ -694,82 +694,82 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             editor.select_display_ranges(&[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)], cx);
         });
-        find_bar.update(&mut cx, |find_bar, cx| {
-            assert_eq!(find_bar.active_match_index, Some(0));
-            find_bar.go_to_match(&GoToMatch(Direction::Next), cx);
+        search_bar.update(&mut cx, |search_bar, cx| {
+            assert_eq!(search_bar.active_match_index, Some(0));
+            search_bar.go_to_match(&GoToMatch(Direction::Next), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
-        find_bar.read_with(&cx, |find_bar, _| {
-            assert_eq!(find_bar.active_match_index, Some(0));
+        search_bar.read_with(&cx, |search_bar, _| {
+            assert_eq!(search_bar.active_match_index, Some(0));
         });
 
-        find_bar.update(&mut cx, |find_bar, cx| {
-            find_bar.go_to_match(&GoToMatch(Direction::Next), cx);
+        search_bar.update(&mut cx, |search_bar, cx| {
+            search_bar.go_to_match(&GoToMatch(Direction::Next), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
             );
         });
-        find_bar.read_with(&cx, |find_bar, _| {
-            assert_eq!(find_bar.active_match_index, Some(1));
+        search_bar.read_with(&cx, |search_bar, _| {
+            assert_eq!(search_bar.active_match_index, Some(1));
         });
 
-        find_bar.update(&mut cx, |find_bar, cx| {
-            find_bar.go_to_match(&GoToMatch(Direction::Next), cx);
+        search_bar.update(&mut cx, |search_bar, cx| {
+            search_bar.go_to_match(&GoToMatch(Direction::Next), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
             );
         });
-        find_bar.read_with(&cx, |find_bar, _| {
-            assert_eq!(find_bar.active_match_index, Some(2));
+        search_bar.read_with(&cx, |search_bar, _| {
+            assert_eq!(search_bar.active_match_index, Some(2));
         });
 
-        find_bar.update(&mut cx, |find_bar, cx| {
-            find_bar.go_to_match(&GoToMatch(Direction::Next), cx);
+        search_bar.update(&mut cx, |search_bar, cx| {
+            search_bar.go_to_match(&GoToMatch(Direction::Next), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
-        find_bar.read_with(&cx, |find_bar, _| {
-            assert_eq!(find_bar.active_match_index, Some(0));
+        search_bar.read_with(&cx, |search_bar, _| {
+            assert_eq!(search_bar.active_match_index, Some(0));
         });
 
-        find_bar.update(&mut cx, |find_bar, cx| {
-            find_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
+        search_bar.update(&mut cx, |search_bar, cx| {
+            search_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
             );
         });
-        find_bar.read_with(&cx, |find_bar, _| {
-            assert_eq!(find_bar.active_match_index, Some(2));
+        search_bar.read_with(&cx, |search_bar, _| {
+            assert_eq!(search_bar.active_match_index, Some(2));
         });
 
-        find_bar.update(&mut cx, |find_bar, cx| {
-            find_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
+        search_bar.update(&mut cx, |search_bar, cx| {
+            search_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
             );
         });
-        find_bar.read_with(&cx, |find_bar, _| {
-            assert_eq!(find_bar.active_match_index, Some(1));
+        search_bar.read_with(&cx, |search_bar, _| {
+            assert_eq!(search_bar.active_match_index, Some(1));
         });
 
-        find_bar.update(&mut cx, |find_bar, cx| {
-            find_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
+        search_bar.update(&mut cx, |search_bar, cx| {
+            search_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
-        find_bar.read_with(&cx, |find_bar, _| {
-            assert_eq!(find_bar.active_match_index, Some(0));
+        search_bar.read_with(&cx, |search_bar, _| {
+            assert_eq!(search_bar.active_match_index, Some(0));
         });
 
         // Park the cursor in between matches and ensure that going to the previous match selects
@@ -777,16 +777,16 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             editor.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
         });
-        find_bar.update(&mut cx, |find_bar, cx| {
-            assert_eq!(find_bar.active_match_index, Some(1));
-            find_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
+        search_bar.update(&mut cx, |search_bar, cx| {
+            assert_eq!(search_bar.active_match_index, Some(1));
+            search_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
-        find_bar.read_with(&cx, |find_bar, _| {
-            assert_eq!(find_bar.active_match_index, Some(0));
+        search_bar.read_with(&cx, |search_bar, _| {
+            assert_eq!(search_bar.active_match_index, Some(0));
         });
 
         // Park the cursor in between matches and ensure that going to the next match selects the
@@ -794,16 +794,16 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             editor.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
         });
-        find_bar.update(&mut cx, |find_bar, cx| {
-            assert_eq!(find_bar.active_match_index, Some(1));
-            find_bar.go_to_match(&GoToMatch(Direction::Next), cx);
+        search_bar.update(&mut cx, |search_bar, cx| {
+            assert_eq!(search_bar.active_match_index, Some(1));
+            search_bar.go_to_match(&GoToMatch(Direction::Next), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
             );
         });
-        find_bar.read_with(&cx, |find_bar, _| {
-            assert_eq!(find_bar.active_match_index, Some(1));
+        search_bar.read_with(&cx, |search_bar, _| {
+            assert_eq!(search_bar.active_match_index, Some(1));
         });
 
         // Park the cursor after the last match and ensure that going to the previous match selects
@@ -811,16 +811,16 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             editor.select_display_ranges(&[DisplayPoint::new(3, 60)..DisplayPoint::new(3, 60)], cx);
         });
-        find_bar.update(&mut cx, |find_bar, cx| {
-            assert_eq!(find_bar.active_match_index, Some(2));
-            find_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
+        search_bar.update(&mut cx, |search_bar, cx| {
+            assert_eq!(search_bar.active_match_index, Some(2));
+            search_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
             );
         });
-        find_bar.read_with(&cx, |find_bar, _| {
-            assert_eq!(find_bar.active_match_index, Some(2));
+        search_bar.read_with(&cx, |search_bar, _| {
+            assert_eq!(search_bar.active_match_index, Some(2));
         });
 
         // Park the cursor after the last match and ensure that going to the next match selects the
@@ -828,16 +828,16 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             editor.select_display_ranges(&[DisplayPoint::new(3, 60)..DisplayPoint::new(3, 60)], cx);
         });
-        find_bar.update(&mut cx, |find_bar, cx| {
-            assert_eq!(find_bar.active_match_index, Some(2));
-            find_bar.go_to_match(&GoToMatch(Direction::Next), cx);
+        search_bar.update(&mut cx, |search_bar, cx| {
+            assert_eq!(search_bar.active_match_index, Some(2));
+            search_bar.go_to_match(&GoToMatch(Direction::Next), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
-        find_bar.read_with(&cx, |find_bar, _| {
-            assert_eq!(find_bar.active_match_index, Some(0));
+        search_bar.read_with(&cx, |search_bar, _| {
+            assert_eq!(search_bar.active_match_index, Some(0));
         });
 
         // Park the cursor before the first match and ensure that going to the previous match
@@ -845,16 +845,16 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             editor.select_display_ranges(&[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)], cx);
         });
-        find_bar.update(&mut cx, |find_bar, cx| {
-            assert_eq!(find_bar.active_match_index, Some(0));
-            find_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
+        search_bar.update(&mut cx, |search_bar, cx| {
+            assert_eq!(search_bar.active_match_index, Some(0));
+            search_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
             );
         });
-        find_bar.read_with(&cx, |find_bar, _| {
-            assert_eq!(find_bar.active_match_index, Some(2));
+        search_bar.read_with(&cx, |search_bar, _| {
+            assert_eq!(search_bar.active_match_index, Some(2));
         });
     }
 }

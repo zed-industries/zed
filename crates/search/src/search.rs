@@ -1,11 +1,11 @@
 use gpui::MutableAppContext;
 
-mod buffer_find;
-mod project_find;
+mod buffer_search;
+mod project_search;
 
 pub fn init(cx: &mut MutableAppContext) {
-    buffer_find::init(cx);
-    project_find::init(cx);
+    buffer_search::init(cx);
+    project_search::init(cx);
 }
 
 #[derive(Clone, Copy)]

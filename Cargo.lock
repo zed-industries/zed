@@ -1773,23 +1773,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "find"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "editor",
- "gpui",
- "language",
- "postage",
- "project",
- "theme",
- "unindent",
- "util",
- "workspace",
-]
-
-[[package]]
 name = "fixedbitset"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4181,6 +4164,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 
 [[package]]
+name = "search"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "editor",
+ "gpui",
+ "language",
+ "postage",
+ "project",
+ "theme",
+ "unindent",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "semver"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5860,7 +5860,6 @@ dependencies = [
  "editor",
  "env_logger",
  "file_finder",
- "find",
  "fsevent",
  "futures",
  "fuzzy",
@@ -5889,6 +5888,7 @@ dependencies = [
  "rpc",
  "rsa",
  "rust-embed",
+ "search",
  "serde",
  "serde_json",
  "serde_path_to_error",

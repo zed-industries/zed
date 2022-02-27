@@ -348,14 +348,14 @@ tab_icon_width = 13
 tab_icon_spacing = 4
 tab_summary_spacing = 10
 
-[find]
+[search]
 match_background = "$state.highlighted_line"
 background = "$surface.1"
 results_status = { extends = "$text.0", size = 18 }
 tab_icon_width = 14
 tab_icon_spacing = 4
 
-[find.option_button]
+[search.option_button]
 extends = "$text.1"
 padding = { left = 6, right = 6, top = 1, bottom = 1 }
 corner_radius = 6
@@ -364,26 +364,26 @@ border = { width = 1, color = "$border.0" }
 margin.left = 1
 margin.right = 1
 
-[find.option_button_group]
+[search.option_button_group]
 padding = { left = 2, right = 2 }
 
-[find.active_option_button]
-extends = "$find.option_button"
+[search.active_option_button]
+extends = "$search.option_button"
 background = "$surface.2"
 
-[find.hovered_option_button]
-extends = "$find.option_button"
+[search.hovered_option_button]
+extends = "$search.option_button"
 background = "$surface.2"
 
-[find.active_hovered_option_button]
-extends = "$find.option_button"
+[search.active_hovered_option_button]
+extends = "$search.option_button"
 background = "$surface.2"
 
-[find.match_index]
+[search.match_index]
 extends = "$text.1"
 padding = 6
 
-[find.editor]
+[search.editor]
 max_width = 400
 background = "$surface.0"
 corner_radius = 6
@@ -394,6 +394,6 @@ placeholder_text = "$text.2"
 selection = "$selection.host"
 border = { width = 1, color = "$border.0" }
 
-[find.invalid_editor]
-extends = "$find.editor"
+[search.invalid_editor]
+extends = "$search.editor"
 border = { width = 1, color = "$status.bad" }
