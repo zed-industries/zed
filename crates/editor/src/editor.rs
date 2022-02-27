@@ -1061,7 +1061,8 @@ impl Editor {
             first_cursor_top = highlighted_rows.start as f32;
             last_cursor_bottom = first_cursor_top + 1.;
         } else if autoscroll == Autoscroll::Newest {
-            let newest_selection = self.newest_selection::<Point>(&display_map.buffer_snapshot);
+            let newest_selection =
+                self.newest_selection_with_snapshot::<Point>(&display_map.buffer_snapshot);
             first_cursor_top = newest_selection.head().to_display_point(&display_map).row() as f32;
             last_cursor_bottom = first_cursor_top + 1.;
         } else {
@@ -1208,7 +1209,7 @@ impl Editor {
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let tail = self
-            .newest_selection::<usize>(&display_map.buffer_snapshot)
+            .newest_selection_with_snapshot::<usize>(&display_map.buffer_snapshot)
             .tail();
         self.begin_selection(position, false, click_count, cx);
 
@@ -1328,7 +1329,7 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let tail = self
-            .newest_selection::<Point>(&display_map.buffer_snapshot)
+            .newest_selection_with_snapshot::<Point>(&display_map.buffer_snapshot)
             .tail();
         self.columnar_selection_tail = Some(display_map.buffer_snapshot.anchor_before(tail));
 
@@ -1514,8 +1515,7 @@ impl Editor {
             self.set_selections(selections, None, cx);
             self.request_autoscroll(Autoscroll::Fit, cx);
         } else {
-            let buffer = self.buffer.read(cx).snapshot(cx);
-            let mut oldest_selection = self.oldest_selection::<usize>(&buffer);
+            let mut oldest_selection = self.oldest_selection::<usize>(&cx);
             if self.selection_count() == 1 {
                 if oldest_selection.is_empty() {
                     cx.propagate_action();
@@ -4086,7 +4086,7 @@ impl Editor {
 
     pub fn show_next_diagnostic(&mut self, _: &ShowNextDiagnostic, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let selection = self.newest_selection::<usize>(&buffer);
+        let selection = self.newest_selection_with_snapshot::<usize>(&buffer);
         let mut active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
             active_diagnostics
                 .primary_range
@@ -4158,8 +4158,7 @@ impl Editor {
         };
 
         let editor = editor_handle.read(cx);
-        let buffer = editor.buffer.read(cx);
-        let head = editor.newest_selection::<usize>(&buffer.read(cx)).head();
+        let head = editor.newest_selection::<usize>(cx).head();
         let (buffer, head) =
             if let Some(text_anchor) = editor.buffer.read(cx).text_anchor_for_position(head, cx) {
                 text_anchor
@@ -4207,8 +4206,7 @@ impl Editor {
         let editor_handle = active_item.act_as::<Self>(cx)?;
 
         let editor = editor_handle.read(cx);
-        let buffer = editor.buffer.read(cx);
-        let head = editor.newest_selection::<usize>(&buffer.read(cx)).head();
+        let head = editor.newest_selection::<usize>(cx).head();
         let (buffer, head) = editor.buffer.read(cx).text_anchor_for_position(head, cx)?;
         let replica_id = editor.replica_id(cx);
 
@@ -4432,12 +4430,11 @@ impl Editor {
         self.clear_highlighted_ranges::<Rename>(cx);
 
         let editor = rename.editor.read(cx);
-        let buffer = editor.buffer.read(cx).snapshot(cx);
-        let selection = editor.newest_selection::<usize>(&buffer);
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let selection = editor.newest_selection_with_snapshot::<usize>(&snapshot);
 
         // Update the selection to match the position of the selection inside
         // the rename editor.
-        let snapshot = self.buffer.read(cx).snapshot(cx);
         let rename_range = rename.range.to_offset(&snapshot);
         let start = snapshot
             .clip_offset(rename_range.start + selection.start, Bias::Left)
@@ -4748,17 +4745,28 @@ impl Editor {
 
     pub fn oldest_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        snapshot: &MultiBufferSnapshot,
+        cx: &AppContext,
     ) -> Selection<D> {
+        let snapshot = self.buffer.read(cx).read(cx);
         self.selections
             .iter()
             .min_by_key(|s| s.id)
-            .map(|selection| self.resolve_selection(selection, snapshot))
-            .or_else(|| self.pending_selection(snapshot))
+            .map(|selection| self.resolve_selection(selection, &snapshot))
+            .or_else(|| self.pending_selection(&snapshot))
             .unwrap()
     }
 
     pub fn newest_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
+        &self,
+        cx: &AppContext,
+    ) -> Selection<D> {
+        self.resolve_selection(
+            self.newest_anchor_selection(),
+            &self.buffer.read(cx).read(cx),
+        )
+    }
+
+    pub fn newest_selection_with_snapshot<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
         snapshot: &MultiBufferSnapshot,
     ) -> Selection<D> {

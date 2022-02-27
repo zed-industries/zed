@@ -270,7 +270,7 @@ impl SearchBar {
                     .display_snapshot;
                 let selection = editor
                     .read(cx)
-                    .newest_selection::<usize>(&display_map.buffer_snapshot);
+                    .newest_selection_with_snapshot::<usize>(&display_map.buffer_snapshot);
 
                 let mut text: String;
                 if selection.start == selection.end {
