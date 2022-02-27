@@ -1,5 +1,5 @@
-use crate::SearchOption;
-use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll};
+use crate::{Direction, SearchOption, SelectMatch, ToggleSearchOption};
+use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll, SelectNext};
 use gpui::{
     action, elements::*, keymap::Binding, platform::CursorStyle, AppContext, ElementBox, Entity,
     ModelContext, ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext,
@@ -9,6 +9,7 @@ use postage::watch;
 use project::{search::SearchQuery, Project};
 use std::{
     any::{Any, TypeId},
+    cmp::{self, Ordering},
     ops::Range,
     path::PathBuf,
 };
@@ -18,7 +19,6 @@ use workspace::{Item, ItemHandle, ItemNavHistory, ItemView, Settings, Workspace}
 action!(Deploy);
 action!(Search);
 action!(SearchInNew);
-action!(ToggleSearchOption, SearchOption);
 action!(ToggleFocus);
 
 const MAX_TAB_TITLE_LEN: usize = 24;
@@ -30,19 +30,30 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("cmd-shift-F", Deploy, Some("Workspace")),
         Binding::new("enter", Search, Some("ProjectSearchView")),
         Binding::new("cmd-enter", SearchInNew, Some("ProjectSearchView")),
+        Binding::new(
+            "cmd-g",
+            SelectMatch(Direction::Next),
+            Some("ProjectSearchView"),
+        ),
+        Binding::new(
+            "cmd-shift-G",
+            SelectMatch(Direction::Prev),
+            Some("ProjectSearchView"),
+        ),
     ]);
     cx.add_action(ProjectSearchView::deploy);
     cx.add_action(ProjectSearchView::search);
     cx.add_action(ProjectSearchView::search_in_new);
     cx.add_action(ProjectSearchView::toggle_search_option);
     cx.add_action(ProjectSearchView::toggle_focus);
+    cx.add_action(ProjectSearchView::select_match);
 }
 
 struct ProjectSearch {
     project: ModelHandle<Project>,
     excerpts: ModelHandle<MultiBuffer>,
     pending_search: Option<Task<Option<()>>>,
-    highlighted_ranges: Vec<Range<Anchor>>,
+    match_ranges: Vec<Range<Anchor>>,
     active_query: Option<SearchQuery>,
 }
 
@@ -54,6 +65,7 @@ struct ProjectSearchView {
     whole_word: bool,
     regex: bool,
     query_contains_error: bool,
+    active_match_index: Option<usize>,
     settings: watch::Receiver<Settings>,
 }
 
@@ -68,7 +80,7 @@ impl ProjectSearch {
             project,
             excerpts: cx.add_model(|_| MultiBuffer::new(replica_id)),
             pending_search: Default::default(),
-            highlighted_ranges: Default::default(),
+            match_ranges: Default::default(),
             active_query: None,
         }
     }
@@ -80,7 +92,7 @@ impl ProjectSearch {
                 .excerpts
                 .update(cx, |excerpts, cx| cx.add_model(|cx| excerpts.clone(cx))),
             pending_search: Default::default(),
-            highlighted_ranges: self.highlighted_ranges.clone(),
+            match_ranges: self.match_ranges.clone(),
             active_query: self.active_query.clone(),
         })
     }
@@ -90,12 +102,12 @@ impl ProjectSearch {
             .project
             .update(cx, |project, cx| project.search(query.clone(), cx));
         self.active_query = Some(query);
-        self.highlighted_ranges.clear();
+        self.match_ranges.clear();
         self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
             let matches = search.await.log_err()?;
             if let Some(this) = this.upgrade(&cx) {
                 this.update(&mut cx, |this, cx| {
-                    this.highlighted_ranges.clear();
+                    this.match_ranges.clear();
                     let mut matches = matches.into_iter().collect::<Vec<_>>();
                     matches
                         .sort_by_key(|(buffer, _)| buffer.read(cx).file().map(|file| file.path()));
@@ -108,7 +120,7 @@ impl ProjectSearch {
                                 1,
                                 cx,
                             );
-                            this.highlighted_ranges.extend(ranges_to_highlight);
+                            this.match_ranges.extend(ranges_to_highlight);
                         }
                     });
                     this.pending_search.take();
@@ -153,7 +165,7 @@ impl View for ProjectSearchView {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let model = &self.model.read(cx);
-        let results = if model.highlighted_ranges.is_empty() {
+        let results = if model.match_ranges.is_empty() {
             let theme = &self.settings.borrow().theme;
             let text = if self.query_editor.read(cx).text(cx).is_empty() {
                 ""
@@ -181,7 +193,7 @@ impl View for ProjectSearchView {
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        if self.model.read(cx).highlighted_ranges.is_empty() {
+        if self.model.read(cx).match_ranges.is_empty() {
             cx.focus(&self.query_editor);
         } else {
             self.focus_results_editor(cx);
@@ -348,6 +360,12 @@ impl ProjectSearchView {
         });
         cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab))
             .detach();
+        cx.subscribe(&results_editor, |this, _, event, cx| {
+            if matches!(event, editor::Event::SelectionsChanged) {
+                this.update_match_index(cx);
+            }
+        })
+        .detach();
 
         let mut this = ProjectSearchView {
             model,
@@ -357,6 +375,7 @@ impl ProjectSearchView {
             whole_word,
             regex,
             query_contains_error: false,
+            active_match_index: None,
             settings,
         };
         this.model_changed(false, cx);
@@ -446,9 +465,52 @@ impl ProjectSearchView {
         cx.notify();
     }
 
+    fn select_match(&mut self, &SelectMatch(direction): &SelectMatch, cx: &mut ViewContext<Self>) {
+        if let Some(mut index) = self.active_match_index {
+            let range_to_select = {
+                let model = self.model.read(cx);
+                let results_editor = self.results_editor.read(cx);
+                let buffer = results_editor.buffer().read(cx).read(cx);
+                let cursor = results_editor.newest_anchor_selection().head();
+                let ranges = &model.match_ranges;
+
+                if ranges[index].start.cmp(&cursor, &buffer).unwrap().is_gt() {
+                    if direction == Direction::Prev {
+                        if index == 0 {
+                            index = ranges.len() - 1;
+                        } else {
+                            index -= 1;
+                        }
+                    }
+                } else if ranges[index].end.cmp(&cursor, &buffer).unwrap().is_lt() {
+                    if direction == Direction::Next {
+                        index = 0;
+                    }
+                } else if direction == Direction::Prev {
+                    if index == 0 {
+                        index = ranges.len() - 1;
+                    } else {
+                        index -= 1;
+                    }
+                } else if direction == Direction::Next {
+                    if index == ranges.len() - 1 {
+                        index = 0
+                    } else {
+                        index += 1;
+                    }
+                };
+                ranges[index].clone()
+            };
+
+            self.results_editor.update(cx, |editor, cx| {
+                editor.select_ranges([range_to_select], Some(Autoscroll::Fit), cx);
+            });
+        }
+    }
+
     fn toggle_focus(&mut self, _: &ToggleFocus, cx: &mut ViewContext<Self>) {
         if self.query_editor.is_focused(cx) {
-            if !self.model.read(cx).highlighted_ranges.is_empty() {
+            if !self.model.read(cx).match_ranges.is_empty() {
                 self.focus_results_editor(cx);
             }
         } else {
@@ -461,18 +523,20 @@ impl ProjectSearchView {
 
     fn focus_results_editor(&self, cx: &mut ViewContext<Self>) {
         self.query_editor.update(cx, |query_editor, cx| {
-            let head = query_editor.newest_anchor_selection().head();
-            query_editor.select_ranges([head.clone()..head], None, cx);
+            let cursor = query_editor.newest_anchor_selection().head();
+            query_editor.select_ranges([cursor.clone()..cursor], None, cx);
         });
         cx.focus(&self.results_editor);
     }
 
     fn model_changed(&mut self, reset_selections: bool, cx: &mut ViewContext<Self>) {
-        let highlighted_ranges = self.model.read(cx).highlighted_ranges.clone();
-        if !highlighted_ranges.is_empty() {
+        let match_ranges = self.model.read(cx).match_ranges.clone();
+        if match_ranges.is_empty() {
+            self.active_match_index = None;
+        } else {
             let theme = &self.settings.borrow().theme.search;
             self.results_editor.update(cx, |editor, cx| {
-                editor.highlight_ranges::<Self>(highlighted_ranges, theme.match_background, cx);
+                editor.highlight_ranges::<Self>(match_ranges, theme.match_background, cx);
                 if reset_selections {
                     editor.select_ranges([0..0], Some(Autoscroll::Fit), cx);
                 }
@@ -484,6 +548,34 @@ impl ProjectSearchView {
 
         cx.emit(ViewEvent::UpdateTab);
         cx.notify();
+    }
+
+    fn update_match_index(&mut self, cx: &mut ViewContext<Self>) {
+        let match_ranges = self.model.read(cx).match_ranges.clone();
+        if match_ranges.is_empty() {
+            self.active_match_index = None;
+        } else {
+            let results_editor = &self.results_editor.read(cx);
+            let cursor = results_editor.newest_anchor_selection().head();
+            let new_index = {
+                let buffer = results_editor.buffer().read(cx).read(cx);
+                match match_ranges.binary_search_by(|probe| {
+                    if probe.end.cmp(&cursor, &*buffer).unwrap().is_lt() {
+                        Ordering::Less
+                    } else if probe.start.cmp(&cursor, &*buffer).unwrap().is_gt() {
+                        Ordering::Greater
+                    } else {
+                        Ordering::Equal
+                    }
+                }) {
+                    Ok(i) | Err(i) => Some(cmp::min(i, match_ranges.len() - 1)),
+                }
+            };
+            if self.active_match_index != new_index {
+                self.active_match_index = new_index;
+                cx.notify();
+            }
+        }
     }
 
     fn render_query_editor(&self, cx: &mut RenderContext<Self>) -> ElementBox {
@@ -513,6 +605,29 @@ impl ProjectSearchView {
                     .aligned()
                     .boxed(),
             )
+            .with_children({
+                self.active_match_index.into_iter().flat_map(|match_ix| {
+                    [
+                        Flex::row()
+                            .with_child(self.render_nav_button("<", Direction::Prev, cx))
+                            .with_child(self.render_nav_button(">", Direction::Next, cx))
+                            .aligned()
+                            .boxed(),
+                        Label::new(
+                            format!(
+                                "{}/{}",
+                                match_ix + 1,
+                                self.model.read(cx).match_ranges.len()
+                            ),
+                            theme.search.match_index.text.clone(),
+                        )
+                        .contained()
+                        .with_style(theme.search.match_index.container)
+                        .aligned()
+                        .boxed(),
+                    ]
+                })
+            })
             .contained()
             .with_style(theme.search.container)
             .constrained()
@@ -551,5 +666,29 @@ impl ProjectSearchView {
             SearchOption::CaseSensitive => self.case_sensitive,
             SearchOption::Regex => self.regex,
         }
+    }
+
+    fn render_nav_button(
+        &self,
+        icon: &str,
+        direction: Direction,
+        cx: &mut RenderContext<Self>,
+    ) -> ElementBox {
+        let theme = &self.settings.borrow().theme.search;
+        enum NavButton {}
+        MouseEventHandler::new::<NavButton, _, _>(direction as usize, cx, |state, _| {
+            let style = if state.hovered {
+                &theme.hovered_option_button
+            } else {
+                &theme.option_button
+            };
+            Label::new(icon.to_string(), style.text.clone())
+                .contained()
+                .with_style(style.container)
+                .boxed()
+        })
+        .on_click(move |cx| cx.dispatch_action(SelectMatch(direction)))
+        .with_cursor_style(CursorStyle::PointingHand)
+        .boxed()
     }
 }

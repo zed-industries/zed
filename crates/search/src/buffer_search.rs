@@ -1,4 +1,4 @@
-use crate::SearchOption;
+use crate::{Direction, SearchOption, SelectMatch};
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, Anchor, Autoscroll, Bias, Editor};
 use gpui::{
@@ -18,13 +18,6 @@ action!(Deploy, bool);
 action!(Dismiss);
 action!(FocusEditor);
 action!(ToggleSearchOption, SearchOption);
-action!(SelectMatch, Direction);
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Direction {
-    Prev,
-    Next,
-}
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
