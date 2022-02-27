@@ -18,7 +18,7 @@ action!(Deploy, bool);
 action!(Dismiss);
 action!(FocusEditor);
 action!(ToggleSearchOption, SearchOption);
-action!(GoToMatch, Direction);
+action!(SelectMatch, Direction);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -32,17 +32,21 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("cmd-e", Deploy(false), Some("Editor && mode == full")),
         Binding::new("escape", Dismiss, Some("SearchBar")),
         Binding::new("cmd-f", FocusEditor, Some("SearchBar")),
-        Binding::new("enter", GoToMatch(Direction::Next), Some("SearchBar")),
-        Binding::new("shift-enter", GoToMatch(Direction::Prev), Some("SearchBar")),
-        Binding::new("cmd-g", GoToMatch(Direction::Next), Some("Pane")),
-        Binding::new("cmd-shift-G", GoToMatch(Direction::Prev), Some("Pane")),
+        Binding::new("enter", SelectMatch(Direction::Next), Some("SearchBar")),
+        Binding::new(
+            "shift-enter",
+            SelectMatch(Direction::Prev),
+            Some("SearchBar"),
+        ),
+        Binding::new("cmd-g", SelectMatch(Direction::Next), Some("Pane")),
+        Binding::new("cmd-shift-G", SelectMatch(Direction::Prev), Some("Pane")),
     ]);
     cx.add_action(SearchBar::deploy);
     cx.add_action(SearchBar::dismiss);
     cx.add_action(SearchBar::focus_editor);
     cx.add_action(SearchBar::toggle_search_option);
-    cx.add_action(SearchBar::go_to_match);
-    cx.add_action(SearchBar::go_to_match_on_pane);
+    cx.add_action(SearchBar::select_match);
+    cx.add_action(SearchBar::select_match_on_pane);
 }
 
 struct SearchBar {
@@ -245,7 +249,7 @@ impl SearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |cx| cx.dispatch_action(GoToMatch(direction)))
+        .on_click(move |cx| cx.dispatch_action(SelectMatch(direction)))
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
     }
@@ -337,7 +341,7 @@ impl SearchBar {
         cx.notify();
     }
 
-    fn go_to_match(&mut self, GoToMatch(direction): &GoToMatch, cx: &mut ViewContext<Self>) {
+    fn select_match(&mut self, SelectMatch(direction): &SelectMatch, cx: &mut ViewContext<Self>) {
         if let Some(mut index) = self.active_match_index {
             if let Some(editor) = self.active_editor.as_ref() {
                 editor.update(cx, |editor, cx| {
@@ -380,9 +384,9 @@ impl SearchBar {
         }
     }
 
-    fn go_to_match_on_pane(pane: &mut Pane, action: &GoToMatch, cx: &mut ViewContext<Pane>) {
+    fn select_match_on_pane(pane: &mut Pane, action: &SelectMatch, cx: &mut ViewContext<Pane>) {
         if let Some(search_bar) = pane.toolbar::<SearchBar>() {
-            search_bar.update(cx, |search_bar, cx| search_bar.go_to_match(action, cx));
+            search_bar.update(cx, |search_bar, cx| search_bar.select_match(action, cx));
         }
     }
 
@@ -696,7 +700,7 @@ mod tests {
         });
         search_bar.update(&mut cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(0));
-            search_bar.go_to_match(&GoToMatch(Direction::Next), cx);
+            search_bar.select_match(&SelectMatch(Direction::Next), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
@@ -707,7 +711,7 @@ mod tests {
         });
 
         search_bar.update(&mut cx, |search_bar, cx| {
-            search_bar.go_to_match(&GoToMatch(Direction::Next), cx);
+            search_bar.select_match(&SelectMatch(Direction::Next), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
@@ -718,7 +722,7 @@ mod tests {
         });
 
         search_bar.update(&mut cx, |search_bar, cx| {
-            search_bar.go_to_match(&GoToMatch(Direction::Next), cx);
+            search_bar.select_match(&SelectMatch(Direction::Next), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
@@ -729,7 +733,7 @@ mod tests {
         });
 
         search_bar.update(&mut cx, |search_bar, cx| {
-            search_bar.go_to_match(&GoToMatch(Direction::Next), cx);
+            search_bar.select_match(&SelectMatch(Direction::Next), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
@@ -740,7 +744,7 @@ mod tests {
         });
 
         search_bar.update(&mut cx, |search_bar, cx| {
-            search_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
+            search_bar.select_match(&SelectMatch(Direction::Prev), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
@@ -751,7 +755,7 @@ mod tests {
         });
 
         search_bar.update(&mut cx, |search_bar, cx| {
-            search_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
+            search_bar.select_match(&SelectMatch(Direction::Prev), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
@@ -762,7 +766,7 @@ mod tests {
         });
 
         search_bar.update(&mut cx, |search_bar, cx| {
-            search_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
+            search_bar.select_match(&SelectMatch(Direction::Prev), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
@@ -779,7 +783,7 @@ mod tests {
         });
         search_bar.update(&mut cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(1));
-            search_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
+            search_bar.select_match(&SelectMatch(Direction::Prev), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
@@ -796,7 +800,7 @@ mod tests {
         });
         search_bar.update(&mut cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(1));
-            search_bar.go_to_match(&GoToMatch(Direction::Next), cx);
+            search_bar.select_match(&SelectMatch(Direction::Next), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
@@ -813,7 +817,7 @@ mod tests {
         });
         search_bar.update(&mut cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(2));
-            search_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
+            search_bar.select_match(&SelectMatch(Direction::Prev), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
@@ -830,7 +834,7 @@ mod tests {
         });
         search_bar.update(&mut cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(2));
-            search_bar.go_to_match(&GoToMatch(Direction::Next), cx);
+            search_bar.select_match(&SelectMatch(Direction::Next), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
@@ -847,7 +851,7 @@ mod tests {
         });
         search_bar.update(&mut cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(0));
-            search_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
+            search_bar.select_match(&SelectMatch(Direction::Prev), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
