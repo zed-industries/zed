@@ -1,5 +1,5 @@
 use crate::{Direction, SearchOption, SelectMatch, ToggleSearchOption};
-use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll, SelectNext};
+use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll};
 use gpui::{
     action, elements::*, keymap::Binding, platform::CursorStyle, AppContext, ElementBox, Entity,
     ModelContext, ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext,
