@@ -722,6 +722,7 @@ pub struct MutableAppContext {
     foreground_platform: Rc<dyn platform::ForegroundPlatform>,
     assets: Arc<AssetCache>,
     cx: AppContext,
+    capture_actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     global_actions: HashMap<TypeId, Box<GlobalActionCallback>>,
     keystroke_matcher: keymap::Matcher,
@@ -768,6 +769,7 @@ impl MutableAppContext {
                 font_cache,
                 platform,
             },
+            capture_actions: HashMap::new(),
             actions: HashMap::new(),
             global_actions: HashMap::new(),
             keystroke_matcher: keymap::Matcher::default(),
@@ -857,7 +859,25 @@ impl MutableAppContext {
             .map(|debug_elements| debug_elements(&self.cx))
     }
 
-    pub fn add_action<A, V, F>(&mut self, mut handler: F)
+    pub fn add_action<A, V, F>(&mut self, handler: F)
+    where
+        A: Action,
+        V: View,
+        F: 'static + FnMut(&mut V, &A, &mut ViewContext<V>),
+    {
+        self.add_action_internal(handler, false)
+    }
+
+    pub fn capture_action<A, V, F>(&mut self, handler: F)
+    where
+        A: Action,
+        V: View,
+        F: 'static + FnMut(&mut V, &A, &mut ViewContext<V>),
+    {
+        self.add_action_internal(handler, true)
+    }
+
+    fn add_action_internal<A, V, F>(&mut self, mut handler: F, capture: bool)
     where
         A: Action,
         V: View,
@@ -881,7 +901,13 @@ impl MutableAppContext {
             },
         );
 
-        self.actions
+        let actions = if capture {
+            &mut self.capture_actions
+        } else {
+            &mut self.actions
+        };
+
+        actions
             .entry(TypeId::of::<V>())
             .or_default()
             .entry(TypeId::of::<A>())
@@ -1169,29 +1195,33 @@ impl MutableAppContext {
     ) -> bool {
         self.update(|this| {
             this.halt_action_dispatch = false;
-            for view_id in path.iter().rev() {
-                if let Some(mut view) = this.cx.views.remove(&(window_id, *view_id)) {
+            for (capture_phase, view_id) in path
+                .iter()
+                .map(|view_id| (true, *view_id))
+                .chain(path.iter().rev().map(|view_id| (false, *view_id)))
+            {
+                if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
                     let type_id = view.as_any().type_id();
 
                     if let Some((name, mut handlers)) = this
-                        .actions
+                        .actions_mut(capture_phase)
                         .get_mut(&type_id)
                         .and_then(|h| h.remove_entry(&action.id()))
                     {
                         for handler in handlers.iter_mut().rev() {
                             this.halt_action_dispatch = true;
-                            handler(view.as_mut(), action, this, window_id, *view_id);
+                            handler(view.as_mut(), action, this, window_id, view_id);
                             if this.halt_action_dispatch {
                                 break;
                             }
                         }
-                        this.actions
+                        this.actions_mut(capture_phase)
                             .get_mut(&type_id)
                             .unwrap()
                             .insert(name, handlers);
                     }
 
-                    this.cx.views.insert((window_id, *view_id), view);
+                    this.cx.views.insert((window_id, view_id), view);
 
                     if this.halt_action_dispatch {
                         break;
@@ -1204,6 +1234,17 @@ impl MutableAppContext {
             }
             this.halt_action_dispatch
         })
+    }
+
+    fn actions_mut(
+        &mut self,
+        capture_phase: bool,
+    ) -> &mut HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>> {
+        if capture_phase {
+            &mut self.capture_actions
+        } else {
+            &mut self.actions
+        }
     }
 
     pub fn dispatch_global_action<A: Action>(&mut self, action: A) {
@@ -4320,40 +4361,58 @@ mod tests {
 
         let actions = Rc::new(RefCell::new(Vec::new()));
 
-        let actions_clone = actions.clone();
-        cx.add_global_action(move |_: &Action, _: &mut MutableAppContext| {
-            actions_clone.borrow_mut().push("global".to_string());
-        });
+        {
+            let actions = actions.clone();
+            cx.add_global_action(move |_: &Action, _: &mut MutableAppContext| {
+                actions.borrow_mut().push("global".to_string());
+            });
+        }
 
-        let actions_clone = actions.clone();
-        cx.add_action(move |view: &mut ViewA, action: &Action, cx| {
-            assert_eq!(action.0, "bar");
-            cx.propagate_action();
-            actions_clone.borrow_mut().push(format!("{} a", view.id));
-        });
+        {
+            let actions = actions.clone();
+            cx.add_action(move |view: &mut ViewA, action: &Action, cx| {
+                assert_eq!(action.0, "bar");
+                cx.propagate_action();
+                actions.borrow_mut().push(format!("{} a", view.id));
+            });
+        }
 
-        let actions_clone = actions.clone();
-        cx.add_action(move |view: &mut ViewA, _: &Action, cx| {
-            if view.id != 1 {
-                cx.add_view(|cx| {
-                    cx.propagate_action(); // Still works on a nested ViewContext
-                    ViewB { id: 5 }
-                });
-            }
-            actions_clone.borrow_mut().push(format!("{} b", view.id));
-        });
+        {
+            let actions = actions.clone();
+            cx.add_action(move |view: &mut ViewA, _: &Action, cx| {
+                if view.id != 1 {
+                    cx.add_view(|cx| {
+                        cx.propagate_action(); // Still works on a nested ViewContext
+                        ViewB { id: 5 }
+                    });
+                }
+                actions.borrow_mut().push(format!("{} b", view.id));
+            });
+        }
 
-        let actions_clone = actions.clone();
-        cx.add_action(move |view: &mut ViewB, _: &Action, cx| {
-            cx.propagate_action();
-            actions_clone.borrow_mut().push(format!("{} c", view.id));
-        });
+        {
+            let actions = actions.clone();
+            cx.add_action(move |view: &mut ViewB, _: &Action, cx| {
+                cx.propagate_action();
+                actions.borrow_mut().push(format!("{} c", view.id));
+            });
+        }
 
-        let actions_clone = actions.clone();
-        cx.add_action(move |view: &mut ViewB, _: &Action, cx| {
-            cx.propagate_action();
-            actions_clone.borrow_mut().push(format!("{} d", view.id));
-        });
+        {
+            let actions = actions.clone();
+            cx.add_action(move |view: &mut ViewB, _: &Action, cx| {
+                cx.propagate_action();
+                actions.borrow_mut().push(format!("{} d", view.id));
+            });
+        }
+
+        {
+            let actions = actions.clone();
+            cx.capture_action(move |view: &mut ViewA, _: &Action, cx| {
+                cx.propagate_action();
+                actions.borrow_mut().push(format!("{} capture", view.id));
+            });
+        }
 
         let (window_id, view_1) = cx.add_window(Default::default(), |_| ViewA { id: 1 });
         let view_2 = cx.add_view(window_id, |_| ViewB { id: 2 });
@@ -4368,7 +4427,17 @@ mod tests {
 
         assert_eq!(
             *actions.borrow(),
-            vec!["4 d", "4 c", "3 b", "3 a", "2 d", "2 c", "1 b"]
+            vec![
+                "1 capture",
+                "3 capture",
+                "4 d",
+                "4 c",
+                "3 b",
+                "3 a",
+                "2 d",
+                "2 c",
+                "1 b"
+            ]
         );
 
         // Remove view_1, which doesn't propagate the action
@@ -4381,7 +4450,16 @@ mod tests {
 
         assert_eq!(
             *actions.borrow(),
-            vec!["4 d", "4 c", "3 b", "3 a", "2 d", "2 c", "global"]
+            vec![
+                "3 capture",
+                "4 d",
+                "4 c",
+                "3 b",
+                "3 a",
+                "2 d",
+                "2 c",
+                "global"
+            ]
         );
     }
 
