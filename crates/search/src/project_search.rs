@@ -21,6 +21,8 @@ action!(SearchInNew);
 action!(ToggleSearchOption, SearchOption);
 action!(ToggleFocus);
 
+const MAX_TAB_TITLE_LEN: usize = 24;
+
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
         Binding::new("cmd-shift-F", ToggleFocus, Some("ProjectSearchView")),
@@ -273,7 +275,13 @@ impl ItemView for ProjectSearchView {
                     .boxed(),
             )
             .with_children(self.model.read(cx).active_query.as_ref().map(|query| {
-                Label::new(query.as_str().to_string(), tab_theme.label.clone())
+                let query_text = if query.as_str().len() > MAX_TAB_TITLE_LEN {
+                    query.as_str()[..MAX_TAB_TITLE_LEN].to_string() + "…"
+                } else {
+                    query.as_str().to_string()
+                };
+
+                Label::new(query_text, tab_theme.label.clone())
                     .aligned()
                     .contained()
                     .with_margin_left(search_theme.tab_icon_spacing)
