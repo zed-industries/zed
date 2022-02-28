@@ -5029,6 +5029,22 @@ mod tests {
                             highlights.await;
                         }
                     }
+                    55..=59 => {
+                        let search = project.update(&mut cx, |project, cx| {
+                            let query = rng.lock().gen_range('a'..='z');
+                            log::info!("Guest {}: project-wide search {:?}", guest_id, query);
+                            project.search(SearchQuery::text(query, false, false), cx)
+                        });
+                        let search = cx
+                            .background()
+                            .spawn(async move { search.await.expect("search request failed") });
+                        if rng.lock().gen_bool(0.3) {
+                            log::info!("Guest {}: detaching search request", guest_id);
+                            search.detach();
+                        } else {
+                            self.buffers.extend(search.await.into_keys());
+                        }
+                    }
                     _ => {
                         buffer.update(&mut cx, |buffer, cx| {
                             log::info!(
