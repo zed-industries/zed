@@ -811,24 +811,20 @@ impl Project {
         path: &ProjectPath,
         cx: &mut ModelContext<Self>,
     ) -> Option<ModelHandle<Buffer>> {
-        let mut result = None;
         let worktree = self.worktree_for_id(path.worktree_id, cx)?;
         self.buffers_state
-            .borrow_mut()
+            .borrow()
             .open_buffers
-            .retain(|_, buffer| {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
-                        if file.worktree == worktree && file.path() == &path.path {
-                            result = Some(buffer);
-                        }
-                    }
-                    true
+            .values()
+            .find_map(|buffer| {
+                let buffer = buffer.upgrade(cx)?;
+                let file = File::from_dyn(buffer.read(cx).file())?;
+                if file.worktree == worktree && file.path() == &path.path {
+                    Some(buffer)
                 } else {
-                    false
+                    None
                 }
-            });
-        result
+            })
     }
 
     fn register_buffer(
