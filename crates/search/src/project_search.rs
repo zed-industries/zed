@@ -15,9 +15,7 @@ use std::{
     path::PathBuf,
 };
 use util::ResultExt as _;
-use workspace::{
-    Item, ItemHandle, ItemNavHistory, ItemView, Settings, WeakItemViewHandle, Workspace,
-};
+use workspace::{Item, ItemHandle, ItemNavHistory, ItemView, Settings, Workspace};
 
 action!(Deploy);
 action!(Search);
