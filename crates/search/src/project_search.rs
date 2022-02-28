@@ -1,4 +1,7 @@
-use crate::{Direction, SearchOption, SelectMatch, ToggleSearchOption};
+use crate::{
+    active_match_index, match_index_for_direction, Direction, SearchOption, SelectMatch,
+    ToggleSearchOption,
+};
 use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll};
 use gpui::{
@@ -10,7 +13,6 @@ use postage::watch;
 use project::{search::SearchQuery, Project};
 use std::{
     any::{Any, TypeId},
-    cmp::{self, Ordering},
     ops::Range,
     path::PathBuf,
 };
@@ -496,42 +498,17 @@ impl ProjectSearchView {
     }
 
     fn select_match(&mut self, &SelectMatch(direction): &SelectMatch, cx: &mut ViewContext<Self>) {
-        if let Some(mut index) = self.active_match_index {
-            let range_to_select = {
-                let model = self.model.read(cx);
-                let results_editor = self.results_editor.read(cx);
-                let buffer = results_editor.buffer().read(cx).read(cx);
-                let cursor = results_editor.newest_anchor_selection().head();
-                let ranges = &model.match_ranges;
-
-                if ranges[index].start.cmp(&cursor, &buffer).unwrap().is_gt() {
-                    if direction == Direction::Prev {
-                        if index == 0 {
-                            index = ranges.len() - 1;
-                        } else {
-                            index -= 1;
-                        }
-                    }
-                } else if ranges[index].end.cmp(&cursor, &buffer).unwrap().is_lt() {
-                    if direction == Direction::Next {
-                        index = 0;
-                    }
-                } else if direction == Direction::Prev {
-                    if index == 0 {
-                        index = ranges.len() - 1;
-                    } else {
-                        index -= 1;
-                    }
-                } else if direction == Direction::Next {
-                    if index == ranges.len() - 1 {
-                        index = 0
-                    } else {
-                        index += 1;
-                    }
-                };
-                ranges[index].clone()
-            };
-
+        if let Some(index) = self.active_match_index {
+            let model = self.model.read(cx);
+            let results_editor = self.results_editor.read(cx);
+            let new_index = match_index_for_direction(
+                &model.match_ranges,
+                &results_editor.newest_anchor_selection().head(),
+                index,
+                direction,
+                &results_editor.buffer().read(cx).read(cx),
+            );
+            let range_to_select = model.match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
                 editor.select_ranges([range_to_select], Some(Autoscroll::Fit), cx);
             });
@@ -595,30 +572,15 @@ impl ProjectSearchView {
     }
 
     fn update_match_index(&mut self, cx: &mut ViewContext<Self>) {
-        let match_ranges = self.model.read(cx).match_ranges.clone();
-        if match_ranges.is_empty() {
-            self.active_match_index = None;
-        } else {
-            let results_editor = &self.results_editor.read(cx);
-            let cursor = results_editor.newest_anchor_selection().head();
-            let new_index = {
-                let buffer = results_editor.buffer().read(cx).read(cx);
-                match match_ranges.binary_search_by(|probe| {
-                    if probe.end.cmp(&cursor, &*buffer).unwrap().is_lt() {
-                        Ordering::Less
-                    } else if probe.start.cmp(&cursor, &*buffer).unwrap().is_gt() {
-                        Ordering::Greater
-                    } else {
-                        Ordering::Equal
-                    }
-                }) {
-                    Ok(i) | Err(i) => Some(cmp::min(i, match_ranges.len() - 1)),
-                }
-            };
-            if self.active_match_index != new_index {
-                self.active_match_index = new_index;
-                cx.notify();
-            }
+        let results_editor = self.results_editor.read(cx);
+        let new_index = active_match_index(
+            &self.model.read(cx).match_ranges,
+            &results_editor.newest_anchor_selection().head(),
+            &results_editor.buffer().read(cx).read(cx),
+        );
+        if self.active_match_index != new_index {
+            self.active_match_index = new_index;
+            cx.notify();
         }
     }
 

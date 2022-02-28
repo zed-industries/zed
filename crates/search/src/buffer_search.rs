@@ -1,4 +1,4 @@
-use crate::{Direction, SearchOption, SelectMatch};
+use crate::{active_match_index, match_index_for_direction, Direction, SearchOption, SelectMatch};
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, Anchor, Autoscroll, Bias, Editor};
 use gpui::{
@@ -8,10 +8,7 @@ use gpui::{
 use language::AnchorRangeExt;
 use postage::watch;
 use project::search::SearchQuery;
-use std::{
-    cmp::{self, Ordering},
-    ops::Range,
-};
+use std::ops::Range;
 use workspace::{ItemViewHandle, Pane, Settings, Toolbar, Workspace};
 
 action!(Deploy, bool);
@@ -334,43 +331,23 @@ impl SearchBar {
         cx.notify();
     }
 
-    fn select_match(&mut self, SelectMatch(direction): &SelectMatch, cx: &mut ViewContext<Self>) {
-        if let Some(mut index) = self.active_match_index {
+    fn select_match(&mut self, &SelectMatch(direction): &SelectMatch, cx: &mut ViewContext<Self>) {
+        if let Some(index) = self.active_match_index {
             if let Some(editor) = self.active_editor.as_ref() {
                 editor.update(cx, |editor, cx| {
-                    let newest_selection = editor.newest_anchor_selection().clone();
                     if let Some(ranges) = self.editors_with_matches.get(&cx.weak_handle()) {
-                        let position = newest_selection.head();
-                        let buffer = editor.buffer().read(cx).read(cx);
-                        if ranges[index].start.cmp(&position, &buffer).unwrap().is_gt() {
-                            if *direction == Direction::Prev {
-                                if index == 0 {
-                                    index = ranges.len() - 1;
-                                } else {
-                                    index -= 1;
-                                }
-                            }
-                        } else if ranges[index].end.cmp(&position, &buffer).unwrap().is_lt() {
-                            if *direction == Direction::Next {
-                                index = 0;
-                            }
-                        } else if *direction == Direction::Prev {
-                            if index == 0 {
-                                index = ranges.len() - 1;
-                            } else {
-                                index -= 1;
-                            }
-                        } else if *direction == Direction::Next {
-                            if index == ranges.len() - 1 {
-                                index = 0
-                            } else {
-                                index += 1;
-                            }
-                        }
-
-                        let range_to_select = ranges[index].clone();
-                        drop(buffer);
-                        editor.select_ranges([range_to_select], Some(Autoscroll::Fit), cx);
+                        let new_index = match_index_for_direction(
+                            ranges,
+                            &editor.newest_anchor_selection().head(),
+                            index,
+                            direction,
+                            &editor.buffer().read(cx).read(cx),
+                        );
+                        editor.select_ranges(
+                            [ranges[new_index].clone()],
+                            Some(Autoscroll::Fit),
+                            cx,
+                        );
                     }
                 });
             }
@@ -518,30 +495,18 @@ impl SearchBar {
     }
 
     fn update_match_index(&mut self, cx: &mut ViewContext<Self>) {
-        self.active_match_index = self.active_match_index(cx);
-        cx.notify();
-    }
-
-    fn active_match_index(&mut self, cx: &mut ViewContext<Self>) -> Option<usize> {
-        let editor = self.active_editor.as_ref()?;
-        let ranges = self.editors_with_matches.get(&editor.downgrade())?;
-        let editor = editor.read(cx);
-        let position = editor.newest_anchor_selection().head();
-        if ranges.is_empty() {
-            None
-        } else {
-            let buffer = editor.buffer().read(cx).read(cx);
-            match ranges.binary_search_by(|probe| {
-                if probe.end.cmp(&position, &*buffer).unwrap().is_lt() {
-                    Ordering::Less
-                } else if probe.start.cmp(&position, &*buffer).unwrap().is_gt() {
-                    Ordering::Greater
-                } else {
-                    Ordering::Equal
-                }
-            }) {
-                Ok(i) | Err(i) => Some(cmp::min(i, ranges.len() - 1)),
-            }
+        let new_index = self.active_editor.as_ref().and_then(|editor| {
+            let ranges = self.editors_with_matches.get(&editor.downgrade())?;
+            let editor = editor.read(cx);
+            active_match_index(
+                &ranges,
+                &editor.newest_anchor_selection().head(),
+                &editor.buffer().read(cx).read(cx),
+            )
+        });
+        if new_index != self.active_match_index {
+            self.active_match_index = new_index;
+            cx.notify();
         }
     }
 }
