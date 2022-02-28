@@ -2063,6 +2063,9 @@ impl Project {
 
             let background = cx.background().clone();
             let path_count: usize = snapshots.iter().map(|s| s.visible_file_count()).sum();
+            if path_count == 0 {
+                return Task::ready(Ok(Default::default()));
+            }
             let workers = background.num_cpus().min(path_count);
             let (matching_paths_tx, mut matching_paths_rx) = smol::channel::bounded(1024);
             cx.background()

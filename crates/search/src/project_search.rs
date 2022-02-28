@@ -150,7 +150,7 @@ impl Item for ProjectSearch {
         nav_history: ItemNavHistory,
         cx: &mut gpui::ViewContext<Self::View>,
     ) -> Self::View {
-        ProjectSearchView::new(model, nav_history, workspace.settings(), cx)
+        ProjectSearchView::new(model, Some(nav_history), workspace.settings(), cx)
     }
 
     fn project_path(&self) -> Option<project::ProjectPath> {
@@ -316,7 +316,12 @@ impl ItemView for ProjectSearchView {
         Self: Sized,
     {
         let model = self.model.update(cx, |model, cx| model.clone(cx));
-        Some(Self::new(model, nav_history, self.settings.clone(), cx))
+        Some(Self::new(
+            model,
+            Some(nav_history),
+            self.settings.clone(),
+            cx,
+        ))
     }
 
     fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) {
@@ -332,7 +337,7 @@ impl ItemView for ProjectSearchView {
 impl ProjectSearchView {
     fn new(
         model: ModelHandle<ProjectSearch>,
-        nav_history: ItemNavHistory,
+        nav_history: Option<ItemNavHistory>,
         settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -370,7 +375,7 @@ impl ProjectSearchView {
         let results_editor = cx.add_view(|cx| {
             let mut editor = Editor::for_buffer(excerpts, Some(project), settings.clone(), cx);
             editor.set_searchable(false);
-            editor.set_nav_history(Some(nav_history));
+            editor.set_nav_history(nav_history);
             editor
         });
         cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab))
@@ -696,5 +701,148 @@ impl ProjectSearchView {
         .on_click(move |cx| cx.dispatch_action(SelectMatch(direction)))
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use editor::DisplayPoint;
+    use gpui::{color::Color, TestAppContext};
+    use project::FakeFs;
+    use serde_json::json;
+    use std::sync::Arc;
+
+    #[gpui::test]
+    async fn test_project_search(mut cx: TestAppContext) {
+        let fonts = cx.font_cache();
+        let mut theme = gpui::fonts::with_font_cache(fonts.clone(), || theme::Theme::default());
+        theme.search.match_background = Color::red();
+        let settings = Settings::new("Courier", &fonts, Arc::new(theme)).unwrap();
+        let settings = watch::channel_with(settings).1;
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+                "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+                "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), &mut cx);
+        let (tree, _) = project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_local_worktree("/dir", false, cx)
+            })
+            .await
+            .unwrap();
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+
+        let search = cx.add_model(|cx| ProjectSearch::new(project, cx));
+        let search_view = cx.add_view(Default::default(), |cx| {
+            ProjectSearchView::new(search.clone(), None, settings, cx)
+        });
+
+        search_view.update(&mut cx, |search_view, cx| {
+            search_view
+                .query_editor
+                .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
+            search_view.search(&Search, cx);
+        });
+        search_view.next_notification(&cx).await;
+        search_view.update(&mut cx, |search_view, cx| {
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx)),
+                "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;"
+            );
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.all_highlighted_ranges(cx)),
+                &[
+                    (
+                        DisplayPoint::new(2, 32)..DisplayPoint::new(2, 35),
+                        Color::red()
+                    ),
+                    (
+                        DisplayPoint::new(2, 37)..DisplayPoint::new(2, 40),
+                        Color::red()
+                    ),
+                    (
+                        DisplayPoint::new(5, 6)..DisplayPoint::new(5, 9),
+                        Color::red()
+                    )
+                ]
+            );
+            assert_eq!(search_view.active_match_index, Some(0));
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                [DisplayPoint::new(2, 32)..DisplayPoint::new(2, 35)]
+            );
+
+            search_view.select_match(&SelectMatch(Direction::Next), cx);
+        });
+
+        search_view.update(&mut cx, |search_view, cx| {
+            assert_eq!(search_view.active_match_index, Some(1));
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                [DisplayPoint::new(2, 37)..DisplayPoint::new(2, 40)]
+            );
+            search_view.select_match(&SelectMatch(Direction::Next), cx);
+        });
+
+        search_view.update(&mut cx, |search_view, cx| {
+            assert_eq!(search_view.active_match_index, Some(2));
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                [DisplayPoint::new(5, 6)..DisplayPoint::new(5, 9)]
+            );
+            search_view.select_match(&SelectMatch(Direction::Next), cx);
+        });
+
+        search_view.update(&mut cx, |search_view, cx| {
+            assert_eq!(search_view.active_match_index, Some(0));
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                [DisplayPoint::new(2, 32)..DisplayPoint::new(2, 35)]
+            );
+            search_view.select_match(&SelectMatch(Direction::Prev), cx);
+        });
+
+        search_view.update(&mut cx, |search_view, cx| {
+            assert_eq!(search_view.active_match_index, Some(2));
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                [DisplayPoint::new(5, 6)..DisplayPoint::new(5, 9)]
+            );
+            search_view.select_match(&SelectMatch(Direction::Prev), cx);
+        });
+
+        search_view.update(&mut cx, |search_view, cx| {
+            assert_eq!(search_view.active_match_index, Some(1));
+            assert_eq!(
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                [DisplayPoint::new(2, 37)..DisplayPoint::new(2, 40)]
+            );
+        });
     }
 }
