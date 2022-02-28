@@ -85,6 +85,8 @@ pub trait UpgradeModelHandle {
         handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>>;
 
+    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool;
+
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle>;
 }
 
@@ -608,6 +610,10 @@ impl UpgradeModelHandle for AsyncAppContext {
         self.0.borrow().upgrade_model_handle(handle)
     }
 
+    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
+        self.0.borrow().model_handle_is_upgradable(handle)
+    }
+
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
         self.0.borrow().upgrade_any_model_handle(handle)
     }
@@ -763,6 +769,7 @@ impl MutableAppContext {
                 models: Default::default(),
                 views: Default::default(),
                 windows: Default::default(),
+                app_states: Default::default(),
                 element_states: Default::default(),
                 ref_counts: Arc::new(Mutex::new(RefCounts::default())),
                 background,
@@ -1306,6 +1313,27 @@ impl MutableAppContext {
         Ok(pending)
     }
 
+    pub fn add_app_state<T: 'static>(&mut self, state: T) {
+        self.cx
+            .app_states
+            .insert(TypeId::of::<T>(), Box::new(state));
+    }
+
+    pub fn update_app_state<T: 'static, F, U>(&mut self, update: F) -> U
+    where
+        F: FnOnce(&mut T, &mut MutableAppContext) -> U,
+    {
+        let type_id = TypeId::of::<T>();
+        let mut state = self
+            .cx
+            .app_states
+            .remove(&type_id)
+            .expect("no app state has been added for this type");
+        let result = update(state.downcast_mut().unwrap(), self);
+        self.cx.app_states.insert(type_id, state);
+        result
+    }
+
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
     where
         T: Entity,
@@ -1828,6 +1856,10 @@ impl UpgradeModelHandle for MutableAppContext {
         self.cx.upgrade_model_handle(handle)
     }
 
+    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
+        self.cx.model_handle_is_upgradable(handle)
+    }
+
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
         self.cx.upgrade_any_model_handle(handle)
     }
@@ -1898,6 +1930,7 @@ pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     views: HashMap<(usize, usize), Box<dyn AnyView>>,
     windows: HashMap<usize, Window>,
+    app_states: HashMap<TypeId, Box<dyn Any>>,
     element_states: HashMap<ElementStateId, Box<dyn Any>>,
     background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
@@ -1929,6 +1962,14 @@ impl AppContext {
     pub fn platform(&self) -> &Arc<dyn Platform> {
         &self.platform
     }
+
+    pub fn app_state<T: 'static>(&self) -> &T {
+        self.app_states
+            .get(&TypeId::of::<T>())
+            .expect("no app state has been added for this type")
+            .downcast_ref()
+            .unwrap()
+    }
 }
 
 impl ReadModel for AppContext {
@@ -1954,6 +1995,10 @@ impl UpgradeModelHandle for AppContext {
         } else {
             None
         }
+    }
+
+    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
+        self.models.contains_key(&handle.model_id)
     }
 
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
@@ -2361,6 +2406,10 @@ impl<M> UpgradeModelHandle for ModelContext<'_, M> {
         self.cx.upgrade_model_handle(handle)
     }
 
+    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
+        self.cx.model_handle_is_upgradable(handle)
+    }
+
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
         self.cx.upgrade_any_model_handle(handle)
     }
@@ -2699,6 +2748,10 @@ impl<V> UpgradeModelHandle for ViewContext<'_, V> {
         self.cx.upgrade_model_handle(handle)
     }
 
+    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
+        self.cx.model_handle_is_upgradable(handle)
+    }
+
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
         self.cx.upgrade_any_model_handle(handle)
     }
@@ -2941,6 +2994,12 @@ impl<T> PartialEq for ModelHandle<T> {
 
 impl<T> Eq for ModelHandle<T> {}
 
+impl<T> PartialEq<WeakModelHandle<T>> for ModelHandle<T> {
+    fn eq(&self, other: &WeakModelHandle<T>) -> bool {
+        self.model_id == other.model_id
+    }
+}
+
 impl<T> Hash for ModelHandle<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.model_id.hash(state);
@@ -3011,6 +3070,10 @@ impl<T: Entity> WeakModelHandle<T> {
 
     pub fn id(&self) -> usize {
         self.model_id
+    }
+
+    pub fn is_upgradable(&self, cx: &impl UpgradeModelHandle) -> bool {
+        cx.model_handle_is_upgradable(self)
     }
 
     pub fn upgrade(&self, cx: &impl UpgradeModelHandle) -> Option<ModelHandle<T>> {

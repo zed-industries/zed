@@ -1,9 +1,10 @@
 use crate::{Direction, SearchOption, SelectMatch, ToggleSearchOption};
+use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll};
 use gpui::{
     action, elements::*, keymap::Binding, platform::CursorStyle, AppContext, ElementBox, Entity,
     ModelContext, ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext,
-    ViewHandle,
+    ViewHandle, WeakModelHandle,
 };
 use postage::watch;
 use project::{search::SearchQuery, Project};
@@ -14,7 +15,9 @@ use std::{
     path::PathBuf,
 };
 use util::ResultExt as _;
-use workspace::{Item, ItemHandle, ItemNavHistory, ItemView, Settings, Workspace};
+use workspace::{
+    Item, ItemHandle, ItemNavHistory, ItemView, Settings, WeakItemViewHandle, Workspace,
+};
 
 action!(Deploy);
 action!(Search);
@@ -23,7 +26,11 @@ action!(ToggleFocus);
 
 const MAX_TAB_TITLE_LEN: usize = 24;
 
+#[derive(Default)]
+struct ActiveSearches(HashMap<WeakModelHandle<Project>, WeakModelHandle<ProjectSearch>>);
+
 pub fn init(cx: &mut MutableAppContext) {
+    cx.add_app_state(ActiveSearches::default());
     cx.add_bindings([
         Binding::new("cmd-shift-F", ToggleFocus, Some("ProjectSearchView")),
         Binding::new("cmd-f", ToggleFocus, Some("ProjectSearchView")),
@@ -194,6 +201,13 @@ impl View for ProjectSearchView {
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+        cx.update_app_state(|state: &mut ActiveSearches, cx| {
+            state.0.insert(
+                self.model.read(cx).project.downgrade(),
+                self.model.downgrade(),
+            )
+        });
+
         if self.model.read(cx).match_ranges.is_empty() {
             cx.focus(&self.query_editor);
         } else {
@@ -383,11 +397,28 @@ impl ProjectSearchView {
         this
     }
 
+    // Re-activate the most recently activated search or the most recent if it has been closed.
+    // If no search exists in the workspace, create a new one.
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
-        if let Some(existing) = workspace
-            .items_of_type::<ProjectSearch>(cx)
-            .max_by_key(|existing| existing.id())
-        {
+        // Clean up entries for dropped projects
+        cx.update_app_state(|state: &mut ActiveSearches, cx| {
+            state.0.retain(|project, _| project.is_upgradable(cx))
+        });
+
+        let active_search = cx
+            .app_state::<ActiveSearches>()
+            .0
+            .get(&workspace.project().downgrade());
+
+        let existing = active_search
+            .and_then(|active_search| {
+                workspace
+                    .items_of_type::<ProjectSearch>(cx)
+                    .find(|search| search == active_search)
+            })
+            .or_else(|| workspace.item_of_type::<ProjectSearch>(cx));
+
+        if let Some(existing) = existing {
             workspace.activate_item(&existing, cx);
         } else {
             let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
@@ -515,10 +546,7 @@ impl ProjectSearchView {
                 self.focus_results_editor(cx);
             }
         } else {
-            self.query_editor.update(cx, |query_editor, cx| {
-                query_editor.select_all(&SelectAll, cx);
-            });
-            cx.focus(&self.query_editor);
+            self.focus_query_editor(cx);
         }
     }
 
@@ -530,6 +558,13 @@ impl ProjectSearchView {
         } else {
             cx.propagate_action()
         }
+    }
+
+    fn focus_query_editor(&self, cx: &mut ViewContext<Self>) {
+        self.query_editor.update(cx, |query_editor, cx| {
+            query_editor.select_all(&SelectAll, cx);
+        });
+        cx.focus(&self.query_editor);
     }
 
     fn focus_results_editor(&self, cx: &mut ViewContext<Self>) {
