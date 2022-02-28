@@ -4368,9 +4368,9 @@ mod tests {
                 .project
                 .as_ref()
                 .unwrap()
-                .read_with(guest_cx, |project, _| {
+                .read_with(guest_cx, |project, cx| {
                     assert!(
-                        !project.has_buffered_operations(),
+                        !project.has_buffered_operations(cx),
                         "guest {} has buffered operations ",
                         guest_id,
                     );
@@ -4382,7 +4382,7 @@ mod tests {
                     project
                         .shared_buffer(guest_client.peer_id, buffer_id)
                         .expect(&format!(
-                            "host doest not have buffer for guest:{}, peer:{}, id:{}",
+                            "host does not have buffer for guest:{}, peer:{}, id:{}",
                             guest_id, guest_client.peer_id, buffer_id
                         ))
                 });
@@ -4867,9 +4867,19 @@ mod tests {
                         project_path.1
                     );
                     let buffer = project
-                        .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))
+                        .update(&mut cx, |project, cx| {
+                            project.open_buffer(project_path.clone(), cx)
+                        })
                         .await
                         .unwrap();
+                    log::info!(
+                        "Guest {}: path in worktree {:?} {:?} {:?} opened with buffer id {:?}",
+                        guest_id,
+                        project_path.0,
+                        worktree_root_name,
+                        project_path.1,
+                        buffer.read_with(&cx, |buffer, _| buffer.remote_id())
+                    );
                     self.buffers.insert(buffer.clone());
                     buffer
                 } else {
@@ -4958,7 +4968,7 @@ mod tests {
                             save.await;
                         }
                     }
-                    40..=45 => {
+                    40..=44 => {
                         let prepare_rename = project.update(&mut cx, |project, cx| {
                             log::info!(
                                 "Guest {}: preparing rename for buffer {:?}",
@@ -4978,10 +4988,10 @@ mod tests {
                             prepare_rename.await;
                         }
                     }
-                    46..=49 => {
+                    45..=49 => {
                         let definitions = project.update(&mut cx, |project, cx| {
                             log::info!(
-                                "Guest {}: requesting defintions for buffer {:?}",
+                                "Guest {}: requesting definitions for buffer {:?}",
                                 guest_id,
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
@@ -4999,7 +5009,7 @@ mod tests {
                                 .extend(definitions.await.into_iter().map(|loc| loc.buffer));
                         }
                     }
-                    50..=55 => {
+                    50..=54 => {
                         let highlights = project.update(&mut cx, |project, cx| {
                             log::info!(
                                 "Guest {}: requesting highlights for buffer {:?}",

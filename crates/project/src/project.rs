@@ -405,12 +405,17 @@ impl Project {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn has_buffered_operations(&self) -> bool {
+    pub fn has_buffered_operations(&self, cx: &AppContext) -> bool {
         self.buffers_state
             .borrow()
             .open_buffers
             .values()
-            .any(|buffer| matches!(buffer, OpenBuffer::Loading(_)))
+            .any(|buffer| match buffer {
+                OpenBuffer::Loaded(buffer) => buffer
+                    .upgrade(cx)
+                    .map_or(false, |buffer| buffer.read(cx).deferred_ops_len() > 0),
+                OpenBuffer::Loading(_) => true,
+            })
     }
 
     #[cfg(any(test, feature = "test-support"))]
