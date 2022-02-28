@@ -4371,7 +4371,7 @@ mod tests {
                 .read_with(guest_cx, |project, cx| {
                     assert!(
                         !project.has_buffered_operations(cx),
-                        "guest {} has buffered operations ",
+                        "guest {} has buffered operations",
                         guest_id,
                     );
                 });
@@ -4779,8 +4779,9 @@ mod tests {
                             } else {
                                 buffer.update(&mut cx, |buffer, cx| {
                                     log::info!(
-                                        "Host: updating buffer {:?}",
-                                        buffer.file().unwrap().full_path(cx)
+                                        "Host: updating buffer {:?} ({})",
+                                        buffer.file().unwrap().full_path(cx),
+                                        buffer.remote_id()
                                     );
                                     buffer.randomly_edit(&mut *rng.lock(), 5, cx)
                                 });
