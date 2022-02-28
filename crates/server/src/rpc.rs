@@ -1165,14 +1165,6 @@ mod tests {
         //     .condition(&cx_a, |buffer, _| buffer.selection_sets().count() == 0)
         //     .await;
 
-        // Close the buffer as client A, see that the buffer is closed.
-        cx_a.update(move |_| drop(buffer_a));
-        project_a
-            .condition(&cx_a, |project, cx| {
-                !project.has_open_buffer((worktree_id, "b.txt"), cx)
-            })
-            .await;
-
         // Dropping the client B's project removes client B from client A's collaborators.
         cx_b.update(move |_| drop(project_b));
         project_a
@@ -2535,14 +2527,6 @@ mod tests {
             );
         });
         assert_eq!(definitions_1[0].buffer, definitions_2[0].buffer);
-
-        cx_b.update(|_| {
-            drop(definitions_1);
-            drop(definitions_2);
-        });
-        project_b
-            .condition(&cx_b, |proj, cx| proj.worktrees(cx).count() == 1)
-            .await;
     }
 
     #[gpui::test(iterations = 10)]
@@ -4370,21 +4354,19 @@ mod tests {
                 .unwrap()
                 .read_with(guest_cx, |project, cx| {
                     assert!(
-                        !project.has_buffered_operations(cx),
-                        "guest {} has buffered operations",
+                        !project.has_deferred_operations(cx),
+                        "guest {} has deferred operations",
                         guest_id,
                     );
                 });
 
             for guest_buffer in &guest_client.buffers {
                 let buffer_id = guest_buffer.read_with(guest_cx, |buffer, _| buffer.remote_id());
-                let host_buffer = host_project.read_with(&host_cx, |project, _| {
-                    project
-                        .shared_buffer(guest_client.peer_id, buffer_id)
-                        .expect(&format!(
-                            "host does not have buffer for guest:{}, peer:{}, id:{}",
-                            guest_id, guest_client.peer_id, buffer_id
-                        ))
+                let host_buffer = host_project.read_with(&host_cx, |project, cx| {
+                    project.buffer_for_id(buffer_id, cx).expect(&format!(
+                        "host does not have buffer for guest:{}, peer:{}, id:{}",
+                        guest_id, guest_client.peer_id, buffer_id
+                    ))
                 });
                 assert_eq!(
                     guest_buffer.read_with(guest_cx, |buffer, _| buffer.text()),

@@ -1,4 +1,4 @@
-use crate::{BufferRequestHandle, DocumentHighlight, Location, Project, ProjectTransaction};
+use crate::{DocumentHighlight, Location, Project, ProjectTransaction};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use client::{proto, PeerId};
@@ -48,7 +48,6 @@ pub(crate) trait LspCommand: 'static + Sized {
         message: <Self::ProtoRequest as proto::RequestMessage>::Response,
         project: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
-        request_handle: BufferRequestHandle,
         cx: AsyncAppContext,
     ) -> Result<Self::Response>;
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> u64;
@@ -162,7 +161,6 @@ impl LspCommand for PrepareRename {
         message: proto::PrepareRenameResponse,
         _: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
-        _: BufferRequestHandle,
         mut cx: AsyncAppContext,
     ) -> Result<Option<Range<Anchor>>> {
         if message.can_rename {
@@ -279,7 +277,6 @@ impl LspCommand for PerformRename {
         message: proto::PerformRenameResponse,
         project: ModelHandle<Project>,
         _: ModelHandle<Buffer>,
-        request_handle: BufferRequestHandle,
         mut cx: AsyncAppContext,
     ) -> Result<ProjectTransaction> {
         let message = message
@@ -287,12 +284,7 @@ impl LspCommand for PerformRename {
             .ok_or_else(|| anyhow!("missing transaction"))?;
         project
             .update(&mut cx, |project, cx| {
-                project.deserialize_project_transaction(
-                    message,
-                    self.push_to_history,
-                    request_handle,
-                    cx,
-                )
+                project.deserialize_project_transaction(message, self.push_to_history, cx)
             })
             .await
     }
@@ -435,16 +427,13 @@ impl LspCommand for GetDefinition {
         message: proto::GetDefinitionResponse,
         project: ModelHandle<Project>,
         _: ModelHandle<Buffer>,
-        request_handle: BufferRequestHandle,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<Location>> {
         let mut locations = Vec::new();
         for location in message.locations {
             let buffer = location.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
             let buffer = project
-                .update(&mut cx, |this, cx| {
-                    this.deserialize_buffer(buffer, request_handle.clone(), cx)
-                })
+                .update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
                 .await?;
             let start = location
                 .start
@@ -586,16 +575,13 @@ impl LspCommand for GetReferences {
         message: proto::GetReferencesResponse,
         project: ModelHandle<Project>,
         _: ModelHandle<Buffer>,
-        request_handle: BufferRequestHandle,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<Location>> {
         let mut locations = Vec::new();
         for location in message.locations {
             let buffer = location.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
             let target_buffer = project
-                .update(&mut cx, |this, cx| {
-                    this.deserialize_buffer(buffer, request_handle.clone(), cx)
-                })
+                .update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
                 .await?;
             let start = location
                 .start
@@ -720,7 +706,6 @@ impl LspCommand for GetDocumentHighlights {
         message: proto::GetDocumentHighlightsResponse,
         _: ModelHandle<Project>,
         _: ModelHandle<Buffer>,
-        _: BufferRequestHandle,
         _: AsyncAppContext,
     ) -> Result<Vec<DocumentHighlight>> {
         Ok(message
