@@ -565,6 +565,12 @@ impl TestAppContext {
     }
 }
 
+impl Drop for TestAppContext {
+    fn drop(&mut self) {
+        self.cx.borrow_mut().flush_effects();
+    }
+}
+
 impl AsyncAppContext {
     pub fn spawn<F, Fut, T>(&self, f: F) -> Task<T>
     where
