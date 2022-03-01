@@ -16,7 +16,7 @@ use platform::Event;
 use postage::{mpsc, oneshot, sink::Sink as _, stream::Stream as _};
 use smol::prelude::*;
 use std::{
-    any::{type_name, Any, TypeId},
+    any::{self, type_name, Any, TypeId},
     cell::RefCell,
     collections::{hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque},
     fmt::{self, Debug},
@@ -3149,16 +3149,28 @@ pub struct ViewHandle<T> {
     view_id: usize,
     view_type: PhantomData<T>,
     ref_counts: Arc<Mutex<RefCounts>>,
+    #[cfg(feature = "test-support")]
+    handle_id: usize,
 }
 
 impl<T: View> ViewHandle<T> {
     fn new(window_id: usize, view_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
         ref_counts.lock().inc_view(window_id, view_id);
+        #[cfg(feature = "test-support")]
+        let handle_id = ref_counts
+            .lock()
+            .leak_detector
+            .lock()
+            .handle_created(Some(type_name::<T>()), view_id);
+
         Self {
             window_id,
             view_id,
             view_type: PhantomData,
             ref_counts: ref_counts.clone(),
+
+            #[cfg(feature = "test-support")]
+            handle_id,
         }
     }
 
@@ -3304,17 +3316,9 @@ impl<T: View> ViewHandle<T> {
     }
 }
 
-impl<T> Clone for ViewHandle<T> {
+impl<T: View> Clone for ViewHandle<T> {
     fn clone(&self) -> Self {
-        self.ref_counts
-            .lock()
-            .inc_view(self.window_id, self.view_id);
-        Self {
-            window_id: self.window_id,
-            view_id: self.view_id,
-            view_type: PhantomData,
-            ref_counts: self.ref_counts.clone(),
-        }
+        ViewHandle::new(self.window_id, self.view_id, &self.ref_counts)
     }
 }
 
@@ -3340,6 +3344,12 @@ impl<T> Drop for ViewHandle<T> {
         self.ref_counts
             .lock()
             .dec_view(self.window_id, self.view_id);
+        #[cfg(feature = "test-support")]
+        self.ref_counts
+            .lock()
+            .leak_detector
+            .lock()
+            .handle_dropped(self.view_id, self.handle_id);
     }
 }
 
@@ -3370,10 +3380,40 @@ pub struct AnyViewHandle {
     window_id: usize,
     view_id: usize,
     view_type: TypeId,
+    type_name: &'static str,
     ref_counts: Arc<Mutex<RefCounts>>,
+    #[cfg(feature = "test-support")]
+    handle_id: usize,
 }
 
 impl AnyViewHandle {
+    fn new(
+        window_id: usize,
+        view_id: usize,
+        view_type: TypeId,
+        type_name: &'static str,
+        ref_counts: Arc<Mutex<RefCounts>>,
+    ) -> Self {
+        ref_counts.lock().inc_view(window_id, view_id);
+
+        #[cfg(feature = "test-support")]
+        let handle_id = ref_counts
+            .lock()
+            .leak_detector
+            .lock()
+            .handle_created(Some(type_name), view_id);
+
+        Self {
+            window_id,
+            view_id,
+            view_type,
+            type_name,
+            ref_counts,
+            #[cfg(feature = "test-support")]
+            handle_id,
+        }
+    }
+
     pub fn id(&self) -> usize {
         self.view_id
     }
@@ -3394,6 +3434,8 @@ impl AnyViewHandle {
                 view_id: self.view_id,
                 ref_counts: self.ref_counts.clone(),
                 view_type: PhantomData,
+                #[cfg(feature = "test-support")]
+                handle_id: self.handle_id,
             });
             unsafe {
                 Arc::decrement_strong_count(&self.ref_counts);
@@ -3408,15 +3450,13 @@ impl AnyViewHandle {
 
 impl Clone for AnyViewHandle {
     fn clone(&self) -> Self {
-        self.ref_counts
-            .lock()
-            .inc_view(self.window_id, self.view_id);
-        Self {
-            window_id: self.window_id,
-            view_id: self.view_id,
-            view_type: self.view_type,
-            ref_counts: self.ref_counts.clone(),
-        }
+        Self::new(
+            self.window_id,
+            self.view_id,
+            self.view_type,
+            self.type_name,
+            self.ref_counts.clone(),
+        )
     }
 }
 
@@ -3428,16 +3468,13 @@ impl From<&AnyViewHandle> for AnyViewHandle {
 
 impl<T: View> From<&ViewHandle<T>> for AnyViewHandle {
     fn from(handle: &ViewHandle<T>) -> Self {
-        handle
-            .ref_counts
-            .lock()
-            .inc_view(handle.window_id, handle.view_id);
-        AnyViewHandle {
-            window_id: handle.window_id,
-            view_id: handle.view_id,
-            view_type: TypeId::of::<T>(),
-            ref_counts: handle.ref_counts.clone(),
-        }
+        Self::new(
+            handle.window_id,
+            handle.view_id,
+            TypeId::of::<T>(),
+            any::type_name::<T>(),
+            handle.ref_counts.clone(),
+        )
     }
 }
 
@@ -3447,7 +3484,10 @@ impl<T: View> From<ViewHandle<T>> for AnyViewHandle {
             window_id: handle.window_id,
             view_id: handle.view_id,
             view_type: TypeId::of::<T>(),
+            type_name: any::type_name::<T>(),
             ref_counts: handle.ref_counts.clone(),
+            #[cfg(feature = "test-support")]
+            handle_id: handle.handle_id,
         };
         unsafe {
             Arc::decrement_strong_count(&handle.ref_counts);
@@ -3462,6 +3502,12 @@ impl Drop for AnyViewHandle {
         self.ref_counts
             .lock()
             .dec_view(self.window_id, self.view_id);
+        #[cfg(feature = "test-support")]
+        self.ref_counts
+            .lock()
+            .leak_detector
+            .lock()
+            .handle_dropped(self.view_id, self.handle_id);
     }
 }
 
