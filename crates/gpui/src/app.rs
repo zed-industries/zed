@@ -4,16 +4,15 @@ use crate::{
     keymap::{self, Keystroke},
     platform::{self, CursorStyle, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
-    util::{post_inc, timeout, CwdBacktrace},
+    util::post_inc,
     AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
 };
 use anyhow::{anyhow, Result};
-use backtrace::Backtrace;
 use keymap::MatchResult;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use platform::Event;
-use postage::{mpsc, oneshot, sink::Sink as _, stream::Stream as _};
+use postage::oneshot;
 use smol::prelude::*;
 use std::{
     any::{self, type_name, Any, TypeId},
@@ -237,6 +236,7 @@ pub struct App(Rc<RefCell<MutableAppContext>>);
 #[derive(Clone)]
 pub struct AsyncAppContext(Rc<RefCell<MutableAppContext>>);
 
+#[cfg(any(test, feature = "test-support"))]
 pub struct TestAppContext {
     cx: Rc<RefCell<MutableAppContext>>,
     foreground_platform: Rc<platform::test::ForegroundPlatform>,
@@ -384,6 +384,7 @@ impl App {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl TestAppContext {
     pub fn new(
         foreground_platform: Rc<platform::test::ForegroundPlatform>,
@@ -401,7 +402,7 @@ impl TestAppContext {
             foreground_platform.clone(),
             font_cache,
             RefCounts {
-                #[cfg(feature = "test-support")]
+                #[cfg(any(test, feature = "test-support"))]
                 leak_detector,
                 ..Default::default()
             },
@@ -544,6 +545,8 @@ impl TestAppContext {
     }
 
     pub fn simulate_prompt_answer(&self, window_id: usize, answer: usize) {
+        use postage::prelude::Sink as _;
+
         let mut state = self.cx.borrow_mut();
         let (_, window) = state
             .presenters_and_platform_windows
@@ -560,15 +563,9 @@ impl TestAppContext {
         let _ = done_tx.try_send(answer);
     }
 
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn leak_detector(&self) -> Arc<Mutex<LeakDetector>> {
         self.cx.borrow().leak_detector()
-    }
-}
-
-impl Drop for TestAppContext {
-    fn drop(&mut self) {
-        self.cx.borrow_mut().remove_all_windows();
     }
 }
 
@@ -684,6 +681,7 @@ impl ReadViewWith for AsyncAppContext {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl UpdateModel for TestAppContext {
     fn update_model<T: Entity, O>(
         &mut self,
@@ -694,6 +692,7 @@ impl UpdateModel for TestAppContext {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ReadModelWith for TestAppContext {
     fn read_model_with<E: Entity, T>(
         &self,
@@ -706,6 +705,7 @@ impl ReadModelWith for TestAppContext {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl UpdateView for TestAppContext {
     fn update_view<T, S>(
         &mut self,
@@ -719,6 +719,7 @@ impl UpdateView for TestAppContext {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ReadViewWith for TestAppContext {
     fn read_view_with<V, T>(
         &self,
@@ -848,7 +849,7 @@ impl MutableAppContext {
         }
     }
 
-    fn remove_all_windows(&mut self) {
+    pub fn remove_all_windows(&mut self) {
         for (window_id, _) in self.cx.windows.drain() {
             self.presenters_and_platform_windows.remove(&window_id);
         }
@@ -1827,7 +1828,7 @@ impl MutableAppContext {
         self.cx.platform.read_from_clipboard()
     }
 
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn leak_detector(&self) -> Arc<Mutex<LeakDetector>> {
         self.cx.ref_counts.lock().leak_detector.clone()
     }
@@ -2841,7 +2842,7 @@ pub struct ModelHandle<T: Entity> {
     model_type: PhantomData<T>,
     ref_counts: Arc<Mutex<RefCounts>>,
 
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     handle_id: usize,
 }
 
@@ -2849,7 +2850,7 @@ impl<T: Entity> ModelHandle<T> {
     fn new(model_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
         ref_counts.lock().inc_model(model_id);
 
-        #[cfg(feature = "test-support")]
+        #[cfg(any(test, feature = "test-support"))]
         let handle_id = ref_counts
             .lock()
             .leak_detector
@@ -2861,7 +2862,7 @@ impl<T: Entity> ModelHandle<T> {
             model_type: PhantomData,
             ref_counts: ref_counts.clone(),
 
-            #[cfg(feature = "test-support")]
+            #[cfg(any(test, feature = "test-support"))]
             handle_id,
         }
     }
@@ -2902,8 +2903,11 @@ impl<T: Entity> ModelHandle<T> {
         })
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
-        let (mut tx, mut rx) = mpsc::channel(1);
+        use postage::prelude::{Sink as _, Stream as _};
+
+        let (mut tx, mut rx) = postage::mpsc::channel(1);
         let mut cx = cx.cx.borrow_mut();
         let subscription = cx.observe(self, move |_, _| {
             tx.try_send(()).ok();
@@ -2916,7 +2920,7 @@ impl<T: Entity> ModelHandle<T> {
         };
 
         async move {
-            let notification = timeout(duration, rx.recv())
+            let notification = crate::util::timeout(duration, rx.recv())
                 .await
                 .expect("next notification timed out");
             drop(subscription);
@@ -2924,11 +2928,14 @@ impl<T: Entity> ModelHandle<T> {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn next_event(&self, cx: &TestAppContext) -> impl Future<Output = T::Event>
     where
         T::Event: Clone,
     {
-        let (mut tx, mut rx) = mpsc::channel(1);
+        use postage::prelude::{Sink as _, Stream as _};
+
+        let (mut tx, mut rx) = postage::mpsc::channel(1);
         let mut cx = cx.cx.borrow_mut();
         let subscription = cx.subscribe(self, move |_, event, _| {
             tx.blocking_send(event.clone()).ok();
@@ -2941,7 +2948,7 @@ impl<T: Entity> ModelHandle<T> {
         };
 
         async move {
-            let event = timeout(duration, rx.recv())
+            let event = crate::util::timeout(duration, rx.recv())
                 .await
                 .expect("next event timed out");
             drop(subscription);
@@ -2949,12 +2956,15 @@ impl<T: Entity> ModelHandle<T> {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn condition(
         &self,
         cx: &TestAppContext,
         mut predicate: impl FnMut(&T, &AppContext) -> bool,
     ) -> impl Future<Output = ()> {
-        let (tx, mut rx) = mpsc::channel(1024);
+        use postage::prelude::{Sink as _, Stream as _};
+
+        let (tx, mut rx) = postage::mpsc::channel(1024);
 
         let mut cx = cx.cx.borrow_mut();
         let subscriptions = (
@@ -2981,7 +2991,7 @@ impl<T: Entity> ModelHandle<T> {
         };
 
         async move {
-            timeout(duration, async move {
+            crate::util::timeout(duration, async move {
                 loop {
                     {
                         let cx = cx.borrow();
@@ -3059,7 +3069,7 @@ impl<T: Entity> Drop for ModelHandle<T> {
         let mut ref_counts = self.ref_counts.lock();
         ref_counts.dec_model(self.model_id);
 
-        #[cfg(feature = "test-support")]
+        #[cfg(any(test, feature = "test-support"))]
         ref_counts
             .leak_detector
             .lock()
@@ -3149,14 +3159,14 @@ pub struct ViewHandle<T> {
     view_id: usize,
     view_type: PhantomData<T>,
     ref_counts: Arc<Mutex<RefCounts>>,
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     handle_id: usize,
 }
 
 impl<T: View> ViewHandle<T> {
     fn new(window_id: usize, view_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
         ref_counts.lock().inc_view(window_id, view_id);
-        #[cfg(feature = "test-support")]
+        #[cfg(any(test, feature = "test-support"))]
         let handle_id = ref_counts
             .lock()
             .leak_detector
@@ -3169,7 +3179,7 @@ impl<T: View> ViewHandle<T> {
             view_type: PhantomData,
             ref_counts: ref_counts.clone(),
 
-            #[cfg(feature = "test-support")]
+            #[cfg(any(test, feature = "test-support"))]
             handle_id,
         }
     }
@@ -3230,8 +3240,11 @@ impl<T: View> ViewHandle<T> {
             .map_or(false, |focused_id| focused_id == self.view_id)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
-        let (mut tx, mut rx) = mpsc::channel(1);
+        use postage::prelude::{Sink as _, Stream as _};
+
+        let (mut tx, mut rx) = postage::mpsc::channel(1);
         let mut cx = cx.cx.borrow_mut();
         let subscription = cx.observe(self, move |_, _| {
             tx.try_send(()).ok();
@@ -3244,7 +3257,7 @@ impl<T: View> ViewHandle<T> {
         };
 
         async move {
-            let notification = timeout(duration, rx.recv())
+            let notification = crate::util::timeout(duration, rx.recv())
                 .await
                 .expect("next notification timed out");
             drop(subscription);
@@ -3252,12 +3265,15 @@ impl<T: View> ViewHandle<T> {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn condition(
         &self,
         cx: &TestAppContext,
         mut predicate: impl FnMut(&T, &AppContext) -> bool,
     ) -> impl Future<Output = ()> {
-        let (tx, mut rx) = mpsc::channel(1024);
+        use postage::prelude::{Sink as _, Stream as _};
+
+        let (tx, mut rx) = postage::mpsc::channel(1024);
 
         let mut cx = cx.cx.borrow_mut();
         let subscriptions = self.update(&mut *cx, |_, cx| {
@@ -3286,7 +3302,7 @@ impl<T: View> ViewHandle<T> {
         };
 
         async move {
-            timeout(duration, async move {
+            crate::util::timeout(duration, async move {
                 loop {
                     {
                         let cx = cx.borrow();
@@ -3344,7 +3360,7 @@ impl<T> Drop for ViewHandle<T> {
         self.ref_counts
             .lock()
             .dec_view(self.window_id, self.view_id);
-        #[cfg(feature = "test-support")]
+        #[cfg(any(test, feature = "test-support"))]
         self.ref_counts
             .lock()
             .leak_detector
@@ -3382,7 +3398,7 @@ pub struct AnyViewHandle {
     view_type: TypeId,
     type_name: &'static str,
     ref_counts: Arc<Mutex<RefCounts>>,
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     handle_id: usize,
 }
 
@@ -3396,7 +3412,7 @@ impl AnyViewHandle {
     ) -> Self {
         ref_counts.lock().inc_view(window_id, view_id);
 
-        #[cfg(feature = "test-support")]
+        #[cfg(any(test, feature = "test-support"))]
         let handle_id = ref_counts
             .lock()
             .leak_detector
@@ -3409,7 +3425,7 @@ impl AnyViewHandle {
             view_type,
             type_name,
             ref_counts,
-            #[cfg(feature = "test-support")]
+            #[cfg(any(test, feature = "test-support"))]
             handle_id,
         }
     }
@@ -3434,7 +3450,7 @@ impl AnyViewHandle {
                 view_id: self.view_id,
                 ref_counts: self.ref_counts.clone(),
                 view_type: PhantomData,
-                #[cfg(feature = "test-support")]
+                #[cfg(any(test, feature = "test-support"))]
                 handle_id: self.handle_id,
             });
             unsafe {
@@ -3486,7 +3502,7 @@ impl<T: View> From<ViewHandle<T>> for AnyViewHandle {
             view_type: TypeId::of::<T>(),
             type_name: any::type_name::<T>(),
             ref_counts: handle.ref_counts.clone(),
-            #[cfg(feature = "test-support")]
+            #[cfg(any(test, feature = "test-support"))]
             handle_id: handle.handle_id,
         };
         unsafe {
@@ -3502,7 +3518,7 @@ impl Drop for AnyViewHandle {
         self.ref_counts
             .lock()
             .dec_view(self.window_id, self.view_id);
-        #[cfg(feature = "test-support")]
+        #[cfg(any(test, feature = "test-support"))]
         self.ref_counts
             .lock()
             .leak_detector
@@ -3516,7 +3532,7 @@ pub struct AnyModelHandle {
     model_type: TypeId,
     ref_counts: Arc<Mutex<RefCounts>>,
 
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     handle_id: usize,
 }
 
@@ -3524,7 +3540,7 @@ impl AnyModelHandle {
     fn new(model_id: usize, model_type: TypeId, ref_counts: Arc<Mutex<RefCounts>>) -> Self {
         ref_counts.lock().inc_model(model_id);
 
-        #[cfg(feature = "test-support")]
+        #[cfg(any(test, feature = "test-support"))]
         let handle_id = ref_counts
             .lock()
             .leak_detector
@@ -3536,7 +3552,7 @@ impl AnyModelHandle {
             model_type,
             ref_counts,
 
-            #[cfg(feature = "test-support")]
+            #[cfg(any(test, feature = "test-support"))]
             handle_id,
         }
     }
@@ -3548,7 +3564,7 @@ impl AnyModelHandle {
                 model_type: PhantomData,
                 ref_counts: self.ref_counts.clone(),
 
-                #[cfg(feature = "test-support")]
+                #[cfg(any(test, feature = "test-support"))]
                 handle_id: self.handle_id,
             });
             unsafe {
@@ -3594,7 +3610,7 @@ impl Drop for AnyModelHandle {
         let mut ref_counts = self.ref_counts.lock();
         ref_counts.dec_model(self.model_id);
 
-        #[cfg(feature = "test-support")]
+        #[cfg(any(test, feature = "test-support"))]
         ref_counts
             .leak_detector
             .lock()
@@ -3819,18 +3835,26 @@ lazy_static! {
         std::env::var("LEAK_BACKTRACE").map_or(false, |b| !b.is_empty());
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Default)]
 pub struct LeakDetector {
     next_handle_id: usize,
-    handle_backtraces: HashMap<usize, (Option<&'static str>, HashMap<usize, Option<Backtrace>>)>,
+    handle_backtraces: HashMap<
+        usize,
+        (
+            Option<&'static str>,
+            HashMap<usize, Option<backtrace::Backtrace>>,
+        ),
+    >,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl LeakDetector {
     fn handle_created(&mut self, type_name: Option<&'static str>, entity_id: usize) -> usize {
         let handle_id = post_inc(&mut self.next_handle_id);
         let entry = self.handle_backtraces.entry(entity_id).or_default();
         let backtrace = if *LEAK_BACKTRACE {
-            Some(Backtrace::new_unresolved())
+            Some(backtrace::Backtrace::new_unresolved())
         } else {
             None
         };
@@ -3862,7 +3886,7 @@ impl LeakDetector {
             for trace in backtraces.values_mut() {
                 if let Some(trace) = trace {
                     trace.resolve();
-                    eprintln!("{:?}", CwdBacktrace(trace));
+                    eprintln!("{:?}", crate::util::CwdBacktrace(trace));
                 }
             }
             found_leaks = true;
@@ -3885,7 +3909,7 @@ struct RefCounts {
     dropped_views: HashSet<(usize, usize)>,
     dropped_element_states: HashSet<ElementStateId>,
 
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     leak_detector: Arc<Mutex<LeakDetector>>,
 }
 
@@ -4067,13 +4091,11 @@ mod tests {
 
         let handle_1 = cx.add_model(|_| Model::default());
         let handle_2 = cx.add_model(|_| Model::default());
-        let handle_2b = handle_2.clone();
-
         handle_1.update(cx, |_, c| {
-            c.subscribe(&handle_2, move |model: &mut Model, _, event, c| {
+            c.subscribe(&handle_2, move |model: &mut Model, emitter, event, c| {
                 model.events.push(*event);
 
-                c.subscribe(&handle_2b, |model, _, event, _| {
+                c.subscribe(&emitter, |model, _, event, _| {
                     model.events.push(*event * 2);
                 })
                 .detach();
@@ -4102,12 +4124,11 @@ mod tests {
 
         let handle_1 = cx.add_model(|_| Model::default());
         let handle_2 = cx.add_model(|_| Model::default());
-        let handle_2b = handle_2.clone();
 
         handle_1.update(cx, |_, c| {
             c.observe(&handle_2, move |model, observed, c| {
                 model.events.push(observed.read(c).count);
-                c.observe(&handle_2b, |model, observed, c| {
+                c.observe(&observed, |model, observed, c| {
                     model.events.push(observed.read(c).count * 2);
                 })
                 .detach();
@@ -4341,14 +4362,13 @@ mod tests {
 
         let (window_id, handle_1) = cx.add_window(Default::default(), |_| View::default());
         let handle_2 = cx.add_view(window_id, |_| View::default());
-        let handle_2b = handle_2.clone();
         let handle_3 = cx.add_model(|_| Model);
 
         handle_1.update(cx, |_, c| {
-            c.subscribe(&handle_2, move |me, _, event, c| {
+            c.subscribe(&handle_2, move |me, emitter, event, c| {
                 me.events.push(*event);
 
-                c.subscribe(&handle_2b, |me, _, event, _| {
+                c.subscribe(&emitter, |me, _, event, _| {
                     me.events.push(*event * 2);
                 })
                 .detach();

@@ -86,10 +86,13 @@ pub fn run_test(
                         deterministic.clone(),
                         seed,
                         is_last_iteration,
-                    )
+                    );
                 });
 
+                cx.update(|cx| cx.remove_all_windows());
                 deterministic.run_until_parked();
+                cx.update(|_| {}); // flush effects
+
                 leak_detector.lock().detect();
                 if is_last_iteration {
                     break;

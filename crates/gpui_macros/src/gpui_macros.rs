@@ -66,6 +66,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
         // Pass to the test function the number of app contexts that it needs,
         // based on its parameter list.
         let mut cx_vars = proc_macro2::TokenStream::new();
+        let mut cx_teardowns = proc_macro2::TokenStream::new();
         let mut inner_fn_args = proc_macro2::TokenStream::new();
         for (ix, arg) in inner_fn.sig.inputs.iter().enumerate() {
             if let FnArg::Typed(arg) = arg {
@@ -103,6 +104,11 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                             cx.leak_detector(),
                                             #first_entity_id,
                                         );
+                                    ));
+                                    cx_teardowns.extend(quote!(
+                                        #cx_varname.update(|cx| cx.remove_all_windows());
+                                        deterministic.run_until_parked();
+                                        #cx_varname.update(|_| {}); // flush effects
                                     ));
                                     inner_fn_args.extend(quote!(&mut #cx_varname,));
                                 }
@@ -145,7 +151,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     &mut |cx, foreground_platform, deterministic, seed, is_last_iteration| {
                         #cx_vars
                         cx.foreground().run(#inner_fn_name(#inner_fn_args));
-                        cx.foreground().run_until_parked();
+                        #cx_teardowns
                     }
                 );
             }

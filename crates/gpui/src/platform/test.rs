@@ -39,6 +39,7 @@ pub struct Window {
     pub(crate) last_prompt: Cell<Option<oneshot::Sender<usize>>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ForegroundPlatform {
     pub(crate) fn simulate_new_path_selection(
         &self,
