@@ -1238,7 +1238,9 @@ mod tests {
             .condition(cx_b, |project, _| project.is_read_only())
             .await;
         assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
-        drop(project_b);
+        cx_b.update(|_| {
+            drop(project_b);
+        });
 
         // Share the project again and ensure guests can still join.
         project_a
@@ -1247,7 +1249,7 @@ mod tests {
             .unwrap();
         assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
-        let project_c = Project::remote(
+        let project_b2 = Project::remote(
             project_id,
             client_b.clone(),
             client_b.user_store.clone(),
@@ -1257,7 +1259,7 @@ mod tests {
         )
         .await
         .unwrap();
-        project_c
+        project_b2
             .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
