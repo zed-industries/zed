@@ -8,7 +8,7 @@ use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{prelude::Stream, sink::Sink, watch};
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 use util::TryFutureExt as _;
 
@@ -38,7 +38,7 @@ pub struct UserStore {
     update_contacts_tx: watch::Sender<Option<proto::UpdateContacts>>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     contacts: Arc<[Contact]>,
-    client: Arc<Client>,
+    client: Weak<Client>,
     http: Arc<dyn HttpClient>,
     _maintain_contacts: Task<()>,
     _maintain_current_user: Task<()>,
@@ -65,7 +65,7 @@ impl UserStore {
             users: Default::default(),
             current_user: current_user_rx,
             contacts: Arc::from([]),
-            client: client.clone(),
+            client: Arc::downgrade(&client),
             update_contacts_tx,
             http,
             _maintain_contacts: cx.spawn_weak(|this, mut cx| async move {
@@ -156,25 +156,26 @@ impl UserStore {
         let http = self.http.clone();
         user_ids.retain(|id| !self.users.contains_key(id));
         cx.spawn_weak(|this, mut cx| async move {
-            if !user_ids.is_empty() {
-                let response = rpc.request(proto::GetUsers { user_ids }).await?;
-                let new_users = future::join_all(
-                    response
-                        .users
-                        .into_iter()
-                        .map(|user| User::new(user, http.as_ref())),
-                )
-                .await;
+            if let Some(rpc) = rpc.upgrade() {
+                if !user_ids.is_empty() {
+                    let response = rpc.request(proto::GetUsers { user_ids }).await?;
+                    let new_users = future::join_all(
+                        response
+                            .users
+                            .into_iter()
+                            .map(|user| User::new(user, http.as_ref())),
+                    )
+                    .await;
 
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, _| {
-                        for user in new_users {
-                            this.users.insert(user.id, Arc::new(user));
-                        }
-                    });
+                    if let Some(this) = this.upgrade(&cx) {
+                        this.update(&mut cx, |this, _| {
+                            for user in new_users {
+                                this.users.insert(user.id, Arc::new(user));
+                            }
+                        });
+                    }
                 }
             }
-
             Ok(())
         })
     }
