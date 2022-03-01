@@ -567,7 +567,7 @@ impl TestAppContext {
 
 impl Drop for TestAppContext {
     fn drop(&mut self) {
-        self.cx.borrow_mut().flush_effects();
+        self.cx.borrow_mut().remove_all_windows();
     }
 }
 
@@ -851,7 +851,7 @@ impl MutableAppContext {
         for (window_id, _) in self.cx.windows.drain() {
             self.presenters_and_platform_windows.remove(&window_id);
         }
-        self.remove_dropped_entities();
+        self.flush_effects();
     }
 
     pub fn platform(&self) -> Arc<dyn platform::Platform> {
@@ -1401,7 +1401,6 @@ impl MutableAppContext {
     pub fn remove_window(&mut self, window_id: usize) {
         self.cx.windows.remove(&window_id);
         self.presenters_and_platform_windows.remove(&window_id);
-        self.remove_dropped_entities();
         self.flush_effects();
     }
 
