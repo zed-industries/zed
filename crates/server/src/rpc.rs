@@ -989,10 +989,28 @@ mod tests {
         github, AppState, Config,
     };
     use ::rpc::Peer;
+    use client::{
+        self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Credentials,
+        EstablishConnectionError, UserStore,
+    };
     use collections::BTreeMap;
+    use editor::{
+        self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Input, MultiBuffer,
+        Redo, Rename, ToOffset, ToggleCodeActions, Undo,
+    };
     use gpui::{executor, ModelHandle, TestAppContext};
+    use language::{
+        tree_sitter_rust, AnchorRangeExt, Diagnostic, DiagnosticEntry, Language, LanguageConfig,
+        LanguageRegistry, LanguageServerConfig, Point, ToLspPosition,
+    };
+    use lsp;
     use parking_lot::Mutex;
     use postage::{sink::Sink, watch};
+    use project::{
+        fs::{FakeFs, Fs as _},
+        search::SearchQuery,
+        DiagnosticSummary, Project, ProjectPath,
+    };
     use rand::prelude::*;
     use rpc::PeerId;
     use serde_json::json;
@@ -1009,24 +1027,7 @@ mod tests {
         },
         time::Duration,
     };
-    use zed::{
-        client::{
-            self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Credentials,
-            EstablishConnectionError, UserStore,
-        },
-        editor::{
-            self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Input, MultiBuffer,
-            Redo, Rename, ToOffset, ToggleCodeActions, Undo,
-        },
-        fs::{FakeFs, Fs as _},
-        language::{
-            tree_sitter_rust, AnchorRangeExt, Diagnostic, DiagnosticEntry, Language,
-            LanguageConfig, LanguageRegistry, LanguageServerConfig, Point, ToLspPosition,
-        },
-        lsp,
-        project::{search::SearchQuery, DiagnosticSummary, Project, ProjectPath},
-        workspace::{Settings, Workspace, WorkspaceParams},
-    };
+    use workspace::{Settings, Workspace, WorkspaceParams};
 
     #[cfg(test)]
     #[ctor::ctor]
@@ -4488,7 +4489,7 @@ mod tests {
         pub peer_id: PeerId,
         pub user_store: ModelHandle<UserStore>,
         project: Option<ModelHandle<Project>>,
-        buffers: HashSet<ModelHandle<zed::language::Buffer>>,
+        buffers: HashSet<ModelHandle<language::Buffer>>,
     }
 
     impl Deref for TestClient {

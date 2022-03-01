@@ -58,7 +58,12 @@ features = ["runtime-async-std-rustls", "postgres", "time", "uuid"]
 collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
-zed = { path = "../zed", features = ["test-support"] }
+client = { path = "../client", features = ["test-support"] }
+editor = { path = "../editor", features = ["test-support"] }
+language = { path = "../language", features = ["test-support"] }
+lsp = { path = "../lsp", features = ["test-support"] }
+project = { path = "../project", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }
 ctor = "0.1"
 env_logger = "0.8"
 util = { path = "../util" }
