@@ -4175,7 +4175,7 @@ mod tests {
             .unwrap();
 
         clients.push(cx.foreground().spawn(host.simulate_host(
-            host_project.clone(),
+            host_project,
             language_server_config,
             operations.clone(),
             max_operations,
@@ -4231,7 +4231,8 @@ mod tests {
         let mut clients = futures::future::join_all(clients).await;
         cx.foreground().run_until_parked();
 
-        let (_, host_cx) = clients.remove(0);
+        let (host_client, host_cx) = clients.remove(0);
+        let host_project = host_client.project.as_ref().unwrap();
         let host_worktree_snapshots = host_project.read_with(&host_cx, |project, cx| {
             project
                 .worktrees(cx)
@@ -4519,7 +4520,7 @@ mod tests {
             language_server_config.set_fake_initializer({
                 let rng = rng.clone();
                 let files = files.clone();
-                let project = project.clone();
+                let project = project.downgrade();
                 move |fake_server| {
                     fake_server.handle_request::<lsp::request::Completion, _>(|_, _| {
                         Some(lsp::CompletionResponse::Array(vec![lsp::CompletionItem {
@@ -4579,37 +4580,44 @@ mod tests {
                         let rng = rng.clone();
                         let project = project.clone();
                         move |params, mut cx| {
-                            project.update(&mut cx, |project, cx| {
-                                let path = params
-                                    .text_document_position_params
-                                    .text_document
-                                    .uri
-                                    .to_file_path()
-                                    .unwrap();
-                                let (worktree, relative_path) =
-                                    project.find_local_worktree(&path, cx)?;
-                                let project_path =
-                                    ProjectPath::from((worktree.read(cx).id(), relative_path));
-                                let buffer = project.get_open_buffer(&project_path, cx)?.read(cx);
+                            if let Some(project) = project.upgrade(&cx) {
+                                project.update(&mut cx, |project, cx| {
+                                    let path = params
+                                        .text_document_position_params
+                                        .text_document
+                                        .uri
+                                        .to_file_path()
+                                        .unwrap();
+                                    let (worktree, relative_path) =
+                                        project.find_local_worktree(&path, cx)?;
+                                    let project_path =
+                                        ProjectPath::from((worktree.read(cx).id(), relative_path));
+                                    let buffer =
+                                        project.get_open_buffer(&project_path, cx)?.read(cx);
 
-                                let mut highlights = Vec::new();
-                                let highlight_count = rng.lock().gen_range(1..=5);
-                                let mut prev_end = 0;
-                                for _ in 0..highlight_count {
-                                    let range =
-                                        buffer.random_byte_range(prev_end, &mut *rng.lock());
-                                    let start =
-                                        buffer.offset_to_point_utf16(range.start).to_lsp_position();
-                                    let end =
-                                        buffer.offset_to_point_utf16(range.end).to_lsp_position();
-                                    highlights.push(lsp::DocumentHighlight {
-                                        range: lsp::Range::new(start, end),
-                                        kind: Some(lsp::DocumentHighlightKind::READ),
-                                    });
-                                    prev_end = range.end;
-                                }
-                                Some(highlights)
-                            })
+                                    let mut highlights = Vec::new();
+                                    let highlight_count = rng.lock().gen_range(1..=5);
+                                    let mut prev_end = 0;
+                                    for _ in 0..highlight_count {
+                                        let range =
+                                            buffer.random_byte_range(prev_end, &mut *rng.lock());
+                                        let start = buffer
+                                            .offset_to_point_utf16(range.start)
+                                            .to_lsp_position();
+                                        let end = buffer
+                                            .offset_to_point_utf16(range.end)
+                                            .to_lsp_position();
+                                        highlights.push(lsp::DocumentHighlight {
+                                            range: lsp::Range::new(start, end),
+                                            kind: Some(lsp::DocumentHighlightKind::READ),
+                                        });
+                                        prev_end = range.end;
+                                    }
+                                    Some(highlights)
+                                })
+                            } else {
+                                None
+                            }
                         }
                     });
                 }
