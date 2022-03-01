@@ -384,16 +384,18 @@ impl Worktree {
                 worktree.snapshot = worktree.background_snapshot.lock().clone();
                 if worktree.is_scanning() {
                     if worktree.poll_task.is_none() {
-                        worktree.poll_task = Some(cx.spawn(|this, mut cx| async move {
+                        worktree.poll_task = Some(cx.spawn_weak(|this, mut cx| async move {
                             if is_fake_fs {
                                 cx.background().simulate_random_delay().await;
                             } else {
                                 smol::Timer::after(Duration::from_millis(100)).await;
                             }
-                            this.update(&mut cx, |this, cx| {
-                                this.as_local_mut().unwrap().poll_task = None;
-                                this.poll_snapshot(cx);
-                            })
+                            if let Some(this) = this.upgrade(&cx) {
+                                this.update(&mut cx, |this, cx| {
+                                    this.as_local_mut().unwrap().poll_task = None;
+                                    this.poll_snapshot(cx);
+                                });
+                            }
                         }));
                     }
                 } else {
