@@ -4213,6 +4213,7 @@ mod tests {
             cx.foreground(),
             cx.background(),
             cx.font_cache(),
+            cx.leak_detector(),
             next_entity_id,
         );
         let host = server.create_client(&mut host_cx, "host").await;
@@ -4249,7 +4250,7 @@ mod tests {
             operations.clone(),
             max_operations,
             rng.clone(),
-            host_cx.clone(),
+            host_cx,
         )));
 
         while operations.get() < max_operations {
@@ -4266,6 +4267,7 @@ mod tests {
                     cx.foreground(),
                     cx.background(),
                     cx.font_cache(),
+                    cx.leak_detector(),
                     next_entity_id,
                 );
                 let guest = server
@@ -4276,7 +4278,7 @@ mod tests {
                     guest.client.clone(),
                     guest.user_store.clone(),
                     guest_lang_registry.clone(),
-                    fs.clone(),
+                    FakeFs::new(cx.background()),
                     &mut guest_cx.to_async(),
                 )
                 .await
@@ -4294,9 +4296,10 @@ mod tests {
             }
         }
 
-        let clients = futures::future::join_all(clients).await;
+        let mut clients = futures::future::join_all(clients).await;
         cx.foreground().run_until_parked();
 
+        let (_, host_cx) = clients.remove(0);
         let host_worktree_snapshots = host_project.read_with(&host_cx, |project, cx| {
             project
                 .worktrees(cx)
@@ -4307,7 +4310,7 @@ mod tests {
                 .collect::<BTreeMap<_, _>>()
         });
 
-        for (guest_client, guest_cx) in clients.iter().skip(1) {
+        for (guest_client, guest_cx) in clients.iter() {
             let guest_id = guest_client.client.id();
             let worktree_snapshots =
                 guest_client

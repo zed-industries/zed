@@ -1,3 +1,10 @@
+use crate::{
+    executor, platform, Entity, FontCache, Handle, LeakDetector, MutableAppContext, Platform,
+    Subscription, TestAppContext,
+};
+use futures::StreamExt;
+use parking_lot::Mutex;
+use smol::channel;
 use std::{
     panic::{self, RefUnwindSafe},
     rc::Rc,
@@ -5,14 +12,6 @@ use std::{
         atomic::{AtomicU64, Ordering::SeqCst},
         Arc,
     },
-};
-
-use futures::StreamExt;
-use smol::channel;
-
-use crate::{
-    executor, platform, Entity, FontCache, Handle, MutableAppContext, Platform, Subscription,
-    TestAppContext,
 };
 
 #[cfg(test)]
@@ -65,24 +64,27 @@ pub fn run_test(
                 }
 
                 let deterministic = executor::Deterministic::new(seed);
+                let leak_detector = Arc::new(Mutex::new(LeakDetector::default()));
                 let mut cx = TestAppContext::new(
                     foreground_platform.clone(),
                     platform.clone(),
                     deterministic.build_foreground(usize::MAX),
                     deterministic.build_background(),
                     font_cache.clone(),
+                    leak_detector.clone(),
                     0,
                 );
                 cx.update(|cx| {
                     test_fn(
                         cx,
                         foreground_platform.clone(),
-                        deterministic,
+                        deterministic.clone(),
                         seed,
                         is_last_iteration,
                     )
                 });
 
+                leak_detector.lock().detect();
                 if is_last_iteration {
                     break;
                 }

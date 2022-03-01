@@ -80,6 +80,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                     deterministic.build_foreground(#ix),
                                     deterministic.build_background(),
                                     cx.font_cache().clone(),
+                                    cx.leak_detector(),
                                     #first_entity_id,
                                 ),
                             ));

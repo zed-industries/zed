@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
-use backtrace::{Backtrace, BacktraceFmt, BytesOrWideString};
+use backtrace::Backtrace;
 use collections::HashMap;
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream as _};
@@ -8,7 +8,7 @@ use rand::prelude::*;
 use smol::{channel, future::yield_now, prelude::*, Executor, Timer};
 use std::{
     any::Any,
-    fmt::{self, Debug, Display},
+    fmt::{self, Display},
     marker::PhantomData,
     mem,
     ops::RangeInclusive,
@@ -282,7 +282,7 @@ impl DeterministicState {
                 backtrace.resolve();
                 backtrace_message = format!(
                     "\nbacktrace of waiting future:\n{:?}",
-                    CwdBacktrace::new(backtrace)
+                    util::CwdBacktrace(backtrace)
                 );
             }
 
@@ -291,37 +291,6 @@ impl DeterministicState {
                 backtrace_message
             );
         }
-    }
-}
-
-struct CwdBacktrace<'a> {
-    backtrace: &'a Backtrace,
-}
-
-impl<'a> CwdBacktrace<'a> {
-    fn new(backtrace: &'a Backtrace) -> Self {
-        Self { backtrace }
-    }
-}
-
-impl<'a> Debug for CwdBacktrace<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
-        let cwd = std::env::current_dir().unwrap();
-        let mut print_path = |fmt: &mut fmt::Formatter<'_>, path: BytesOrWideString<'_>| {
-            fmt::Display::fmt(&path, fmt)
-        };
-        let mut fmt = BacktraceFmt::new(f, backtrace::PrintFmt::Full, &mut print_path);
-        for frame in self.backtrace.frames() {
-            let mut formatted_frame = fmt.frame();
-            if frame
-                .symbols()
-                .iter()
-                .any(|s| s.filename().map_or(false, |f| f.starts_with(&cwd)))
-            {
-                formatted_frame.backtrace_frame(frame)?;
-            }
-        }
-        fmt.finish()
     }
 }
 
