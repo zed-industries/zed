@@ -156,9 +156,30 @@ impl Deterministic {
         task
     }
 
-    fn run(&self, cx_id: usize, main_future: AnyLocalFuture) -> Box<dyn Any> {
+    fn run<'a>(
+        &self,
+        cx_id: usize,
+        main_future: Pin<Box<dyn 'a + Future<Output = Box<dyn Any>>>>,
+    ) -> Box<dyn Any> {
         let woken = Arc::new(AtomicBool::new(false));
-        let mut main_task = self.spawn_from_foreground(cx_id, main_future, true);
+
+        let state = self.state.clone();
+        let unparker = self.parker.lock().unparker();
+        let (runnable, mut main_task) = unsafe {
+            async_task::spawn_unchecked(main_future, move |runnable| {
+                let mut state = state.lock();
+                state
+                    .scheduled_from_foreground
+                    .entry(cx_id)
+                    .or_default()
+                    .push(ForegroundRunnable {
+                        runnable,
+                        main: true,
+                    });
+                unparker.unpark();
+            })
+        };
+        runnable.schedule();
 
         loop {
             if let Some(result) = self.run_internal(woken.clone(), Some(&mut main_task)) {
@@ -330,13 +351,13 @@ impl Foreground {
         Task::local(any_task)
     }
 
-    pub fn run<T: 'static>(&self, future: impl 'static + Future<Output = T>) -> T {
-        let future = any_local_future(future);
-        let any_value = match self {
+    pub fn run<T: 'static>(&self, future: impl Future<Output = T>) -> T {
+        let future = async move { Box::new(future.await) as Box<dyn Any> }.boxed_local();
+        let result = match self {
             Self::Deterministic { cx_id, executor } => executor.run(*cx_id, future),
             Self::Platform { .. } => panic!("you can't call run on a platform foreground executor"),
         };
-        *any_value.downcast().unwrap()
+        *result.downcast().unwrap()
     }
 
     pub fn run_until_parked(&self) {
