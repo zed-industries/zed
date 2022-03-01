@@ -3567,6 +3567,15 @@ impl AnyWeakModelHandle {
     }
 }
 
+impl<T: Entity> From<WeakModelHandle<T>> for AnyWeakModelHandle {
+    fn from(handle: WeakModelHandle<T>) -> Self {
+        AnyWeakModelHandle {
+            model_id: handle.model_id,
+            model_type: TypeId::of::<T>(),
+        }
+    }
+}
+
 pub struct WeakViewHandle<T> {
     window_id: usize,
     view_id: usize,
