@@ -174,7 +174,7 @@ impl Deterministic {
         }
     }
 
-    fn run_until_parked(&self) {
+    pub(crate) fn run_until_parked(&self) {
         let woken = Arc::new(AtomicBool::new(false));
         self.run_internal(woken, None);
     }

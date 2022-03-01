@@ -84,6 +84,7 @@ pub fn run_test(
                     )
                 });
 
+                deterministic.run_until_parked();
                 leak_detector.lock().detect();
                 if is_last_iteration {
                     break;
