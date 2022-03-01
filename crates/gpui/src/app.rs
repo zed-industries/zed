@@ -761,7 +761,6 @@ pub struct MutableAppContext {
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
     presenters_and_platform_windows:
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
-    debug_elements_callbacks: HashMap<usize, Box<dyn Fn(&AppContext) -> crate::json::Value>>,
     foreground: Rc<executor::Foreground>,
     pending_effects: VecDeque<Effect>,
     pending_notifications: HashSet<usize>,
@@ -808,7 +807,6 @@ impl MutableAppContext {
             observations: Default::default(),
             release_observations: Default::default(),
             presenters_and_platform_windows: HashMap::new(),
-            debug_elements_callbacks: HashMap::new(),
             foreground,
             pending_effects: VecDeque::new(),
             pending_notifications: HashSet::new(),
@@ -852,7 +850,6 @@ impl MutableAppContext {
     pub fn remove_all_windows(&mut self) {
         for (window_id, _) in self.cx.windows.drain() {
             self.presenters_and_platform_windows.remove(&window_id);
-            self.debug_elements_callbacks.remove(&window_id);
         }
         self.flush_effects();
     }
@@ -873,18 +870,10 @@ impl MutableAppContext {
         &self.cx.background
     }
 
-    pub fn on_debug_elements<F>(&mut self, window_id: usize, callback: F)
-    where
-        F: 'static + Fn(&AppContext) -> crate::json::Value,
-    {
-        self.debug_elements_callbacks
-            .insert(window_id, Box::new(callback));
-    }
-
     pub fn debug_elements(&self, window_id: usize) -> Option<crate::json::Value> {
-        self.debug_elements_callbacks
+        self.presenters_and_platform_windows
             .get(&window_id)
-            .map(|debug_elements| debug_elements(&self.cx))
+            .and_then(|(presenter, _)| presenter.borrow().debug_elements(self))
     }
 
     pub fn add_action<A, V, F>(&mut self, handler: F)
@@ -1404,7 +1393,6 @@ impl MutableAppContext {
     pub fn remove_window(&mut self, window_id: usize) {
         self.cx.windows.remove(&window_id);
         self.presenters_and_platform_windows.remove(&window_id);
-        self.debug_elements_callbacks.remove(&window_id);
         self.flush_effects();
     }
 
@@ -1456,10 +1444,6 @@ impl MutableAppContext {
 
         self.presenters_and_platform_windows
             .insert(window_id, (presenter.clone(), window));
-
-        self.on_debug_elements(window_id, move |cx| {
-            presenter.borrow().debug_elements(cx).unwrap()
-        });
     }
 
     pub fn build_presenter(&mut self, window_id: usize, titlebar_height: f32) -> Presenter {
