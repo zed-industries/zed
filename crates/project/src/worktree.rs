@@ -386,6 +386,7 @@ impl Worktree {
                     if worktree.poll_task.is_none() {
                         worktree.poll_task = Some(cx.spawn_weak(|this, mut cx| async move {
                             if is_fake_fs {
+                                #[cfg(any(test, feature = "test-support"))]
                                 cx.background().simulate_random_delay().await;
                             } else {
                                 smol::Timer::after(Duration::from_millis(100)).await;
