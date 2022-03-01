@@ -225,7 +225,7 @@ struct FakeFsEntry {
 struct FakeFsState {
     entries: std::collections::BTreeMap<PathBuf, FakeFsEntry>,
     next_inode: u64,
-    events_tx: postage::broadcast::Sender<Vec<fsevent::Event>>,
+    event_txs: Vec<smol::channel::Sender<Vec<fsevent::Event>>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -248,8 +248,6 @@ impl FakeFsState {
         I: IntoIterator<Item = T>,
         T: Into<PathBuf>,
     {
-        use postage::prelude::Sink as _;
-
         let events = paths
             .into_iter()
             .map(|path| fsevent::Event {
@@ -257,9 +255,12 @@ impl FakeFsState {
                 flags: fsevent::StreamFlags::empty(),
                 path: path.into(),
             })
-            .collect();
+            .collect::<Vec<_>>();
 
-        let _ = self.events_tx.send(events).await;
+        self.event_txs.retain(|tx| {
+            let _ = tx.try_send(events.clone());
+            !tx.is_closed()
+        });
     }
 }
 
@@ -273,7 +274,6 @@ pub struct FakeFs {
 #[cfg(any(test, feature = "test-support"))]
 impl FakeFs {
     pub fn new(executor: std::sync::Arc<gpui::executor::Background>) -> std::sync::Arc<Self> {
-        let (events_tx, _) = postage::broadcast::channel(2);
         let mut entries = std::collections::BTreeMap::new();
         entries.insert(
             Path::new("/").to_path_buf(),
@@ -292,7 +292,7 @@ impl FakeFs {
             state: futures::lock::Mutex::new(FakeFsState {
                 entries,
                 next_inode: 1,
-                events_tx,
+                event_txs: Default::default(),
             }),
         })
     }
@@ -642,9 +642,10 @@ impl Fs for FakeFs {
         path: &Path,
         _: Duration,
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>> {
-        let state = self.state.lock().await;
+        let mut state = self.state.lock().await;
         self.simulate_random_delay().await;
-        let rx = state.events_tx.subscribe();
+        let (tx, rx) = smol::channel::unbounded();
+        state.event_txs.push(tx);
         let path = path.to_path_buf();
         Box::pin(futures::StreamExt::filter(rx, move |events| {
             let result = events.iter().any(|event| event.path.starts_with(&path));

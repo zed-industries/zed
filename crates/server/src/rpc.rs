@@ -4185,7 +4185,9 @@ mod tests {
 
         while operations.get() < max_operations {
             cx.background().simulate_random_delay().await;
-            if clients.len() < max_peers && rng.lock().gen_bool(0.05) {
+            if clients.len() >= max_peers {
+                break;
+            } else if rng.lock().gen_bool(0.05) {
                 operations.set(operations.get() + 1);
 
                 let guest_id = clients.len();
