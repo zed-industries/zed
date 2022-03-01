@@ -1112,7 +1112,6 @@ pub mod tests {
                 .take(count)
                 .cloned()
                 .collect::<Vec<_>>();
-            dbg!(count, before_id, &messages);
             messages.sort_unstable_by_key(|message| message.id);
             Ok(messages)
         }
