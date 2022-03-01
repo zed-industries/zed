@@ -267,13 +267,13 @@ impl FakeFsState {
 pub struct FakeFs {
     // Use an unfair lock to ensure tests are deterministic.
     state: futures::lock::Mutex<FakeFsState>,
-    executor: std::sync::Arc<gpui::executor::Background>,
+    executor: std::sync::Weak<gpui::executor::Background>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeFs {
     pub fn new(executor: std::sync::Arc<gpui::executor::Background>) -> std::sync::Arc<Self> {
-        let (events_tx, _) = postage::broadcast::channel(2048);
+        let (events_tx, _) = postage::broadcast::channel(2);
         let mut entries = std::collections::BTreeMap::new();
         entries.insert(
             Path::new("/").to_path_buf(),
@@ -288,7 +288,7 @@ impl FakeFs {
             },
         );
         std::sync::Arc::new(Self {
-            executor,
+            executor: std::sync::Arc::downgrade(&executor),
             state: futures::lock::Mutex::new(FakeFsState {
                 entries,
                 next_inode: 1,
@@ -375,13 +375,21 @@ impl FakeFs {
         }
         .boxed()
     }
+
+    async fn simulate_random_delay(&self) {
+        self.executor
+            .upgrade()
+            .expect("excecutor has been dropped")
+            .simulate_random_delay()
+            .await;
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait::async_trait]
 impl Fs for FakeFs {
     async fn create_dir(&self, path: &Path) -> Result<()> {
-        self.executor.simulate_random_delay().await;
+        self.simulate_random_delay().await;
         let state = &mut *self.state.lock().await;
         let path = normalize_path(path);
         let mut ancestor_path = PathBuf::new();
@@ -418,7 +426,7 @@ impl Fs for FakeFs {
     }
 
     async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()> {
-        self.executor.simulate_random_delay().await;
+        self.simulate_random_delay().await;
         let mut state = self.state.lock().await;
         let path = normalize_path(path);
         state.validate_path(&path)?;
@@ -546,7 +554,7 @@ impl Fs for FakeFs {
 
     async fn load(&self, path: &Path) -> Result<String> {
         let path = normalize_path(path);
-        self.executor.simulate_random_delay().await;
+        self.simulate_random_delay().await;
         let state = self.state.lock().await;
         let text = state
             .entries
@@ -557,7 +565,7 @@ impl Fs for FakeFs {
     }
 
     async fn save(&self, path: &Path, text: &Rope) -> Result<()> {
-        self.executor.simulate_random_delay().await;
+        self.simulate_random_delay().await;
         let mut state = self.state.lock().await;
         let path = normalize_path(path);
         state.validate_path(&path)?;
@@ -589,13 +597,13 @@ impl Fs for FakeFs {
     }
 
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
-        self.executor.simulate_random_delay().await;
+        self.simulate_random_delay().await;
         Ok(normalize_path(path))
     }
 
     async fn is_file(&self, path: &Path) -> bool {
         let path = normalize_path(path);
-        self.executor.simulate_random_delay().await;
+        self.simulate_random_delay().await;
         let state = self.state.lock().await;
         state
             .entries
@@ -604,7 +612,7 @@ impl Fs for FakeFs {
     }
 
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
-        self.executor.simulate_random_delay().await;
+        self.simulate_random_delay().await;
         let state = self.state.lock().await;
         let path = normalize_path(path);
         Ok(state.entries.get(&path).map(|entry| entry.metadata.clone()))
@@ -615,7 +623,7 @@ impl Fs for FakeFs {
         abs_path: &Path,
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
         use futures::{future, stream};
-        self.executor.simulate_random_delay().await;
+        self.simulate_random_delay().await;
         let state = self.state.lock().await;
         let abs_path = normalize_path(abs_path);
         Ok(Box::pin(stream::iter(state.entries.clone()).filter_map(
@@ -635,7 +643,7 @@ impl Fs for FakeFs {
         _: Duration,
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>> {
         let state = self.state.lock().await;
-        self.executor.simulate_random_delay().await;
+        self.simulate_random_delay().await;
         let rx = state.events_tx.subscribe();
         let path = path.to_path_buf();
         Box::pin(futures::StreamExt::filter(rx, move |events| {
