@@ -17,6 +17,7 @@ sum_tree = { path = "../sum_tree" }
 async-task = "4.0.3"
 backtrace = "0.3"
 ctor = "0.1"
+dhat = "0.3"
 env_logger = { version = "0.8", optional = true }
 etagere = "0.2"
 futures = "0.3"

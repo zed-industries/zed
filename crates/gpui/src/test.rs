@@ -22,6 +22,9 @@ fn init_logger() {
     }
 }
 
+// #[global_allocator]
+// static ALLOC: dhat::Alloc = dhat::Alloc;
+
 pub fn run_test(
     mut num_iterations: u64,
     mut starting_seed: u64,
@@ -35,6 +38,8 @@ pub fn run_test(
         bool,
     )),
 ) {
+    // let _profiler = dhat::Profiler::new_heap();
+
     let is_randomized = num_iterations > 1;
     if is_randomized {
         if let Ok(value) = std::env::var("SEED") {
