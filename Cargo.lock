@@ -336,7 +336,7 @@ dependencies = [
 [[package]]
 name = "async-pipe"
 version = "0.1.3"
-source = "git+https://github.com/routerify/async-pipe-rs?rev=feeb77e83142a9ff837d0767652ae41bfc5d8e47#feeb77e83142a9ff837d0767652ae41bfc5d8e47"
+source = "git+https://github.com/zed-industries/async-pipe-rs?rev=82d00a04211cf4e1236029aa03e6b6ce2a74c553#82d00a04211cf4e1236029aa03e6b6ce2a74c553"
 dependencies = [
  "futures",
  "log",
@@ -2827,6 +2827,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-pipe",
+ "collections",
  "ctor",
  "env_logger",
  "futures",
