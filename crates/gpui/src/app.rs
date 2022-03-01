@@ -10,6 +10,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use backtrace::Backtrace;
 use keymap::MatchResult;
+use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use platform::Event;
 use postage::{mpsc, oneshot, sink::Sink as _, stream::Stream as _};
@@ -3767,20 +3768,30 @@ impl Drop for Subscription {
     }
 }
 
+lazy_static! {
+    static ref LEAK_BACKTRACE: bool =
+        std::env::var("LEAK_BACKTRACE").map_or(false, |b| !b.is_empty());
+}
+
 #[derive(Default)]
 pub struct LeakDetector {
     next_handle_id: usize,
-    handle_backtraces: HashMap<usize, (Option<&'static str>, HashMap<usize, Backtrace>)>,
+    handle_backtraces: HashMap<usize, (Option<&'static str>, HashMap<usize, Option<Backtrace>>)>,
 }
 
 impl LeakDetector {
     fn handle_created(&mut self, type_name: Option<&'static str>, entity_id: usize) -> usize {
         let handle_id = post_inc(&mut self.next_handle_id);
         let entry = self.handle_backtraces.entry(entity_id).or_default();
+        let backtrace = if *LEAK_BACKTRACE {
+            Some(Backtrace::new_unresolved())
+        } else {
+            None
+        };
         if let Some(type_name) = type_name {
             entry.0.get_or_insert(type_name);
         }
-        entry.1.insert(handle_id, Backtrace::new_unresolved());
+        entry.1.insert(handle_id, backtrace);
         handle_id
     }
 
@@ -3803,12 +3814,20 @@ impl LeakDetector {
                 id
             );
             for trace in backtraces.values_mut() {
-                trace.resolve();
-                eprintln!("{:?}", CwdBacktrace(trace));
+                if let Some(trace) = trace {
+                    trace.resolve();
+                    eprintln!("{:?}", CwdBacktrace(trace));
+                }
             }
             found_leaks = true;
         }
-        assert!(!found_leaks, "detected leaked handles");
+
+        let hint = if *LEAK_BACKTRACE {
+            ""
+        } else {
+            " – set LEAK_BACKTRACE=1 for more information"
+        };
+        assert!(!found_leaks, "detected leaked handles{}", hint);
     }
 }
 
