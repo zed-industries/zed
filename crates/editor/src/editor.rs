@@ -7772,7 +7772,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_select_larger_smaller_syntax_node(mut cx: gpui::TestAppContext) {
+    async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
         let settings = cx.read(Settings::test);
         let language = Arc::new(Language::new(
             LanguageConfig::default(),
@@ -7794,7 +7794,7 @@ mod tests {
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
             .await;
 
-        view.update(&mut cx, |view, cx| {
+        view.update(cx, |view, cx| {
             view.select_display_ranges(
                 &[
                     DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
@@ -7806,7 +7806,7 @@ mod tests {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -7814,50 +7814,50 @@ mod tests {
             ]
         );
 
-        view.update(&mut cx, |view, cx| {
+        view.update(cx, |view, cx| {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
                 DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
             ]
         );
 
-        view.update(&mut cx, |view, cx| {
+        view.update(cx, |view, cx| {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
             &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
         );
 
         // Trying to expand the selected syntax node one more time has no effect.
-        view.update(&mut cx, |view, cx| {
+        view.update(cx, |view, cx| {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
             &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
         );
 
-        view.update(&mut cx, |view, cx| {
+        view.update(cx, |view, cx| {
             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
                 DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
             ]
         );
 
-        view.update(&mut cx, |view, cx| {
+        view.update(cx, |view, cx| {
             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -7865,11 +7865,11 @@ mod tests {
             ]
         );
 
-        view.update(&mut cx, |view, cx| {
+        view.update(cx, |view, cx| {
             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
                 DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
@@ -7878,11 +7878,11 @@ mod tests {
         );
 
         // Trying to shrink the selected syntax node one more time has no effect.
-        view.update(&mut cx, |view, cx| {
+        view.update(cx, |view, cx| {
             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
                 DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
@@ -7892,7 +7892,7 @@ mod tests {
 
         // Ensure that we keep expanding the selection if the larger selection starts or ends within
         // a fold.
-        view.update(&mut cx, |view, cx| {
+        view.update(cx, |view, cx| {
             view.fold_ranges(
                 vec![
                     Point::new(0, 21)..Point::new(0, 24),
@@ -7903,7 +7903,7 @@ mod tests {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -7913,7 +7913,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_autoindent_selections(mut cx: gpui::TestAppContext) {
+    async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
         let settings = cx.read(Settings::test);
         let language = Arc::new(
             Language::new(
@@ -7954,7 +7954,7 @@ mod tests {
             .condition(&cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
             .await;
 
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             editor.select_ranges([5..5, 8..8, 9..9], None, cx);
             editor.newline(&Newline, cx);
             assert_eq!(editor.text(cx), "fn a(\n    \n) {\n    \n}\n");
@@ -7970,7 +7970,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_autoclose_pairs(mut cx: gpui::TestAppContext) {
+    async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
         let settings = cx.read(Settings::test);
         let language = Arc::new(Language::new(
             LanguageConfig {
@@ -8007,7 +8007,7 @@ mod tests {
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
             .await;
 
-        view.update(&mut cx, |view, cx| {
+        view.update(cx, |view, cx| {
             view.select_display_ranges(
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
@@ -8081,7 +8081,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_snippets(mut cx: gpui::TestAppContext) {
+    async fn test_snippets(cx: &mut gpui::TestAppContext) {
         let settings = cx.read(Settings::test);
 
         let text = "
@@ -8093,7 +8093,7 @@ mod tests {
         let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, settings, cx));
 
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             let buffer = &editor.snapshot(cx).buffer_snapshot;
             let snippet = Snippet::parse("f(${1:one}, ${2:two}, ${1:three})$0").unwrap();
             let insertion_ranges = [
@@ -8188,7 +8188,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_completion(mut cx: gpui::TestAppContext) {
+    async fn test_completion(cx: &mut gpui::TestAppContext) {
         let settings = cx.read(Settings::test);
         let (language_server, mut fake) = cx.update(|cx| {
             lsp::LanguageServer::fake_with_capabilities(
@@ -8213,23 +8213,23 @@ mod tests {
         let fs = FakeFs::new(cx.background().clone());
         fs.insert_file("/file", text).await;
 
-        let project = Project::test(fs, &mut cx);
+        let project = Project::test(fs, cx);
 
         let (worktree, relative_path) = project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/file", false, cx)
             })
             .await
             .unwrap();
         let project_path = ProjectPath {
-            worktree_id: worktree.read_with(&cx, |worktree, _| worktree.id()),
+            worktree_id: worktree.read_with(cx, |worktree, _| worktree.id()),
             path: relative_path.into(),
         };
         let buffer = project
-            .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))
             .await
             .unwrap();
-        buffer.update(&mut cx, |buffer, cx| {
+        buffer.update(cx, |buffer, cx| {
             buffer.set_language_server(Some(language_server), cx);
         });
 
@@ -8238,7 +8238,7 @@ mod tests {
 
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, settings, cx));
 
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             editor.project = Some(project);
             editor.select_ranges([Point::new(0, 3)..Point::new(0, 3)], None, cx);
             editor.handle_input(&Input(".".to_string()), cx);
@@ -8258,7 +8258,7 @@ mod tests {
             .condition(&cx, |editor, _| editor.context_menu_visible())
             .await;
 
-        let apply_additional_edits = editor.update(&mut cx, |editor, cx| {
+        let apply_additional_edits = editor.update(cx, |editor, cx| {
             editor.move_down(&MoveDown, cx);
             let apply_additional_edits = editor
                 .confirm_completion(&ConfirmCompletion(None), cx)
@@ -8282,7 +8282,7 @@ mod tests {
         .await;
         apply_additional_edits.await.unwrap();
         assert_eq!(
-            editor.read_with(&cx, |editor, cx| editor.text(cx)),
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
             "
                 one.second_completion
                 two
@@ -8292,7 +8292,7 @@ mod tests {
             .unindent()
         );
 
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             editor.select_ranges(
                 [
                     Point::new(1, 3)..Point::new(1, 3),
@@ -8323,7 +8323,7 @@ mod tests {
             .condition(&cx, |editor, _| editor.context_menu_visible())
             .await;
 
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             editor.handle_input(&Input("i".to_string()), cx);
         });
 
@@ -8342,7 +8342,7 @@ mod tests {
             .condition(&cx, |editor, _| editor.context_menu_visible())
             .await;
 
-        let apply_additional_edits = editor.update(&mut cx, |editor, cx| {
+        let apply_additional_edits = editor.update(cx, |editor, cx| {
             let apply_additional_edits = editor
                 .confirm_completion(&ConfirmCompletion(None), cx)
                 .unwrap();
@@ -8421,7 +8421,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_toggle_comment(mut cx: gpui::TestAppContext) {
+    async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
         let settings = cx.read(Settings::test);
         let language = Arc::new(Language::new(
             LanguageConfig {
@@ -8444,7 +8444,7 @@ mod tests {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
 
-        view.update(&mut cx, |editor, cx| {
+        view.update(cx, |editor, cx| {
             // If multiple selections intersect a line, the line is only
             // toggled once.
             editor.select_display_ranges(
@@ -8678,7 +8678,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_extra_newline_insertion(mut cx: gpui::TestAppContext) {
+    async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
         let settings = cx.read(Settings::test);
         let language = Arc::new(Language::new(
             LanguageConfig {
@@ -8715,7 +8715,7 @@ mod tests {
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
             .await;
 
-        view.update(&mut cx, |view, cx| {
+        view.update(cx, |view, cx| {
             view.select_display_ranges(
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),

@@ -421,7 +421,7 @@ mod tests {
     use workspace::{Workspace, WorkspaceParams};
 
     #[gpui::test]
-    async fn test_matching_paths(mut cx: gpui::TestAppContext) {
+    async fn test_matching_paths(cx: &mut gpui::TestAppContext) {
         let mut path_openers = Vec::new();
         cx.update(|cx| {
             super::init(cx);
@@ -447,7 +447,7 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         params
             .project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/root", false, cx)
             })
             .await
@@ -496,7 +496,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_matching_cancellation(mut cx: gpui::TestAppContext) {
+    async fn test_matching_cancellation(cx: &mut gpui::TestAppContext) {
         let params = cx.update(WorkspaceParams::test);
         let fs = params.fs.as_fake();
         fs.insert_tree(
@@ -516,7 +516,7 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         params
             .project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/dir", false, cx)
             })
             .await
@@ -533,12 +533,12 @@ mod tests {
 
         let query = "hi".to_string();
         finder
-            .update(&mut cx, |f, cx| f.spawn_search(query.clone(), cx))
+            .update(cx, |f, cx| f.spawn_search(query.clone(), cx))
             .unwrap()
             .await;
-        finder.read_with(&cx, |f, _| assert_eq!(f.matches.len(), 5));
+        finder.read_with(cx, |f, _| assert_eq!(f.matches.len(), 5));
 
-        finder.update(&mut cx, |finder, cx| {
+        finder.update(cx, |finder, cx| {
             let matches = finder.matches.clone();
 
             // Simulate a search being cancelled after the time limit,
@@ -571,7 +571,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_single_file_worktrees(mut cx: gpui::TestAppContext) {
+    async fn test_single_file_worktrees(cx: &mut gpui::TestAppContext) {
         let params = cx.update(WorkspaceParams::test);
         params
             .fs
@@ -582,7 +582,7 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         params
             .project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/root/the-parent-dir/the-file", false, cx)
             })
             .await
@@ -600,7 +600,7 @@ mod tests {
         // Even though there is only one worktree, that worktree's filename
         // is included in the matching, because the worktree is a single file.
         finder
-            .update(&mut cx, |f, cx| f.spawn_search("thf".into(), cx))
+            .update(cx, |f, cx| f.spawn_search("thf".into(), cx))
             .unwrap()
             .await;
         cx.read(|cx| {
@@ -618,14 +618,14 @@ mod tests {
         // Since the worktree root is a file, searching for its name followed by a slash does
         // not match anything.
         finder
-            .update(&mut cx, |f, cx| f.spawn_search("thf/".into(), cx))
+            .update(cx, |f, cx| f.spawn_search("thf/".into(), cx))
             .unwrap()
             .await;
-        finder.read_with(&cx, |f, _| assert_eq!(f.matches.len(), 0));
+        finder.read_with(cx, |f, _| assert_eq!(f.matches.len(), 0));
     }
 
     #[gpui::test(retries = 5)]
-    async fn test_multiple_matches_with_same_relative_path(mut cx: gpui::TestAppContext) {
+    async fn test_multiple_matches_with_same_relative_path(cx: &mut gpui::TestAppContext) {
         let params = cx.update(WorkspaceParams::test);
         params
             .fs
@@ -642,7 +642,7 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
 
         workspace
-            .update(&mut cx, |workspace, cx| {
+            .update(cx, |workspace, cx| {
                 workspace.open_paths(
                     &[PathBuf::from("/root/dir1"), PathBuf::from("/root/dir2")],
                     cx,
@@ -662,12 +662,12 @@ mod tests {
 
         // Run a search that matches two files with the same relative path.
         finder
-            .update(&mut cx, |f, cx| f.spawn_search("a.t".into(), cx))
+            .update(cx, |f, cx| f.spawn_search("a.t".into(), cx))
             .unwrap()
             .await;
 
         // Can switch between different matches with the same relative path.
-        finder.update(&mut cx, |f, cx| {
+        finder.update(cx, |f, cx| {
             assert_eq!(f.matches.len(), 2);
             assert_eq!(f.selected_index(), 0);
             f.select_next(&SelectNext, cx);

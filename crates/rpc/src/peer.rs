@@ -347,7 +347,7 @@ mod tests {
     use gpui::TestAppContext;
 
     #[gpui::test(iterations = 50)]
-    async fn test_request_response(cx: TestAppContext) {
+    async fn test_request_response(cx: &mut TestAppContext) {
         let executor = cx.foreground();
 
         // create 2 clients connected to 1 server
@@ -441,7 +441,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 50)]
-    async fn test_order_of_response_and_incoming(cx: TestAppContext) {
+    async fn test_order_of_response_and_incoming(cx: &mut TestAppContext) {
         let executor = cx.foreground();
         let server = Peer::new();
         let client = Peer::new();
@@ -539,7 +539,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 50)]
-    async fn test_dropping_request_before_completion(cx: TestAppContext) {
+    async fn test_dropping_request_before_completion(cx: &mut TestAppContext) {
         let executor = cx.foreground();
         let server = Peer::new();
         let client = Peer::new();
@@ -651,7 +651,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 50)]
-    async fn test_disconnect(cx: TestAppContext) {
+    async fn test_disconnect(cx: &mut TestAppContext) {
         let executor = cx.foreground();
 
         let (client_conn, mut server_conn, _) = Connection::in_memory(cx.background());
@@ -686,7 +686,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 50)]
-    async fn test_io_error(cx: TestAppContext) {
+    async fn test_io_error(cx: &mut TestAppContext) {
         let executor = cx.foreground();
         let (client_conn, mut server_conn, _) = Connection::in_memory(cx.background());
 

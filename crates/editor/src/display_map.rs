@@ -464,7 +464,7 @@ mod tests {
     use Bias::*;
 
     #[gpui::test(iterations = 100)]
-    async fn test_random_display_map(mut cx: gpui::TestAppContext, mut rng: StdRng) {
+    async fn test_random_display_map(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
         cx.foreground().set_block_on_ticks(0..=50);
         cx.foreground().forbid_parking();
         let operations = env::var("OPERATIONS")
@@ -512,11 +512,11 @@ mod tests {
                 cx,
             )
         });
-        let mut notifications = observe(&map, &mut cx);
+        let mut notifications = observe(&map, cx);
         let mut fold_count = 0;
         let mut blocks = Vec::new();
 
-        let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         log::info!("buffer text: {:?}", snapshot.buffer_snapshot.text());
         log::info!("fold text: {:?}", snapshot.folds_snapshot.text());
         log::info!("tab text: {:?}", snapshot.tabs_snapshot.text());
@@ -533,10 +533,10 @@ mod tests {
                         Some(rng.gen_range(0.0..=max_wrap_width))
                     };
                     log::info!("setting wrap width to {:?}", wrap_width);
-                    map.update(&mut cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+                    map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
                 }
                 20..=44 => {
-                    map.update(&mut cx, |map, cx| {
+                    map.update(cx, |map, cx| {
                         if rng.gen() || blocks.is_empty() {
                             let buffer = map.snapshot(cx).buffer_snapshot;
                             let block_properties = (0..rng.gen_range(1..=1))
@@ -582,7 +582,7 @@ mod tests {
                 45..=79 => {
                     let mut ranges = Vec::new();
                     for _ in 0..rng.gen_range(1..=3) {
-                        buffer.read_with(&cx, |buffer, cx| {
+                        buffer.read_with(cx, |buffer, cx| {
                             let buffer = buffer.read(cx);
                             let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
                             let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
@@ -592,26 +592,26 @@ mod tests {
 
                     if rng.gen() && fold_count > 0 {
                         log::info!("unfolding ranges: {:?}", ranges);
-                        map.update(&mut cx, |map, cx| {
+                        map.update(cx, |map, cx| {
                             map.unfold(ranges, cx);
                         });
                     } else {
                         log::info!("folding ranges: {:?}", ranges);
-                        map.update(&mut cx, |map, cx| {
+                        map.update(cx, |map, cx| {
                             map.fold(ranges, cx);
                         });
                     }
                 }
                 _ => {
-                    buffer.update(&mut cx, |buffer, cx| buffer.randomly_edit(&mut rng, 5, cx));
+                    buffer.update(cx, |buffer, cx| buffer.randomly_edit(&mut rng, 5, cx));
                 }
             }
 
-            if map.read_with(&cx, |map, cx| map.is_rewrapping(cx)) {
+            if map.read_with(cx, |map, cx| map.is_rewrapping(cx)) {
                 notifications.next().await.unwrap();
             }
 
-            let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
+            let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
             fold_count = snapshot.fold_count();
             log::info!("buffer text: {:?}", snapshot.buffer_snapshot.text());
             log::info!("fold text: {:?}", snapshot.folds_snapshot.text());
@@ -846,7 +846,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_chunks(mut cx: gpui::TestAppContext) {
+    async fn test_chunks(cx: &mut gpui::TestAppContext) {
         use unindent::Unindent as _;
 
         let text = r#"
@@ -914,7 +914,7 @@ mod tests {
             ]
         );
 
-        map.update(&mut cx, |map, cx| {
+        map.update(cx, |map, cx| {
             map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx)
         });
         assert_eq!(
@@ -931,7 +931,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_chunks_with_soft_wrapping(mut cx: gpui::TestAppContext) {
+    async fn test_chunks_with_soft_wrapping(cx: &mut gpui::TestAppContext) {
         use unindent::Unindent as _;
 
         cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
@@ -996,7 +996,7 @@ mod tests {
             [("{}\n\n".to_string(), None)]
         );
 
-        map.update(&mut cx, |map, cx| {
+        map.update(cx, |map, cx| {
             map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx)
         });
         assert_eq!(

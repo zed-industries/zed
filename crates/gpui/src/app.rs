@@ -4726,7 +4726,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    async fn test_model_condition(mut cx: TestAppContext) {
+    async fn test_model_condition(cx: &mut TestAppContext) {
         struct Counter(usize);
 
         impl super::Entity for Counter {
@@ -4746,23 +4746,23 @@ mod tests {
         let condition2 = model.condition(&cx, |model, _| model.0 == 3);
         smol::pin!(condition1, condition2);
 
-        model.update(&mut cx, |model, cx| model.inc(cx));
+        model.update(cx, |model, cx| model.inc(cx));
         assert_eq!(poll_once(&mut condition1).await, None);
         assert_eq!(poll_once(&mut condition2).await, None);
 
-        model.update(&mut cx, |model, cx| model.inc(cx));
+        model.update(cx, |model, cx| model.inc(cx));
         assert_eq!(poll_once(&mut condition1).await, Some(()));
         assert_eq!(poll_once(&mut condition2).await, None);
 
-        model.update(&mut cx, |model, cx| model.inc(cx));
+        model.update(cx, |model, cx| model.inc(cx));
         assert_eq!(poll_once(&mut condition2).await, Some(()));
 
-        model.update(&mut cx, |_, cx| cx.notify());
+        model.update(cx, |_, cx| cx.notify());
     }
 
     #[crate::test(self)]
     #[should_panic]
-    async fn test_model_condition_timeout(mut cx: TestAppContext) {
+    async fn test_model_condition_timeout(cx: &mut TestAppContext) {
         struct Model;
 
         impl super::Entity for Model {
@@ -4775,7 +4775,7 @@ mod tests {
 
     #[crate::test(self)]
     #[should_panic(expected = "model dropped with pending condition")]
-    async fn test_model_condition_panic_on_drop(mut cx: TestAppContext) {
+    async fn test_model_condition_panic_on_drop(cx: &mut TestAppContext) {
         struct Model;
 
         impl super::Entity for Model {
@@ -4789,7 +4789,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    async fn test_view_condition(mut cx: TestAppContext) {
+    async fn test_view_condition(cx: &mut TestAppContext) {
         struct Counter(usize);
 
         impl super::Entity for Counter {
@@ -4819,22 +4819,22 @@ mod tests {
         let condition2 = view.condition(&cx, |view, _| view.0 == 3);
         smol::pin!(condition1, condition2);
 
-        view.update(&mut cx, |view, cx| view.inc(cx));
+        view.update(cx, |view, cx| view.inc(cx));
         assert_eq!(poll_once(&mut condition1).await, None);
         assert_eq!(poll_once(&mut condition2).await, None);
 
-        view.update(&mut cx, |view, cx| view.inc(cx));
+        view.update(cx, |view, cx| view.inc(cx));
         assert_eq!(poll_once(&mut condition1).await, Some(()));
         assert_eq!(poll_once(&mut condition2).await, None);
 
-        view.update(&mut cx, |view, cx| view.inc(cx));
+        view.update(cx, |view, cx| view.inc(cx));
         assert_eq!(poll_once(&mut condition2).await, Some(()));
-        view.update(&mut cx, |_, cx| cx.notify());
+        view.update(cx, |_, cx| cx.notify());
     }
 
     #[crate::test(self)]
     #[should_panic]
-    async fn test_view_condition_timeout(mut cx: TestAppContext) {
+    async fn test_view_condition_timeout(cx: &mut TestAppContext) {
         struct View;
 
         impl super::Entity for View {
@@ -4857,7 +4857,7 @@ mod tests {
 
     #[crate::test(self)]
     #[should_panic(expected = "view dropped with pending condition")]
-    async fn test_view_condition_panic_on_drop(mut cx: TestAppContext) {
+    async fn test_view_condition_panic_on_drop(cx: &mut TestAppContext) {
         struct View;
 
         impl super::Entity for View {

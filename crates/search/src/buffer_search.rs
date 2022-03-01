@@ -520,7 +520,7 @@ mod tests {
     use unindent::Unindent as _;
 
     #[gpui::test]
-    async fn test_search_simple(mut cx: TestAppContext) {
+    async fn test_search_simple(cx: &mut TestAppContext) {
         let fonts = cx.font_cache();
         let mut theme = gpui::fonts::with_font_cache(fonts.clone(), || theme::Theme::default());
         theme.search.match_background = Color::red();
@@ -551,11 +551,11 @@ mod tests {
 
         // Search for a string that appears with different casing.
         // By default, search is case-insensitive.
-        search_bar.update(&mut cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             search_bar.set_query("us", cx);
         });
         editor.next_notification(&cx).await;
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_highlighted_ranges(cx),
                 &[
@@ -572,11 +572,11 @@ mod tests {
         });
 
         // Switch to a case sensitive search.
-        search_bar.update(&mut cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             search_bar.toggle_search_option(&ToggleSearchOption(SearchOption::CaseSensitive), cx);
         });
         editor.next_notification(&cx).await;
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_highlighted_ranges(cx),
                 &[(
@@ -588,11 +588,11 @@ mod tests {
 
         // Search for a string that appears both as a whole word and
         // within other words. By default, all results are found.
-        search_bar.update(&mut cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             search_bar.set_query("or", cx);
         });
         editor.next_notification(&cx).await;
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_highlighted_ranges(cx),
                 &[
@@ -629,11 +629,11 @@ mod tests {
         });
 
         // Switch to a whole word search.
-        search_bar.update(&mut cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             search_bar.toggle_search_option(&ToggleSearchOption(SearchOption::WholeWord), cx);
         });
         editor.next_notification(&cx).await;
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_highlighted_ranges(cx),
                 &[
@@ -653,10 +653,10 @@ mod tests {
             );
         });
 
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             editor.select_display_ranges(&[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)], cx);
         });
-        search_bar.update(&mut cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(0));
             search_bar.select_match(&SelectMatch(Direction::Next), cx);
             assert_eq!(
@@ -664,82 +664,82 @@ mod tests {
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
-        search_bar.read_with(&cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
-        search_bar.update(&mut cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             search_bar.select_match(&SelectMatch(Direction::Next), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
             );
         });
-        search_bar.read_with(&cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(1));
         });
 
-        search_bar.update(&mut cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             search_bar.select_match(&SelectMatch(Direction::Next), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
             );
         });
-        search_bar.read_with(&cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
 
-        search_bar.update(&mut cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             search_bar.select_match(&SelectMatch(Direction::Next), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
-        search_bar.read_with(&cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
-        search_bar.update(&mut cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             search_bar.select_match(&SelectMatch(Direction::Prev), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
             );
         });
-        search_bar.read_with(&cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
 
-        search_bar.update(&mut cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             search_bar.select_match(&SelectMatch(Direction::Prev), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
             );
         });
-        search_bar.read_with(&cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(1));
         });
 
-        search_bar.update(&mut cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             search_bar.select_match(&SelectMatch(Direction::Prev), cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
-        search_bar.read_with(&cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
         // Park the cursor in between matches and ensure that going to the previous match selects
         // the closest match to the left.
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             editor.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
         });
-        search_bar.update(&mut cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(1));
             search_bar.select_match(&SelectMatch(Direction::Prev), cx);
             assert_eq!(
@@ -747,16 +747,16 @@ mod tests {
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
-        search_bar.read_with(&cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
         // Park the cursor in between matches and ensure that going to the next match selects the
         // closest match to the right.
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             editor.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
         });
-        search_bar.update(&mut cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(1));
             search_bar.select_match(&SelectMatch(Direction::Next), cx);
             assert_eq!(
@@ -764,16 +764,16 @@ mod tests {
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
             );
         });
-        search_bar.read_with(&cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(1));
         });
 
         // Park the cursor after the last match and ensure that going to the previous match selects
         // the last match.
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             editor.select_display_ranges(&[DisplayPoint::new(3, 60)..DisplayPoint::new(3, 60)], cx);
         });
-        search_bar.update(&mut cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(2));
             search_bar.select_match(&SelectMatch(Direction::Prev), cx);
             assert_eq!(
@@ -781,16 +781,16 @@ mod tests {
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
             );
         });
-        search_bar.read_with(&cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
 
         // Park the cursor after the last match and ensure that going to the next match selects the
         // first match.
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             editor.select_display_ranges(&[DisplayPoint::new(3, 60)..DisplayPoint::new(3, 60)], cx);
         });
-        search_bar.update(&mut cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(2));
             search_bar.select_match(&SelectMatch(Direction::Next), cx);
             assert_eq!(
@@ -798,16 +798,16 @@ mod tests {
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
-        search_bar.read_with(&cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
         // Park the cursor before the first match and ensure that going to the previous match
         // selects the last match.
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             editor.select_display_ranges(&[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)], cx);
         });
-        search_bar.update(&mut cx, |search_bar, cx| {
+        search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(0));
             search_bar.select_match(&SelectMatch(Direction::Prev), cx);
             assert_eq!(
@@ -815,7 +815,7 @@ mod tests {
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
             );
         });
-        search_bar.read_with(&cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
     }

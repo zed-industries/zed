@@ -712,7 +712,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_fake(mut cx: TestAppContext) {
+    async fn test_fake(cx: &mut TestAppContext) {
         let (server, mut fake) = cx.update(LanguageServer::fake);
 
         let (message_tx, message_rx) = channel::unbounded();

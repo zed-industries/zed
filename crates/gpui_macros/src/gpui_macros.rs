@@ -65,31 +65,54 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     let mut outer_fn: ItemFn = if inner_fn.sig.asyncness.is_some() {
         // Pass to the test function the number of app contexts that it needs,
         // based on its parameter list.
+        let mut cx_vars = proc_macro2::TokenStream::new();
         let mut inner_fn_args = proc_macro2::TokenStream::new();
         for (ix, arg) in inner_fn.sig.inputs.iter().enumerate() {
             if let FnArg::Typed(arg) = arg {
                 if let Type::Path(ty) = &*arg.ty {
                     let last_segment = ty.path.segments.last();
                     match last_segment.map(|s| s.ident.to_string()).as_deref() {
-                        Some("TestAppContext") => {
-                            let first_entity_id = ix * 100_000;
-                            inner_fn_args.extend(quote!(
-                                #namespace::TestAppContext::new(
-                                    foreground_platform.clone(),
-                                    cx.platform().clone(),
-                                    deterministic.build_foreground(#ix),
-                                    deterministic.build_background(),
-                                    cx.font_cache().clone(),
-                                    cx.leak_detector(),
-                                    #first_entity_id,
-                                ),
-                            ));
-                        }
                         Some("StdRng") => {
                             inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(seed),));
                         }
                         Some("bool") => {
                             inner_fn_args.extend(quote!(is_last_iteration,));
+                        }
+                        _ => {
+                            return TokenStream::from(
+                                syn::Error::new_spanned(arg, "invalid argument")
+                                    .into_compile_error(),
+                            )
+                        }
+                    }
+                } else if let Type::Reference(ty) = &*arg.ty {
+                    match &*ty.elem {
+                        Type::Path(ty) => {
+                            let last_segment = ty.path.segments.last();
+                            match last_segment.map(|s| s.ident.to_string()).as_deref() {
+                                Some("TestAppContext") => {
+                                    let first_entity_id = ix * 100_000;
+                                    let cx_varname = format_ident!("cx_{}", ix);
+                                    cx_vars.extend(quote!(
+                                        let mut #cx_varname = #namespace::TestAppContext::new(
+                                            foreground_platform.clone(),
+                                            cx.platform().clone(),
+                                            deterministic.build_foreground(#ix),
+                                            deterministic.build_background(),
+                                            cx.font_cache().clone(),
+                                            cx.leak_detector(),
+                                            #first_entity_id,
+                                        );
+                                    ));
+                                    inner_fn_args.extend(quote!(&mut #cx_varname,));
+                                }
+                                _ => {
+                                    return TokenStream::from(
+                                        syn::Error::new_spanned(arg, "invalid argument")
+                                            .into_compile_error(),
+                                    )
+                                }
+                            }
                         }
                         _ => {
                             return TokenStream::from(
@@ -120,7 +143,9 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     #starting_seed as u64,
                     #max_retries,
                     &mut |cx, foreground_platform, deterministic, seed, is_last_iteration| {
-                        cx.foreground().run(#inner_fn_name(#inner_fn_args))
+                        #cx_vars
+                        cx.foreground().run(#inner_fn_name(#inner_fn_args));
+                        cx.foreground().run_until_parked();
                     }
                 );
             }

@@ -2441,7 +2441,7 @@ mod tests {
     use util::test::temp_tree;
 
     #[gpui::test]
-    async fn test_traversal(cx: gpui::TestAppContext) {
+    async fn test_traversal(cx: &mut gpui::TestAppContext) {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/root",
@@ -2470,7 +2470,7 @@ mod tests {
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
 
-        tree.read_with(&cx, |tree, _| {
+        tree.read_with(cx, |tree, _| {
             assert_eq!(
                 tree.entries(false)
                     .map(|entry| entry.path.as_ref())
@@ -2486,7 +2486,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_rescan_with_gitignore(cx: gpui::TestAppContext) {
+    async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
         let dir = temp_tree(json!({
             ".git": {},
             ".gitignore": "ignored-dir\n",

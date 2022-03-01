@@ -933,7 +933,7 @@ mod tests {
     use gpui::TestAppContext;
 
     #[gpui::test(iterations = 10)]
-    async fn test_heartbeat(cx: TestAppContext) {
+    async fn test_heartbeat(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
@@ -953,7 +953,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_reconnection(cx: TestAppContext) {
+    async fn test_reconnection(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
@@ -1001,7 +1001,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_subscribing_to_entity(mut cx: TestAppContext) {
+    async fn test_subscribing_to_entity(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
@@ -1033,14 +1033,11 @@ mod tests {
             subscription: None,
         });
 
-        let _subscription1 =
-            model1.update(&mut cx, |_, cx| client.add_model_for_remote_entity(1, cx));
-        let _subscription2 =
-            model2.update(&mut cx, |_, cx| client.add_model_for_remote_entity(2, cx));
+        let _subscription1 = model1.update(cx, |_, cx| client.add_model_for_remote_entity(1, cx));
+        let _subscription2 = model2.update(cx, |_, cx| client.add_model_for_remote_entity(2, cx));
         // Ensure dropping a subscription for the same entity type still allows receiving of
         // messages for other entity IDs of the same type.
-        let subscription3 =
-            model3.update(&mut cx, |_, cx| client.add_model_for_remote_entity(3, cx));
+        let subscription3 = model3.update(cx, |_, cx| client.add_model_for_remote_entity(3, cx));
         drop(subscription3);
 
         server.send(proto::UnshareProject { project_id: 1 });
@@ -1050,7 +1047,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_subscribing_after_dropping_subscription(mut cx: TestAppContext) {
+    async fn test_subscribing_after_dropping_subscription(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
@@ -1078,7 +1075,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_dropping_subscription_in_handler(mut cx: TestAppContext) {
+    async fn test_dropping_subscription_in_handler(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
@@ -1095,7 +1092,7 @@ mod tests {
                 async { Ok(()) }
             },
         );
-        model.update(&mut cx, |model, _| {
+        model.update(cx, |model, _| {
             model.subscription = Some(subscription);
         });
         server.send(proto::Ping {});
