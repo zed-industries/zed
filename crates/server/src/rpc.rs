@@ -5052,6 +5052,12 @@ mod tests {
         }
     }
 
+    impl Drop for TestClient {
+        fn drop(&mut self) {
+            self.client.tear_down();
+        }
+    }
+
     impl Executor for Arc<gpui::executor::Background> {
         fn spawn_detached<F: 'static + Send + Future<Output = ()>>(&self, future: F) {
             self.spawn(future).detach();

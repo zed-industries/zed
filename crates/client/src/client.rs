@@ -229,6 +229,15 @@ impl Client {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn tear_down(&self) {
+        let mut state = self.state.write();
+        state.message_handlers.clear();
+        state.models_by_message_type.clear();
+        state.models_by_entity_type_and_remote_id.clear();
+        state.entity_id_extractors.clear();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub fn override_authenticate<F>(&mut self, authenticate: F) -> &mut Self
     where
         F: 'static + Send + Sync + Fn(&AsyncAppContext) -> Task<Result<Credentials>>,
