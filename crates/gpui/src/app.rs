@@ -852,6 +852,7 @@ impl MutableAppContext {
     pub fn remove_all_windows(&mut self) {
         for (window_id, _) in self.cx.windows.drain() {
             self.presenters_and_platform_windows.remove(&window_id);
+            self.debug_elements_callbacks.remove(&window_id);
         }
         self.flush_effects();
     }
@@ -1403,6 +1404,7 @@ impl MutableAppContext {
     pub fn remove_window(&mut self, window_id: usize) {
         self.cx.windows.remove(&window_id);
         self.presenters_and_platform_windows.remove(&window_id);
+        self.debug_elements_callbacks.remove(&window_id);
         self.flush_effects();
     }
 
