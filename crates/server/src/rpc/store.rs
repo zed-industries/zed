@@ -296,7 +296,16 @@ impl Store {
                         }
                     }
 
-                    Ok(e.remove())
+                    let project = e.remove();
+                    if let Some(share) = &project.share {
+                        for guest_connection in share.guests.keys() {
+                            if let Some(connection) = self.connections.get_mut(&guest_connection) {
+                                connection.projects.remove(&project_id);
+                            }
+                        }
+                    }
+
+                    Ok(project)
                 } else {
                     Err(anyhow!("no such project"))?
                 }
