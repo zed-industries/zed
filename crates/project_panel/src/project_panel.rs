@@ -590,6 +590,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_visible_list(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+
         let params = cx.update(WorkspaceParams::test);
         let settings = params.settings.clone();
         let fs = params.fs.as_fake();
