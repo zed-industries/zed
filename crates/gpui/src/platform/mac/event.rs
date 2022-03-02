@@ -21,14 +21,19 @@ impl Event {
 
         match event_type {
             NSEventType::NSKeyDown => {
-                let mut input = None;
                 let modifiers = native_event.modifierFlags();
+                let ctrl = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
+                let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
+                let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
+                let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
+
                 let unmodified_chars = CStr::from_ptr(
                     native_event.charactersIgnoringModifiers().UTF8String() as *mut c_char,
                 )
                 .to_str()
                 .unwrap();
 
+                let mut input = None;
                 let unmodified_chars = if let Some(first_char) = unmodified_chars.chars().next() {
                     use cocoa::appkit::*;
                     const BACKSPACE_KEY: u16 = 0x7f;
@@ -71,14 +76,16 @@ impl Event {
                         NSF12FunctionKey => "f12",
 
                         _ => {
-                            input = Some(
-                                CStr::from_ptr(
-                                    native_event.characters().UTF8String() as *mut c_char
-                                )
-                                .to_str()
-                                .unwrap()
-                                .into(),
-                            );
+                            if !cmd && !ctrl {
+                                input = Some(
+                                    CStr::from_ptr(
+                                        native_event.characters().UTF8String() as *mut c_char
+                                    )
+                                    .to_str()
+                                    .unwrap()
+                                    .into(),
+                                );
+                            }
                             unmodified_chars
                         }
                     }
@@ -88,10 +95,10 @@ impl Event {
 
                 Some(Self::KeyDown {
                     keystroke: Keystroke {
-                        ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
-                        alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
-                        shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
-                        cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
+                        ctrl,
+                        alt,
+                        shift,
+                        cmd,
                         key: unmodified_chars.into(),
                     },
                     input,
