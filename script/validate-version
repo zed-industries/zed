@@ -2,6 +2,7 @@
 
 set -e
 
+mkdir -p vendor/bin
 if [[ ! -f vendor/bin/jq ]]; then
     curl -L https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-amd64 > vendor/bin/jq
     chmod +x vendor/bin/jq
