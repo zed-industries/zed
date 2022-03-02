@@ -951,7 +951,7 @@ impl Element for EditorElement {
             }
 
             let newest_selection_head = view
-                .newest_selection::<usize>(&snapshot.buffer_snapshot)
+                .newest_selection_with_snapshot::<usize>(&snapshot.buffer_snapshot)
                 .head()
                 .to_display_point(&snapshot);
 

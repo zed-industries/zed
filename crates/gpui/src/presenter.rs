@@ -281,6 +281,10 @@ impl<'a> UpgradeModelHandle for LayoutContext<'a> {
         self.app.upgrade_model_handle(handle)
     }
 
+    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
+        self.app.model_handle_is_upgradable(handle)
+    }
+
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
         self.app.upgrade_any_model_handle(handle)
     }

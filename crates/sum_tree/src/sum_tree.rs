@@ -821,6 +821,14 @@ mod tests {
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), None);
         assert_eq!(cursor.start().sum, 0);
+        cursor.prev(&());
+        assert_eq!(cursor.item(), None);
+        assert_eq!(cursor.prev_item(), None);
+        assert_eq!(cursor.start().sum, 0);
+        cursor.next(&());
+        assert_eq!(cursor.item(), None);
+        assert_eq!(cursor.prev_item(), None);
+        assert_eq!(cursor.start().sum, 0);
 
         // Single-element tree
         let mut tree = SumTree::<u8>::new();

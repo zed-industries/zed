@@ -30,14 +30,14 @@ use gpui::{
 };
 use items::{BufferItemHandle, MultiBufferItemHandle};
 use itertools::Itertools as _;
+pub use language::{char_kind, CharKind};
 use language::{
     AnchorRangeExt as _, BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic,
     DiagnosticSeverity, Language, Point, Selection, SelectionGoal, TransactionId,
 };
 use multi_buffer::MultiBufferChunks;
 pub use multi_buffer::{
-    char_kind, Anchor, AnchorRangeExt, CharKind, ExcerptId, MultiBuffer, MultiBufferSnapshot,
-    ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use ordered_float::OrderedFloat;
 use postage::watch;
@@ -132,6 +132,7 @@ action!(ShowCompletions);
 action!(ToggleCodeActions, bool);
 action!(ConfirmCompletion, Option<usize>);
 action!(ConfirmCodeAction, Option<usize>);
+action!(OpenExcerpts);
 
 pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpener>>) {
     path_openers.push(Box::new(items::BufferOpener));
@@ -259,6 +260,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
         Binding::new("alt-cmd-f", FoldSelectedRanges, Some("Editor")),
         Binding::new("ctrl-space", ShowCompletions, Some("Editor")),
         Binding::new("cmd-.", ToggleCodeActions(false), Some("Editor")),
+        Binding::new("alt-enter", OpenExcerpts, Some("Editor")),
     ]);
 
     cx.add_action(Editor::open_new);
@@ -324,6 +326,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_action(Editor::fold_selected_ranges);
     cx.add_action(Editor::show_completions);
     cx.add_action(Editor::toggle_code_actions);
+    cx.add_action(Editor::open_excerpts);
     cx.add_async_action(Editor::confirm_completion);
     cx.add_async_action(Editor::confirm_code_action);
     cx.add_async_action(Editor::rename);
@@ -446,6 +449,7 @@ pub struct Editor {
     code_actions_task: Option<Task<()>>,
     document_highlights_task: Option<Task<()>>,
     pending_rename: Option<RenameState>,
+    searchable: bool,
 }
 
 pub struct EditorSnapshot {
@@ -834,7 +838,7 @@ impl Editor {
         Self::new(EditorMode::Full, buffer, project, settings, None, cx)
     }
 
-    pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
+    pub fn clone(&self, nav_history: ItemNavHistory, cx: &mut ViewContext<Self>) -> Self {
         let mut clone = Self::new(
             self.mode,
             self.buffer.clone(),
@@ -845,10 +849,8 @@ impl Editor {
         );
         clone.scroll_position = self.scroll_position;
         clone.scroll_top_anchor = self.scroll_top_anchor.clone();
-        clone.nav_history = self
-            .nav_history
-            .as_ref()
-            .map(|nav_history| ItemNavHistory::new(nav_history.history(), &cx.handle()));
+        clone.nav_history = Some(nav_history);
+        clone.searchable = self.searchable;
         clone
     }
 
@@ -927,6 +929,7 @@ impl Editor {
             code_actions_task: Default::default(),
             document_highlights_task: Default::default(),
             pending_rename: Default::default(),
+            searchable: true,
         };
         this.end_selection(cx);
         this
@@ -1058,7 +1061,8 @@ impl Editor {
             first_cursor_top = highlighted_rows.start as f32;
             last_cursor_bottom = first_cursor_top + 1.;
         } else if autoscroll == Autoscroll::Newest {
-            let newest_selection = self.newest_selection::<Point>(&display_map.buffer_snapshot);
+            let newest_selection =
+                self.newest_selection_with_snapshot::<Point>(&display_map.buffer_snapshot);
             first_cursor_top = newest_selection.head().to_display_point(&display_map).row() as f32;
             last_cursor_bottom = first_cursor_top + 1.;
         } else {
@@ -1205,7 +1209,7 @@ impl Editor {
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let tail = self
-            .newest_selection::<usize>(&display_map.buffer_snapshot)
+            .newest_selection_with_snapshot::<usize>(&display_map.buffer_snapshot)
             .tail();
         self.begin_selection(position, false, click_count, cx);
 
@@ -1325,7 +1329,7 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let tail = self
-            .newest_selection::<Point>(&display_map.buffer_snapshot)
+            .newest_selection_with_snapshot::<Point>(&display_map.buffer_snapshot)
             .tail();
         self.columnar_selection_tail = Some(display_map.buffer_snapshot.anchor_before(tail));
 
@@ -1511,8 +1515,7 @@ impl Editor {
             self.set_selections(selections, None, cx);
             self.request_autoscroll(Autoscroll::Fit, cx);
         } else {
-            let buffer = self.buffer.read(cx).snapshot(cx);
-            let mut oldest_selection = self.oldest_selection::<usize>(&buffer);
+            let mut oldest_selection = self.oldest_selection::<usize>(&cx);
             if self.selection_count() == 1 {
                 if oldest_selection.is_empty() {
                     cx.propagate_action();
@@ -4083,7 +4086,7 @@ impl Editor {
 
     pub fn show_next_diagnostic(&mut self, _: &ShowNextDiagnostic, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let selection = self.newest_selection::<usize>(&buffer);
+        let selection = self.newest_selection_with_snapshot::<usize>(&buffer);
         let mut active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
             active_diagnostics
                 .primary_range
@@ -4155,8 +4158,7 @@ impl Editor {
         };
 
         let editor = editor_handle.read(cx);
-        let buffer = editor.buffer.read(cx);
-        let head = editor.newest_selection::<usize>(&buffer.read(cx)).head();
+        let head = editor.newest_selection::<usize>(cx).head();
         let (buffer, head) =
             if let Some(text_anchor) = editor.buffer.read(cx).text_anchor_for_position(head, cx) {
                 text_anchor
@@ -4170,6 +4172,7 @@ impl Editor {
         cx.spawn(|workspace, mut cx| async move {
             let definitions = definitions.await?;
             workspace.update(&mut cx, |workspace, cx| {
+                let nav_history = workspace.active_pane().read(cx).nav_history().clone();
                 for definition in definitions {
                     let range = definition.range.to_offset(definition.buffer.read(cx));
                     let target_editor_handle = workspace
@@ -4180,15 +4183,11 @@ impl Editor {
                     target_editor_handle.update(cx, |target_editor, cx| {
                         // When selecting a definition in a different buffer, disable the nav history
                         // to avoid creating a history entry at the previous cursor location.
-                        let disabled_history = if editor_handle == target_editor_handle {
-                            None
-                        } else {
-                            target_editor.nav_history.take()
-                        };
-                        target_editor.select_ranges([range], Some(Autoscroll::Center), cx);
-                        if disabled_history.is_some() {
-                            target_editor.nav_history = disabled_history;
+                        if editor_handle != target_editor_handle {
+                            nav_history.borrow_mut().disable();
                         }
+                        target_editor.select_ranges([range], Some(Autoscroll::Center), cx);
+                        nav_history.borrow_mut().enable();
                     });
                 }
             });
@@ -4207,8 +4206,7 @@ impl Editor {
         let editor_handle = active_item.act_as::<Self>(cx)?;
 
         let editor = editor_handle.read(cx);
-        let buffer = editor.buffer.read(cx);
-        let head = editor.newest_selection::<usize>(&buffer.read(cx)).head();
+        let head = editor.newest_selection::<usize>(cx).head();
         let (buffer, head) = editor.buffer.read(cx).text_anchor_for_position(head, cx)?;
         let replica_id = editor.replica_id(cx);
 
@@ -4432,12 +4430,11 @@ impl Editor {
         self.clear_highlighted_ranges::<Rename>(cx);
 
         let editor = rename.editor.read(cx);
-        let buffer = editor.buffer.read(cx).snapshot(cx);
-        let selection = editor.newest_selection::<usize>(&buffer);
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let selection = editor.newest_selection_with_snapshot::<usize>(&snapshot);
 
         // Update the selection to match the position of the selection inside
         // the rename editor.
-        let snapshot = self.buffer.read(cx).snapshot(cx);
         let rename_range = rename.range.to_offset(&snapshot);
         let start = snapshot
             .clip_offset(rename_range.start + selection.start, Bias::Left)
@@ -4748,17 +4745,28 @@ impl Editor {
 
     pub fn oldest_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        snapshot: &MultiBufferSnapshot,
+        cx: &AppContext,
     ) -> Selection<D> {
+        let snapshot = self.buffer.read(cx).read(cx);
         self.selections
             .iter()
             .min_by_key(|s| s.id)
-            .map(|selection| self.resolve_selection(selection, snapshot))
-            .or_else(|| self.pending_selection(snapshot))
+            .map(|selection| self.resolve_selection(selection, &snapshot))
+            .or_else(|| self.pending_selection(&snapshot))
             .unwrap()
     }
 
     pub fn newest_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
+        &self,
+        cx: &AppContext,
+    ) -> Selection<D> {
+        self.resolve_selection(
+            self.newest_anchor_selection(),
+            &self.buffer.read(cx).read(cx),
+        )
+    }
+
+    pub fn newest_selection_with_snapshot<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
         snapshot: &MultiBufferSnapshot,
     ) -> Selection<D> {
@@ -5145,6 +5153,14 @@ impl Editor {
         self.buffer.read(cx).read(cx).text()
     }
 
+    pub fn set_text(&mut self, text: impl Into<String>, cx: &mut ViewContext<Self>) {
+        self.buffer
+            .read(cx)
+            .as_singleton()
+            .expect("you can only call set_text on editors for singleton buffers")
+            .update(cx, |buffer, cx| buffer.set_text(text, cx));
+    }
+
     pub fn display_text(&self, cx: &mut MutableAppContext) -> String {
         self.display_map
             .update(cx, |map, cx| map.snapshot(cx))
@@ -5344,6 +5360,78 @@ impl Editor {
     fn on_display_map_changed(&mut self, _: ModelHandle<DisplayMap>, cx: &mut ViewContext<Self>) {
         cx.notify();
     }
+
+    pub fn set_searchable(&mut self, searchable: bool) {
+        self.searchable = searchable;
+    }
+
+    pub fn searchable(&self) -> bool {
+        self.searchable
+    }
+
+    fn open_excerpts(workspace: &mut Workspace, _: &OpenExcerpts, cx: &mut ViewContext<Workspace>) {
+        let active_item = workspace.active_item(cx);
+        let editor_handle = if let Some(editor) = active_item
+            .as_ref()
+            .and_then(|item| item.act_as::<Self>(cx))
+        {
+            editor
+        } else {
+            cx.propagate_action();
+            return;
+        };
+
+        let editor = editor_handle.read(cx);
+        let buffer = editor.buffer.read(cx);
+        if buffer.is_singleton() {
+            cx.propagate_action();
+            return;
+        }
+
+        let mut new_selections_by_buffer = HashMap::default();
+        for selection in editor.local_selections::<usize>(cx) {
+            for (buffer, mut range) in
+                buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
+            {
+                if selection.reversed {
+                    mem::swap(&mut range.start, &mut range.end);
+                }
+                new_selections_by_buffer
+                    .entry(buffer)
+                    .or_insert(Vec::new())
+                    .push(range)
+            }
+        }
+
+        editor_handle.update(cx, |editor, cx| {
+            editor.push_to_nav_history(editor.newest_anchor_selection().head(), None, cx);
+        });
+        let nav_history = workspace.active_pane().read(cx).nav_history().clone();
+        nav_history.borrow_mut().disable();
+
+        // We defer the pane interaction because we ourselves are a workspace item
+        // and activating a new item causes the pane to call a method on us reentrantly,
+        // which panics if we're on the stack.
+        cx.defer(move |workspace, cx| {
+            for (ix, (buffer, ranges)) in new_selections_by_buffer.into_iter().enumerate() {
+                let buffer = BufferItemHandle(buffer);
+                if ix == 0 && !workspace.activate_pane_for_item(&buffer, cx) {
+                    workspace.activate_next_pane(cx);
+                }
+
+                let editor = workspace
+                    .open_item(buffer, cx)
+                    .downcast::<Editor>()
+                    .unwrap();
+
+                editor.update(cx, |editor, cx| {
+                    editor.select_ranges(ranges, Some(Autoscroll::Newest), cx);
+                });
+            }
+
+            nav_history.borrow_mut().enable();
+        });
+    }
 }
 
 impl EditorSnapshot {
@@ -5463,9 +5551,14 @@ fn build_style(
     get_field_editor_theme: Option<GetFieldEditorTheme>,
     cx: &AppContext,
 ) -> EditorStyle {
-    let theme = settings.theme.editor.clone();
+    let mut theme = settings.theme.editor.clone();
     if let Some(get_field_editor_theme) = get_field_editor_theme {
         let field_editor_theme = get_field_editor_theme(&settings.theme);
+        if let Some(background) = field_editor_theme.container.background_color {
+            theme.background = background;
+        }
+        theme.text_color = field_editor_theme.text.color;
+        theme.selection = field_editor_theme.selection;
         EditorStyle {
             text: field_editor_theme.text,
             placeholder_text: field_editor_theme.placeholder_text,

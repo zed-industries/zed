@@ -12,7 +12,7 @@ use collections::{HashMap, HashSet};
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, SinkExt, StreamExt};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use rpc::{
-    proto::{self, AnyTypedEnvelope, EnvelopedMessage, RequestMessage},
+    proto::{self, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},
     Connection, ConnectionId, Peer, TypedEnvelope,
 };
 use sha1::{Digest as _, Sha1};
@@ -77,25 +77,28 @@ impl Server {
             .add_message_handler(Server::update_diagnostic_summary)
             .add_message_handler(Server::disk_based_diagnostics_updating)
             .add_message_handler(Server::disk_based_diagnostics_updated)
-            .add_request_handler(Server::get_definition)
-            .add_request_handler(Server::get_references)
-            .add_request_handler(Server::get_document_highlights)
-            .add_request_handler(Server::get_project_symbols)
-            .add_request_handler(Server::open_buffer_for_symbol)
-            .add_request_handler(Server::open_buffer)
+            .add_request_handler(Server::forward_project_request::<proto::GetDefinition>)
+            .add_request_handler(Server::forward_project_request::<proto::GetReferences>)
+            .add_request_handler(Server::forward_project_request::<proto::SearchProject>)
+            .add_request_handler(Server::forward_project_request::<proto::GetDocumentHighlights>)
+            .add_request_handler(Server::forward_project_request::<proto::GetProjectSymbols>)
+            .add_request_handler(Server::forward_project_request::<proto::OpenBufferForSymbol>)
+            .add_request_handler(Server::forward_project_request::<proto::OpenBuffer>)
+            .add_request_handler(Server::forward_project_request::<proto::GetCompletions>)
+            .add_request_handler(
+                Server::forward_project_request::<proto::ApplyCompletionAdditionalEdits>,
+            )
+            .add_request_handler(Server::forward_project_request::<proto::GetCodeActions>)
+            .add_request_handler(Server::forward_project_request::<proto::ApplyCodeAction>)
+            .add_request_handler(Server::forward_project_request::<proto::PrepareRename>)
+            .add_request_handler(Server::forward_project_request::<proto::PerformRename>)
+            .add_request_handler(Server::forward_project_request::<proto::FormatBuffers>)
             .add_message_handler(Server::close_buffer)
             .add_request_handler(Server::update_buffer)
             .add_message_handler(Server::update_buffer_file)
             .add_message_handler(Server::buffer_reloaded)
             .add_message_handler(Server::buffer_saved)
             .add_request_handler(Server::save_buffer)
-            .add_request_handler(Server::format_buffers)
-            .add_request_handler(Server::get_completions)
-            .add_request_handler(Server::apply_additional_edits_for_completion)
-            .add_request_handler(Server::get_code_actions)
-            .add_request_handler(Server::apply_code_action)
-            .add_request_handler(Server::prepare_rename)
-            .add_request_handler(Server::perform_rename)
             .add_request_handler(Server::get_channels)
             .add_request_handler(Server::get_users)
             .add_request_handler(Server::join_channel)
@@ -542,83 +545,16 @@ impl Server {
         Ok(())
     }
 
-    async fn get_definition(
+    async fn forward_project_request<T>(
         self: Arc<Server>,
-        request: TypedEnvelope<proto::GetDefinition>,
-    ) -> tide::Result<proto::GetDefinitionResponse> {
+        request: TypedEnvelope<T>,
+    ) -> tide::Result<T::Response>
+    where
+        T: EntityMessage + RequestMessage,
+    {
         let host_connection_id = self
             .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host_connection_id, request.payload)
-            .await?)
-    }
-
-    async fn get_references(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::GetReferences>,
-    ) -> tide::Result<proto::GetReferencesResponse> {
-        let host_connection_id = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host_connection_id, request.payload)
-            .await?)
-    }
-
-    async fn get_document_highlights(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::GetDocumentHighlights>,
-    ) -> tide::Result<proto::GetDocumentHighlightsResponse> {
-        let host_connection_id = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host_connection_id, request.payload)
-            .await?)
-    }
-
-    async fn get_project_symbols(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::GetProjectSymbols>,
-    ) -> tide::Result<proto::GetProjectSymbolsResponse> {
-        let host_connection_id = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host_connection_id, request.payload)
-            .await?)
-    }
-
-    async fn open_buffer_for_symbol(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::OpenBufferForSymbol>,
-    ) -> tide::Result<proto::OpenBufferForSymbolResponse> {
-        let host_connection_id = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host_connection_id, request.payload)
-            .await?)
-    }
-
-    async fn open_buffer(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::OpenBuffer>,
-    ) -> tide::Result<proto::OpenBufferResponse> {
-        let host_connection_id = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
+            .read_project(request.payload.remote_entity_id(), request.sender_id)?
             .host_connection_id;
         Ok(self
             .peer
@@ -663,104 +599,6 @@ impl Server {
         })?;
 
         Ok(response)
-    }
-
-    async fn format_buffers(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::FormatBuffers>,
-    ) -> tide::Result<proto::FormatBuffersResponse> {
-        let host = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host, request.payload.clone())
-            .await?)
-    }
-
-    async fn get_completions(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::GetCompletions>,
-    ) -> tide::Result<proto::GetCompletionsResponse> {
-        let host = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host, request.payload.clone())
-            .await?)
-    }
-
-    async fn apply_additional_edits_for_completion(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::ApplyCompletionAdditionalEdits>,
-    ) -> tide::Result<proto::ApplyCompletionAdditionalEditsResponse> {
-        let host = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host, request.payload.clone())
-            .await?)
-    }
-
-    async fn get_code_actions(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::GetCodeActions>,
-    ) -> tide::Result<proto::GetCodeActionsResponse> {
-        let host = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host, request.payload.clone())
-            .await?)
-    }
-
-    async fn apply_code_action(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::ApplyCodeAction>,
-    ) -> tide::Result<proto::ApplyCodeActionResponse> {
-        let host = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host, request.payload.clone())
-            .await?)
-    }
-
-    async fn prepare_rename(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::PrepareRename>,
-    ) -> tide::Result<proto::PrepareRenameResponse> {
-        let host = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host, request.payload.clone())
-            .await?)
-    }
-
-    async fn perform_rename(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::PerformRename>,
-    ) -> tide::Result<proto::PerformRenameResponse> {
-        let host = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        Ok(self
-            .peer
-            .forward_request(request.sender_id, host, request.payload.clone())
-            .await?)
     }
 
     async fn update_buffer(
@@ -1186,7 +1024,7 @@ mod tests {
             LanguageConfig, LanguageRegistry, LanguageServerConfig, Point, ToLspPosition,
         },
         lsp,
-        project::{DiagnosticSummary, Project, ProjectPath},
+        project::{search::SearchQuery, DiagnosticSummary, Project, ProjectPath},
         workspace::{Settings, Workspace, WorkspaceParams},
     };
 
@@ -1326,14 +1164,6 @@ mod tests {
         // buffer_a
         //     .condition(&cx_a, |buffer, _| buffer.selection_sets().count() == 0)
         //     .await;
-
-        // Close the buffer as client A, see that the buffer is closed.
-        cx_a.update(move |_| drop(buffer_a));
-        project_a
-            .condition(&cx_a, |project, cx| {
-                !project.has_open_buffer((worktree_id, "b.txt"), cx)
-            })
-            .await;
 
         // Dropping the client B's project removes client B from client A's collaborators.
         cx_b.update(move |_| drop(project_b));
@@ -2697,14 +2527,6 @@ mod tests {
             );
         });
         assert_eq!(definitions_1[0].buffer, definitions_2[0].buffer);
-
-        cx_b.update(|_| {
-            drop(definitions_1);
-            drop(definitions_2);
-        });
-        project_b
-            .condition(&cx_b, |proj, cx| proj.worktrees(cx).count() == 1)
-            .await;
     }
 
     #[gpui::test(iterations = 10)]
@@ -2841,6 +2663,118 @@ mod tests {
             assert_eq!(references[1].range.to_offset(&two_buffer), 35..38);
             assert_eq!(references[2].range.to_offset(&three_buffer), 37..40);
         });
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_project_search(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+        cx_a.foreground().forbid_parking();
+        let lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = FakeFs::new(cx_a.background());
+        fs.insert_tree(
+            "/root-1",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "a": "hello world",
+                "b": "goodnight moon",
+                "c": "a world of goo",
+                "d": "world champion of clown world",
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/root-2",
+            json!({
+                "e": "disney world is fun",
+            }),
+        )
+        .await;
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let client_a = server.create_client(&mut cx_a, "user_a").await;
+        let client_b = server.create_client(&mut cx_b, "user_b").await;
+
+        // Share a project as client A
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+
+        let (worktree_1, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/root-1", false, cx)
+            })
+            .await
+            .unwrap();
+        worktree_1
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let (worktree_2, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/root-2", false, cx)
+            })
+            .await
+            .unwrap();
+        worktree_2
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+
+        eprintln!("sharing");
+
+        project_a
+            .update(&mut cx_a, |p, cx| p.share(cx))
+            .await
+            .unwrap();
+
+        // Join the worktree as client B.
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        let results = project_b
+            .update(&mut cx_b, |project, cx| {
+                project.search(SearchQuery::text("world", false, false), cx)
+            })
+            .await
+            .unwrap();
+
+        let mut ranges_by_path = results
+            .into_iter()
+            .map(|(buffer, ranges)| {
+                buffer.read_with(&cx_b, |buffer, cx| {
+                    let path = buffer.file().unwrap().full_path(cx);
+                    let offset_ranges = ranges
+                        .into_iter()
+                        .map(|range| range.to_offset(buffer))
+                        .collect::<Vec<_>>();
+                    (path, offset_ranges)
+                })
+            })
+            .collect::<Vec<_>>();
+        ranges_by_path.sort_by_key(|(path, _)| path.clone());
+
+        assert_eq!(
+            ranges_by_path,
+            &[
+                (PathBuf::from("root-1/a"), vec![6..11]),
+                (PathBuf::from("root-1/c"), vec![2..7]),
+                (PathBuf::from("root-1/d"), vec![0..5, 24..29]),
+                (PathBuf::from("root-2/e"), vec![7..12]),
+            ]
+        );
     }
 
     #[gpui::test(iterations = 10)]
@@ -4418,23 +4352,21 @@ mod tests {
                 .project
                 .as_ref()
                 .unwrap()
-                .read_with(guest_cx, |project, _| {
+                .read_with(guest_cx, |project, cx| {
                     assert!(
-                        !project.has_buffered_operations(),
-                        "guest {} has buffered operations ",
+                        !project.has_deferred_operations(cx),
+                        "guest {} has deferred operations",
                         guest_id,
                     );
                 });
 
             for guest_buffer in &guest_client.buffers {
                 let buffer_id = guest_buffer.read_with(guest_cx, |buffer, _| buffer.remote_id());
-                let host_buffer = host_project.read_with(&host_cx, |project, _| {
-                    project
-                        .shared_buffer(guest_client.peer_id, buffer_id)
-                        .expect(&format!(
-                            "host doest not have buffer for guest:{}, peer:{}, id:{}",
-                            guest_id, guest_client.peer_id, buffer_id
-                        ))
+                let host_buffer = host_project.read_with(&host_cx, |project, cx| {
+                    project.buffer_for_id(buffer_id, cx).expect(&format!(
+                        "host does not have buffer for guest:{}, peer:{}, id:{}",
+                        guest_id, guest_client.peer_id, buffer_id
+                    ))
                 });
                 assert_eq!(
                     guest_buffer.read_with(guest_cx, |buffer, _| buffer.text()),
@@ -4829,8 +4761,9 @@ mod tests {
                             } else {
                                 buffer.update(&mut cx, |buffer, cx| {
                                     log::info!(
-                                        "Host: updating buffer {:?}",
-                                        buffer.file().unwrap().full_path(cx)
+                                        "Host: updating buffer {:?} ({})",
+                                        buffer.file().unwrap().full_path(cx),
+                                        buffer.remote_id()
                                     );
                                     buffer.randomly_edit(&mut *rng.lock(), 5, cx)
                                 });
@@ -4917,9 +4850,19 @@ mod tests {
                         project_path.1
                     );
                     let buffer = project
-                        .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))
+                        .update(&mut cx, |project, cx| {
+                            project.open_buffer(project_path.clone(), cx)
+                        })
                         .await
                         .unwrap();
+                    log::info!(
+                        "Guest {}: path in worktree {:?} {:?} {:?} opened with buffer id {:?}",
+                        guest_id,
+                        project_path.0,
+                        worktree_root_name,
+                        project_path.1,
+                        buffer.read_with(&cx, |buffer, _| buffer.remote_id())
+                    );
                     self.buffers.insert(buffer.clone());
                     buffer
                 } else {
@@ -5008,7 +4951,7 @@ mod tests {
                             save.await;
                         }
                     }
-                    40..=45 => {
+                    40..=44 => {
                         let prepare_rename = project.update(&mut cx, |project, cx| {
                             log::info!(
                                 "Guest {}: preparing rename for buffer {:?}",
@@ -5028,10 +4971,10 @@ mod tests {
                             prepare_rename.await;
                         }
                     }
-                    46..=49 => {
+                    45..=49 => {
                         let definitions = project.update(&mut cx, |project, cx| {
                             log::info!(
-                                "Guest {}: requesting defintions for buffer {:?}",
+                                "Guest {}: requesting definitions for buffer {:?}",
                                 guest_id,
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
@@ -5049,7 +4992,7 @@ mod tests {
                                 .extend(definitions.await.into_iter().map(|loc| loc.buffer));
                         }
                     }
-                    50..=55 => {
+                    50..=54 => {
                         let highlights = project.update(&mut cx, |project, cx| {
                             log::info!(
                                 "Guest {}: requesting highlights for buffer {:?}",
@@ -5067,6 +5010,22 @@ mod tests {
                             highlights.detach();
                         } else {
                             highlights.await;
+                        }
+                    }
+                    55..=59 => {
+                        let search = project.update(&mut cx, |project, cx| {
+                            let query = rng.lock().gen_range('a'..='z');
+                            log::info!("Guest {}: project-wide search {:?}", guest_id, query);
+                            project.search(SearchQuery::text(query, false, false), cx)
+                        });
+                        let search = cx
+                            .background()
+                            .spawn(async move { search.await.expect("search request failed") });
+                        if rng.lock().gen_bool(0.3) {
+                            log::info!("Guest {}: detaching search request", guest_id);
+                            search.detach();
+                        } else {
+                            self.buffers.extend(search.await.into_keys());
                         }
                     }
                     _ => {

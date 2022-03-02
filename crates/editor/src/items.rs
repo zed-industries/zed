@@ -158,11 +158,11 @@ impl WeakItemHandle for WeakMultiBufferItemHandle {
 }
 
 impl ItemView for Editor {
-    fn item_id(&self, cx: &AppContext) -> usize {
+    fn item(&self, cx: &AppContext) -> Box<dyn ItemHandle> {
         if let Some(buffer) = self.buffer.read(cx).as_singleton() {
-            buffer.id()
+            Box::new(BufferItemHandle(buffer))
         } else {
-            self.buffer.id()
+            Box::new(MultiBufferItemHandle(self.buffer.clone()))
         }
     }
 
@@ -194,11 +194,15 @@ impl ItemView for Editor {
         })
     }
 
-    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
+    fn clone_on_split(
+        &self,
+        nav_history: ItemNavHistory,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Self>
     where
         Self: Sized,
     {
-        Some(self.clone(cx))
+        Some(self.clone(nav_history, cx))
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
@@ -378,7 +382,9 @@ impl DiagnosticMessage {
     fn update(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
         let buffer = editor.buffer().read(cx);
-        let cursor_position = editor.newest_selection::<usize>(&buffer.read(cx)).head();
+        let cursor_position = editor
+            .newest_selection_with_snapshot::<usize>(&buffer.read(cx))
+            .head();
         let new_diagnostic = buffer
             .read(cx)
             .diagnostics_in_range::<_, usize>(cursor_position..cursor_position)

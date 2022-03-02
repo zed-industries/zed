@@ -34,13 +34,13 @@ where
             stack: ArrayVec::new(),
             position: D::default(),
             did_seek: false,
-            at_end: false,
+            at_end: tree.is_empty(),
         }
     }
 
     fn reset(&mut self) {
         self.did_seek = false;
-        self.at_end = false;
+        self.at_end = self.tree.is_empty();
         self.stack.truncate(0);
         self.position = D::default();
     }
@@ -139,7 +139,7 @@ where
         if self.at_end {
             self.position = D::default();
             self.descend_to_last_item(self.tree, cx);
-            self.at_end = false;
+            self.at_end = self.tree.is_empty();
         } else {
             while let Some(entry) = self.stack.pop() {
                 if entry.index > 0 {
@@ -195,13 +195,15 @@ where
     {
         let mut descend = false;
 
-        if self.stack.is_empty() && !self.at_end {
-            self.stack.push(StackEntry {
-                tree: self.tree,
-                index: 0,
-                position: D::default(),
-            });
-            descend = true;
+        if self.stack.is_empty() {
+            if !self.at_end {
+                self.stack.push(StackEntry {
+                    tree: self.tree,
+                    index: 0,
+                    position: D::default(),
+                });
+                descend = true;
+            }
             self.did_seek = true;
         }
 
@@ -279,6 +281,10 @@ where
         cx: &<T::Summary as Summary>::Context,
     ) {
         self.did_seek = true;
+        if subtree.is_empty() {
+            return;
+        }
+
         loop {
             match subtree.0.as_ref() {
                 Node::Internal {
@@ -298,7 +304,7 @@ where
                     subtree = child_trees.last().unwrap();
                 }
                 Node::Leaf { item_summaries, .. } => {
-                    let last_index = item_summaries.len().saturating_sub(1);
+                    let last_index = item_summaries.len() - 1;
                     for item_summary in &item_summaries[0..last_index] {
                         self.position.add_summary(item_summary, cx);
                     }

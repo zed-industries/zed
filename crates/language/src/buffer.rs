@@ -365,6 +365,14 @@ pub(crate) struct DiagnosticEndpoint {
     severity: DiagnosticSeverity,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug)]
+pub enum CharKind {
+    Newline,
+    Punctuation,
+    Whitespace,
+    Word,
+}
+
 impl Buffer {
     pub fn new<T: Into<Arc<str>>>(
         replica_id: ReplicaId,
@@ -1335,6 +1343,13 @@ impl Buffer {
             .pending_snapshots
             .insert(version, snapshot.clone());
         let _ = language_server.latest_snapshot.blocking_send(snapshot);
+    }
+
+    pub fn set_text<T>(&mut self, text: T, cx: &mut ModelContext<Self>) -> Option<clock::Local>
+    where
+        T: Into<String>,
+    {
+        self.edit_internal([0..self.len()], text, false, cx)
     }
 
     pub fn edit<I, S, T>(
@@ -2658,4 +2673,16 @@ pub fn contiguous_ranges(
             return current_range.take();
         }
     })
+}
+
+pub fn char_kind(c: char) -> CharKind {
+    if c == '\n' {
+        CharKind::Newline
+    } else if c.is_whitespace() {
+        CharKind::Whitespace
+    } else if c.is_alphanumeric() || c == '_' {
+        CharKind::Word
+    } else {
+        CharKind::Punctuation
+    }
 }

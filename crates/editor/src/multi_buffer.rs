@@ -7,8 +7,9 @@ use collections::{Bound, HashMap, HashSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
-    Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Outline,
-    OutlineItem, Selection, ToOffset as _, ToPoint as _, ToPointUtf16 as _, TransactionId,
+    char_kind, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, DiagnosticEntry, Event, File,
+    Language, Outline, OutlineItem, Selection, ToOffset as _, ToPoint as _, ToPointUtf16 as _,
+    TransactionId,
 };
 use std::{
     cell::{Ref, RefCell},
@@ -42,20 +43,13 @@ pub struct MultiBuffer {
     title: Option<String>,
 }
 
+#[derive(Clone)]
 struct History {
     next_transaction_id: TransactionId,
     undo_stack: Vec<Transaction>,
     redo_stack: Vec<Transaction>,
     transaction_depth: usize,
     group_interval: Duration,
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug)]
-pub enum CharKind {
-    Newline,
-    Punctuation,
-    Whitespace,
-    Word,
 }
 
 #[derive(Clone)]
@@ -102,6 +96,7 @@ pub struct MultiBufferSnapshot {
 }
 
 pub struct ExcerptBoundary {
+    pub id: ExcerptId,
     pub row: u32,
     pub buffer: BufferSnapshot,
     pub range: Range<text::Anchor>,
@@ -171,6 +166,37 @@ impl MultiBuffer {
                 group_interval: Duration::from_millis(300),
             },
             title: Default::default(),
+        }
+    }
+
+    pub fn clone(&self, new_cx: &mut ModelContext<Self>) -> Self {
+        let mut buffers = HashMap::default();
+        for (buffer_id, buffer_state) in self.buffers.borrow().iter() {
+            buffers.insert(
+                *buffer_id,
+                BufferState {
+                    buffer: buffer_state.buffer.clone(),
+                    last_version: buffer_state.last_version.clone(),
+                    last_parse_count: buffer_state.last_parse_count,
+                    last_selections_update_count: buffer_state.last_selections_update_count,
+                    last_diagnostics_update_count: buffer_state.last_diagnostics_update_count,
+                    last_file_update_count: buffer_state.last_file_update_count,
+                    excerpts: buffer_state.excerpts.clone(),
+                    _subscriptions: [
+                        new_cx.observe(&buffer_state.buffer, |_, _, cx| cx.notify()),
+                        new_cx.subscribe(&buffer_state.buffer, Self::on_buffer_event),
+                    ],
+                },
+            );
+        }
+        Self {
+            snapshot: RefCell::new(self.snapshot.borrow().clone()),
+            buffers: RefCell::new(buffers),
+            subscriptions: Default::default(),
+            singleton: self.singleton,
+            replica_id: self.replica_id,
+            history: self.history.clone(),
+            title: self.title.clone(),
         }
     }
 
@@ -693,6 +719,11 @@ impl MultiBuffer {
         O: text::ToOffset,
     {
         assert_eq!(self.history.transaction_depth, 0);
+        let mut ranges = ranges.into_iter().peekable();
+        if ranges.peek().is_none() {
+            return Default::default();
+        }
+
         self.sync(cx);
 
         let buffer_id = buffer.id();
@@ -733,7 +764,6 @@ impl MultiBuffer {
         }
 
         let mut ids = Vec::new();
-        let mut ranges = ranges.into_iter().peekable();
         while let Some(range) = ranges.next() {
             let id = ExcerptId::between(&prev_id, &next_id);
             if let Err(ix) = buffer_state.excerpts.binary_search(&id) {
@@ -771,6 +801,22 @@ impl MultiBuffer {
 
         cx.notify();
         ids
+    }
+
+    pub fn clear(&mut self, cx: &mut ModelContext<Self>) {
+        self.sync(cx);
+        self.buffers.borrow_mut().clear();
+        let mut snapshot = self.snapshot.borrow_mut();
+        let prev_len = snapshot.len();
+        snapshot.excerpts = Default::default();
+        snapshot.trailing_excerpt_update_count += 1;
+        snapshot.is_dirty = false;
+        snapshot.has_conflict = false;
+        self.subscriptions.publish_mut([Edit {
+            old: 0..prev_len,
+            new: 0..0,
+        }]);
+        cx.notify();
     }
 
     pub fn excerpt_ids_for_buffer(&self, buffer: &ModelHandle<Buffer>) -> Vec<ExcerptId> {
@@ -840,6 +886,7 @@ impl MultiBuffer {
         excerpt_ids: impl IntoIterator<Item = &'a ExcerptId>,
         cx: &mut ModelContext<Self>,
     ) {
+        self.sync(cx);
         let mut buffers = self.buffers.borrow_mut();
         let mut snapshot = self.snapshot.borrow_mut();
         let mut new_excerpts = SumTree::new();
@@ -1166,6 +1213,12 @@ impl MultiBuffer {
 
         let mut buffers = Vec::new();
         for _ in 0..mutation_count {
+            if rng.gen_bool(0.05) {
+                log::info!("Clearing multi-buffer");
+                self.clear(cx);
+                continue;
+            }
+
             let excerpt_ids = self
                 .buffers
                 .borrow()
@@ -1195,16 +1248,26 @@ impl MultiBuffer {
                 };
 
                 let buffer = buffer_handle.read(cx);
-                let end_ix = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Right);
-                let start_ix = buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
+                let buffer_text = buffer.text();
+                let ranges = (0..rng.gen_range(0..5))
+                    .map(|_| {
+                        let end_ix =
+                            buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Right);
+                        let start_ix = buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
+                        start_ix..end_ix
+                    })
+                    .collect::<Vec<_>>();
                 log::info!(
-                    "Inserting excerpt from buffer {} and range {:?}: {:?}",
+                    "Inserting excerpts from buffer {} and ranges {:?}: {:?}",
                     buffer_handle.id(),
-                    start_ix..end_ix,
-                    &buffer.text()[start_ix..end_ix]
+                    ranges,
+                    ranges
+                        .iter()
+                        .map(|range| &buffer_text[range.clone()])
+                        .collect::<Vec<_>>()
                 );
 
-                let excerpt_id = self.push_excerpts(buffer_handle.clone(), [start_ix..end_ix], cx);
+                let excerpt_id = self.push_excerpts(buffer_handle.clone(), ranges, cx);
                 log::info!("Inserted with id: {:?}", excerpt_id);
             } else {
                 let remove_count = rng.gen_range(1..=excerpt_ids.len());
@@ -1342,9 +1405,12 @@ impl MultiBufferSnapshot {
         (start..end, word_kind)
     }
 
-    fn as_singleton(&self) -> Option<&Excerpt> {
+    pub fn as_singleton(&self) -> Option<(&ExcerptId, usize, &BufferSnapshot)> {
         if self.singleton {
-            self.excerpts.iter().next()
+            self.excerpts
+                .iter()
+                .next()
+                .map(|e| (&e.id, e.buffer_id, &e.buffer))
         } else {
             None
         }
@@ -1359,8 +1425,8 @@ impl MultiBufferSnapshot {
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
-        if let Some(excerpt) = self.as_singleton() {
-            return excerpt.buffer.clip_offset(offset, bias);
+        if let Some((_, _, buffer)) = self.as_singleton() {
+            return buffer.clip_offset(offset, bias);
         }
 
         let mut cursor = self.excerpts.cursor::<usize>();
@@ -1378,8 +1444,8 @@ impl MultiBufferSnapshot {
     }
 
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
-        if let Some(excerpt) = self.as_singleton() {
-            return excerpt.buffer.clip_point(point, bias);
+        if let Some((_, _, buffer)) = self.as_singleton() {
+            return buffer.clip_point(point, bias);
         }
 
         let mut cursor = self.excerpts.cursor::<Point>();
@@ -1397,8 +1463,8 @@ impl MultiBufferSnapshot {
     }
 
     pub fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
-        if let Some(excerpt) = self.as_singleton() {
-            return excerpt.buffer.clip_point_utf16(point, bias);
+        if let Some((_, _, buffer)) = self.as_singleton() {
+            return buffer.clip_point_utf16(point, bias);
         }
 
         let mut cursor = self.excerpts.cursor::<PointUtf16>();
@@ -1466,8 +1532,8 @@ impl MultiBufferSnapshot {
     }
 
     pub fn offset_to_point(&self, offset: usize) -> Point {
-        if let Some(excerpt) = self.as_singleton() {
-            return excerpt.buffer.offset_to_point(offset);
+        if let Some((_, _, buffer)) = self.as_singleton() {
+            return buffer.offset_to_point(offset);
         }
 
         let mut cursor = self.excerpts.cursor::<(usize, Point)>();
@@ -1487,8 +1553,8 @@ impl MultiBufferSnapshot {
     }
 
     pub fn offset_to_point_utf16(&self, offset: usize) -> PointUtf16 {
-        if let Some(excerpt) = self.as_singleton() {
-            return excerpt.buffer.offset_to_point_utf16(offset);
+        if let Some((_, _, buffer)) = self.as_singleton() {
+            return buffer.offset_to_point_utf16(offset);
         }
 
         let mut cursor = self.excerpts.cursor::<(usize, PointUtf16)>();
@@ -1508,8 +1574,8 @@ impl MultiBufferSnapshot {
     }
 
     pub fn point_to_point_utf16(&self, point: Point) -> PointUtf16 {
-        if let Some(excerpt) = self.as_singleton() {
-            return excerpt.buffer.point_to_point_utf16(point);
+        if let Some((_, _, buffer)) = self.as_singleton() {
+            return buffer.point_to_point_utf16(point);
         }
 
         let mut cursor = self.excerpts.cursor::<(Point, PointUtf16)>();
@@ -1529,8 +1595,8 @@ impl MultiBufferSnapshot {
     }
 
     pub fn point_to_offset(&self, point: Point) -> usize {
-        if let Some(excerpt) = self.as_singleton() {
-            return excerpt.buffer.point_to_offset(point);
+        if let Some((_, _, buffer)) = self.as_singleton() {
+            return buffer.point_to_offset(point);
         }
 
         let mut cursor = self.excerpts.cursor::<(Point, usize)>();
@@ -1550,8 +1616,8 @@ impl MultiBufferSnapshot {
     }
 
     pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
-        if let Some(excerpt) = self.as_singleton() {
-            return excerpt.buffer.point_utf16_to_offset(point);
+        if let Some((_, _, buffer)) = self.as_singleton() {
+            return buffer.point_utf16_to_offset(point);
         }
 
         let mut cursor = self.excerpts.cursor::<(PointUtf16, usize)>();
@@ -1711,9 +1777,8 @@ impl MultiBufferSnapshot {
         D: TextDimension + Ord + Sub<D, Output = D>,
         I: 'a + IntoIterator<Item = &'a Anchor>,
     {
-        if let Some(excerpt) = self.as_singleton() {
-            return excerpt
-                .buffer
+        if let Some((_, _, buffer)) = self.as_singleton() {
+            return buffer
                 .summaries_for_anchors(anchors.into_iter().map(|a| &a.text_anchor))
                 .collect();
         }
@@ -1878,11 +1943,11 @@ impl MultiBufferSnapshot {
 
     pub fn anchor_at<T: ToOffset>(&self, position: T, mut bias: Bias) -> Anchor {
         let offset = position.to_offset(self);
-        if let Some(excerpt) = self.as_singleton() {
+        if let Some((excerpt_id, buffer_id, buffer)) = self.as_singleton() {
             return Anchor {
-                buffer_id: Some(excerpt.buffer_id),
-                excerpt_id: excerpt.id.clone(),
-                text_anchor: excerpt.buffer.anchor_at(offset, bias),
+                buffer_id: Some(buffer_id),
+                excerpt_id: excerpt_id.clone(),
+                text_anchor: buffer.anchor_at(offset, bias),
             };
         }
 
@@ -1989,6 +2054,7 @@ impl MultiBufferSnapshot {
                 let excerpt = cursor.item()?;
                 let starts_new_buffer = Some(excerpt.buffer_id) != prev_buffer_id;
                 let boundary = ExcerptBoundary {
+                    id: excerpt.id.clone(),
                     row: cursor.start().1.row,
                     buffer: excerpt.buffer.clone(),
                     range: excerpt.range.clone(),
@@ -2090,7 +2156,7 @@ impl MultiBufferSnapshot {
     {
         self.as_singleton()
             .into_iter()
-            .flat_map(move |excerpt| excerpt.buffer.diagnostic_group(group_id))
+            .flat_map(move |(_, _, buffer)| buffer.diagnostic_group(group_id))
     }
 
     pub fn diagnostics_in_range<'a, T, O>(
@@ -2101,11 +2167,11 @@ impl MultiBufferSnapshot {
         T: 'a + ToOffset,
         O: 'a + text::FromAnchor,
     {
-        self.as_singleton().into_iter().flat_map(move |excerpt| {
-            excerpt
-                .buffer
-                .diagnostics_in_range(range.start.to_offset(self)..range.end.to_offset(self))
-        })
+        self.as_singleton()
+            .into_iter()
+            .flat_map(move |(_, _, buffer)| {
+                buffer.diagnostics_in_range(range.start.to_offset(self)..range.end.to_offset(self))
+            })
     }
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
@@ -2147,16 +2213,16 @@ impl MultiBufferSnapshot {
     }
 
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
-        let excerpt = self.as_singleton()?;
-        let outline = excerpt.buffer.outline(theme)?;
+        let (excerpt_id, _, buffer) = self.as_singleton()?;
+        let outline = buffer.outline(theme)?;
         Some(Outline::new(
             outline
                 .items
                 .into_iter()
                 .map(|item| OutlineItem {
                     depth: item.depth,
-                    range: self.anchor_in_excerpt(excerpt.id.clone(), item.range.start)
-                        ..self.anchor_in_excerpt(excerpt.id.clone(), item.range.end),
+                    range: self.anchor_in_excerpt(excerpt_id.clone(), item.range.start)
+                        ..self.anchor_in_excerpt(excerpt_id.clone(), item.range.end),
                     text: item.text,
                     highlight_ranges: item.highlight_ranges,
                     name_ranges: item.name_ranges,
@@ -2761,18 +2827,6 @@ impl ToPointUtf16 for Point {
 impl ToPointUtf16 for PointUtf16 {
     fn to_point_utf16<'a>(&self, _: &MultiBufferSnapshot) -> PointUtf16 {
         *self
-    }
-}
-
-pub fn char_kind(c: char) -> CharKind {
-    if c == '\n' {
-        CharKind::Newline
-    } else if c.is_whitespace() {
-        CharKind::Whitespace
-    } else if c.is_alphanumeric() || c == '_' {
-        CharKind::Word
-    } else {
-        CharKind::Punctuation
     }
 }
 

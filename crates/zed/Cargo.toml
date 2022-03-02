@@ -36,7 +36,7 @@ contacts_panel = { path = "../contacts_panel" }
 diagnostics = { path = "../diagnostics" }
 editor = { path = "../editor" }
 file_finder = { path = "../file_finder" }
-find = { path = "../find" }
+search = { path = "../search" }
 fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
 go_to_line = { path = "../go_to_line" }
@@ -88,7 +88,6 @@ smol = "1.2.5"
 surf = "2.2"
 tempdir = { version = "0.3.7", optional = true }
 thiserror = "1.0.29"
-time = "0.3"
 tiny_http = "0.8"
 toml = "0.5"
 tree-sitter = "0.20.4"

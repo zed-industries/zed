@@ -259,7 +259,9 @@ impl OutlineView {
 
             let editor = self.active_editor.read(cx);
             let buffer = editor.buffer().read(cx).read(cx);
-            let cursor_offset = editor.newest_selection::<usize>(&buffer).head();
+            let cursor_offset = editor
+                .newest_selection_with_snapshot::<usize>(&buffer)
+                .head();
             selected_index = self
                 .outline
                 .items

@@ -123,6 +123,7 @@ enum NavigationMode {
     Normal,
     GoingBack,
     GoingForward,
+    Disabled,
 }
 
 impl Default for NavigationMode {
@@ -147,6 +148,10 @@ impl Pane {
             active_toolbar_type: Default::default(),
             active_toolbar_visible: false,
         }
+    }
+
+    pub fn nav_history(&self) -> &Rc<RefCell<NavHistory>> {
+        &self.nav_history
     }
 
     pub fn activate(&self, cx: &mut ViewContext<Self>) {
@@ -279,7 +284,7 @@ impl Pane {
         item_view.added_to_pane(cx);
         let item_idx = cmp::min(self.active_item_index + 1, self.item_views.len());
         self.item_views
-            .insert(item_idx, (item_view.item_id(cx), item_view));
+            .insert(item_idx, (item_view.item(cx).id(), item_view));
         self.activate_item(item_idx, cx);
         cx.notify();
     }
@@ -662,6 +667,14 @@ impl ItemNavHistory {
 }
 
 impl NavHistory {
+    pub fn disable(&mut self) {
+        self.mode = NavigationMode::Disabled;
+    }
+
+    pub fn enable(&mut self) {
+        self.mode = NavigationMode::Normal;
+    }
+
     pub fn pop_backward(&mut self) -> Option<NavigationEntry> {
         self.backward_stack.pop_back()
     }
@@ -672,7 +685,7 @@ impl NavHistory {
 
     fn pop(&mut self, mode: NavigationMode) -> Option<NavigationEntry> {
         match mode {
-            NavigationMode::Normal => None,
+            NavigationMode::Normal | NavigationMode::Disabled => None,
             NavigationMode::GoingBack => self.pop_backward(),
             NavigationMode::GoingForward => self.pop_forward(),
         }
@@ -688,6 +701,7 @@ impl NavHistory {
         item_view: Rc<dyn WeakItemViewHandle>,
     ) {
         match self.mode {
+            NavigationMode::Disabled => {}
             NavigationMode::Normal => {
                 if self.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
                     self.backward_stack.pop_front();

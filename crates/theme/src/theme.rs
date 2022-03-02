@@ -24,7 +24,7 @@ pub struct Theme {
     pub project_panel: ProjectPanel,
     pub selector: Selector,
     pub editor: Editor,
-    pub find: Find,
+    pub search: Search,
     pub project_diagnostics: ProjectDiagnostics,
 }
 
@@ -95,18 +95,21 @@ pub struct Toolbar {
 }
 
 #[derive(Clone, Deserialize, Default)]
-pub struct Find {
+pub struct Search {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub editor: FindEditor,
     pub invalid_editor: ContainerStyle,
-    pub mode_button_group: ContainerStyle,
-    pub mode_button: ContainedText,
-    pub active_mode_button: ContainedText,
-    pub hovered_mode_button: ContainedText,
-    pub active_hovered_mode_button: ContainedText,
+    pub option_button_group: ContainerStyle,
+    pub option_button: ContainedText,
+    pub active_option_button: ContainedText,
+    pub hovered_option_button: ContainedText,
+    pub active_hovered_option_button: ContainedText,
     pub match_background: Color,
     pub match_index: ContainedText,
+    pub results_status: TextStyle,
+    pub tab_icon_width: f32,
+    pub tab_icon_spacing: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]

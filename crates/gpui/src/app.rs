@@ -85,6 +85,8 @@ pub trait UpgradeModelHandle {
         handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>>;
 
+    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool;
+
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle>;
 }
 
@@ -608,6 +610,10 @@ impl UpgradeModelHandle for AsyncAppContext {
         self.0.borrow().upgrade_model_handle(handle)
     }
 
+    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
+        self.0.borrow().model_handle_is_upgradable(handle)
+    }
+
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
         self.0.borrow().upgrade_any_model_handle(handle)
     }
@@ -710,7 +716,7 @@ impl ReadViewWith for TestAppContext {
 }
 
 type ActionCallback =
-    dyn FnMut(&mut dyn AnyView, &dyn AnyAction, &mut MutableAppContext, usize, usize) -> bool;
+    dyn FnMut(&mut dyn AnyView, &dyn AnyAction, &mut MutableAppContext, usize, usize);
 type GlobalActionCallback = dyn FnMut(&dyn AnyAction, &mut MutableAppContext);
 
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
@@ -722,6 +728,7 @@ pub struct MutableAppContext {
     foreground_platform: Rc<dyn platform::ForegroundPlatform>,
     assets: Arc<AssetCache>,
     cx: AppContext,
+    capture_actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     global_actions: HashMap<TypeId, Box<GlobalActionCallback>>,
     keystroke_matcher: keymap::Matcher,
@@ -741,6 +748,7 @@ pub struct MutableAppContext {
     pending_flushes: usize,
     flushing_effects: bool,
     next_cursor_style_handle_id: Arc<AtomicUsize>,
+    halt_action_dispatch: bool,
 }
 
 impl MutableAppContext {
@@ -761,12 +769,14 @@ impl MutableAppContext {
                 models: Default::default(),
                 views: Default::default(),
                 windows: Default::default(),
+                app_states: Default::default(),
                 element_states: Default::default(),
                 ref_counts: Arc::new(Mutex::new(RefCounts::default())),
                 background,
                 font_cache,
                 platform,
             },
+            capture_actions: HashMap::new(),
             actions: HashMap::new(),
             global_actions: HashMap::new(),
             keystroke_matcher: keymap::Matcher::default(),
@@ -785,6 +795,7 @@ impl MutableAppContext {
             pending_flushes: 0,
             flushing_effects: false,
             next_cursor_style_handle_id: Default::default(),
+            halt_action_dispatch: false,
         }
     }
 
@@ -855,7 +866,25 @@ impl MutableAppContext {
             .map(|debug_elements| debug_elements(&self.cx))
     }
 
-    pub fn add_action<A, V, F>(&mut self, mut handler: F)
+    pub fn add_action<A, V, F>(&mut self, handler: F)
+    where
+        A: Action,
+        V: View,
+        F: 'static + FnMut(&mut V, &A, &mut ViewContext<V>),
+    {
+        self.add_action_internal(handler, false)
+    }
+
+    pub fn capture_action<A, V, F>(&mut self, handler: F)
+    where
+        A: Action,
+        V: View,
+        F: 'static + FnMut(&mut V, &A, &mut ViewContext<V>),
+    {
+        self.add_action_internal(handler, true)
+    }
+
+    fn add_action_internal<A, V, F>(&mut self, mut handler: F, capture: bool)
     where
         A: Action,
         V: View,
@@ -876,11 +905,16 @@ impl MutableAppContext {
                     action,
                     &mut cx,
                 );
-                cx.halt_action_dispatch
             },
         );
 
-        self.actions
+        let actions = if capture {
+            &mut self.capture_actions
+        } else {
+            &mut self.actions
+        };
+
+        actions
             .entry(TypeId::of::<V>())
             .or_default()
             .entry(TypeId::of::<A>())
@@ -1167,43 +1201,57 @@ impl MutableAppContext {
         action: &dyn AnyAction,
     ) -> bool {
         self.update(|this| {
-            let mut halted_dispatch = false;
-            for view_id in path.iter().rev() {
-                if let Some(mut view) = this.cx.views.remove(&(window_id, *view_id)) {
+            this.halt_action_dispatch = false;
+            for (capture_phase, view_id) in path
+                .iter()
+                .map(|view_id| (true, *view_id))
+                .chain(path.iter().rev().map(|view_id| (false, *view_id)))
+            {
+                if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
                     let type_id = view.as_any().type_id();
 
                     if let Some((name, mut handlers)) = this
-                        .actions
+                        .actions_mut(capture_phase)
                         .get_mut(&type_id)
                         .and_then(|h| h.remove_entry(&action.id()))
                     {
                         for handler in handlers.iter_mut().rev() {
-                            let halt_dispatch =
-                                handler(view.as_mut(), action, this, window_id, *view_id);
-                            if halt_dispatch {
-                                halted_dispatch = true;
+                            this.halt_action_dispatch = true;
+                            handler(view.as_mut(), action, this, window_id, view_id);
+                            if this.halt_action_dispatch {
                                 break;
                             }
                         }
-                        this.actions
+                        this.actions_mut(capture_phase)
                             .get_mut(&type_id)
                             .unwrap()
                             .insert(name, handlers);
                     }
 
-                    this.cx.views.insert((window_id, *view_id), view);
+                    this.cx.views.insert((window_id, view_id), view);
 
-                    if halted_dispatch {
+                    if this.halt_action_dispatch {
                         break;
                     }
                 }
             }
 
-            if !halted_dispatch {
-                halted_dispatch = this.dispatch_global_action_any(action);
+            if !this.halt_action_dispatch {
+                this.dispatch_global_action_any(action);
             }
-            halted_dispatch
+            this.halt_action_dispatch
         })
+    }
+
+    fn actions_mut(
+        &mut self,
+        capture_phase: bool,
+    ) -> &mut HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>> {
+        if capture_phase {
+            &mut self.capture_actions
+        } else {
+            &mut self.actions
+        }
     }
 
     pub fn dispatch_global_action<A: Action>(&mut self, action: A) {
@@ -1263,6 +1311,27 @@ impl MutableAppContext {
         }
 
         Ok(pending)
+    }
+
+    pub fn add_app_state<T: 'static>(&mut self, state: T) {
+        self.cx
+            .app_states
+            .insert(TypeId::of::<T>(), Box::new(state));
+    }
+
+    pub fn update_app_state<T: 'static, F, U>(&mut self, update: F) -> U
+    where
+        F: FnOnce(&mut T, &mut MutableAppContext) -> U,
+    {
+        let type_id = TypeId::of::<T>();
+        let mut state = self
+            .cx
+            .app_states
+            .remove(&type_id)
+            .expect("no app state has been added for this type");
+        let result = update(state.downcast_mut().unwrap(), self);
+        self.cx.app_states.insert(type_id, state);
+        result
     }
 
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
@@ -1787,6 +1856,10 @@ impl UpgradeModelHandle for MutableAppContext {
         self.cx.upgrade_model_handle(handle)
     }
 
+    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
+        self.cx.model_handle_is_upgradable(handle)
+    }
+
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
         self.cx.upgrade_any_model_handle(handle)
     }
@@ -1857,6 +1930,7 @@ pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     views: HashMap<(usize, usize), Box<dyn AnyView>>,
     windows: HashMap<usize, Window>,
+    app_states: HashMap<TypeId, Box<dyn Any>>,
     element_states: HashMap<ElementStateId, Box<dyn Any>>,
     background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
@@ -1888,6 +1962,14 @@ impl AppContext {
     pub fn platform(&self) -> &Arc<dyn Platform> {
         &self.platform
     }
+
+    pub fn app_state<T: 'static>(&self) -> &T {
+        self.app_states
+            .get(&TypeId::of::<T>())
+            .expect("no app state has been added for this type")
+            .downcast_ref()
+            .unwrap()
+    }
 }
 
 impl ReadModel for AppContext {
@@ -1913,6 +1995,10 @@ impl UpgradeModelHandle for AppContext {
         } else {
             None
         }
+    }
+
+    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
+        self.models.contains_key(&handle.model_id)
     }
 
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
@@ -2320,6 +2406,10 @@ impl<M> UpgradeModelHandle for ModelContext<'_, M> {
         self.cx.upgrade_model_handle(handle)
     }
 
+    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
+        self.cx.model_handle_is_upgradable(handle)
+    }
+
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
         self.cx.upgrade_any_model_handle(handle)
     }
@@ -2344,7 +2434,6 @@ pub struct ViewContext<'a, T: ?Sized> {
     window_id: usize,
     view_id: usize,
     view_type: PhantomData<T>,
-    halt_action_dispatch: bool,
 }
 
 impl<'a, T: View> ViewContext<'a, T> {
@@ -2354,7 +2443,6 @@ impl<'a, T: View> ViewContext<'a, T> {
             window_id,
             view_id,
             view_type: PhantomData,
-            halt_action_dispatch: true,
         }
     }
 
@@ -2529,7 +2617,7 @@ impl<'a, T: View> ViewContext<'a, T> {
     }
 
     pub fn propagate_action(&mut self) {
-        self.halt_action_dispatch = false;
+        self.app.halt_action_dispatch = false;
     }
 
     pub fn spawn<F, Fut, S>(&self, f: F) -> Task<S>
@@ -2658,6 +2746,10 @@ impl<V> UpgradeModelHandle for ViewContext<'_, V> {
         handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>> {
         self.cx.upgrade_model_handle(handle)
+    }
+
+    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
+        self.cx.model_handle_is_upgradable(handle)
     }
 
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
@@ -2902,6 +2994,12 @@ impl<T> PartialEq for ModelHandle<T> {
 
 impl<T> Eq for ModelHandle<T> {}
 
+impl<T> PartialEq<WeakModelHandle<T>> for ModelHandle<T> {
+    fn eq(&self, other: &WeakModelHandle<T>) -> bool {
+        self.model_id == other.model_id
+    }
+}
+
 impl<T> Hash for ModelHandle<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.model_id.hash(state);
@@ -2972,6 +3070,10 @@ impl<T: Entity> WeakModelHandle<T> {
 
     pub fn id(&self) -> usize {
         self.model_id
+    }
+
+    pub fn is_upgradable(&self, cx: &impl UpgradeModelHandle) -> bool {
+        cx.model_handle_is_upgradable(self)
     }
 
     pub fn upgrade(&self, cx: &impl UpgradeModelHandle) -> Option<ModelHandle<T>> {
@@ -4322,37 +4424,58 @@ mod tests {
 
         let actions = Rc::new(RefCell::new(Vec::new()));
 
-        let actions_clone = actions.clone();
-        cx.add_global_action(move |_: &Action, _: &mut MutableAppContext| {
-            actions_clone.borrow_mut().push("global".to_string());
-        });
+        {
+            let actions = actions.clone();
+            cx.add_global_action(move |_: &Action, _: &mut MutableAppContext| {
+                actions.borrow_mut().push("global".to_string());
+            });
+        }
 
-        let actions_clone = actions.clone();
-        cx.add_action(move |view: &mut ViewA, action: &Action, cx| {
-            assert_eq!(action.0, "bar");
-            cx.propagate_action();
-            actions_clone.borrow_mut().push(format!("{} a", view.id));
-        });
-
-        let actions_clone = actions.clone();
-        cx.add_action(move |view: &mut ViewA, _: &Action, cx| {
-            if view.id != 1 {
+        {
+            let actions = actions.clone();
+            cx.add_action(move |view: &mut ViewA, action: &Action, cx| {
+                assert_eq!(action.0, "bar");
                 cx.propagate_action();
-            }
-            actions_clone.borrow_mut().push(format!("{} b", view.id));
-        });
+                actions.borrow_mut().push(format!("{} a", view.id));
+            });
+        }
 
-        let actions_clone = actions.clone();
-        cx.add_action(move |view: &mut ViewB, _: &Action, cx| {
-            cx.propagate_action();
-            actions_clone.borrow_mut().push(format!("{} c", view.id));
-        });
+        {
+            let actions = actions.clone();
+            cx.add_action(move |view: &mut ViewA, _: &Action, cx| {
+                if view.id != 1 {
+                    cx.add_view(|cx| {
+                        cx.propagate_action(); // Still works on a nested ViewContext
+                        ViewB { id: 5 }
+                    });
+                }
+                actions.borrow_mut().push(format!("{} b", view.id));
+            });
+        }
 
-        let actions_clone = actions.clone();
-        cx.add_action(move |view: &mut ViewB, _: &Action, cx| {
-            cx.propagate_action();
-            actions_clone.borrow_mut().push(format!("{} d", view.id));
-        });
+        {
+            let actions = actions.clone();
+            cx.add_action(move |view: &mut ViewB, _: &Action, cx| {
+                cx.propagate_action();
+                actions.borrow_mut().push(format!("{} c", view.id));
+            });
+        }
+
+        {
+            let actions = actions.clone();
+            cx.add_action(move |view: &mut ViewB, _: &Action, cx| {
+                cx.propagate_action();
+                actions.borrow_mut().push(format!("{} d", view.id));
+            });
+        }
+
+        {
+            let actions = actions.clone();
+            cx.capture_action(move |view: &mut ViewA, _: &Action, cx| {
+                cx.propagate_action();
+                actions.borrow_mut().push(format!("{} capture", view.id));
+            });
+        }
 
         let (window_id, view_1) = cx.add_window(Default::default(), |_| ViewA { id: 1 });
         let view_2 = cx.add_view(window_id, |_| ViewB { id: 2 });
@@ -4367,7 +4490,17 @@ mod tests {
 
         assert_eq!(
             *actions.borrow(),
-            vec!["4 d", "4 c", "3 b", "3 a", "2 d", "2 c", "1 b"]
+            vec![
+                "1 capture",
+                "3 capture",
+                "4 d",
+                "4 c",
+                "3 b",
+                "3 a",
+                "2 d",
+                "2 c",
+                "1 b"
+            ]
         );
 
         // Remove view_1, which doesn't propagate the action
@@ -4380,7 +4513,16 @@ mod tests {
 
         assert_eq!(
             *actions.borrow(),
-            vec!["4 d", "4 c", "3 b", "3 a", "2 d", "2 c", "global"]
+            vec![
+                "3 capture",
+                "4 d",
+                "4 c",
+                "3 b",
+                "3 a",
+                "2 d",
+                "2 c",
+                "global"
+            ]
         );
     }
 

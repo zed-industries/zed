@@ -1,25 +1,27 @@
 [package]
-name = "find"
+name = "search"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-path = "src/find.rs"
+path = "src/search.rs"
 
 [dependencies]
 collections = { path = "../collections" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
+language = { path = "../language" }
+project = { path = "../project" }
 theme = { path = "../theme" }
+util = { path = "../util" }
 workspace = { path = "../workspace" }
-aho-corasick = "0.7"
 anyhow = "1.0"
+log = "0.4"
 postage = { version = "0.4.1", features = ["futures-traits"] }
-regex = "1.5"
-smol = { version = "1.2" }
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
+serde_json = { version = "1.0.64", features = ["preserve_order"] }
 workspace = { path = "../workspace", features = ["test-support"] }
 unindent = "0.1"
