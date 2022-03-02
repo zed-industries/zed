@@ -16,7 +16,8 @@ use std::{
 
 use crate::{
     platform::{self, Dispatcher},
-    util, MutableAppContext,
+    util::{self, post_inc},
+    MutableAppContext,
 };
 
 pub enum Foreground {
@@ -69,7 +70,8 @@ struct DeterministicState {
     forbid_parking: bool,
     block_on_ticks: std::ops::RangeInclusive<usize>,
     now: std::time::Instant,
-    pending_timers: Vec<(std::time::Instant, postage::barrier::Sender)>,
+    next_timer_id: usize,
+    pending_timers: Vec<(usize, std::time::Instant, postage::barrier::Sender)>,
     waiting_backtrace: Option<backtrace::Backtrace>,
 }
 
@@ -99,6 +101,7 @@ impl Deterministic {
                 forbid_parking: false,
                 block_on_ticks: 0..=1000,
                 now: std::time::Instant::now(),
+                next_timer_id: Default::default(),
                 pending_timers: Default::default(),
                 waiting_backtrace: None,
             })),
@@ -426,11 +429,31 @@ impl Foreground {
                 use postage::prelude::Stream as _;
 
                 let (tx, mut rx) = postage::barrier::channel();
+                let timer_id;
                 {
                     let mut state = executor.state.lock();
                     let wakeup_at = state.now + duration;
-                    state.pending_timers.push((wakeup_at, tx));
+                    timer_id = post_inc(&mut state.next_timer_id);
+                    state.pending_timers.push((timer_id, wakeup_at, tx));
                 }
+
+                struct DropTimer<'a>(usize, &'a Foreground);
+                impl<'a> Drop for DropTimer<'a> {
+                    fn drop(&mut self) {
+                        match self.1 {
+                            Foreground::Deterministic { executor, .. } => {
+                                executor
+                                    .state
+                                    .lock()
+                                    .pending_timers
+                                    .retain(|(timer_id, _, _)| *timer_id != self.0);
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+
+                let _guard = DropTimer(timer_id, self);
                 rx.recv().await;
             }
             _ => {
@@ -451,7 +474,7 @@ impl Foreground {
                 let mut pending_timers = mem::take(&mut state.pending_timers);
                 drop(state);
 
-                pending_timers.retain(|(wakeup, _)| *wakeup > now);
+                pending_timers.retain(|(_, wakeup, _)| *wakeup > now);
                 executor.state.lock().pending_timers.extend(pending_timers);
             }
             _ => panic!("this method can only be called on a deterministic executor"),
