@@ -479,7 +479,7 @@ impl Project {
             .filter_map(move |worktree| worktree.upgrade(cx))
     }
 
-    pub fn strong_worktrees<'a>(
+    pub fn visible_worktrees<'a>(
         &'a self,
         cx: &'a AppContext,
     ) -> impl 'a + Iterator<Item = ModelHandle<Worktree>> {
@@ -2065,7 +2065,7 @@ impl Project {
     ) -> Task<Result<HashMap<ModelHandle<Buffer>, Vec<Range<Anchor>>>>> {
         if self.is_local() {
             let snapshots = self
-                .strong_worktrees(cx)
+                .visible_worktrees(cx)
                 .filter_map(|tree| {
                     let tree = tree.read(cx).as_local()?;
                     Some(tree.snapshot())
@@ -2735,7 +2735,7 @@ impl Project {
                         buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
                     }
                     OpenBuffer::Loading(operations) => operations.extend_from_slice(&ops),
-                    _ => unreachable!(),
+                    OpenBuffer::Weak(_) => {}
                 },
                 hash_map::Entry::Vacant(e) => {
                     e.insert(OpenBuffer::Loading(ops));
