@@ -133,9 +133,8 @@ struct ClientState {
     entity_id_extractors: HashMap<TypeId, Box<dyn Send + Sync + Fn(&dyn AnyTypedEnvelope) -> u64>>,
     _maintain_connection: Option<Task<()>>,
     heartbeat_interval: Duration,
-
     models_by_entity_type_and_remote_id: HashMap<(TypeId, u64), AnyWeakModelHandle>,
-    models_by_message_type: HashMap<TypeId, AnyModelHandle>,
+    models_by_message_type: HashMap<TypeId, AnyWeakModelHandle>,
     model_types_by_message_type: HashMap<TypeId, TypeId>,
     message_handlers: HashMap<
         TypeId,
@@ -226,6 +225,17 @@ impl Client {
 
     pub fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http.clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn tear_down(&self) {
+        let mut state = self.state.write();
+        state._maintain_connection.take();
+        state.message_handlers.clear();
+        state.models_by_message_type.clear();
+        state.models_by_entity_type_and_remote_id.clear();
+        state.entity_id_extractors.clear();
+        self.peer.reset();
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -339,18 +349,22 @@ impl Client {
     {
         let message_type_id = TypeId::of::<M>();
 
-        let client = self.clone();
+        let client = Arc::downgrade(self);
         let mut state = self.state.write();
         state
             .models_by_message_type
-            .insert(message_type_id, model.into());
+            .insert(message_type_id, model.downgrade().into());
 
         let prev_handler = state.message_handlers.insert(
             message_type_id,
             Arc::new(move |handle, envelope, cx| {
                 let model = handle.downcast::<E>().unwrap();
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
-                handler(model, *envelope, client.clone(), cx).boxed_local()
+                if let Some(client) = client.upgrade() {
+                    handler(model, *envelope, client.clone(), cx).boxed_local()
+                } else {
+                    async move { Ok(()) }.boxed_local()
+                }
             }),
         );
         if prev_handler.is_some() {
@@ -376,7 +390,7 @@ impl Client {
         let model_type_id = TypeId::of::<E>();
         let message_type_id = TypeId::of::<M>();
 
-        let client = self.clone();
+        let client = Arc::downgrade(self);
         let mut state = self.state.write();
         state
             .model_types_by_message_type
@@ -399,7 +413,11 @@ impl Client {
             Arc::new(move |handle, envelope, cx| {
                 let model = handle.downcast::<E>().unwrap();
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
-                handler(model, *envelope, client.clone(), cx).boxed_local()
+                if let Some(client) = client.upgrade() {
+                    handler(model, *envelope, client.clone(), cx).boxed_local()
+                } else {
+                    async move { Ok(()) }.boxed_local()
+                }
             }),
         );
         if prev_handler.is_some() {
@@ -541,7 +559,7 @@ impl Client {
                         let model = state
                             .models_by_message_type
                             .get(&payload_type_id)
-                            .cloned()
+                            .and_then(|model| model.upgrade(&cx))
                             .or_else(|| {
                                 let model_type_id =
                                     *state.model_types_by_message_type.get(&payload_type_id)?;
@@ -917,7 +935,7 @@ mod tests {
     use gpui::TestAppContext;
 
     #[gpui::test(iterations = 10)]
-    async fn test_heartbeat(cx: TestAppContext) {
+    async fn test_heartbeat(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
@@ -937,7 +955,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_reconnection(cx: TestAppContext) {
+    async fn test_reconnection(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
@@ -985,7 +1003,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_subscribing_to_entity(mut cx: TestAppContext) {
+    async fn test_subscribing_to_entity(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
@@ -1017,14 +1035,11 @@ mod tests {
             subscription: None,
         });
 
-        let _subscription1 =
-            model1.update(&mut cx, |_, cx| client.add_model_for_remote_entity(1, cx));
-        let _subscription2 =
-            model2.update(&mut cx, |_, cx| client.add_model_for_remote_entity(2, cx));
+        let _subscription1 = model1.update(cx, |_, cx| client.add_model_for_remote_entity(1, cx));
+        let _subscription2 = model2.update(cx, |_, cx| client.add_model_for_remote_entity(2, cx));
         // Ensure dropping a subscription for the same entity type still allows receiving of
         // messages for other entity IDs of the same type.
-        let subscription3 =
-            model3.update(&mut cx, |_, cx| client.add_model_for_remote_entity(3, cx));
+        let subscription3 = model3.update(cx, |_, cx| client.add_model_for_remote_entity(3, cx));
         drop(subscription3);
 
         server.send(proto::UnshareProject { project_id: 1 });
@@ -1034,7 +1049,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_subscribing_after_dropping_subscription(mut cx: TestAppContext) {
+    async fn test_subscribing_after_dropping_subscription(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
@@ -1062,7 +1077,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_dropping_subscription_in_handler(mut cx: TestAppContext) {
+    async fn test_dropping_subscription_in_handler(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
@@ -1079,7 +1094,7 @@ mod tests {
                 async { Ok(()) }
             },
         );
-        model.update(&mut cx, |model, _| {
+        model.update(cx, |model, _| {
             model.subscription = Some(subscription);
         });
         server.send(proto::Ping {});

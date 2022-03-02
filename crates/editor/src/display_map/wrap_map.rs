@@ -1010,7 +1010,7 @@ mod tests {
     use text::Rope;
 
     #[gpui::test(iterations = 100)]
-    async fn test_random_wraps(mut cx: gpui::TestAppContext, mut rng: StdRng) {
+    async fn test_random_wraps(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
         cx.foreground().set_block_on_ticks(0..=50);
         cx.foreground().forbid_parking();
         let operations = env::var("OPERATIONS")
@@ -1043,7 +1043,7 @@ mod tests {
                 MultiBuffer::build_simple(&text, cx)
             }
         });
-        let mut buffer_snapshot = buffer.read_with(&cx, |buffer, cx| buffer.snapshot(cx));
+        let mut buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
         let (mut fold_map, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
         log::info!("Unwrapped text (no folds): {:?}", buffer_snapshot.text());
@@ -1059,13 +1059,13 @@ mod tests {
 
         let (wrap_map, _) =
             cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font_id, font_size, wrap_width, cx));
-        let mut notifications = observe(&wrap_map, &mut cx);
+        let mut notifications = observe(&wrap_map, cx);
 
-        if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
+        if wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
             notifications.next().await.unwrap();
         }
 
-        let (initial_snapshot, _) = wrap_map.update(&mut cx, |map, cx| {
+        let (initial_snapshot, _) = wrap_map.update(cx, |map, cx| {
             assert!(!map.is_rewrapping());
             map.sync(tabs_snapshot.clone(), Vec::new(), cx)
         });
@@ -1091,20 +1091,20 @@ mod tests {
                         Some(rng.gen_range(0.0..=1000.0))
                     };
                     log::info!("Setting wrap width to {:?}", wrap_width);
-                    wrap_map.update(&mut cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+                    wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
                 }
                 20..=39 => {
                     for (folds_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
                         let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
-                        let (mut snapshot, wrap_edits) = wrap_map
-                            .update(&mut cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
+                        let (mut snapshot, wrap_edits) =
+                            wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
                         snapshot.check_invariants();
                         snapshot.verify_chunks(&mut rng);
                         edits.push((snapshot, wrap_edits));
                     }
                 }
                 _ => {
-                    buffer.update(&mut cx, |buffer, cx| {
+                    buffer.update(cx, |buffer, cx| {
                         let subscription = buffer.subscribe();
                         let edit_count = rng.gen_range(1..=5);
                         buffer.randomly_mutate(&mut rng, edit_count, cx);
@@ -1125,24 +1125,23 @@ mod tests {
 
             let unwrapped_text = tabs_snapshot.text();
             let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
-            let (mut snapshot, wrap_edits) = wrap_map.update(&mut cx, |map, cx| {
-                map.sync(tabs_snapshot.clone(), tab_edits, cx)
-            });
+            let (mut snapshot, wrap_edits) =
+                wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot.clone(), tab_edits, cx));
             snapshot.check_invariants();
             snapshot.verify_chunks(&mut rng);
             edits.push((snapshot, wrap_edits));
 
-            if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) && rng.gen_bool(0.4) {
+            if wrap_map.read_with(cx, |map, _| map.is_rewrapping()) && rng.gen_bool(0.4) {
                 log::info!("Waiting for wrapping to finish");
-                while wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
+                while wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
                     notifications.next().await.unwrap();
                 }
-                wrap_map.read_with(&cx, |map, _| assert!(map.pending_edits.is_empty()));
+                wrap_map.read_with(cx, |map, _| assert!(map.pending_edits.is_empty()));
             }
 
-            if !wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
+            if !wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
                 let (mut wrapped_snapshot, wrap_edits) =
-                    wrap_map.update(&mut cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
+                    wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
                 let actual_text = wrapped_snapshot.text();
                 let actual_longest_row = wrapped_snapshot.longest_row();
                 log::info!("Wrapping finished: {:?}", actual_text);
@@ -1220,13 +1219,13 @@ mod tests {
             assert_eq!(initial_text.to_string(), snapshot_text.to_string());
         }
 
-        if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
+        if wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
             log::info!("Waiting for wrapping to finish");
-            while wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
+            while wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
                 notifications.next().await.unwrap();
             }
         }
-        wrap_map.read_with(&cx, |map, _| assert!(map.pending_edits.is_empty()));
+        wrap_map.read_with(cx, |map, _| assert!(map.pending_edits.is_empty()));
     }
 
     fn wrap_text(

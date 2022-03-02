@@ -597,7 +597,7 @@ mod tests {
     use surf::http::Response;
 
     #[gpui::test]
-    async fn test_channel_messages(mut cx: TestAppContext) {
+    async fn test_channel_messages(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
@@ -609,7 +609,7 @@ mod tests {
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
 
         let channel_list = cx.add_model(|cx| ChannelList::new(user_store, client.clone(), cx));
-        channel_list.read_with(&cx, |list, _| assert_eq!(list.available_channels(), None));
+        channel_list.read_with(cx, |list, _| assert_eq!(list.available_channels(), None));
 
         // Get the available channels.
         let get_channels = server.receive::<proto::GetChannels>().await.unwrap();
@@ -625,7 +625,7 @@ mod tests {
             )
             .await;
         channel_list.next_notification(&cx).await;
-        channel_list.read_with(&cx, |list, _| {
+        channel_list.read_with(cx, |list, _| {
             assert_eq!(
                 list.available_channels().unwrap(),
                 &[ChannelDetails {
@@ -652,12 +652,12 @@ mod tests {
 
         // Join a channel and populate its existing messages.
         let channel = channel_list
-            .update(&mut cx, |list, cx| {
+            .update(cx, |list, cx| {
                 let channel_id = list.available_channels().unwrap()[0].id;
                 list.get_channel(channel_id, cx)
             })
             .unwrap();
-        channel.read_with(&cx, |channel, _| assert!(channel.messages().is_empty()));
+        channel.read_with(cx, |channel, _| assert!(channel.messages().is_empty()));
         let join_channel = server.receive::<proto::JoinChannel>().await.unwrap();
         server
             .respond(
@@ -708,7 +708,7 @@ mod tests {
                 new_count: 2,
             }
         );
-        channel.read_with(&cx, |channel, _| {
+        channel.read_with(cx, |channel, _| {
             assert_eq!(
                 channel
                     .messages_in_range(0..2)
@@ -723,7 +723,7 @@ mod tests {
 
         // Receive a new message.
         server.send(proto::ChannelMessageSent {
-            channel_id: channel.read_with(&cx, |channel, _| channel.details.id),
+            channel_id: channel.read_with(cx, |channel, _| channel.details.id),
             message: Some(proto::ChannelMessage {
                 id: 12,
                 body: "c".into(),
@@ -756,7 +756,7 @@ mod tests {
                 new_count: 1,
             }
         );
-        channel.read_with(&cx, |channel, _| {
+        channel.read_with(cx, |channel, _| {
             assert_eq!(
                 channel
                     .messages_in_range(2..3)
@@ -767,7 +767,7 @@ mod tests {
         });
 
         // Scroll up to view older messages.
-        channel.update(&mut cx, |channel, cx| {
+        channel.update(cx, |channel, cx| {
             assert!(channel.load_more_messages(cx));
         });
         let get_messages = server.receive::<proto::GetChannelMessages>().await.unwrap();
@@ -805,7 +805,7 @@ mod tests {
                 new_count: 2,
             }
         );
-        channel.read_with(&cx, |channel, _| {
+        channel.read_with(cx, |channel, _| {
             assert_eq!(
                 channel
                     .messages_in_range(0..2)

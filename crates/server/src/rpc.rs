@@ -989,10 +989,28 @@ mod tests {
         github, AppState, Config,
     };
     use ::rpc::Peer;
+    use client::{
+        self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Credentials,
+        EstablishConnectionError, UserStore,
+    };
     use collections::BTreeMap;
+    use editor::{
+        self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Input, MultiBuffer,
+        Redo, Rename, ToOffset, ToggleCodeActions, Undo,
+    };
     use gpui::{executor, ModelHandle, TestAppContext};
+    use language::{
+        tree_sitter_rust, AnchorRangeExt, Diagnostic, DiagnosticEntry, Language, LanguageConfig,
+        LanguageRegistry, LanguageServerConfig, Point, ToLspPosition,
+    };
+    use lsp;
     use parking_lot::Mutex;
     use postage::{sink::Sink, watch};
+    use project::{
+        fs::{FakeFs, Fs as _},
+        search::SearchQuery,
+        DiagnosticSummary, Project, ProjectPath,
+    };
     use rand::prelude::*;
     use rpc::PeerId;
     use serde_json::json;
@@ -1009,24 +1027,7 @@ mod tests {
         },
         time::Duration,
     };
-    use zed::{
-        client::{
-            self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Credentials,
-            EstablishConnectionError, UserStore,
-        },
-        editor::{
-            self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Input, MultiBuffer,
-            Redo, Rename, ToOffset, ToggleCodeActions, Undo,
-        },
-        fs::{FakeFs, Fs as _},
-        language::{
-            tree_sitter_rust, AnchorRangeExt, Diagnostic, DiagnosticEntry, Language,
-            LanguageConfig, LanguageRegistry, LanguageServerConfig, Point, ToLspPosition,
-        },
-        lsp,
-        project::{search::SearchQuery, DiagnosticSummary, Project, ProjectPath},
-        workspace::{Settings, Workspace, WorkspaceParams},
-    };
+    use workspace::{Settings, Workspace, WorkspaceParams};
 
     #[cfg(test)]
     #[ctor::ctor]
@@ -1037,7 +1038,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_share_project(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+    async fn test_share_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         let (window_b, _) = cx_b.add_window(|_| EmptyView);
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = FakeFs::new(cx_a.background());
@@ -1045,8 +1046,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         fs.insert_tree(
@@ -1068,20 +1069,17 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/a", false, cx)
             })
             .await
             .unwrap();
-        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that project as client B
         let project_b = Project::remote(
@@ -1095,7 +1093,7 @@ mod tests {
         .await
         .unwrap();
 
-        let replica_id_b = project_b.read_with(&cx_b, |project, _| {
+        let replica_id_b = project_b.read_with(cx_b, |project, _| {
             assert_eq!(
                 project
                     .collaborators()
@@ -1120,18 +1118,18 @@ mod tests {
 
         // Open the same file as client B and client A.
         let buffer_b = project_b
-            .update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "b.txt"), cx))
+            .update(cx_b, |p, cx| p.open_buffer((worktree_id, "b.txt"), cx))
             .await
             .unwrap();
         let buffer_b = cx_b.add_model(|cx| MultiBuffer::singleton(buffer_b, cx));
-        buffer_b.read_with(&cx_b, |buf, cx| {
+        buffer_b.read_with(cx_b, |buf, cx| {
             assert_eq!(buf.read(cx).text(), "b-contents")
         });
-        project_a.read_with(&cx_a, |project, cx| {
+        project_a.read_with(cx_a, |project, cx| {
             assert!(project.has_open_buffer((worktree_id, "b.txt"), cx))
         });
         let buffer_a = project_a
-            .update(&mut cx_a, |p, cx| p.open_buffer((worktree_id, "b.txt"), cx))
+            .update(cx_a, |p, cx| p.open_buffer((worktree_id, "b.txt"), cx))
             .await
             .unwrap();
 
@@ -1151,7 +1149,7 @@ mod tests {
         //     .await;
 
         // Edit the buffer as client B and see that edit as client A.
-        editor_b.update(&mut cx_b, |editor, cx| {
+        editor_b.update(cx_b, |editor, cx| {
             editor.handle_input(&Input("ok, ".into()), cx)
         });
         buffer_a
@@ -1173,15 +1171,15 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_unshare_project(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+    async fn test_unshare_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = FakeFs::new(cx_a.background());
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         fs.insert_tree(
@@ -1203,21 +1201,18 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/a", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
-        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
-        assert!(worktree_a.read_with(&cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
+        assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
         // Join that project as client B
         let project_b = Project::remote(
@@ -1231,29 +1226,31 @@ mod tests {
         .await
         .unwrap();
         project_b
-            .update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+            .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
 
         // Unshare the project as client A
         project_a
-            .update(&mut cx_a, |project, cx| project.unshare(cx))
+            .update(cx_a, |project, cx| project.unshare(cx))
             .await
             .unwrap();
         project_b
-            .condition(&mut cx_b, |project, _| project.is_read_only())
+            .condition(cx_b, |project, _| project.is_read_only())
             .await;
-        assert!(worktree_a.read_with(&cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
-        drop(project_b);
+        assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
+        cx_b.update(|_| {
+            drop(project_b);
+        });
 
         // Share the project again and ensure guests can still join.
         project_a
-            .update(&mut cx_a, |project, cx| project.share(cx))
+            .update(cx_a, |project, cx| project.share(cx))
             .await
             .unwrap();
-        assert!(worktree_a.read_with(&cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
+        assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
-        let project_c = Project::remote(
+        let project_b2 = Project::remote(
             project_id,
             client_b.clone(),
             client_b.user_store.clone(),
@@ -1263,17 +1260,17 @@ mod tests {
         )
         .await
         .unwrap();
-        project_c
-            .update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        project_b2
+            .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
     }
 
     #[gpui::test(iterations = 10)]
     async fn test_propagate_saves_and_fs_changes(
-        mut cx_a: TestAppContext,
-        mut cx_b: TestAppContext,
-        mut cx_c: TestAppContext,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
+        cx_c: &mut TestAppContext,
     ) {
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = FakeFs::new(cx_a.background());
@@ -1281,9 +1278,9 @@ mod tests {
 
         // Connect to a server as 3 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
-        let client_c = server.create_client(&mut cx_c, "user_c").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
+        let client_c = server.create_client(cx_c, "user_c").await;
 
         // Share a worktree as client A.
         fs.insert_tree(
@@ -1305,20 +1302,17 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/a", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
-        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that worktree as clients B and C.
         let project_b = Project::remote(
@@ -1341,56 +1335,56 @@ mod tests {
         )
         .await
         .unwrap();
-        let worktree_b = project_b.read_with(&cx_b, |p, cx| p.worktrees(cx).next().unwrap());
-        let worktree_c = project_c.read_with(&cx_c, |p, cx| p.worktrees(cx).next().unwrap());
+        let worktree_b = project_b.read_with(cx_b, |p, cx| p.worktrees(cx).next().unwrap());
+        let worktree_c = project_c.read_with(cx_c, |p, cx| p.worktrees(cx).next().unwrap());
 
         // Open and edit a buffer as both guests B and C.
         let buffer_b = project_b
-            .update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
+            .update(cx_b, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
             .await
             .unwrap();
         let buffer_c = project_c
-            .update(&mut cx_c, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
+            .update(cx_c, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
             .await
             .unwrap();
-        buffer_b.update(&mut cx_b, |buf, cx| buf.edit([0..0], "i-am-b, ", cx));
-        buffer_c.update(&mut cx_c, |buf, cx| buf.edit([0..0], "i-am-c, ", cx));
+        buffer_b.update(cx_b, |buf, cx| buf.edit([0..0], "i-am-b, ", cx));
+        buffer_c.update(cx_c, |buf, cx| buf.edit([0..0], "i-am-c, ", cx));
 
         // Open and edit that buffer as the host.
         let buffer_a = project_a
-            .update(&mut cx_a, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
+            .update(cx_a, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
             .await
             .unwrap();
 
         buffer_a
-            .condition(&mut cx_a, |buf, _| buf.text() == "i-am-c, i-am-b, ")
+            .condition(cx_a, |buf, _| buf.text() == "i-am-c, i-am-b, ")
             .await;
-        buffer_a.update(&mut cx_a, |buf, cx| {
+        buffer_a.update(cx_a, |buf, cx| {
             buf.edit([buf.len()..buf.len()], "i-am-a", cx)
         });
 
         // Wait for edits to propagate
         buffer_a
-            .condition(&mut cx_a, |buf, _| buf.text() == "i-am-c, i-am-b, i-am-a")
+            .condition(cx_a, |buf, _| buf.text() == "i-am-c, i-am-b, i-am-a")
             .await;
         buffer_b
-            .condition(&mut cx_b, |buf, _| buf.text() == "i-am-c, i-am-b, i-am-a")
+            .condition(cx_b, |buf, _| buf.text() == "i-am-c, i-am-b, i-am-a")
             .await;
         buffer_c
-            .condition(&mut cx_c, |buf, _| buf.text() == "i-am-c, i-am-b, i-am-a")
+            .condition(cx_c, |buf, _| buf.text() == "i-am-c, i-am-b, i-am-a")
             .await;
 
         // Edit the buffer as the host and concurrently save as guest B.
-        let save_b = buffer_b.update(&mut cx_b, |buf, cx| buf.save(cx));
-        buffer_a.update(&mut cx_a, |buf, cx| buf.edit([0..0], "hi-a, ", cx));
+        let save_b = buffer_b.update(cx_b, |buf, cx| buf.save(cx));
+        buffer_a.update(cx_a, |buf, cx| buf.edit([0..0], "hi-a, ", cx));
         save_b.await.unwrap();
         assert_eq!(
             fs.load("/a/file1".as_ref()).await.unwrap(),
             "hi-a, i-am-c, i-am-b, i-am-a"
         );
-        buffer_a.read_with(&cx_a, |buf, _| assert!(!buf.is_dirty()));
-        buffer_b.read_with(&cx_b, |buf, _| assert!(!buf.is_dirty()));
-        buffer_c.condition(&cx_c, |buf, _| !buf.is_dirty()).await;
+        buffer_a.read_with(cx_a, |buf, _| assert!(!buf.is_dirty()));
+        buffer_b.read_with(cx_b, |buf, _| assert!(!buf.is_dirty()));
+        buffer_c.condition(cx_c, |buf, _| !buf.is_dirty()).await;
 
         // Make changes on host's file system, see those changes on guest worktrees.
         fs.rename(
@@ -1450,15 +1444,15 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_buffer_conflict_after_save(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+    async fn test_buffer_conflict_after_save(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = FakeFs::new(cx_a.background());
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         fs.insert_tree(
@@ -1480,20 +1474,17 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/dir", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
-        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that project as client B
         let project_b = Project::remote(
@@ -1509,44 +1500,41 @@ mod tests {
 
         // Open a buffer as client B
         let buffer_b = project_b
-            .update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+            .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
 
-        buffer_b.update(&mut cx_b, |buf, cx| buf.edit([0..0], "world ", cx));
-        buffer_b.read_with(&cx_b, |buf, _| {
+        buffer_b.update(cx_b, |buf, cx| buf.edit([0..0], "world ", cx));
+        buffer_b.read_with(cx_b, |buf, _| {
             assert!(buf.is_dirty());
             assert!(!buf.has_conflict());
         });
 
-        buffer_b
-            .update(&mut cx_b, |buf, cx| buf.save(cx))
-            .await
-            .unwrap();
+        buffer_b.update(cx_b, |buf, cx| buf.save(cx)).await.unwrap();
         buffer_b
             .condition(&cx_b, |buffer_b, _| !buffer_b.is_dirty())
             .await;
-        buffer_b.read_with(&cx_b, |buf, _| {
+        buffer_b.read_with(cx_b, |buf, _| {
             assert!(!buf.has_conflict());
         });
 
-        buffer_b.update(&mut cx_b, |buf, cx| buf.edit([0..0], "hello ", cx));
-        buffer_b.read_with(&cx_b, |buf, _| {
+        buffer_b.update(cx_b, |buf, cx| buf.edit([0..0], "hello ", cx));
+        buffer_b.read_with(cx_b, |buf, _| {
             assert!(buf.is_dirty());
             assert!(!buf.has_conflict());
         });
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_buffer_reloading(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+    async fn test_buffer_reloading(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = FakeFs::new(cx_a.background());
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         fs.insert_tree(
@@ -1568,20 +1556,17 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/dir", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
-        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that project as client B
         let project_b = Project::remote(
@@ -1594,14 +1579,14 @@ mod tests {
         )
         .await
         .unwrap();
-        let _worktree_b = project_b.update(&mut cx_b, |p, cx| p.worktrees(cx).next().unwrap());
+        let _worktree_b = project_b.update(cx_b, |p, cx| p.worktrees(cx).next().unwrap());
 
         // Open a buffer as client B
         let buffer_b = project_b
-            .update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+            .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
-        buffer_b.read_with(&cx_b, |buf, _| {
+        buffer_b.read_with(cx_b, |buf, _| {
             assert!(!buf.is_dirty());
             assert!(!buf.has_conflict());
         });
@@ -1614,15 +1599,15 @@ mod tests {
                 buf.text() == "new contents" && !buf.is_dirty()
             })
             .await;
-        buffer_b.read_with(&cx_b, |buf, _| {
+        buffer_b.read_with(cx_b, |buf, _| {
             assert!(!buf.has_conflict());
         });
     }
 
     #[gpui::test(iterations = 10)]
     async fn test_editing_while_guest_opens_buffer(
-        mut cx_a: TestAppContext,
-        mut cx_b: TestAppContext,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
     ) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
@@ -1630,8 +1615,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         fs.insert_tree(
@@ -1652,20 +1637,17 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/dir", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
-        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that project as client B
         let project_b = Project::remote(
@@ -1681,30 +1663,30 @@ mod tests {
 
         // Open a buffer as client A
         let buffer_a = project_a
-            .update(&mut cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+            .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
 
         // Start opening the same buffer as client B
         let buffer_b = cx_b
             .background()
-            .spawn(project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx)));
+            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx)));
 
         // Edit the buffer as client A while client B is still opening it.
         cx_b.background().simulate_random_delay().await;
-        buffer_a.update(&mut cx_a, |buf, cx| buf.edit([0..0], "X", cx));
+        buffer_a.update(cx_a, |buf, cx| buf.edit([0..0], "X", cx));
         cx_b.background().simulate_random_delay().await;
-        buffer_a.update(&mut cx_a, |buf, cx| buf.edit([1..1], "Y", cx));
+        buffer_a.update(cx_a, |buf, cx| buf.edit([1..1], "Y", cx));
 
-        let text = buffer_a.read_with(&cx_a, |buf, _| buf.text());
+        let text = buffer_a.read_with(cx_a, |buf, _| buf.text());
         let buffer_b = buffer_b.await.unwrap();
         buffer_b.condition(&cx_b, |buf, _| buf.text() == text).await;
     }
 
     #[gpui::test(iterations = 10)]
     async fn test_leaving_worktree_while_opening_buffer(
-        mut cx_a: TestAppContext,
-        mut cx_b: TestAppContext,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
     ) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
@@ -1712,8 +1694,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         fs.insert_tree(
@@ -1734,20 +1716,17 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/dir", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
-        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that project as client B
         let project_b = Project::remote(
@@ -1769,7 +1748,7 @@ mod tests {
         // Begin opening a buffer as client B, but leave the project before the open completes.
         let buffer_b = cx_b
             .background()
-            .spawn(project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx)));
+            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx)));
         cx_b.update(|_| drop(project_b));
         drop(buffer_b);
 
@@ -1780,15 +1759,15 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_peer_disconnection(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+    async fn test_peer_disconnection(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = FakeFs::new(cx_a.background());
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         fs.insert_tree(
@@ -1810,19 +1789,19 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/a", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
         let project_id = project_a
-            .update(&mut cx_a, |project, _| project.next_remote_id())
+            .update(cx_a, |project, _| project.next_remote_id())
             .await;
         project_a
-            .update(&mut cx_a, |project, cx| project.share(cx))
+            .update(cx_a, |project, cx| project.share(cx))
             .await
             .unwrap();
 
@@ -1852,8 +1831,8 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_collaborating_with_diagnostics(
-        mut cx_a: TestAppContext,
-        mut cx_b: TestAppContext,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
     ) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
@@ -1875,8 +1854,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         fs.insert_tree(
@@ -1898,25 +1877,22 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/a", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
-        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Cause the language server to start.
         let _ = cx_a
             .background()
-            .spawn(project_a.update(&mut cx_a, |project, cx| {
+            .spawn(project_a.update(cx_a, |project, cx| {
                 project.open_buffer(
                     ProjectPath {
                         worktree_id,
@@ -1972,7 +1948,7 @@ mod tests {
         .await
         .unwrap();
 
-        project_b.read_with(&cx_b, |project, cx| {
+        project_b.read_with(cx_b, |project, cx| {
             assert_eq!(
                 project.diagnostic_summaries(cx).collect::<Vec<_>>(),
                 &[(
@@ -2035,11 +2011,11 @@ mod tests {
         // Open the file with the errors on client B. They should be present.
         let buffer_b = cx_b
             .background()
-            .spawn(project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
+            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
             .await
             .unwrap();
 
-        buffer_b.read_with(&cx_b, |buffer, _| {
+        buffer_b.read_with(cx_b, |buffer, _| {
             assert_eq!(
                 buffer
                     .snapshot()
@@ -2074,8 +2050,8 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_collaborating_with_completion(
-        mut cx_a: TestAppContext,
-        mut cx_b: TestAppContext,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
     ) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
@@ -2104,8 +2080,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         fs.insert_tree(
@@ -2127,20 +2103,17 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/a", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
-        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
         let project_b = Project::remote(
@@ -2156,9 +2129,7 @@ mod tests {
 
         // Open a file in an editor as the guest.
         let buffer_b = project_b
-            .update(&mut cx_b, |p, cx| {
-                p.open_buffer((worktree_id, "main.rs"), cx)
-            })
+            .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
             .await
             .unwrap();
         let (window_b, _) = cx_b.add_window(|_| EmptyView);
@@ -2177,7 +2148,7 @@ mod tests {
             .await;
 
         // Type a completion trigger character as the guest.
-        editor_b.update(&mut cx_b, |editor, cx| {
+        editor_b.update(cx_b, |editor, cx| {
             editor.select_ranges([13..13], None, cx);
             editor.handle_input(&Input(".".into()), cx);
             cx.focus(&editor_b);
@@ -2233,9 +2204,7 @@ mod tests {
 
         // Open the buffer on the host.
         let buffer_a = project_a
-            .update(&mut cx_a, |p, cx| {
-                p.open_buffer((worktree_id, "main.rs"), cx)
-            })
+            .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
             .await
             .unwrap();
         buffer_a
@@ -2246,7 +2215,7 @@ mod tests {
         editor_b
             .condition(&cx_b, |editor, _| editor.context_menu_visible())
             .await;
-        editor_b.update(&mut cx_b, |editor, cx| {
+        editor_b.update(cx_b, |editor, cx| {
             editor.confirm_completion(&ConfirmCompletion(Some(0)), cx);
             assert_eq!(editor.text(cx), "fn main() { a.first_method() }");
         });
@@ -2290,7 +2259,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_formatting_buffer(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+    async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
         let fs = FakeFs::new(cx_a.background());
@@ -2311,8 +2280,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         fs.insert_tree(
@@ -2333,20 +2302,17 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/a", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
-        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
         let project_b = Project::remote(
@@ -2362,11 +2328,11 @@ mod tests {
 
         let buffer_b = cx_b
             .background()
-            .spawn(project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
+            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
             .await
             .unwrap();
 
-        let format = project_b.update(&mut cx_b, |project, cx| {
+        let format = project_b.update(cx_b, |project, cx| {
             project.format(HashSet::from_iter([buffer_b.clone()]), true, cx)
         });
 
@@ -2386,13 +2352,13 @@ mod tests {
 
         format.await.unwrap();
         assert_eq!(
-            buffer_b.read_with(&cx_b, |buffer, _| buffer.text()),
+            buffer_b.read_with(cx_b, |buffer, _| buffer.text()),
             "let honey = two"
         );
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_definition(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+    async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
         let fs = FakeFs::new(cx_a.background());
@@ -2428,8 +2394,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         let project_a = cx_a.update(|cx| {
@@ -2442,20 +2408,17 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/root-1", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
-        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
         let project_b = Project::remote(
@@ -2472,12 +2435,12 @@ mod tests {
         // Open the file on client B.
         let buffer_b = cx_b
             .background()
-            .spawn(project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
+            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
             .await
             .unwrap();
 
         // Request the definition of a symbol as the guest.
-        let definitions_1 = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b, 23, cx));
+        let definitions_1 = project_b.update(cx_b, |p, cx| p.definition(&buffer_b, 23, cx));
 
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_, _| {
@@ -2504,7 +2467,7 @@ mod tests {
 
         // Try getting more definitions for the same buffer, ensuring the buffer gets reused from
         // the previous call to `definition`.
-        let definitions_2 = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b, 33, cx));
+        let definitions_2 = project_b.update(cx_b, |p, cx| p.definition(&buffer_b, 33, cx));
         fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_, _| {
             Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
                 lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
@@ -2530,7 +2493,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_references(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+    async fn test_references(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
         let fs = FakeFs::new(cx_a.background());
@@ -2567,8 +2530,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         let project_a = cx_a.update(|cx| {
@@ -2581,20 +2544,17 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/root-1", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
-        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
         let project_b = Project::remote(
@@ -2611,14 +2571,12 @@ mod tests {
         // Open the file on client B.
         let buffer_b = cx_b
             .background()
-            .spawn(project_b.update(&mut cx_b, |p, cx| {
-                p.open_buffer((worktree_id, "one.rs"), cx)
-            }))
+            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "one.rs"), cx)))
             .await
             .unwrap();
 
         // Request references to a symbol as the guest.
-        let references = project_b.update(&mut cx_b, |p, cx| p.references(&buffer_b, 7, cx));
+        let references = project_b.update(cx_b, |p, cx| p.references(&buffer_b, 7, cx));
 
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::References, _>(|params, _| {
@@ -2666,7 +2624,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_project_search(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+    async fn test_project_search(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = FakeFs::new(cx_a.background());
@@ -2691,8 +2649,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         let project_a = cx_a.update(|cx| {
@@ -2704,33 +2662,30 @@ mod tests {
                 cx,
             )
         });
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
 
         let (worktree_1, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/root-1", false, cx)
             })
             .await
             .unwrap();
         worktree_1
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
         let (worktree_2, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/root-2", false, cx)
             })
             .await
             .unwrap();
         worktree_2
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
 
         eprintln!("sharing");
 
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
         let project_b = Project::remote(
@@ -2745,7 +2700,7 @@ mod tests {
         .unwrap();
 
         let results = project_b
-            .update(&mut cx_b, |project, cx| {
+            .update(cx_b, |project, cx| {
                 project.search(SearchQuery::text("world", false, false), cx)
             })
             .await
@@ -2754,7 +2709,7 @@ mod tests {
         let mut ranges_by_path = results
             .into_iter()
             .map(|(buffer, ranges)| {
-                buffer.read_with(&cx_b, |buffer, cx| {
+                buffer.read_with(cx_b, |buffer, cx| {
                     let path = buffer.file().unwrap().full_path(cx);
                     let offset_ranges = ranges
                         .into_iter()
@@ -2778,7 +2733,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_document_highlights(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+    async fn test_document_highlights(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = FakeFs::new(cx_a.background());
@@ -2805,8 +2760,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         let project_a = cx_a.update(|cx| {
@@ -2819,20 +2774,17 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/root-1", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
-        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
         let project_b = Project::remote(
@@ -2849,15 +2801,12 @@ mod tests {
         // Open the file on client B.
         let buffer_b = cx_b
             .background()
-            .spawn(project_b.update(&mut cx_b, |p, cx| {
-                p.open_buffer((worktree_id, "main.rs"), cx)
-            }))
+            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx)))
             .await
             .unwrap();
 
         // Request document highlights as the guest.
-        let highlights =
-            project_b.update(&mut cx_b, |p, cx| p.document_highlights(&buffer_b, 34, cx));
+        let highlights = project_b.update(cx_b, |p, cx| p.document_highlights(&buffer_b, 34, cx));
 
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::DocumentHighlightRequest, _>(
@@ -2901,7 +2850,7 @@ mod tests {
         );
 
         let highlights = highlights.await.unwrap();
-        buffer_b.read_with(&cx_b, |buffer, _| {
+        buffer_b.read_with(cx_b, |buffer, _| {
             let snapshot = buffer.snapshot();
 
             let highlights = highlights
@@ -2920,7 +2869,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_project_symbols(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+    async fn test_project_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
         let fs = FakeFs::new(cx_a.background());
@@ -2957,8 +2906,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         let project_a = cx_a.update(|cx| {
@@ -2971,20 +2920,17 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/code/crate-1", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
-        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
         let project_b = Project::remote(
@@ -3001,14 +2947,12 @@ mod tests {
         // Cause the language server to start.
         let _buffer = cx_b
             .background()
-            .spawn(project_b.update(&mut cx_b, |p, cx| {
-                p.open_buffer((worktree_id, "one.rs"), cx)
-            }))
+            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "one.rs"), cx)))
             .await
             .unwrap();
 
         // Request the definition of a symbol as the guest.
-        let symbols = project_b.update(&mut cx_b, |p, cx| p.symbols("two", cx));
+        let symbols = project_b.update(cx_b, |p, cx| p.symbols("two", cx));
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::WorkspaceSymbol, _>(|_, _| {
             #[allow(deprecated)]
@@ -3031,12 +2975,12 @@ mod tests {
 
         // Open one of the returned symbols.
         let buffer_b_2 = project_b
-            .update(&mut cx_b, |project, cx| {
+            .update(cx_b, |project, cx| {
                 project.open_buffer_for_symbol(&symbols[0], cx)
             })
             .await
             .unwrap();
-        buffer_b_2.read_with(&cx_b, |buffer, _| {
+        buffer_b_2.read_with(cx_b, |buffer, _| {
             assert_eq!(
                 buffer.file().unwrap().path().as_ref(),
                 Path::new("../crate-2/two.rs")
@@ -3047,7 +2991,7 @@ mod tests {
         let mut fake_symbol = symbols[0].clone();
         fake_symbol.path = Path::new("/code/secrets").into();
         let error = project_b
-            .update(&mut cx_b, |project, cx| {
+            .update(cx_b, |project, cx| {
                 project.open_buffer_for_symbol(&fake_symbol, cx)
             })
             .await
@@ -3057,8 +3001,8 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_open_buffer_while_getting_definition_pointing_to_it(
-        mut cx_a: TestAppContext,
-        mut cx_b: TestAppContext,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
         mut rng: StdRng,
     ) {
         cx_a.foreground().forbid_parking();
@@ -3091,8 +3035,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         let project_a = cx_a.update(|cx| {
@@ -3106,20 +3050,17 @@ mod tests {
         });
 
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/root", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
-        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
         let project_b = Project::remote(
@@ -3135,20 +3076,18 @@ mod tests {
 
         let buffer_b1 = cx_b
             .background()
-            .spawn(project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
+            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
             .await
             .unwrap();
 
         let definitions;
         let buffer_b2;
         if rng.gen() {
-            definitions = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
-            buffer_b2 =
-                project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "b.rs"), cx));
+            definitions = project_b.update(cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
+            buffer_b2 = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "b.rs"), cx));
         } else {
-            buffer_b2 =
-                project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "b.rs"), cx));
-            definitions = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
+            buffer_b2 = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "b.rs"), cx));
+            definitions = project_b.update(cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
         }
 
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
@@ -3167,8 +3106,8 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_collaborating_with_code_actions(
-        mut cx_a: TestAppContext,
-        mut cx_b: TestAppContext,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
     ) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
@@ -3192,8 +3131,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         fs.insert_tree(
@@ -3215,20 +3154,17 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/a", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
-        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
         let project_b = Project::remote(
@@ -3250,7 +3186,7 @@ mod tests {
 
         let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
         let editor_b = workspace_b
-            .update(&mut cx_b, |workspace, cx| {
+            .update(cx_b, |workspace, cx| {
                 workspace.open_path((worktree_id, "main.rs").into(), cx)
             })
             .await
@@ -3273,7 +3209,7 @@ mod tests {
             .await;
 
         // Move cursor to a location that contains code actions.
-        editor_b.update(&mut cx_b, |editor, cx| {
+        editor_b.update(cx_b, |editor, cx| {
             editor.select_ranges([Point::new(1, 31)..Point::new(1, 31)], None, cx);
             cx.focus(&editor_b);
         });
@@ -3335,7 +3271,7 @@ mod tests {
             .await;
 
         // Toggle code actions and wait for them to display.
-        editor_b.update(&mut cx_b, |editor, cx| {
+        editor_b.update(cx_b, |editor, cx| {
             editor.toggle_code_actions(&ToggleCodeActions(false), cx);
         });
         editor_b
@@ -3346,7 +3282,7 @@ mod tests {
 
         // Confirming the code action will trigger a resolve request.
         let confirm_action = workspace_b
-            .update(&mut cx_b, |workspace, cx| {
+            .update(cx_b, |workspace, cx| {
                 Editor::confirm_code_action(workspace, &ConfirmCodeAction(Some(0)), cx)
             })
             .unwrap();
@@ -3388,14 +3324,14 @@ mod tests {
 
         // After the action is confirmed, an editor containing both modified files is opened.
         confirm_action.await.unwrap();
-        let code_action_editor = workspace_b.read_with(&cx_b, |workspace, cx| {
+        let code_action_editor = workspace_b.read_with(cx_b, |workspace, cx| {
             workspace
                 .active_item(cx)
                 .unwrap()
                 .downcast::<Editor>()
                 .unwrap()
         });
-        code_action_editor.update(&mut cx_b, |editor, cx| {
+        code_action_editor.update(cx_b, |editor, cx| {
             assert_eq!(editor.text(cx), "\nmod other;\nfn main() { let foo = 4; }");
             editor.undo(&Undo, cx);
             assert_eq!(
@@ -3408,7 +3344,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_collaborating_with_renames(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+    async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
         let fs = FakeFs::new(cx_a.background());
@@ -3431,8 +3367,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Share a project as client A
         fs.insert_tree(
@@ -3454,20 +3390,17 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/dir", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
-        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
-        project_a
-            .update(&mut cx_a, |p, cx| p.share(cx))
-            .await
-            .unwrap();
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
         let project_b = Project::remote(
@@ -3489,7 +3422,7 @@ mod tests {
 
         let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
         let editor_b = workspace_b
-            .update(&mut cx_b, |workspace, cx| {
+            .update(cx_b, |workspace, cx| {
                 workspace.open_path((worktree_id, "one.rs").into(), cx)
             })
             .await
@@ -3499,7 +3432,7 @@ mod tests {
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
 
         // Move cursor to a location that can be renamed.
-        let prepare_rename = editor_b.update(&mut cx_b, |editor, cx| {
+        let prepare_rename = editor_b.update(cx_b, |editor, cx| {
             editor.select_ranges([7..7], None, cx);
             editor.rename(&Rename, cx).unwrap()
         });
@@ -3517,7 +3450,7 @@ mod tests {
             .await
             .unwrap();
         prepare_rename.await.unwrap();
-        editor_b.update(&mut cx_b, |editor, cx| {
+        editor_b.update(cx_b, |editor, cx| {
             let rename = editor.pending_rename().unwrap();
             let buffer = editor.buffer().read(cx).snapshot(cx);
             assert_eq!(
@@ -3531,7 +3464,7 @@ mod tests {
             });
         });
 
-        let confirm_rename = workspace_b.update(&mut cx_b, |workspace, cx| {
+        let confirm_rename = workspace_b.update(cx_b, |workspace, cx| {
             Editor::confirm_rename(workspace, &ConfirmRename, cx).unwrap()
         });
         fake_language_server
@@ -3589,14 +3522,14 @@ mod tests {
             .unwrap();
         confirm_rename.await.unwrap();
 
-        let rename_editor = workspace_b.read_with(&cx_b, |workspace, cx| {
+        let rename_editor = workspace_b.read_with(cx_b, |workspace, cx| {
             workspace
                 .active_item(cx)
                 .unwrap()
                 .downcast::<Editor>()
                 .unwrap()
         });
-        rename_editor.update(&mut cx_b, |editor, cx| {
+        rename_editor.update(cx_b, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
                 "const TWO: usize = one::THREE + one::THREE;\nconst THREE: usize = 1;"
@@ -3614,7 +3547,7 @@ mod tests {
         });
 
         // Ensure temporary rename edits cannot be undone/redone.
-        editor_b.update(&mut cx_b, |editor, cx| {
+        editor_b.update(cx_b, |editor, cx| {
             editor.undo(&Undo, cx);
             assert_eq!(editor.text(cx), "const ONE: usize = 1;");
             editor.undo(&Undo, cx);
@@ -3625,13 +3558,13 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_basic_chat(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+    async fn test_basic_chat(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
 
         // Create an org that includes these 2 users.
         let db = &server.app_state.db;
@@ -3664,9 +3597,9 @@ mod tests {
         let channels_a = cx_a
             .add_model(|cx| ChannelList::new(client_a.user_store.clone(), client_a.clone(), cx));
         channels_a
-            .condition(&mut cx_a, |list, _| list.available_channels().is_some())
+            .condition(cx_a, |list, _| list.available_channels().is_some())
             .await;
-        channels_a.read_with(&cx_a, |list, _| {
+        channels_a.read_with(cx_a, |list, _| {
             assert_eq!(
                 list.available_channels().unwrap(),
                 &[ChannelDetails {
@@ -3675,10 +3608,10 @@ mod tests {
                 }]
             )
         });
-        let channel_a = channels_a.update(&mut cx_a, |this, cx| {
+        let channel_a = channels_a.update(cx_a, |this, cx| {
             this.get_channel(channel_id.to_proto(), cx).unwrap()
         });
-        channel_a.read_with(&cx_a, |channel, _| assert!(channel.messages().is_empty()));
+        channel_a.read_with(cx_a, |channel, _| assert!(channel.messages().is_empty()));
         channel_a
             .condition(&cx_a, |channel, _| {
                 channel_messages(channel)
@@ -3689,9 +3622,9 @@ mod tests {
         let channels_b = cx_b
             .add_model(|cx| ChannelList::new(client_b.user_store.clone(), client_b.clone(), cx));
         channels_b
-            .condition(&mut cx_b, |list, _| list.available_channels().is_some())
+            .condition(cx_b, |list, _| list.available_channels().is_some())
             .await;
-        channels_b.read_with(&cx_b, |list, _| {
+        channels_b.read_with(cx_b, |list, _| {
             assert_eq!(
                 list.available_channels().unwrap(),
                 &[ChannelDetails {
@@ -3701,10 +3634,10 @@ mod tests {
             )
         });
 
-        let channel_b = channels_b.update(&mut cx_b, |this, cx| {
+        let channel_b = channels_b.update(cx_b, |this, cx| {
             this.get_channel(channel_id.to_proto(), cx).unwrap()
         });
-        channel_b.read_with(&cx_b, |channel, _| assert!(channel.messages().is_empty()));
+        channel_b.read_with(cx_b, |channel, _| assert!(channel.messages().is_empty()));
         channel_b
             .condition(&cx_b, |channel, _| {
                 channel_messages(channel)
@@ -3713,7 +3646,7 @@ mod tests {
             .await;
 
         channel_a
-            .update(&mut cx_a, |channel, cx| {
+            .update(cx_a, |channel, cx| {
                 channel
                     .send_message("oh, hi B.".to_string(), cx)
                     .unwrap()
@@ -3765,11 +3698,11 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_chat_message_validation(mut cx_a: TestAppContext) {
+    async fn test_chat_message_validation(cx_a: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
 
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
 
         let db = &server.app_state.db;
         let org_id = db.create_org("Test Org", "test-org").await.unwrap();
@@ -3784,15 +3717,15 @@ mod tests {
         let channels_a = cx_a
             .add_model(|cx| ChannelList::new(client_a.user_store.clone(), client_a.clone(), cx));
         channels_a
-            .condition(&mut cx_a, |list, _| list.available_channels().is_some())
+            .condition(cx_a, |list, _| list.available_channels().is_some())
             .await;
-        let channel_a = channels_a.update(&mut cx_a, |this, cx| {
+        let channel_a = channels_a.update(cx_a, |this, cx| {
             this.get_channel(channel_id.to_proto(), cx).unwrap()
         });
 
         // Messages aren't allowed to be too long.
         channel_a
-            .update(&mut cx_a, |channel, cx| {
+            .update(cx_a, |channel, cx| {
                 let long_body = "this is long.\n".repeat(1024);
                 channel.send_message(long_body, cx).unwrap()
             })
@@ -3800,13 +3733,13 @@ mod tests {
             .unwrap_err();
 
         // Messages aren't allowed to be blank.
-        channel_a.update(&mut cx_a, |channel, cx| {
+        channel_a.update(cx_a, |channel, cx| {
             channel.send_message(String::new(), cx).unwrap_err()
         });
 
         // Leading and trailing whitespace are trimmed.
         channel_a
-            .update(&mut cx_a, |channel, cx| {
+            .update(cx_a, |channel, cx| {
                 channel
                     .send_message("\n surrounded by whitespace  \n".to_string(), cx)
                     .unwrap()
@@ -3825,13 +3758,13 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_chat_reconnection(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+    async fn test_chat_reconnection(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
         let mut status_b = client_b.status();
 
         // Create an org that includes these 2 users.
@@ -3865,10 +3798,10 @@ mod tests {
         let channels_a = cx_a
             .add_model(|cx| ChannelList::new(client_a.user_store.clone(), client_a.clone(), cx));
         channels_a
-            .condition(&mut cx_a, |list, _| list.available_channels().is_some())
+            .condition(cx_a, |list, _| list.available_channels().is_some())
             .await;
 
-        channels_a.read_with(&cx_a, |list, _| {
+        channels_a.read_with(cx_a, |list, _| {
             assert_eq!(
                 list.available_channels().unwrap(),
                 &[ChannelDetails {
@@ -3877,10 +3810,10 @@ mod tests {
                 }]
             )
         });
-        let channel_a = channels_a.update(&mut cx_a, |this, cx| {
+        let channel_a = channels_a.update(cx_a, |this, cx| {
             this.get_channel(channel_id.to_proto(), cx).unwrap()
         });
-        channel_a.read_with(&cx_a, |channel, _| assert!(channel.messages().is_empty()));
+        channel_a.read_with(cx_a, |channel, _| assert!(channel.messages().is_empty()));
         channel_a
             .condition(&cx_a, |channel, _| {
                 channel_messages(channel)
@@ -3891,9 +3824,9 @@ mod tests {
         let channels_b = cx_b
             .add_model(|cx| ChannelList::new(client_b.user_store.clone(), client_b.clone(), cx));
         channels_b
-            .condition(&mut cx_b, |list, _| list.available_channels().is_some())
+            .condition(cx_b, |list, _| list.available_channels().is_some())
             .await;
-        channels_b.read_with(&cx_b, |list, _| {
+        channels_b.read_with(cx_b, |list, _| {
             assert_eq!(
                 list.available_channels().unwrap(),
                 &[ChannelDetails {
@@ -3903,10 +3836,10 @@ mod tests {
             )
         });
 
-        let channel_b = channels_b.update(&mut cx_b, |this, cx| {
+        let channel_b = channels_b.update(cx_b, |this, cx| {
             this.get_channel(channel_id.to_proto(), cx).unwrap()
         });
-        channel_b.read_with(&cx_b, |channel, _| assert!(channel.messages().is_empty()));
+        channel_b.read_with(cx_b, |channel, _| assert!(channel.messages().is_empty()));
         channel_b
             .condition(&cx_b, |channel, _| {
                 channel_messages(channel)
@@ -3922,7 +3855,7 @@ mod tests {
             Some(client::Status::ReconnectionError { .. })
         ) {}
 
-        channels_b.read_with(&cx_b, |channels, _| {
+        channels_b.read_with(cx_b, |channels, _| {
             assert_eq!(
                 channels.available_channels().unwrap(),
                 [ChannelDetails {
@@ -3931,7 +3864,7 @@ mod tests {
                 }]
             )
         });
-        channel_b.read_with(&cx_b, |channel, _| {
+        channel_b.read_with(cx_b, |channel, _| {
             assert_eq!(
                 channel_messages(channel),
                 [("user_b".to_string(), "hello A, it's B.".to_string(), false)]
@@ -3940,7 +3873,7 @@ mod tests {
 
         // Send a message from client B while it is disconnected.
         channel_b
-            .update(&mut cx_b, |channel, cx| {
+            .update(cx_b, |channel, cx| {
                 let task = channel
                     .send_message("can you see this?".to_string(), cx)
                     .unwrap();
@@ -3958,7 +3891,7 @@ mod tests {
 
         // Send a message from client A while B is disconnected.
         channel_a
-            .update(&mut cx_a, |channel, cx| {
+            .update(cx_a, |channel, cx| {
                 channel
                     .send_message("oh, hi B.".to_string(), cx)
                     .unwrap()
@@ -3997,7 +3930,7 @@ mod tests {
 
         // Ensure client A and B can communicate normally after reconnection.
         channel_a
-            .update(&mut cx_a, |channel, cx| {
+            .update(cx_a, |channel, cx| {
                 channel.send_message("you online?".to_string(), cx).unwrap()
             })
             .await
@@ -4016,7 +3949,7 @@ mod tests {
             .await;
 
         channel_b
-            .update(&mut cx_b, |channel, cx| {
+            .update(cx_b, |channel, cx| {
                 channel.send_message("yep".to_string(), cx).unwrap()
             })
             .await
@@ -4038,9 +3971,9 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_contacts(
-        mut cx_a: TestAppContext,
-        mut cx_b: TestAppContext,
-        mut cx_c: TestAppContext,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
+        cx_c: &mut TestAppContext,
     ) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
@@ -4048,9 +3981,9 @@ mod tests {
 
         // Connect to a server as 3 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(&mut cx_a, "user_a").await;
-        let client_b = server.create_client(&mut cx_b, "user_b").await;
-        let client_c = server.create_client(&mut cx_c, "user_c").await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
+        let client_c = server.create_client(cx_c, "user_c").await;
 
         // Share a worktree as client A.
         fs.insert_tree(
@@ -4071,13 +4004,13 @@ mod tests {
             )
         });
         let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
+            .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/a", false, cx)
             })
             .await
             .unwrap();
         worktree_a
-            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
 
         client_a
@@ -4100,10 +4033,10 @@ mod tests {
             .await;
 
         let project_id = project_a
-            .update(&mut cx_a, |project, _| project.next_remote_id())
+            .update(cx_a, |project, _| project.next_remote_id())
             .await;
         project_a
-            .update(&mut cx_a, |project, cx| project.share(cx))
+            .update(cx_a, |project, cx| project.share(cx))
             .await
             .unwrap();
 
@@ -4179,7 +4112,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    async fn test_random_collaboration(cx: TestAppContext, rng: StdRng) {
+    async fn test_random_collaboration(cx: &mut TestAppContext, rng: StdRng) {
         cx.foreground().forbid_parking();
         let max_peers = env::var("MAX_PEERS")
             .map(|i| i.parse().expect("invalid `MAX_PEERS` variable"))
@@ -4213,6 +4146,7 @@ mod tests {
             cx.foreground(),
             cx.background(),
             cx.font_cache(),
+            cx.leak_detector(),
             next_entity_id,
         );
         let host = server.create_client(&mut host_cx, "host").await;
@@ -4244,17 +4178,19 @@ mod tests {
             .unwrap();
 
         clients.push(cx.foreground().spawn(host.simulate_host(
-            host_project.clone(),
+            host_project,
             language_server_config,
             operations.clone(),
             max_operations,
             rng.clone(),
-            host_cx.clone(),
+            host_cx,
         )));
 
         while operations.get() < max_operations {
             cx.background().simulate_random_delay().await;
-            if clients.len() < max_peers && rng.lock().gen_bool(0.05) {
+            if clients.len() >= max_peers {
+                break;
+            } else if rng.lock().gen_bool(0.05) {
                 operations.set(operations.get() + 1);
 
                 let guest_id = clients.len();
@@ -4266,6 +4202,7 @@ mod tests {
                     cx.foreground(),
                     cx.background(),
                     cx.font_cache(),
+                    cx.leak_detector(),
                     next_entity_id,
                 );
                 let guest = server
@@ -4276,7 +4213,7 @@ mod tests {
                     guest.client.clone(),
                     guest.user_store.clone(),
                     guest_lang_registry.clone(),
-                    fs.clone(),
+                    FakeFs::new(cx.background()),
                     &mut guest_cx.to_async(),
                 )
                 .await
@@ -4294,9 +4231,11 @@ mod tests {
             }
         }
 
-        let clients = futures::future::join_all(clients).await;
+        let mut clients = futures::future::join_all(clients).await;
         cx.foreground().run_until_parked();
 
+        let (host_client, mut host_cx) = clients.remove(0);
+        let host_project = host_client.project.as_ref().unwrap();
         let host_worktree_snapshots = host_project.read_with(&host_cx, |project, cx| {
             project
                 .worktrees(cx)
@@ -4307,14 +4246,14 @@ mod tests {
                 .collect::<BTreeMap<_, _>>()
         });
 
-        for (guest_client, guest_cx) in clients.iter().skip(1) {
+        for (guest_client, mut guest_cx) in clients.into_iter() {
             let guest_id = guest_client.client.id();
             let worktree_snapshots =
                 guest_client
                     .project
                     .as_ref()
                     .unwrap()
-                    .read_with(guest_cx, |project, cx| {
+                    .read_with(&guest_cx, |project, cx| {
                         project
                             .worktrees(cx)
                             .map(|worktree| {
@@ -4352,7 +4291,7 @@ mod tests {
                 .project
                 .as_ref()
                 .unwrap()
-                .read_with(guest_cx, |project, cx| {
+                .read_with(&guest_cx, |project, cx| {
                     assert!(
                         !project.has_deferred_operations(cx),
                         "guest {} has deferred operations",
@@ -4361,7 +4300,7 @@ mod tests {
                 });
 
             for guest_buffer in &guest_client.buffers {
-                let buffer_id = guest_buffer.read_with(guest_cx, |buffer, _| buffer.remote_id());
+                let buffer_id = guest_buffer.read_with(&guest_cx, |buffer, _| buffer.remote_id());
                 let host_buffer = host_project.read_with(&host_cx, |project, cx| {
                     project.buffer_for_id(buffer_id, cx).expect(&format!(
                         "host does not have buffer for guest:{}, peer:{}, id:{}",
@@ -4369,7 +4308,7 @@ mod tests {
                     ))
                 });
                 assert_eq!(
-                    guest_buffer.read_with(guest_cx, |buffer, _| buffer.text()),
+                    guest_buffer.read_with(&guest_cx, |buffer, _| buffer.text()),
                     host_buffer.read_with(&host_cx, |buffer, _| buffer.text()),
                     "guest {}, buffer {}, path {:?}, differs from the host's buffer",
                     guest_id,
@@ -4378,7 +4317,11 @@ mod tests {
                         .read_with(&host_cx, |buffer, cx| buffer.file().unwrap().full_path(cx))
                 );
             }
+
+            guest_cx.update(|_| drop(guest_client));
         }
+
+        host_cx.update(|_| drop(host_client));
     }
 
     struct TestServer {
@@ -4550,7 +4493,7 @@ mod tests {
         pub peer_id: PeerId,
         pub user_store: ModelHandle<UserStore>,
         project: Option<ModelHandle<Project>>,
-        buffers: HashSet<ModelHandle<zed::language::Buffer>>,
+        buffers: HashSet<ModelHandle<language::Buffer>>,
     }
 
     impl Deref for TestClient {
@@ -4584,7 +4527,7 @@ mod tests {
             language_server_config.set_fake_initializer({
                 let rng = rng.clone();
                 let files = files.clone();
-                let project = project.clone();
+                let project = project.downgrade();
                 move |fake_server| {
                     fake_server.handle_request::<lsp::request::Completion, _>(|_, _| {
                         Some(lsp::CompletionResponse::Array(vec![lsp::CompletionItem {
@@ -4644,37 +4587,44 @@ mod tests {
                         let rng = rng.clone();
                         let project = project.clone();
                         move |params, mut cx| {
-                            project.update(&mut cx, |project, cx| {
-                                let path = params
-                                    .text_document_position_params
-                                    .text_document
-                                    .uri
-                                    .to_file_path()
-                                    .unwrap();
-                                let (worktree, relative_path) =
-                                    project.find_local_worktree(&path, cx)?;
-                                let project_path =
-                                    ProjectPath::from((worktree.read(cx).id(), relative_path));
-                                let buffer = project.get_open_buffer(&project_path, cx)?.read(cx);
+                            if let Some(project) = project.upgrade(&cx) {
+                                project.update(&mut cx, |project, cx| {
+                                    let path = params
+                                        .text_document_position_params
+                                        .text_document
+                                        .uri
+                                        .to_file_path()
+                                        .unwrap();
+                                    let (worktree, relative_path) =
+                                        project.find_local_worktree(&path, cx)?;
+                                    let project_path =
+                                        ProjectPath::from((worktree.read(cx).id(), relative_path));
+                                    let buffer =
+                                        project.get_open_buffer(&project_path, cx)?.read(cx);
 
-                                let mut highlights = Vec::new();
-                                let highlight_count = rng.lock().gen_range(1..=5);
-                                let mut prev_end = 0;
-                                for _ in 0..highlight_count {
-                                    let range =
-                                        buffer.random_byte_range(prev_end, &mut *rng.lock());
-                                    let start =
-                                        buffer.offset_to_point_utf16(range.start).to_lsp_position();
-                                    let end =
-                                        buffer.offset_to_point_utf16(range.end).to_lsp_position();
-                                    highlights.push(lsp::DocumentHighlight {
-                                        range: lsp::Range::new(start, end),
-                                        kind: Some(lsp::DocumentHighlightKind::READ),
-                                    });
-                                    prev_end = range.end;
-                                }
-                                Some(highlights)
-                            })
+                                    let mut highlights = Vec::new();
+                                    let highlight_count = rng.lock().gen_range(1..=5);
+                                    let mut prev_end = 0;
+                                    for _ in 0..highlight_count {
+                                        let range =
+                                            buffer.random_byte_range(prev_end, &mut *rng.lock());
+                                        let start = buffer
+                                            .offset_to_point_utf16(range.start)
+                                            .to_lsp_position();
+                                        let end = buffer
+                                            .offset_to_point_utf16(range.end)
+                                            .to_lsp_position();
+                                        highlights.push(lsp::DocumentHighlight {
+                                            range: lsp::Range::new(start, end),
+                                            kind: Some(lsp::DocumentHighlightKind::READ),
+                                        });
+                                        prev_end = range.end;
+                                    }
+                                    Some(highlights)
+                                })
+                            } else {
+                                None
+                            }
                         }
                     });
                 }
@@ -5046,6 +4996,12 @@ mod tests {
 
             self.project = Some(project);
             (self, cx)
+        }
+    }
+
+    impl Drop for TestClient {
+        fn drop(&mut self) {
+            self.client.tear_down();
         }
     }
 

@@ -1,28 +1,18 @@
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
-use backtrace::{Backtrace, BacktraceFmt, BytesOrWideString};
-use collections::HashMap;
-use parking_lot::Mutex;
-use postage::{barrier, prelude::Stream as _};
-use rand::prelude::*;
-use smol::{channel, future::yield_now, prelude::*, Executor, Timer};
+use smol::{channel, prelude::*, Executor, Timer};
 use std::{
     any::Any,
-    fmt::{self, Debug, Display},
+    fmt::{self, Display},
     marker::PhantomData,
     mem,
-    ops::RangeInclusive,
     pin::Pin,
     rc::Rc,
-    sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
-        Arc,
-    },
+    sync::Arc,
     task::{Context, Poll},
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
-use waker_fn::waker_fn;
 
 use crate::{
     platform::{self, Dispatcher},
@@ -34,6 +24,7 @@ pub enum Foreground {
         dispatcher: Arc<dyn platform::Dispatcher>,
         _not_send_or_sync: PhantomData<Rc<()>>,
     },
+    #[cfg(any(test, feature = "test-support"))]
     Deterministic {
         cx_id: usize,
         executor: Arc<Deterministic>,
@@ -41,9 +32,8 @@ pub enum Foreground {
 }
 
 pub enum Background {
-    Deterministic {
-        executor: Arc<Deterministic>,
-    },
+    #[cfg(any(test, feature = "test-support"))]
+    Deterministic { executor: Arc<Deterministic> },
     Production {
         executor: Arc<smol::Executor<'static>>,
         _stop: channel::Sender<()>,
@@ -70,39 +60,47 @@ pub enum Task<T> {
 
 unsafe impl<T: Send> Send for Task<T> {}
 
+#[cfg(any(test, feature = "test-support"))]
 struct DeterministicState {
-    rng: StdRng,
+    rng: rand::prelude::StdRng,
     seed: u64,
-    scheduled_from_foreground: HashMap<usize, Vec<ForegroundRunnable>>,
+    scheduled_from_foreground: collections::HashMap<usize, Vec<ForegroundRunnable>>,
     scheduled_from_background: Vec<Runnable>,
     forbid_parking: bool,
-    block_on_ticks: RangeInclusive<usize>,
-    now: Instant,
-    pending_timers: Vec<(Instant, barrier::Sender)>,
-    waiting_backtrace: Option<Backtrace>,
+    block_on_ticks: std::ops::RangeInclusive<usize>,
+    now: std::time::Instant,
+    next_timer_id: usize,
+    pending_timers: Vec<(usize, std::time::Instant, postage::barrier::Sender)>,
+    waiting_backtrace: Option<backtrace::Backtrace>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 struct ForegroundRunnable {
     runnable: Runnable,
     main: bool,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub struct Deterministic {
-    state: Arc<Mutex<DeterministicState>>,
-    parker: Mutex<parking::Parker>,
+    state: Arc<parking_lot::Mutex<DeterministicState>>,
+    parker: parking_lot::Mutex<parking::Parker>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl Deterministic {
     pub fn new(seed: u64) -> Arc<Self> {
+        use rand::prelude::*;
+
         Arc::new(Self {
-            state: Arc::new(Mutex::new(DeterministicState {
+            state: Arc::new(parking_lot::Mutex::new(DeterministicState {
                 rng: StdRng::seed_from_u64(seed),
                 seed,
                 scheduled_from_foreground: Default::default(),
                 scheduled_from_background: Default::default(),
                 forbid_parking: false,
                 block_on_ticks: 0..=1000,
-                now: Instant::now(),
+                now: std::time::Instant::now(),
+                next_timer_id: Default::default(),
                 pending_timers: Default::default(),
                 waiting_backtrace: None,
             })),
@@ -156,9 +154,32 @@ impl Deterministic {
         task
     }
 
-    fn run(&self, cx_id: usize, main_future: AnyLocalFuture) -> Box<dyn Any> {
+    fn run<'a>(
+        &self,
+        cx_id: usize,
+        main_future: Pin<Box<dyn 'a + Future<Output = Box<dyn Any>>>>,
+    ) -> Box<dyn Any> {
+        use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+
         let woken = Arc::new(AtomicBool::new(false));
-        let mut main_task = self.spawn_from_foreground(cx_id, main_future, true);
+
+        let state = self.state.clone();
+        let unparker = self.parker.lock().unparker();
+        let (runnable, mut main_task) = unsafe {
+            async_task::spawn_unchecked(main_future, move |runnable| {
+                let mut state = state.lock();
+                state
+                    .scheduled_from_foreground
+                    .entry(cx_id)
+                    .or_default()
+                    .push(ForegroundRunnable {
+                        runnable,
+                        main: true,
+                    });
+                unparker.unpark();
+            })
+        };
+        runnable.schedule();
 
         loop {
             if let Some(result) = self.run_internal(woken.clone(), Some(&mut main_task)) {
@@ -174,18 +195,22 @@ impl Deterministic {
         }
     }
 
-    fn run_until_parked(&self) {
+    pub fn run_until_parked(&self) {
+        use std::sync::atomic::AtomicBool;
         let woken = Arc::new(AtomicBool::new(false));
         self.run_internal(woken, None);
     }
 
     fn run_internal(
         &self,
-        woken: Arc<AtomicBool>,
+        woken: Arc<std::sync::atomic::AtomicBool>,
         mut main_task: Option<&mut AnyLocalTask>,
     ) -> Option<Box<dyn Any>> {
+        use rand::prelude::*;
+        use std::sync::atomic::Ordering::SeqCst;
+
         let unparker = self.parker.lock().unparker();
-        let waker = waker_fn(move || {
+        let waker = waker_fn::waker_fn(move || {
             woken.store(true, SeqCst);
             unparker.unpark();
         });
@@ -197,6 +222,12 @@ impl Deterministic {
             if state.scheduled_from_foreground.is_empty()
                 && state.scheduled_from_background.is_empty()
             {
+                if let Some(main_task) = main_task {
+                    if let Poll::Ready(result) = main_task.poll(&mut cx) {
+                        return Some(result);
+                    }
+                }
+
                 return None;
             }
 
@@ -240,8 +271,10 @@ impl Deterministic {
     where
         F: Unpin + Future<Output = T>,
     {
+        use rand::prelude::*;
+
         let unparker = self.parker.lock().unparker();
-        let waker = waker_fn(move || {
+        let waker = waker_fn::waker_fn(move || {
             unparker.unpark();
         });
 
@@ -272,17 +305,30 @@ impl Deterministic {
 
         None
     }
+
+    pub fn advance_clock(&self, duration: Duration) {
+        let mut state = self.state.lock();
+        state.now += duration;
+        let now = state.now;
+        let mut pending_timers = mem::take(&mut state.pending_timers);
+        drop(state);
+
+        pending_timers.retain(|(_, wakeup, _)| *wakeup > now);
+        self.state.lock().pending_timers.extend(pending_timers);
+    }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl DeterministicState {
     fn will_park(&mut self) {
         if self.forbid_parking {
             let mut backtrace_message = String::new();
+            #[cfg(any(test, feature = "test-support"))]
             if let Some(backtrace) = self.waiting_backtrace.as_mut() {
                 backtrace.resolve();
                 backtrace_message = format!(
                     "\nbacktrace of waiting future:\n{:?}",
-                    CwdBacktrace::new(backtrace)
+                    util::CwdBacktrace(backtrace)
                 );
             }
 
@@ -291,37 +337,6 @@ impl DeterministicState {
                 backtrace_message
             );
         }
-    }
-}
-
-struct CwdBacktrace<'a> {
-    backtrace: &'a Backtrace,
-}
-
-impl<'a> CwdBacktrace<'a> {
-    fn new(backtrace: &'a Backtrace) -> Self {
-        Self { backtrace }
-    }
-}
-
-impl<'a> Debug for CwdBacktrace<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
-        let cwd = std::env::current_dir().unwrap();
-        let mut print_path = |fmt: &mut fmt::Formatter<'_>, path: BytesOrWideString<'_>| {
-            fmt::Display::fmt(&path, fmt)
-        };
-        let mut fmt = BacktraceFmt::new(f, backtrace::PrintFmt::Full, &mut print_path);
-        for frame in self.backtrace.frames() {
-            let mut formatted_frame = fmt.frame();
-            if frame
-                .symbols()
-                .iter()
-                .any(|s| s.filename().map_or(false, |f| f.starts_with(&cwd)))
-            {
-                formatted_frame.backtrace_frame(frame)?;
-            }
-        }
-        fmt.finish()
     }
 }
 
@@ -340,6 +355,7 @@ impl Foreground {
     pub fn spawn<T: 'static>(&self, future: impl Future<Output = T> + 'static) -> Task<T> {
         let future = any_local_future(future);
         let any_task = match self {
+            #[cfg(any(test, feature = "test-support"))]
             Self::Deterministic { cx_id, executor } => {
                 executor.spawn_from_foreground(*cx_id, future, false)
             }
@@ -361,15 +377,17 @@ impl Foreground {
         Task::local(any_task)
     }
 
-    pub fn run<T: 'static>(&self, future: impl 'static + Future<Output = T>) -> T {
-        let future = any_local_future(future);
-        let any_value = match self {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn run<T: 'static>(&self, future: impl Future<Output = T>) -> T {
+        let future = async move { Box::new(future.await) as Box<dyn Any> }.boxed_local();
+        let result = match self {
             Self::Deterministic { cx_id, executor } => executor.run(*cx_id, future),
             Self::Platform { .. } => panic!("you can't call run on a platform foreground executor"),
         };
-        *any_value.downcast().unwrap()
+        *result.downcast().unwrap()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn run_until_parked(&self) {
         match self {
             Self::Deterministic { executor, .. } => executor.run_until_parked(),
@@ -377,6 +395,7 @@ impl Foreground {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn parking_forbidden(&self) -> bool {
         match self {
             Self::Deterministic { executor, .. } => executor.state.lock().forbid_parking,
@@ -384,15 +403,18 @@ impl Foreground {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn start_waiting(&self) {
         match self {
             Self::Deterministic { executor, .. } => {
-                executor.state.lock().waiting_backtrace = Some(Backtrace::new_unresolved());
+                executor.state.lock().waiting_backtrace =
+                    Some(backtrace::Backtrace::new_unresolved());
             }
             _ => panic!("this method can only be called on a deterministic executor"),
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn finish_waiting(&self) {
         match self {
             Self::Deterministic { executor, .. } => {
@@ -402,7 +424,10 @@ impl Foreground {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn forbid_parking(&self) {
+        use rand::prelude::*;
+
         match self {
             Self::Deterministic { executor, .. } => {
                 let mut state = executor.state.lock();
@@ -415,13 +440,36 @@ impl Foreground {
 
     pub async fn timer(&self, duration: Duration) {
         match self {
+            #[cfg(any(test, feature = "test-support"))]
             Self::Deterministic { executor, .. } => {
-                let (tx, mut rx) = barrier::channel();
+                use postage::prelude::Stream as _;
+
+                let (tx, mut rx) = postage::barrier::channel();
+                let timer_id;
                 {
                     let mut state = executor.state.lock();
                     let wakeup_at = state.now + duration;
-                    state.pending_timers.push((wakeup_at, tx));
+                    timer_id = util::post_inc(&mut state.next_timer_id);
+                    state.pending_timers.push((timer_id, wakeup_at, tx));
                 }
+
+                struct DropTimer<'a>(usize, &'a Foreground);
+                impl<'a> Drop for DropTimer<'a> {
+                    fn drop(&mut self) {
+                        match self.1 {
+                            Foreground::Deterministic { executor, .. } => {
+                                executor
+                                    .state
+                                    .lock()
+                                    .pending_timers
+                                    .retain(|(timer_id, _, _)| *timer_id != self.0);
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+
+                let _guard = DropTimer(timer_id, self);
                 rx.recv().await;
             }
             _ => {
@@ -430,25 +478,19 @@ impl Foreground {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn advance_clock(&self, duration: Duration) {
         match self {
             Self::Deterministic { executor, .. } => {
                 executor.run_until_parked();
-
-                let mut state = executor.state.lock();
-                state.now += duration;
-                let now = state.now;
-                let mut pending_timers = mem::take(&mut state.pending_timers);
-                drop(state);
-
-                pending_timers.retain(|(wakeup, _)| *wakeup > now);
-                executor.state.lock().pending_timers.extend(pending_timers);
+                executor.advance_clock(duration);
             }
             _ => panic!("this method can only be called on a deterministic executor"),
         }
     }
 
-    pub fn set_block_on_ticks(&self, range: RangeInclusive<usize>) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_block_on_ticks(&self, range: std::ops::RangeInclusive<usize>) {
         match self {
             Self::Deterministic { executor, .. } => executor.state.lock().block_on_ticks = range,
             _ => panic!("this method can only be called on a deterministic executor"),
@@ -488,6 +530,7 @@ impl Background {
         let future = any_future(future);
         let any_task = match self {
             Self::Production { executor, .. } => executor.spawn(future),
+            #[cfg(any(test, feature = "test-support"))]
             Self::Deterministic { executor } => executor.spawn(future),
         };
         Task::send(any_task)
@@ -500,6 +543,7 @@ impl Background {
         smol::pin!(future);
         match self {
             Self::Production { .. } => smol::block_on(&mut future),
+            #[cfg(any(test, feature = "test-support"))]
             Self::Deterministic { executor, .. } => {
                 executor.block(&mut future, usize::MAX).unwrap()
             }
@@ -519,7 +563,9 @@ impl Background {
         if !timeout.is_zero() {
             let output = match self {
                 Self::Production { .. } => smol::block_on(util::timeout(timeout, &mut future)).ok(),
+                #[cfg(any(test, feature = "test-support"))]
                 Self::Deterministic { executor, .. } => {
+                    use rand::prelude::*;
                     let max_ticks = {
                         let mut state = executor.state.lock();
                         let range = state.block_on_ticks.clone();
@@ -554,7 +600,11 @@ impl Background {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn simulate_random_delay(&self) {
+        use rand::prelude::*;
+        use smol::future::yield_now;
+
         match self {
             Self::Deterministic { executor, .. } => {
                 if executor.state.lock().rng.gen_bool(0.2) {
@@ -562,6 +612,9 @@ impl Background {
                     for _ in 0..yields {
                         yield_now().await;
                     }
+
+                    let delay = Duration::from_millis(executor.state.lock().rng.gen_range(0..100));
+                    executor.advance_clock(delay);
                 }
             }
             _ => panic!("this method can only be called on a deterministic executor"),

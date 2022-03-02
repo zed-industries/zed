@@ -714,7 +714,7 @@ mod tests {
     use std::sync::Arc;
 
     #[gpui::test]
-    async fn test_project_search(mut cx: TestAppContext) {
+    async fn test_project_search(cx: &mut TestAppContext) {
         let fonts = cx.font_cache();
         let mut theme = gpui::fonts::with_font_cache(fonts.clone(), || theme::Theme::default());
         theme.search.match_background = Color::red();
@@ -732,9 +732,9 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), &mut cx);
+        let project = Project::test(fs.clone(), cx);
         let (tree, _) = project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/dir", false, cx)
             })
             .await
@@ -747,14 +747,14 @@ mod tests {
             ProjectSearchView::new(search.clone(), None, settings, cx)
         });
 
-        search_view.update(&mut cx, |search_view, cx| {
+        search_view.update(cx, |search_view, cx| {
             search_view
                 .query_editor
                 .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
             search_view.search(&Search, cx);
         });
         search_view.next_notification(&cx).await;
-        search_view.update(&mut cx, |search_view, cx| {
+        search_view.update(cx, |search_view, cx| {
             assert_eq!(
                 search_view
                     .results_editor
@@ -791,7 +791,7 @@ mod tests {
             search_view.select_match(&SelectMatch(Direction::Next), cx);
         });
 
-        search_view.update(&mut cx, |search_view, cx| {
+        search_view.update(cx, |search_view, cx| {
             assert_eq!(search_view.active_match_index, Some(1));
             assert_eq!(
                 search_view
@@ -802,7 +802,7 @@ mod tests {
             search_view.select_match(&SelectMatch(Direction::Next), cx);
         });
 
-        search_view.update(&mut cx, |search_view, cx| {
+        search_view.update(cx, |search_view, cx| {
             assert_eq!(search_view.active_match_index, Some(2));
             assert_eq!(
                 search_view
@@ -813,7 +813,7 @@ mod tests {
             search_view.select_match(&SelectMatch(Direction::Next), cx);
         });
 
-        search_view.update(&mut cx, |search_view, cx| {
+        search_view.update(cx, |search_view, cx| {
             assert_eq!(search_view.active_match_index, Some(0));
             assert_eq!(
                 search_view
@@ -824,7 +824,7 @@ mod tests {
             search_view.select_match(&SelectMatch(Direction::Prev), cx);
         });
 
-        search_view.update(&mut cx, |search_view, cx| {
+        search_view.update(cx, |search_view, cx| {
             assert_eq!(search_view.active_match_index, Some(2));
             assert_eq!(
                 search_view
@@ -835,7 +835,7 @@ mod tests {
             search_view.select_match(&SelectMatch(Direction::Prev), cx);
         });
 
-        search_view.update(&mut cx, |search_view, cx| {
+        search_view.update(cx, |search_view, cx| {
             assert_eq!(search_view.active_match_index, Some(1));
             assert_eq!(
                 search_view

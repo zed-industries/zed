@@ -3603,7 +3603,7 @@ mod tests {
     use worktree::WorktreeHandle as _;
 
     #[gpui::test]
-    async fn test_populate_and_search(mut cx: gpui::TestAppContext) {
+    async fn test_populate_and_search(cx: &mut gpui::TestAppContext) {
         let dir = temp_tree(json!({
             "root": {
                 "apple": "",
@@ -3627,10 +3627,10 @@ mod tests {
         )
         .unwrap();
 
-        let project = Project::test(Arc::new(RealFs), &mut cx);
+        let project = Project::test(Arc::new(RealFs), cx);
 
         let (tree, _) = project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree(&root_link_path, false, cx)
             })
             .await
@@ -3649,7 +3649,7 @@ mod tests {
 
         let cancel_flag = Default::default();
         let results = project
-            .read_with(&cx, |project, cx| {
+            .read_with(cx, |project, cx| {
                 project.match_paths("bna", false, false, 10, &cancel_flag, cx)
             })
             .await;
@@ -3666,7 +3666,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_language_server_diagnostics(mut cx: gpui::TestAppContext) {
+    async fn test_language_server_diagnostics(cx: &mut gpui::TestAppContext) {
         let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
         let progress_token = language_server_config
             .disk_based_diagnostics_progress_token
@@ -3693,31 +3693,31 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, &mut cx);
-        project.update(&mut cx, |project, _| {
+        let project = Project::test(fs, cx);
+        project.update(cx, |project, _| {
             Arc::get_mut(&mut project.languages).unwrap().add(language);
         });
 
         let (tree, _) = project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/dir", false, cx)
             })
             .await
             .unwrap();
-        let worktree_id = tree.read_with(&cx, |tree, _| tree.id());
+        let worktree_id = tree.read_with(cx, |tree, _| tree.id());
 
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
 
         // Cause worktree to start the fake language server
         let _buffer = project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.open_buffer((worktree_id, Path::new("b.rs")), cx)
             })
             .await
             .unwrap();
 
-        let mut events = subscribe(&project, &mut cx);
+        let mut events = subscribe(&project, cx);
 
         let mut fake_server = fake_servers.next().await.unwrap();
         fake_server.start_progress(&progress_token).await;
@@ -3759,11 +3759,11 @@ mod tests {
         );
 
         let buffer = project
-            .update(&mut cx, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
+            .update(cx, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
             .await
             .unwrap();
 
-        buffer.read_with(&cx, |buffer, _| {
+        buffer.read_with(cx, |buffer, _| {
             let snapshot = buffer.snapshot();
             let diagnostics = snapshot
                 .diagnostics_in_range::<_, Point>(0..buffer.len())
@@ -3785,7 +3785,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_search_worktree_without_files(mut cx: gpui::TestAppContext) {
+    async fn test_search_worktree_without_files(cx: &mut gpui::TestAppContext) {
         let dir = temp_tree(json!({
             "root": {
                 "dir1": {},
@@ -3795,9 +3795,9 @@ mod tests {
             }
         }));
 
-        let project = Project::test(Arc::new(RealFs), &mut cx);
+        let project = Project::test(Arc::new(RealFs), cx);
         let (tree, _) = project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree(&dir.path(), false, cx)
             })
             .await
@@ -3808,7 +3808,7 @@ mod tests {
 
         let cancel_flag = Default::default();
         let results = project
-            .read_with(&cx, |project, cx| {
+            .read_with(cx, |project, cx| {
                 project.match_paths("dir", false, false, 10, &cancel_flag, cx)
             })
             .await;
@@ -3817,7 +3817,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_definition(mut cx: gpui::TestAppContext) {
+    async fn test_definition(cx: &mut gpui::TestAppContext) {
         let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
         let language = Arc::new(Language::new(
             LanguageConfig {
@@ -3839,23 +3839,23 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, &mut cx);
-        project.update(&mut cx, |project, _| {
+        let project = Project::test(fs, cx);
+        project.update(cx, |project, _| {
             Arc::get_mut(&mut project.languages).unwrap().add(language);
         });
 
         let (tree, _) = project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/dir/b.rs", false, cx)
             })
             .await
             .unwrap();
-        let worktree_id = tree.read_with(&cx, |tree, _| tree.id());
+        let worktree_id = tree.read_with(cx, |tree, _| tree.id());
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
 
         let buffer = project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.open_buffer(
                     ProjectPath {
                         worktree_id,
@@ -3883,7 +3883,7 @@ mod tests {
         });
 
         let mut definitions = project
-            .update(&mut cx, |project, cx| project.definition(&buffer, 22, cx))
+            .update(cx, |project, cx| project.definition(&buffer, 22, cx))
             .await
             .unwrap();
 
@@ -3934,7 +3934,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_save_file(mut cx: gpui::TestAppContext) {
+    async fn test_save_file(cx: &mut gpui::TestAppContext) {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/dir",
@@ -3944,22 +3944,22 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), &mut cx);
+        let project = Project::test(fs.clone(), cx);
         let worktree_id = project
-            .update(&mut cx, |p, cx| {
+            .update(cx, |p, cx| {
                 p.find_or_create_local_worktree("/dir", false, cx)
             })
             .await
             .unwrap()
             .0
-            .read_with(&cx, |tree, _| tree.id());
+            .read_with(cx, |tree, _| tree.id());
 
         let buffer = project
-            .update(&mut cx, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
+            .update(cx, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
             .await
             .unwrap();
         buffer
-            .update(&mut cx, |buffer, cx| {
+            .update(cx, |buffer, cx| {
                 assert_eq!(buffer.text(), "the old contents");
                 buffer.edit(Some(0..0), "a line of text.\n".repeat(10 * 1024), cx);
                 buffer.save(cx)
@@ -3968,11 +3968,11 @@ mod tests {
             .unwrap();
 
         let new_text = fs.load(Path::new("/dir/file1")).await.unwrap();
-        assert_eq!(new_text, buffer.read_with(&cx, |buffer, _| buffer.text()));
+        assert_eq!(new_text, buffer.read_with(cx, |buffer, _| buffer.text()));
     }
 
     #[gpui::test]
-    async fn test_save_in_single_file_worktree(mut cx: gpui::TestAppContext) {
+    async fn test_save_in_single_file_worktree(cx: &mut gpui::TestAppContext) {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/dir",
@@ -3982,22 +3982,22 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), &mut cx);
+        let project = Project::test(fs.clone(), cx);
         let worktree_id = project
-            .update(&mut cx, |p, cx| {
+            .update(cx, |p, cx| {
                 p.find_or_create_local_worktree("/dir/file1", false, cx)
             })
             .await
             .unwrap()
             .0
-            .read_with(&cx, |tree, _| tree.id());
+            .read_with(cx, |tree, _| tree.id());
 
         let buffer = project
-            .update(&mut cx, |p, cx| p.open_buffer((worktree_id, ""), cx))
+            .update(cx, |p, cx| p.open_buffer((worktree_id, ""), cx))
             .await
             .unwrap();
         buffer
-            .update(&mut cx, |buffer, cx| {
+            .update(cx, |buffer, cx| {
                 buffer.edit(Some(0..0), "a line of text.\n".repeat(10 * 1024), cx);
                 buffer.save(cx)
             })
@@ -4005,11 +4005,11 @@ mod tests {
             .unwrap();
 
         let new_text = fs.load(Path::new("/dir/file1")).await.unwrap();
-        assert_eq!(new_text, buffer.read_with(&cx, |buffer, _| buffer.text()));
+        assert_eq!(new_text, buffer.read_with(cx, |buffer, _| buffer.text()));
     }
 
     #[gpui::test(retries = 5)]
-    async fn test_rescan_and_remote_updates(mut cx: gpui::TestAppContext) {
+    async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
         let dir = temp_tree(json!({
             "a": {
                 "file1": "",
@@ -4024,16 +4024,16 @@ mod tests {
             }
         }));
 
-        let project = Project::test(Arc::new(RealFs), &mut cx);
-        let rpc = project.read_with(&cx, |p, _| p.client.clone());
+        let project = Project::test(Arc::new(RealFs), cx);
+        let rpc = project.read_with(cx, |p, _| p.client.clone());
 
         let (tree, _) = project
-            .update(&mut cx, |p, cx| {
+            .update(cx, |p, cx| {
                 p.find_or_create_local_worktree(dir.path(), false, cx)
             })
             .await
             .unwrap();
-        let worktree_id = tree.read_with(&cx, |tree, _| tree.id());
+        let worktree_id = tree.read_with(cx, |tree, _| tree.id());
 
         let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
             let buffer = project.update(cx, |p, cx| p.open_buffer((worktree_id, path), cx));
@@ -4047,10 +4047,10 @@ mod tests {
             })
         };
 
-        let buffer2 = buffer_for_path("a/file2", &mut cx).await;
-        let buffer3 = buffer_for_path("a/file3", &mut cx).await;
-        let buffer4 = buffer_for_path("b/c/file4", &mut cx).await;
-        let buffer5 = buffer_for_path("b/c/file5", &mut cx).await;
+        let buffer2 = buffer_for_path("a/file2", cx).await;
+        let buffer3 = buffer_for_path("a/file3", cx).await;
+        let buffer4 = buffer_for_path("b/c/file4", cx).await;
+        let buffer5 = buffer_for_path("b/c/file5", cx).await;
 
         let file2_id = id_for_path("a/file2", &cx);
         let file3_id = id_for_path("a/file3", &cx);
@@ -4061,7 +4061,7 @@ mod tests {
             .await;
 
         // Create a remote copy of this worktree.
-        let initial_snapshot = tree.read_with(&cx, |tree, _| tree.as_local().unwrap().snapshot());
+        let initial_snapshot = tree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot());
         let (remote, load_task) = cx.update(|cx| {
             Worktree::remote(
                 1,
@@ -4136,7 +4136,7 @@ mod tests {
 
         // Update the remote worktree. Check that it becomes consistent with the
         // local worktree.
-        remote.update(&mut cx, |remote, cx| {
+        remote.update(cx, |remote, cx| {
             let update_message = tree.read(cx).as_local().unwrap().snapshot().build_update(
                 &initial_snapshot,
                 1,
@@ -4161,7 +4161,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_buffer_deduping(mut cx: gpui::TestAppContext) {
+    async fn test_buffer_deduping(cx: &mut gpui::TestAppContext) {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/the-dir",
@@ -4172,18 +4172,18 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), &mut cx);
+        let project = Project::test(fs.clone(), cx);
         let worktree_id = project
-            .update(&mut cx, |p, cx| {
+            .update(cx, |p, cx| {
                 p.find_or_create_local_worktree("/the-dir", false, cx)
             })
             .await
             .unwrap()
             .0
-            .read_with(&cx, |tree, _| tree.id());
+            .read_with(cx, |tree, _| tree.id());
 
         // Spawn multiple tasks to open paths, repeating some paths.
-        let (buffer_a_1, buffer_b, buffer_a_2) = project.update(&mut cx, |p, cx| {
+        let (buffer_a_1, buffer_b, buffer_a_2) = project.update(cx, |p, cx| {
             (
                 p.open_buffer((worktree_id, "a.txt"), cx),
                 p.open_buffer((worktree_id, "b.txt"), cx),
@@ -4194,8 +4194,8 @@ mod tests {
         let buffer_a_1 = buffer_a_1.await.unwrap();
         let buffer_a_2 = buffer_a_2.await.unwrap();
         let buffer_b = buffer_b.await.unwrap();
-        assert_eq!(buffer_a_1.read_with(&cx, |b, _| b.text()), "a-contents");
-        assert_eq!(buffer_b.read_with(&cx, |b, _| b.text()), "b-contents");
+        assert_eq!(buffer_a_1.read_with(cx, |b, _| b.text()), "a-contents");
+        assert_eq!(buffer_b.read_with(cx, |b, _| b.text()), "b-contents");
 
         // There is only one buffer per path.
         let buffer_a_id = buffer_a_1.id();
@@ -4204,7 +4204,7 @@ mod tests {
         // Open the same path again while it is still open.
         drop(buffer_a_1);
         let buffer_a_3 = project
-            .update(&mut cx, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+            .update(cx, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
 
@@ -4213,7 +4213,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_buffer_is_dirty(mut cx: gpui::TestAppContext) {
+    async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         use std::fs;
 
         let dir = temp_tree(json!({
@@ -4222,28 +4222,28 @@ mod tests {
             "file3": "ghi",
         }));
 
-        let project = Project::test(Arc::new(RealFs), &mut cx);
+        let project = Project::test(Arc::new(RealFs), cx);
         let (worktree, _) = project
-            .update(&mut cx, |p, cx| {
+            .update(cx, |p, cx| {
                 p.find_or_create_local_worktree(dir.path(), false, cx)
             })
             .await
             .unwrap();
-        let worktree_id = worktree.read_with(&cx, |worktree, _| worktree.id());
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
 
         worktree.flush_fs_events(&cx).await;
         worktree
-            .read_with(&cx, |t, _| t.as_local().unwrap().scan_complete())
+            .read_with(cx, |t, _| t.as_local().unwrap().scan_complete())
             .await;
 
         let buffer1 = project
-            .update(&mut cx, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
+            .update(cx, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
             .await
             .unwrap();
         let events = Rc::new(RefCell::new(Vec::new()));
 
         // initially, the buffer isn't dirty.
-        buffer1.update(&mut cx, |buffer, cx| {
+        buffer1.update(cx, |buffer, cx| {
             cx.subscribe(&buffer1, {
                 let events = events.clone();
                 move |_, _, event, _| events.borrow_mut().push(event.clone())
@@ -4257,7 +4257,7 @@ mod tests {
         });
 
         // after the first edit, the buffer is dirty, and emits a dirtied event.
-        buffer1.update(&mut cx, |buffer, cx| {
+        buffer1.update(cx, |buffer, cx| {
             assert!(buffer.text() == "ac");
             assert!(buffer.is_dirty());
             assert_eq!(
@@ -4269,7 +4269,7 @@ mod tests {
         });
 
         // after saving, the buffer is not dirty, and emits a saved event.
-        buffer1.update(&mut cx, |buffer, cx| {
+        buffer1.update(cx, |buffer, cx| {
             assert!(!buffer.is_dirty());
             assert_eq!(*events.borrow(), &[language::Event::Saved]);
             events.borrow_mut().clear();
@@ -4279,7 +4279,7 @@ mod tests {
         });
 
         // after editing again, the buffer is dirty, and emits another dirty event.
-        buffer1.update(&mut cx, |buffer, cx| {
+        buffer1.update(cx, |buffer, cx| {
             assert!(buffer.text() == "aBDc");
             assert!(buffer.is_dirty());
             assert_eq!(
@@ -4304,10 +4304,10 @@ mod tests {
         // When a file is deleted, the buffer is considered dirty.
         let events = Rc::new(RefCell::new(Vec::new()));
         let buffer2 = project
-            .update(&mut cx, |p, cx| p.open_buffer((worktree_id, "file2"), cx))
+            .update(cx, |p, cx| p.open_buffer((worktree_id, "file2"), cx))
             .await
             .unwrap();
-        buffer2.update(&mut cx, |_, cx| {
+        buffer2.update(cx, |_, cx| {
             cx.subscribe(&buffer2, {
                 let events = events.clone();
                 move |_, _, event, _| events.borrow_mut().push(event.clone())
@@ -4325,10 +4325,10 @@ mod tests {
         // When a file is already dirty when deleted, we don't emit a Dirtied event.
         let events = Rc::new(RefCell::new(Vec::new()));
         let buffer3 = project
-            .update(&mut cx, |p, cx| p.open_buffer((worktree_id, "file3"), cx))
+            .update(cx, |p, cx| p.open_buffer((worktree_id, "file3"), cx))
             .await
             .unwrap();
-        buffer3.update(&mut cx, |_, cx| {
+        buffer3.update(cx, |_, cx| {
             cx.subscribe(&buffer3, {
                 let events = events.clone();
                 move |_, _, event, _| events.borrow_mut().push(event.clone())
@@ -4337,7 +4337,7 @@ mod tests {
         });
 
         worktree.flush_fs_events(&cx).await;
-        buffer3.update(&mut cx, |buffer, cx| {
+        buffer3.update(cx, |buffer, cx| {
             buffer.edit(Some(0..0), "x", cx);
         });
         events.borrow_mut().clear();
@@ -4350,30 +4350,28 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_buffer_file_changes_on_disk(mut cx: gpui::TestAppContext) {
+    async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
         use std::fs;
 
         let initial_contents = "aaa\nbbbbb\nc\n";
         let dir = temp_tree(json!({ "the-file": initial_contents }));
 
-        let project = Project::test(Arc::new(RealFs), &mut cx);
+        let project = Project::test(Arc::new(RealFs), cx);
         let (worktree, _) = project
-            .update(&mut cx, |p, cx| {
+            .update(cx, |p, cx| {
                 p.find_or_create_local_worktree(dir.path(), false, cx)
             })
             .await
             .unwrap();
-        let worktree_id = worktree.read_with(&cx, |tree, _| tree.id());
+        let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
 
         worktree
-            .read_with(&cx, |t, _| t.as_local().unwrap().scan_complete())
+            .read_with(cx, |t, _| t.as_local().unwrap().scan_complete())
             .await;
 
         let abs_path = dir.path().join("the-file");
         let buffer = project
-            .update(&mut cx, |p, cx| {
-                p.open_buffer((worktree_id, "the-file"), cx)
-            })
+            .update(cx, |p, cx| p.open_buffer((worktree_id, "the-file"), cx))
             .await
             .unwrap();
 
@@ -4397,7 +4395,7 @@ mod tests {
 
         // Change the file on disk, adding two new lines of text, and removing
         // one line.
-        buffer.read_with(&cx, |buffer, _| {
+        buffer.read_with(cx, |buffer, _| {
             assert!(!buffer.is_dirty());
             assert!(!buffer.has_conflict());
         });
@@ -4411,7 +4409,7 @@ mod tests {
             .condition(&cx, |buffer, _| buffer.text() == new_contents)
             .await;
 
-        buffer.update(&mut cx, |buffer, _| {
+        buffer.update(cx, |buffer, _| {
             assert_eq!(buffer.text(), new_contents);
             assert!(!buffer.is_dirty());
             assert!(!buffer.has_conflict());
@@ -4433,7 +4431,7 @@ mod tests {
         });
 
         // Modify the buffer
-        buffer.update(&mut cx, |buffer, cx| {
+        buffer.update(cx, |buffer, cx| {
             buffer.edit(vec![0..0], " ", cx);
             assert!(buffer.is_dirty());
             assert!(!buffer.has_conflict());
@@ -4450,7 +4448,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
+    async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/the-dir",
@@ -4467,17 +4465,17 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), &mut cx);
+        let project = Project::test(fs.clone(), cx);
         let (worktree, _) = project
-            .update(&mut cx, |p, cx| {
+            .update(cx, |p, cx| {
                 p.find_or_create_local_worktree("/the-dir", false, cx)
             })
             .await
             .unwrap();
-        let worktree_id = worktree.read_with(&cx, |tree, _| tree.id());
+        let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
 
         let buffer = project
-            .update(&mut cx, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
+            .update(cx, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
             .await
             .unwrap();
 
@@ -4582,11 +4580,11 @@ mod tests {
         };
 
         project
-            .update(&mut cx, |p, cx| {
+            .update(cx, |p, cx| {
                 p.update_diagnostics(message, &Default::default(), cx)
             })
             .unwrap();
-        let buffer = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+        let buffer = buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
         assert_eq!(
             buffer
@@ -4709,7 +4707,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_rename(mut cx: gpui::TestAppContext) {
+    async fn test_rename(cx: &mut gpui::TestAppContext) {
         let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
         let language = Arc::new(Language::new(
             LanguageConfig {
@@ -4731,23 +4729,23 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), &mut cx);
-        project.update(&mut cx, |project, _| {
+        let project = Project::test(fs.clone(), cx);
+        project.update(cx, |project, _| {
             Arc::get_mut(&mut project.languages).unwrap().add(language);
         });
 
         let (tree, _) = project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/dir", false, cx)
             })
             .await
             .unwrap();
-        let worktree_id = tree.read_with(&cx, |tree, _| tree.id());
+        let worktree_id = tree.read_with(cx, |tree, _| tree.id());
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
 
         let buffer = project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.open_buffer((worktree_id, Path::new("one.rs")), cx)
             })
             .await
@@ -4755,7 +4753,7 @@ mod tests {
 
         let mut fake_server = fake_servers.next().await.unwrap();
 
-        let response = project.update(&mut cx, |project, cx| {
+        let response = project.update(cx, |project, cx| {
             project.prepare_rename(buffer.clone(), 7, cx)
         });
         fake_server
@@ -4771,10 +4769,10 @@ mod tests {
             .await
             .unwrap();
         let range = response.await.unwrap().unwrap();
-        let range = buffer.read_with(&cx, |buffer, _| range.to_offset(buffer));
+        let range = buffer.read_with(cx, |buffer, _| range.to_offset(buffer));
         assert_eq!(range, 6..9);
 
-        let response = project.update(&mut cx, |project, cx| {
+        let response = project.update(cx, |project, cx| {
             project.perform_rename(buffer.clone(), 7, "THREE".to_string(), true, cx)
         });
         fake_server
@@ -4837,7 +4835,7 @@ mod tests {
                 .remove_entry(&buffer)
                 .unwrap()
                 .0
-                .read_with(&cx, |buffer, _| buffer.text()),
+                .read_with(cx, |buffer, _| buffer.text()),
             "const THREE: usize = 1;"
         );
         assert_eq!(
@@ -4845,13 +4843,13 @@ mod tests {
                 .into_keys()
                 .next()
                 .unwrap()
-                .read_with(&cx, |buffer, _| buffer.text()),
+                .read_with(cx, |buffer, _| buffer.text()),
             "const TWO: usize = one::THREE + one::THREE;"
         );
     }
 
     #[gpui::test]
-    async fn test_search(mut cx: gpui::TestAppContext) {
+    async fn test_search(cx: &mut gpui::TestAppContext) {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/dir",
@@ -4863,19 +4861,19 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), &mut cx);
+        let project = Project::test(fs.clone(), cx);
         let (tree, _) = project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/dir", false, cx)
             })
             .await
             .unwrap();
-        let worktree_id = tree.read_with(&cx, |tree, _| tree.id());
+        let worktree_id = tree.read_with(cx, |tree, _| tree.id());
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
 
         assert_eq!(
-            search(&project, SearchQuery::text("TWO", false, true), &mut cx)
+            search(&project, SearchQuery::text("TWO", false, true), cx)
                 .await
                 .unwrap(),
             HashMap::from_iter([
@@ -4885,17 +4883,17 @@ mod tests {
         );
 
         let buffer_4 = project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.open_buffer((worktree_id, "four.rs"), cx)
             })
             .await
             .unwrap();
-        buffer_4.update(&mut cx, |buffer, cx| {
+        buffer_4.update(cx, |buffer, cx| {
             buffer.edit([20..28, 31..43], "two::TWO", cx);
         });
 
         assert_eq!(
-            search(&project, SearchQuery::text("TWO", false, true), &mut cx)
+            search(&project, SearchQuery::text("TWO", false, true), cx)
                 .await
                 .unwrap(),
             HashMap::from_iter([

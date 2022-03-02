@@ -1,8 +1,7 @@
 use super::proto::{self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, RequestMessage};
 use super::Connection;
 use anyhow::{anyhow, Context, Result};
-use futures::stream::BoxStream;
-use futures::{FutureExt as _, StreamExt};
+use futures::{channel::oneshot, stream::BoxStream, FutureExt as _, StreamExt};
 use parking_lot::{Mutex, RwLock};
 use postage::{
     barrier, mpsc,
@@ -92,7 +91,7 @@ pub struct ConnectionState {
     outgoing_tx: futures::channel::mpsc::UnboundedSender<proto::Envelope>,
     next_message_id: Arc<AtomicU32>,
     response_channels:
-        Arc<Mutex<Option<HashMap<u32, mpsc::Sender<(proto::Envelope, barrier::Sender)>>>>>,
+        Arc<Mutex<Option<HashMap<u32, oneshot::Sender<(proto::Envelope, barrier::Sender)>>>>>,
 }
 
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -177,18 +176,14 @@ impl Peer {
             async move {
                 if let Some(responding_to) = incoming.responding_to {
                     let channel = response_channels.lock().as_mut()?.remove(&responding_to);
-                    if let Some(mut tx) = channel {
+                    if let Some(tx) = channel {
                         let mut requester_resumed = barrier::channel();
-                        if let Err(error) = tx.send((incoming, requester_resumed.0)).await {
+                        if let Err(error) = tx.send((incoming, requester_resumed.0)) {
                             log::debug!(
                                 "received RPC but request future was dropped {:?}",
-                                error.0 .0
+                                error.0
                             );
                         }
-                        // Drop response channel before awaiting on the barrier. This allows the
-                        // barrier to get dropped even if the request's future is dropped before it
-                        // has a chance to observe the response.
-                        drop(tx);
                         requester_resumed.1.recv().await;
                     } else {
                         log::warn!("received RPC response to unknown request {}", responding_to);
@@ -239,7 +234,7 @@ impl Peer {
         receiver_id: ConnectionId,
         request: T,
     ) -> impl Future<Output = Result<T::Response>> {
-        let (tx, mut rx) = mpsc::channel(1);
+        let (tx, rx) = oneshot::channel();
         let send = self.connection_state(receiver_id).and_then(|connection| {
             let message_id = connection.next_message_id.fetch_add(1, SeqCst);
             connection
@@ -260,10 +255,7 @@ impl Peer {
         });
         async move {
             send?;
-            let (response, _barrier) = rx
-                .recv()
-                .await
-                .ok_or_else(|| anyhow!("connection was closed"))?;
+            let (response, _barrier) = rx.await.map_err(|_| anyhow!("connection was closed"))?;
             if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
                 Err(anyhow!("RPC request failed - {}", error.message))
             } else {
@@ -347,7 +339,7 @@ mod tests {
     use gpui::TestAppContext;
 
     #[gpui::test(iterations = 50)]
-    async fn test_request_response(cx: TestAppContext) {
+    async fn test_request_response(cx: &mut TestAppContext) {
         let executor = cx.foreground();
 
         // create 2 clients connected to 1 server
@@ -441,7 +433,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 50)]
-    async fn test_order_of_response_and_incoming(cx: TestAppContext) {
+    async fn test_order_of_response_and_incoming(cx: &mut TestAppContext) {
         let executor = cx.foreground();
         let server = Peer::new();
         let client = Peer::new();
@@ -539,7 +531,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 50)]
-    async fn test_dropping_request_before_completion(cx: TestAppContext) {
+    async fn test_dropping_request_before_completion(cx: &mut TestAppContext) {
         let executor = cx.foreground();
         let server = Peer::new();
         let client = Peer::new();
@@ -651,7 +643,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 50)]
-    async fn test_disconnect(cx: TestAppContext) {
+    async fn test_disconnect(cx: &mut TestAppContext) {
         let executor = cx.foreground();
 
         let (client_conn, mut server_conn, _) = Connection::in_memory(cx.background());
@@ -686,7 +678,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 50)]
-    async fn test_io_error(cx: TestAppContext) {
+    async fn test_io_error(cx: &mut TestAppContext) {
         let executor = cx.foreground();
         let (client_conn, mut server_conn, _) = Connection::in_memory(cx.background());
 

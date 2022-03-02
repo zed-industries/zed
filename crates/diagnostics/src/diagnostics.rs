@@ -725,7 +725,7 @@ mod tests {
     use workspace::WorkspaceParams;
 
     #[gpui::test]
-    async fn test_diagnostics(mut cx: TestAppContext) {
+    async fn test_diagnostics(cx: &mut TestAppContext) {
         let params = cx.update(WorkspaceParams::test);
         let project = params.project.clone();
         let workspace = cx.add_view(0, |cx| Workspace::new(&params, cx));
@@ -760,14 +760,14 @@ mod tests {
             .await;
 
         project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/test", false, cx)
             })
             .await
             .unwrap();
 
         // Create some diagnostics
-        project.update(&mut cx, |project, cx| {
+        project.update(cx, |project, cx| {
             project
                 .update_diagnostic_entries(
                     PathBuf::from("/test/main.rs"),
@@ -856,7 +856,7 @@ mod tests {
         });
 
         view.next_notification(&cx).await;
-        view.update(&mut cx, |view, cx| {
+        view.update(cx, |view, cx| {
             let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
 
             assert_eq!(
@@ -920,7 +920,7 @@ mod tests {
         });
 
         // Diagnostics are added for another earlier path.
-        project.update(&mut cx, |project, cx| {
+        project.update(cx, |project, cx| {
             project.disk_based_diagnostics_started(cx);
             project
                 .update_diagnostic_entries(
@@ -944,7 +944,7 @@ mod tests {
         });
 
         view.next_notification(&cx).await;
-        view.update(&mut cx, |view, cx| {
+        view.update(cx, |view, cx| {
             let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
 
             assert_eq!(
@@ -1021,7 +1021,7 @@ mod tests {
         });
 
         // Diagnostics are added to the first path
-        project.update(&mut cx, |project, cx| {
+        project.update(cx, |project, cx| {
             project.disk_based_diagnostics_started(cx);
             project
                 .update_diagnostic_entries(
@@ -1059,7 +1059,7 @@ mod tests {
         });
 
         view.next_notification(&cx).await;
-        view.update(&mut cx, |view, cx| {
+        view.update(cx, |view, cx| {
             let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
 
             assert_eq!(

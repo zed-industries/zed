@@ -125,23 +125,23 @@ fn test_edit_events(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-async fn test_apply_diff(mut cx: gpui::TestAppContext) {
+async fn test_apply_diff(cx: &mut gpui::TestAppContext) {
     let text = "a\nbb\nccc\ndddd\neeeee\nffffff\n";
     let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
 
     let text = "a\nccc\ndddd\nffffff\n";
-    let diff = buffer.read_with(&cx, |b, cx| b.diff(text.into(), cx)).await;
-    buffer.update(&mut cx, |b, cx| b.apply_diff(diff, cx));
+    let diff = buffer.read_with(cx, |b, cx| b.diff(text.into(), cx)).await;
+    buffer.update(cx, |b, cx| b.apply_diff(diff, cx));
     cx.read(|cx| assert_eq!(buffer.read(cx).text(), text));
 
     let text = "a\n1\n\nccc\ndd2dd\nffffff\n";
-    let diff = buffer.read_with(&cx, |b, cx| b.diff(text.into(), cx)).await;
-    buffer.update(&mut cx, |b, cx| b.apply_diff(diff, cx));
+    let diff = buffer.read_with(cx, |b, cx| b.diff(text.into(), cx)).await;
+    buffer.update(cx, |b, cx| b.apply_diff(diff, cx));
     cx.read(|cx| assert_eq!(buffer.read(cx).text(), text));
 }
 
 #[gpui::test]
-async fn test_reparse(mut cx: gpui::TestAppContext) {
+async fn test_reparse(cx: &mut gpui::TestAppContext) {
     let text = "fn a() {}";
     let buffer =
         cx.add_model(|cx| Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx));
@@ -159,13 +159,13 @@ async fn test_reparse(mut cx: gpui::TestAppContext) {
         )
     );
 
-    buffer.update(&mut cx, |buffer, _| {
+    buffer.update(cx, |buffer, _| {
         buffer.set_sync_parse_timeout(Duration::ZERO)
     });
 
     // Perform some edits (add parameter and variable reference)
     // Parsing doesn't begin until the transaction is complete
-    buffer.update(&mut cx, |buf, cx| {
+    buffer.update(cx, |buf, cx| {
         buf.start_transaction();
 
         let offset = buf.text().find(")").unwrap();
@@ -196,19 +196,19 @@ async fn test_reparse(mut cx: gpui::TestAppContext) {
     // * turn identifier into a field expression
     // * turn field expression into a method call
     // * add a turbofish to the method call
-    buffer.update(&mut cx, |buf, cx| {
+    buffer.update(cx, |buf, cx| {
         let offset = buf.text().find(";").unwrap();
         buf.edit(vec![offset..offset], ".e", cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e; }");
         assert!(buf.is_parsing());
     });
-    buffer.update(&mut cx, |buf, cx| {
+    buffer.update(cx, |buf, cx| {
         let offset = buf.text().find(";").unwrap();
         buf.edit(vec![offset..offset], "(f)", cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e(f); }");
         assert!(buf.is_parsing());
     });
-    buffer.update(&mut cx, |buf, cx| {
+    buffer.update(cx, |buf, cx| {
         let offset = buf.text().find("(f)").unwrap();
         buf.edit(vec![offset..offset], "::<G>", cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
@@ -230,7 +230,7 @@ async fn test_reparse(mut cx: gpui::TestAppContext) {
         )
     );
 
-    buffer.update(&mut cx, |buf, cx| {
+    buffer.update(cx, |buf, cx| {
         buf.undo(cx);
         assert_eq!(buf.text(), "fn a() {}");
         assert!(buf.is_parsing());
@@ -247,7 +247,7 @@ async fn test_reparse(mut cx: gpui::TestAppContext) {
         )
     );
 
-    buffer.update(&mut cx, |buf, cx| {
+    buffer.update(cx, |buf, cx| {
         buf.redo(cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
         assert!(buf.is_parsing());
@@ -276,7 +276,7 @@ async fn test_reparse(mut cx: gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_outline(mut cx: gpui::TestAppContext) {
+async fn test_outline(cx: &mut gpui::TestAppContext) {
     let language = Arc::new(
         rust_lang()
             .with_outline_query(
@@ -336,7 +336,7 @@ async fn test_outline(mut cx: gpui::TestAppContext) {
 
     let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
     let outline = buffer
-        .read_with(&cx, |buffer, _| buffer.snapshot().outline(None))
+        .read_with(cx, |buffer, _| buffer.snapshot().outline(None))
         .unwrap();
 
     assert_eq!(
@@ -553,7 +553,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
 }
 
 #[gpui::test]
-async fn test_diagnostics(mut cx: gpui::TestAppContext) {
+async fn test_diagnostics(cx: &mut gpui::TestAppContext) {
     let (language_server, mut fake) = cx.update(lsp::LanguageServer::fake);
     let mut rust_lang = rust_lang();
     rust_lang.config.language_server = Some(LanguageServerConfig {
@@ -579,13 +579,13 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
         .await;
 
     // Edit the buffer, moving the content down
-    buffer.update(&mut cx, |buffer, cx| buffer.edit([0..0], "\n\n", cx));
+    buffer.update(cx, |buffer, cx| buffer.edit([0..0], "\n\n", cx));
     let change_notification_1 = fake
         .receive_notification::<lsp::notification::DidChangeTextDocument>()
         .await;
     assert!(change_notification_1.text_document.version > open_notification.text_document.version);
 
-    buffer.update(&mut cx, |buffer, cx| {
+    buffer.update(cx, |buffer, cx| {
         // Receive diagnostics for an earlier version of the buffer.
         buffer
             .update_diagnostics(
@@ -760,7 +760,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
 
     // Keep editing the buffer and ensure disk-based diagnostics get translated according to the
     // changes since the last save.
-    buffer.update(&mut cx, |buffer, cx| {
+    buffer.update(cx, |buffer, cx| {
         buffer.edit(Some(Point::new(2, 0)..Point::new(2, 0)), "    ", cx);
         buffer.edit(Some(Point::new(2, 8)..Point::new(2, 10)), "(x: usize)", cx);
     });
@@ -771,7 +771,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
         change_notification_2.text_document.version > change_notification_1.text_document.version
     );
 
-    buffer.update(&mut cx, |buffer, cx| {
+    buffer.update(cx, |buffer, cx| {
         buffer
             .update_diagnostics(
                 vec![
@@ -836,7 +836,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_edits_from_lsp_with_past_version(mut cx: gpui::TestAppContext) {
+async fn test_edits_from_lsp_with_past_version(cx: &mut gpui::TestAppContext) {
     let (language_server, mut fake) = cx.update(lsp::LanguageServer::fake);
 
     let text = "
@@ -865,7 +865,7 @@ async fn test_edits_from_lsp_with_past_version(mut cx: gpui::TestAppContext) {
         .version;
 
     // Simulate editing the buffer after the language server computes some edits.
-    buffer.update(&mut cx, |buffer, cx| {
+    buffer.update(cx, |buffer, cx| {
         buffer.edit(
             [Point::new(0, 0)..Point::new(0, 0)],
             "// above first function\n",
@@ -902,7 +902,7 @@ async fn test_edits_from_lsp_with_past_version(mut cx: gpui::TestAppContext) {
     });
 
     let edits = buffer
-        .update(&mut cx, |buffer, cx| {
+        .update(cx, |buffer, cx| {
             buffer.edits_from_lsp(
                 vec![
                     // replace body of first function
@@ -937,7 +937,7 @@ async fn test_edits_from_lsp_with_past_version(mut cx: gpui::TestAppContext) {
         .await
         .unwrap();
 
-    buffer.update(&mut cx, |buffer, cx| {
+    buffer.update(cx, |buffer, cx| {
         for (range, new_text) in edits {
             buffer.edit([range], new_text, cx);
         }
@@ -962,7 +962,7 @@ async fn test_edits_from_lsp_with_past_version(mut cx: gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_edits_from_lsp_with_edits_on_adjacent_lines(mut cx: gpui::TestAppContext) {
+async fn test_edits_from_lsp_with_edits_on_adjacent_lines(cx: &mut gpui::TestAppContext) {
     let text = "
         use a::b;
         use a::c;
@@ -979,7 +979,7 @@ async fn test_edits_from_lsp_with_edits_on_adjacent_lines(mut cx: gpui::TestAppC
     // Simulate the language server sending us a small edit in the form of a very large diff.
     // Rust-analyzer does this when performing a merge-imports code action.
     let edits = buffer
-        .update(&mut cx, |buffer, cx| {
+        .update(cx, |buffer, cx| {
             buffer.edits_from_lsp(
                 [
                     // Replace the first use statement without editing the semicolon.
@@ -1015,7 +1015,7 @@ async fn test_edits_from_lsp_with_edits_on_adjacent_lines(mut cx: gpui::TestAppC
         .await
         .unwrap();
 
-    buffer.update(&mut cx, |buffer, cx| {
+    buffer.update(cx, |buffer, cx| {
         let edits = edits
             .into_iter()
             .map(|(range, text)| {
@@ -1053,7 +1053,7 @@ async fn test_edits_from_lsp_with_edits_on_adjacent_lines(mut cx: gpui::TestAppC
 }
 
 #[gpui::test]
-async fn test_empty_diagnostic_ranges(mut cx: gpui::TestAppContext) {
+async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
     cx.add_model(|cx| {
         let text = concat!(
             "let one = ;\n", //

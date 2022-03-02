@@ -384,16 +384,19 @@ impl Worktree {
                 worktree.snapshot = worktree.background_snapshot.lock().clone();
                 if worktree.is_scanning() {
                     if worktree.poll_task.is_none() {
-                        worktree.poll_task = Some(cx.spawn(|this, mut cx| async move {
+                        worktree.poll_task = Some(cx.spawn_weak(|this, mut cx| async move {
                             if is_fake_fs {
-                                smol::future::yield_now().await;
+                                #[cfg(any(test, feature = "test-support"))]
+                                cx.background().simulate_random_delay().await;
                             } else {
                                 smol::Timer::after(Duration::from_millis(100)).await;
                             }
-                            this.update(&mut cx, |this, cx| {
-                                this.as_local_mut().unwrap().poll_task = None;
-                                this.poll_snapshot(cx);
-                            })
+                            if let Some(this) = this.upgrade(&cx) {
+                                this.update(&mut cx, |this, cx| {
+                                    this.as_local_mut().unwrap().poll_task = None;
+                                    this.poll_snapshot(cx);
+                                });
+                            }
                         }));
                     }
                 } else {
@@ -2441,7 +2444,7 @@ mod tests {
     use util::test::temp_tree;
 
     #[gpui::test]
-    async fn test_traversal(cx: gpui::TestAppContext) {
+    async fn test_traversal(cx: &mut gpui::TestAppContext) {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/root",
@@ -2470,7 +2473,7 @@ mod tests {
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
 
-        tree.read_with(&cx, |tree, _| {
+        tree.read_with(cx, |tree, _| {
             assert_eq!(
                 tree.entries(false)
                     .map(|entry| entry.path.as_ref())
@@ -2486,7 +2489,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_rescan_with_gitignore(cx: gpui::TestAppContext) {
+    async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
         let dir = temp_tree(json!({
             ".git": {},
             ".gitignore": "ignored-dir\n",

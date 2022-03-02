@@ -8,15 +8,16 @@ version = "0.1.0"
 path = "src/gpui.rs"
 
 [features]
-test-support = ["env_logger", "collections/test-support"]
+test-support = ["backtrace", "dhat", "env_logger", "collections/test-support"]
 
 [dependencies]
 collections = { path = "../collections" }
 gpui_macros = { path = "../gpui_macros" }
 sum_tree = { path = "../sum_tree" }
 async-task = "4.0.3"
-backtrace = "0.3"
+backtrace = { version = "0.3", optional = true }
 ctor = "0.1"
+dhat = { version = "0.3", optional = true }
 env_logger = { version = "0.8", optional = true }
 etagere = "0.2"
 futures = "0.3"
@@ -48,7 +49,9 @@ bindgen = "0.58.1"
 cc = "1.0.67"
 
 [dev-dependencies]
+backtrace = "0.3"
 collections = { path = "../collections", features = ["test-support"] }
+dhat = "0.3"
 env_logger = "0.8"
 png = "0.16"
 simplelog = "0.9"

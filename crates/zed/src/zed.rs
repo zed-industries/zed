@@ -152,7 +152,7 @@ mod tests {
     };
 
     #[gpui::test]
-    async fn test_open_paths_action(mut cx: TestAppContext) {
+    async fn test_open_paths_action(cx: &mut TestAppContext) {
         let app_state = cx.update(test_app_state);
         let dir = temp_tree(json!({
             "a": {
@@ -186,7 +186,7 @@ mod tests {
             .await;
         assert_eq!(cx.window_ids().len(), 1);
         let workspace_1 = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
-        workspace_1.read_with(&cx, |workspace, cx| {
+        workspace_1.read_with(cx, |workspace, cx| {
             assert_eq!(workspace.worktrees(cx).count(), 2)
         });
 
@@ -205,7 +205,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_new_empty_workspace(mut cx: TestAppContext) {
+    async fn test_new_empty_workspace(cx: &mut TestAppContext) {
         let app_state = cx.update(test_app_state);
         cx.update(|cx| {
             workspace::init(cx);
@@ -213,7 +213,7 @@ mod tests {
         cx.dispatch_global_action(workspace::OpenNew(app_state.clone()));
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();
-        let editor = workspace.update(&mut cx, |workspace, cx| {
+        let editor = workspace.update(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
                 .unwrap()
@@ -221,22 +221,22 @@ mod tests {
                 .unwrap()
         });
 
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             assert!(editor.text(cx).is_empty());
         });
 
-        let save_task = workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(cx));
+        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(cx));
         app_state.fs.as_fake().insert_dir("/root").await;
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
         save_task.await.unwrap();
-        editor.read_with(&cx, |editor, cx| {
+        editor.read_with(cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
             assert_eq!(editor.title(cx), "the-new-name");
         });
     }
 
     #[gpui::test]
-    async fn test_open_entry(mut cx: TestAppContext) {
+    async fn test_open_entry(cx: &mut TestAppContext) {
         let app_state = cx.update(test_app_state);
         app_state
             .fs
@@ -256,7 +256,7 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         params
             .project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/root", false, cx)
             })
             .await
@@ -271,7 +271,7 @@ mod tests {
 
         // Open the first entry
         let entry_1 = workspace
-            .update(&mut cx, |w, cx| w.open_path(file1.clone(), cx))
+            .update(cx, |w, cx| w.open_path(file1.clone(), cx))
             .await
             .unwrap();
         cx.read(|cx| {
@@ -285,7 +285,7 @@ mod tests {
 
         // Open the second entry
         workspace
-            .update(&mut cx, |w, cx| w.open_path(file2.clone(), cx))
+            .update(cx, |w, cx| w.open_path(file2.clone(), cx))
             .await
             .unwrap();
         cx.read(|cx| {
@@ -299,7 +299,7 @@ mod tests {
 
         // Open the first entry again. The existing pane item is activated.
         let entry_1b = workspace
-            .update(&mut cx, |w, cx| w.open_path(file1.clone(), cx))
+            .update(cx, |w, cx| w.open_path(file1.clone(), cx))
             .await
             .unwrap();
         assert_eq!(entry_1.id(), entry_1b.id());
@@ -315,14 +315,14 @@ mod tests {
 
         // Split the pane with the first entry, then open the second entry again.
         workspace
-            .update(&mut cx, |w, cx| {
+            .update(cx, |w, cx| {
                 w.split_pane(w.active_pane().clone(), SplitDirection::Right, cx);
                 w.open_path(file2.clone(), cx)
             })
             .await
             .unwrap();
 
-        workspace.read_with(&cx, |w, cx| {
+        workspace.read_with(cx, |w, cx| {
             assert_eq!(
                 w.active_pane()
                     .read(cx)
@@ -334,7 +334,7 @@ mod tests {
         });
 
         // Open the third entry twice concurrently. Only one pane item is added.
-        let (t1, t2) = workspace.update(&mut cx, |w, cx| {
+        let (t1, t2) = workspace.update(cx, |w, cx| {
             (
                 w.open_path(file3.clone(), cx),
                 w.open_path(file3.clone(), cx),
@@ -357,7 +357,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_open_paths(mut cx: TestAppContext) {
+    async fn test_open_paths(cx: &mut TestAppContext) {
         let app_state = cx.update(test_app_state);
         let fs = app_state.fs.as_fake();
         fs.insert_dir("/dir1").await;
@@ -369,7 +369,7 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         params
             .project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/dir1", false, cx)
             })
             .await
@@ -435,7 +435,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_save_conflicting_item(mut cx: TestAppContext) {
+    async fn test_save_conflicting_item(cx: &mut TestAppContext) {
         let app_state = cx.update(test_app_state);
         let fs = app_state.fs.as_fake();
         fs.insert_tree("/root", json!({ "a.txt": "" })).await;
@@ -444,7 +444,7 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         params
             .project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/root", false, cx)
             })
             .await
@@ -474,24 +474,24 @@ mod tests {
             .await;
         cx.read(|cx| assert!(editor.is_dirty(cx)));
 
-        let save_task = workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(cx));
+        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(cx));
         cx.simulate_prompt_answer(window_id, 0);
         save_task.await.unwrap();
-        editor.read_with(&cx, |editor, cx| {
+        editor.read_with(cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
             assert!(!editor.has_conflict(cx));
         });
     }
 
     #[gpui::test]
-    async fn test_open_and_save_new_file(mut cx: TestAppContext) {
+    async fn test_open_and_save_new_file(cx: &mut TestAppContext) {
         let app_state = cx.update(test_app_state);
         app_state.fs.as_fake().insert_dir("/root").await;
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         params
             .project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/root", false, cx)
             })
             .await
@@ -500,7 +500,7 @@ mod tests {
 
         // Create a new untitled buffer
         cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
-        let editor = workspace.read_with(&cx, |workspace, cx| {
+        let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
                 .unwrap()
@@ -508,7 +508,7 @@ mod tests {
                 .unwrap()
         });
 
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
             assert_eq!(editor.title(cx), "untitled");
             assert!(Arc::ptr_eq(
@@ -520,7 +520,7 @@ mod tests {
         });
 
         // Save the buffer. This prompts for a filename.
-        let save_task = workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(cx));
+        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(cx));
         cx.simulate_new_path_selection(|parent_dir| {
             assert_eq!(parent_dir, Path::new("/root"));
             Some(parent_dir.join("the-new-name.rs"))
@@ -533,21 +533,21 @@ mod tests {
         // When the save completes, the buffer's title is updated and the language is assigned based
         // on the path.
         save_task.await.unwrap();
-        editor.read_with(&cx, |editor, cx| {
+        editor.read_with(cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
             assert_eq!(editor.title(cx), "the-new-name.rs");
             assert_eq!(editor.language(cx).unwrap().name().as_ref(), "Rust");
         });
 
         // Edit the file and save it again. This time, there is no filename prompt.
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             editor.handle_input(&editor::Input(" there".into()), cx);
             assert_eq!(editor.is_dirty(cx.as_ref()), true);
         });
-        let save_task = workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(cx));
+        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(cx));
         save_task.await.unwrap();
         assert!(!cx.did_prompt_for_new_path());
-        editor.read_with(&cx, |editor, cx| {
+        editor.read_with(cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
             assert_eq!(editor.title(cx), "the-new-name.rs")
         });
@@ -556,7 +556,7 @@ mod tests {
         // the same buffer.
         cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
         workspace
-            .update(&mut cx, |workspace, cx| {
+            .update(cx, |workspace, cx| {
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
                 workspace.open_path(
                     ProjectPath {
@@ -568,7 +568,7 @@ mod tests {
             })
             .await
             .unwrap();
-        let editor2 = workspace.update(&mut cx, |workspace, cx| {
+        let editor2 = workspace.update(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
                 .unwrap()
@@ -584,7 +584,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_setting_language_when_saving_as_single_file_worktree(mut cx: TestAppContext) {
+    async fn test_setting_language_when_saving_as_single_file_worktree(cx: &mut TestAppContext) {
         let app_state = cx.update(test_app_state);
         app_state.fs.as_fake().insert_dir("/root").await;
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
@@ -592,7 +592,7 @@ mod tests {
 
         // Create a new untitled buffer
         cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
-        let editor = workspace.read_with(&cx, |workspace, cx| {
+        let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
                 .unwrap()
@@ -600,7 +600,7 @@ mod tests {
                 .unwrap()
         });
 
-        editor.update(&mut cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             assert!(Arc::ptr_eq(
                 editor.language(cx).unwrap(),
                 &language::PLAIN_TEXT
@@ -610,18 +610,18 @@ mod tests {
         });
 
         // Save the buffer. This prompts for a filename.
-        let save_task = workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(cx));
+        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(cx));
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name.rs")));
         save_task.await.unwrap();
         // The buffer is not dirty anymore and the language is assigned based on the path.
-        editor.read_with(&cx, |editor, cx| {
+        editor.read_with(cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
             assert_eq!(editor.language(cx).unwrap().name().as_ref(), "Rust")
         });
     }
 
     #[gpui::test]
-    async fn test_pane_actions(mut cx: TestAppContext) {
+    async fn test_pane_actions(cx: &mut TestAppContext) {
         cx.update(|cx| pane::init(cx));
         let app_state = cx.update(test_app_state);
         app_state
@@ -643,7 +643,7 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         params
             .project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/root", false, cx)
             })
             .await
@@ -656,7 +656,7 @@ mod tests {
         let pane_1 = cx.read(|cx| workspace.read(cx).active_pane().clone());
 
         workspace
-            .update(&mut cx, |w, cx| w.open_path(file1.clone(), cx))
+            .update(cx, |w, cx| w.open_path(file1.clone(), cx))
             .await
             .unwrap();
         cx.read(|cx| {
@@ -686,7 +686,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_navigation(mut cx: TestAppContext) {
+    async fn test_navigation(cx: &mut TestAppContext) {
         let app_state = cx.update(test_app_state);
         app_state
             .fs
@@ -706,7 +706,7 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         params
             .project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/root", false, cx)
             })
             .await
@@ -719,110 +719,94 @@ mod tests {
         let file3 = entries[2].clone();
 
         let editor1 = workspace
-            .update(&mut cx, |w, cx| w.open_path(file1.clone(), cx))
+            .update(cx, |w, cx| w.open_path(file1.clone(), cx))
             .await
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
-        editor1.update(&mut cx, |editor, cx| {
+        editor1.update(cx, |editor, cx| {
             editor.select_display_ranges(&[DisplayPoint::new(10, 0)..DisplayPoint::new(10, 0)], cx);
         });
         let editor2 = workspace
-            .update(&mut cx, |w, cx| w.open_path(file2.clone(), cx))
+            .update(cx, |w, cx| w.open_path(file2.clone(), cx))
             .await
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
         let editor3 = workspace
-            .update(&mut cx, |w, cx| w.open_path(file3.clone(), cx))
+            .update(cx, |w, cx| w.open_path(file3.clone(), cx))
             .await
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
-        editor3.update(&mut cx, |editor, cx| {
+        editor3.update(cx, |editor, cx| {
             editor.select_display_ranges(&[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)], cx);
         });
         assert_eq!(
-            active_location(&workspace, &mut cx),
+            active_location(&workspace, cx),
             (file3.clone(), DisplayPoint::new(15, 0))
         );
 
-        workspace
-            .update(&mut cx, |w, cx| Pane::go_back(w, cx))
-            .await;
+        workspace.update(cx, |w, cx| Pane::go_back(w, cx)).await;
         assert_eq!(
-            active_location(&workspace, &mut cx),
+            active_location(&workspace, cx),
             (file3.clone(), DisplayPoint::new(0, 0))
         );
 
-        workspace
-            .update(&mut cx, |w, cx| Pane::go_back(w, cx))
-            .await;
+        workspace.update(cx, |w, cx| Pane::go_back(w, cx)).await;
         assert_eq!(
-            active_location(&workspace, &mut cx),
+            active_location(&workspace, cx),
             (file2.clone(), DisplayPoint::new(0, 0))
         );
 
-        workspace
-            .update(&mut cx, |w, cx| Pane::go_back(w, cx))
-            .await;
+        workspace.update(cx, |w, cx| Pane::go_back(w, cx)).await;
         assert_eq!(
-            active_location(&workspace, &mut cx),
+            active_location(&workspace, cx),
             (file1.clone(), DisplayPoint::new(10, 0))
         );
 
-        workspace
-            .update(&mut cx, |w, cx| Pane::go_back(w, cx))
-            .await;
+        workspace.update(cx, |w, cx| Pane::go_back(w, cx)).await;
         assert_eq!(
-            active_location(&workspace, &mut cx),
+            active_location(&workspace, cx),
             (file1.clone(), DisplayPoint::new(0, 0))
         );
 
         // Go back one more time and ensure we don't navigate past the first item in the history.
-        workspace
-            .update(&mut cx, |w, cx| Pane::go_back(w, cx))
-            .await;
+        workspace.update(cx, |w, cx| Pane::go_back(w, cx)).await;
         assert_eq!(
-            active_location(&workspace, &mut cx),
+            active_location(&workspace, cx),
             (file1.clone(), DisplayPoint::new(0, 0))
         );
 
-        workspace
-            .update(&mut cx, |w, cx| Pane::go_forward(w, cx))
-            .await;
+        workspace.update(cx, |w, cx| Pane::go_forward(w, cx)).await;
         assert_eq!(
-            active_location(&workspace, &mut cx),
+            active_location(&workspace, cx),
             (file1.clone(), DisplayPoint::new(10, 0))
         );
 
-        workspace
-            .update(&mut cx, |w, cx| Pane::go_forward(w, cx))
-            .await;
+        workspace.update(cx, |w, cx| Pane::go_forward(w, cx)).await;
         assert_eq!(
-            active_location(&workspace, &mut cx),
+            active_location(&workspace, cx),
             (file2.clone(), DisplayPoint::new(0, 0))
         );
 
         // Go forward to an item that has been closed, ensuring it gets re-opened at the same
         // location.
-        workspace.update(&mut cx, |workspace, cx| {
+        workspace.update(cx, |workspace, cx| {
             workspace
                 .active_pane()
                 .update(cx, |pane, cx| pane.close_item(editor3.id(), cx));
             drop(editor3);
         });
-        workspace
-            .update(&mut cx, |w, cx| Pane::go_forward(w, cx))
-            .await;
+        workspace.update(cx, |w, cx| Pane::go_forward(w, cx)).await;
         assert_eq!(
-            active_location(&workspace, &mut cx),
+            active_location(&workspace, cx),
             (file3.clone(), DisplayPoint::new(0, 0))
         );
 
         // Go back to an item that has been closed and removed from disk, ensuring it gets skipped.
         workspace
-            .update(&mut cx, |workspace, cx| {
+            .update(cx, |workspace, cx| {
                 workspace
                     .active_pane()
                     .update(cx, |pane, cx| pane.close_item(editor2.id(), cx));
@@ -834,18 +818,14 @@ mod tests {
             })
             .await
             .unwrap();
-        workspace
-            .update(&mut cx, |w, cx| Pane::go_back(w, cx))
-            .await;
+        workspace.update(cx, |w, cx| Pane::go_back(w, cx)).await;
         assert_eq!(
-            active_location(&workspace, &mut cx),
+            active_location(&workspace, cx),
             (file1.clone(), DisplayPoint::new(10, 0))
         );
-        workspace
-            .update(&mut cx, |w, cx| Pane::go_forward(w, cx))
-            .await;
+        workspace.update(cx, |w, cx| Pane::go_forward(w, cx)).await;
         assert_eq!(
-            active_location(&workspace, &mut cx),
+            active_location(&workspace, cx),
             (file3.clone(), DisplayPoint::new(0, 0))
         );
 

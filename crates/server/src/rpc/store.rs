@@ -296,7 +296,23 @@ impl Store {
                         }
                     }
 
-                    Ok(e.remove())
+                    let project = e.remove();
+
+                    if let Some(host_connection) = self.connections.get_mut(&connection_id) {
+                        host_connection.projects.remove(&project_id);
+                    }
+
+                    if let Some(share) = &project.share {
+                        for guest_connection in share.guests.keys() {
+                            if let Some(connection) = self.connections.get_mut(&guest_connection) {
+                                connection.projects.remove(&project_id);
+                            }
+                        }
+                    }
+
+                    #[cfg(test)]
+                    self.check_invariants();
+                    Ok(project)
                 } else {
                     Err(anyhow!("no such project"))?
                 }

@@ -589,7 +589,9 @@ mod tests {
     use workspace::WorkspaceParams;
 
     #[gpui::test]
-    async fn test_visible_list(mut cx: gpui::TestAppContext) {
+    async fn test_visible_list(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+
         let params = cx.update(WorkspaceParams::test);
         let settings = params.settings.clone();
         let fs = params.fs.as_fake();
@@ -639,28 +641,28 @@ mod tests {
             )
         });
         let (root1, _) = project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/root1", false, cx)
             })
             .await
             .unwrap();
         root1
-            .read_with(&cx, |t, _| t.as_local().unwrap().scan_complete())
+            .read_with(cx, |t, _| t.as_local().unwrap().scan_complete())
             .await;
         let (root2, _) = project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/root2", false, cx)
             })
             .await
             .unwrap();
         root2
-            .read_with(&cx, |t, _| t.as_local().unwrap().scan_complete())
+            .read_with(cx, |t, _| t.as_local().unwrap().scan_complete())
             .await;
 
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        let panel = workspace.update(&mut cx, |_, cx| ProjectPanel::new(project, settings, cx));
+        let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, settings, cx));
         assert_eq!(
-            visible_entry_details(&panel, 0..50, &mut cx),
+            visible_entry_details(&panel, 0..50, cx),
             &[
                 EntryDetails {
                     filename: "root1".to_string(),
@@ -721,9 +723,9 @@ mod tests {
             ],
         );
 
-        toggle_expand_dir(&panel, "root1/b", &mut cx);
+        toggle_expand_dir(&panel, "root1/b", cx);
         assert_eq!(
-            visible_entry_details(&panel, 0..50, &mut cx),
+            visible_entry_details(&panel, 0..50, cx),
             &[
                 EntryDetails {
                     filename: "root1".to_string(),
@@ -799,7 +801,7 @@ mod tests {
         );
 
         assert_eq!(
-            visible_entry_details(&panel, 5..8, &mut cx),
+            visible_entry_details(&panel, 5..8, cx),
             [
                 EntryDetails {
                     filename: "4".to_string(),

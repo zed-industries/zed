@@ -627,7 +627,7 @@ pub mod tests {
     use util::post_inc;
 
     #[gpui::test]
-    async fn test_get_users_by_ids(cx: TestAppContext) {
+    async fn test_get_users_by_ids(cx: &mut TestAppContext) {
         for test_db in [TestDb::postgres(), TestDb::fake(cx.background())] {
             let db = test_db.db();
 
@@ -667,7 +667,7 @@ pub mod tests {
     }
 
     #[gpui::test]
-    async fn test_recent_channel_messages(cx: TestAppContext) {
+    async fn test_recent_channel_messages(cx: &mut TestAppContext) {
         for test_db in [TestDb::postgres(), TestDb::fake(cx.background())] {
             let db = test_db.db();
             let user = db.create_user("user", false).await.unwrap();
@@ -703,7 +703,7 @@ pub mod tests {
     }
 
     #[gpui::test]
-    async fn test_channel_message_nonces(cx: TestAppContext) {
+    async fn test_channel_message_nonces(cx: &mut TestAppContext) {
         for test_db in [TestDb::postgres(), TestDb::fake(cx.background())] {
             let db = test_db.db();
             let user = db.create_user("user", false).await.unwrap();
@@ -1112,7 +1112,6 @@ pub mod tests {
                 .take(count)
                 .cloned()
                 .collect::<Vec<_>>();
-            dbg!(count, before_id, &messages);
             messages.sort_unstable_by_key(|message| message.id);
             Ok(messages)
         }

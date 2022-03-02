@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Context, Result};
-use futures::{io::BufWriter, AsyncRead, AsyncWrite};
+use collections::HashMap;
+use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite};
 use gpui::{executor, Task};
 use parking_lot::{Mutex, RwLock};
-use postage::{barrier, oneshot, prelude::Stream, sink::Sink, watch};
+use postage::{barrier, prelude::Stream, watch};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, value::RawValue, Value};
 use smol::{
@@ -11,7 +12,6 @@ use smol::{
     process::Command,
 };
 use std::{
-    collections::HashMap,
     future::Future,
     io::Write,
     str::FromStr,
@@ -128,13 +128,15 @@ impl LanguageServer {
         let mut stdin = BufWriter::new(stdin);
         let mut stdout = BufReader::new(stdout);
         let (outbound_tx, outbound_rx) = channel::unbounded::<Vec<u8>>();
-        let notification_handlers = Arc::new(RwLock::new(HashMap::<_, NotificationHandler>::new()));
-        let response_handlers = Arc::new(Mutex::new(HashMap::<_, ResponseHandler>::new()));
+        let notification_handlers =
+            Arc::new(RwLock::new(HashMap::<_, NotificationHandler>::default()));
+        let response_handlers = Arc::new(Mutex::new(HashMap::<_, ResponseHandler>::default()));
         let input_task = executor.spawn(
             {
                 let notification_handlers = notification_handlers.clone();
                 let response_handlers = response_handlers.clone();
                 async move {
+                    let _clear_response_handlers = ClearResponseHandlers(response_handlers.clone());
                     let mut buffer = Vec::new();
                     loop {
                         buffer.clear();
@@ -188,8 +190,10 @@ impl LanguageServer {
             .log_err(),
         );
         let (output_done_tx, output_done_rx) = barrier::channel();
-        let output_task = executor.spawn(
+        let output_task = executor.spawn({
+            let response_handlers = response_handlers.clone();
             async move {
+                let _clear_response_handlers = ClearResponseHandlers(response_handlers);
                 let mut content_len_buffer = Vec::new();
                 while let Ok(message) = outbound_rx.recv().await {
                     content_len_buffer.clear();
@@ -203,8 +207,8 @@ impl LanguageServer {
                 drop(output_done_tx);
                 Ok(())
             }
-            .log_err(),
-        );
+            .log_err()
+        });
 
         let (initialized_tx, initialized_rx) = barrier::channel();
         let (mut capabilities_tx, capabilities_rx) = watch::channel();
@@ -323,9 +327,12 @@ impl LanguageServer {
             outbound_tx.close();
             Some(
                 async move {
+                    log::debug!("language server shutdown started");
                     shutdown_request.await?;
+                    response_handlers.lock().clear();
                     exit?;
                     output_done.recv().await;
+                    log::debug!("language server shutdown finished");
                     drop(tasks);
                     Ok(())
                 }
@@ -403,9 +410,13 @@ impl LanguageServer {
             params,
         })
         .unwrap();
-        let mut response_handlers = response_handlers.lock();
-        let (mut tx, mut rx) = oneshot::channel();
-        response_handlers.insert(
+
+        let send = outbound_tx
+            .try_send(message)
+            .context("failed to write to language server's stdin");
+
+        let (tx, rx) = oneshot::channel();
+        response_handlers.lock().insert(
             id,
             Box::new(move |result| {
                 let response = match result {
@@ -414,16 +425,13 @@ impl LanguageServer {
                     }
                     Err(error) => Err(anyhow!("{}", error.message)),
                 };
-                let _ = tx.try_send(response);
+                let _ = tx.send(response);
             }),
         );
 
-        let send = outbound_tx
-            .try_send(message)
-            .context("failed to write to language server's stdin");
         async move {
             send?;
-            rx.recv().await.unwrap()
+            rx.await?
         }
     }
 
@@ -476,17 +484,22 @@ impl Drop for Subscription {
 
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeLanguageServer {
-    handlers: Arc<
-        Mutex<
-            HashMap<
-                &'static str,
-                Box<dyn Send + FnMut(usize, &[u8], gpui::AsyncAppContext) -> Vec<u8>>,
-            >,
-        >,
-    >,
+    handlers: FakeLanguageServerHandlers,
     outgoing_tx: futures::channel::mpsc::UnboundedSender<Vec<u8>>,
     incoming_rx: futures::channel::mpsc::UnboundedReceiver<Vec<u8>>,
+    _input_task: Task<Result<()>>,
+    _output_task: Task<Result<()>>,
 }
+
+#[cfg(any(test, feature = "test-support"))]
+type FakeLanguageServerHandlers = Arc<
+    Mutex<
+        HashMap<
+            &'static str,
+            Box<dyn Send + FnMut(usize, &[u8], gpui::AsyncAppContext) -> Vec<u8>>,
+        >,
+    >,
+>;
 
 #[cfg(any(test, feature = "test-support"))]
 impl LanguageServer {
@@ -533,59 +546,69 @@ impl FakeLanguageServer {
 
         let (incoming_tx, incoming_rx) = futures::channel::mpsc::unbounded();
         let (outgoing_tx, mut outgoing_rx) = futures::channel::mpsc::unbounded();
-        let this = Self {
-            outgoing_tx: outgoing_tx.clone(),
-            incoming_rx,
-            handlers: Default::default(),
-        };
+        let handlers = FakeLanguageServerHandlers::default();
 
-        // Receive incoming messages
-        let handlers = this.handlers.clone();
-        cx.spawn(|cx| async move {
-            let mut buffer = Vec::new();
-            let mut stdin = smol::io::BufReader::new(stdin);
-            while Self::receive(&mut stdin, &mut buffer).await.is_ok() {
-                cx.background().simulate_random_delay().await;
-                if let Ok(request) = serde_json::from_slice::<AnyRequest>(&buffer) {
-                    assert_eq!(request.jsonrpc, JSON_RPC_VERSION);
+        let input_task = cx.spawn(|cx| {
+            let handlers = handlers.clone();
+            let outgoing_tx = outgoing_tx.clone();
+            async move {
+                let mut buffer = Vec::new();
+                let mut stdin = smol::io::BufReader::new(stdin);
+                while Self::receive(&mut stdin, &mut buffer).await.is_ok() {
+                    cx.background().simulate_random_delay().await;
+                    if let Ok(request) = serde_json::from_slice::<AnyRequest>(&buffer) {
+                        assert_eq!(request.jsonrpc, JSON_RPC_VERSION);
 
-                    if let Some(handler) = handlers.lock().get_mut(request.method) {
-                        let response =
-                            handler(request.id, request.params.get().as_bytes(), cx.clone());
-                        log::debug!("handled lsp request. method:{}", request.method);
-                        outgoing_tx.unbounded_send(response)?;
-                    } else {
-                        log::debug!("unhandled lsp request. method:{}", request.method);
-                        outgoing_tx.unbounded_send(
-                            serde_json::to_vec(&AnyResponse {
+                        let response;
+                        if let Some(handler) = handlers.lock().get_mut(request.method) {
+                            response =
+                                handler(request.id, request.params.get().as_bytes(), cx.clone());
+                            log::debug!("handled lsp request. method:{}", request.method);
+                        } else {
+                            response = serde_json::to_vec(&AnyResponse {
                                 id: request.id,
                                 error: Some(Error {
                                     message: "no handler".to_string(),
                                 }),
                                 result: None,
                             })
-                            .unwrap(),
-                        )?;
+                            .unwrap();
+                            log::debug!("unhandled lsp request. method:{}", request.method);
+                        }
+                        outgoing_tx.unbounded_send(response)?;
+                    } else {
+                        incoming_tx.unbounded_send(buffer.clone())?;
                     }
-                } else {
-                    incoming_tx.unbounded_send(buffer.clone())?;
                 }
+                Ok::<_, anyhow::Error>(())
             }
-            Ok::<_, anyhow::Error>(())
-        })
-        .detach();
+        });
 
-        // Send outgoing messages
-        cx.background()
-            .spawn(async move {
-                let mut stdout = smol::io::BufWriter::new(stdout);
-                while let Some(notification) = outgoing_rx.next().await {
-                    Self::send(&mut stdout, &notification).await;
-                }
-            })
-            .detach();
+        let output_task = cx.background().spawn(async move {
+            let mut stdout = smol::io::BufWriter::new(stdout);
+            while let Some(message) = outgoing_rx.next().await {
+                stdout
+                    .write_all(CONTENT_LEN_HEADER.as_bytes())
+                    .await
+                    .unwrap();
+                stdout
+                    .write_all((format!("{}", message.len())).as_bytes())
+                    .await
+                    .unwrap();
+                stdout.write_all("\r\n\r\n".as_bytes()).await.unwrap();
+                stdout.write_all(&message).await.unwrap();
+                stdout.flush().await.unwrap();
+            }
+            Ok(())
+        });
 
-        this
+        Self {
+            outgoing_tx,
+            incoming_rx,
+            handlers,
+            _input_task: input_task,
+            _output_task: output_task,
+        }
     }
 
     pub async fn notify<T: notification::Notification>(&mut self, params: T::Params) {
@@ -665,20 +688,6 @@ impl FakeLanguageServer {
         .await;
     }
 
-    async fn send(stdout: &mut smol::io::BufWriter<async_pipe::PipeWriter>, message: &[u8]) {
-        stdout
-            .write_all(CONTENT_LEN_HEADER.as_bytes())
-            .await
-            .unwrap();
-        stdout
-            .write_all((format!("{}", message.len())).as_bytes())
-            .await
-            .unwrap();
-        stdout.write_all("\r\n\r\n".as_bytes()).await.unwrap();
-        stdout.write_all(&message).await.unwrap();
-        stdout.flush().await.unwrap();
-    }
-
     async fn receive(
         stdin: &mut smol::io::BufReader<async_pipe::PipeReader>,
         buffer: &mut Vec<u8>,
@@ -689,13 +698,21 @@ impl FakeLanguageServer {
         let message_len: usize = std::str::from_utf8(buffer)
             .unwrap()
             .strip_prefix(CONTENT_LEN_HEADER)
-            .unwrap()
+            .ok_or_else(|| anyhow!("invalid content length header"))?
             .trim_end()
             .parse()
             .unwrap();
         buffer.resize(message_len, 0);
         stdin.read_exact(buffer).await?;
         Ok(())
+    }
+}
+
+struct ClearResponseHandlers(Arc<Mutex<HashMap<usize, ResponseHandler>>>);
+
+impl Drop for ClearResponseHandlers {
+    fn drop(&mut self) {
+        self.0.lock().clear();
     }
 }
 
@@ -712,7 +729,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_fake(mut cx: TestAppContext) {
+    async fn test_fake(cx: &mut TestAppContext) {
         let (server, mut fake) = cx.update(LanguageServer::fake);
 
         let (message_tx, message_rx) = channel::unbounded();

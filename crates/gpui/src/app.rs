@@ -4,14 +4,15 @@ use crate::{
     keymap::{self, Keystroke},
     platform::{self, CursorStyle, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
-    util::{post_inc, timeout},
+    util::post_inc,
     AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
 };
 use anyhow::{anyhow, Result};
 use keymap::MatchResult;
+use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use platform::Event;
-use postage::{mpsc, oneshot, sink::Sink as _, stream::Stream as _};
+use postage::oneshot;
 use smol::prelude::*;
 use std::{
     any::{type_name, Any, TypeId},
@@ -235,7 +236,7 @@ pub struct App(Rc<RefCell<MutableAppContext>>);
 #[derive(Clone)]
 pub struct AsyncAppContext(Rc<RefCell<MutableAppContext>>);
 
-#[derive(Clone)]
+#[cfg(any(test, feature = "test-support"))]
 pub struct TestAppContext {
     cx: Rc<RefCell<MutableAppContext>>,
     foreground_platform: Rc<platform::test::ForegroundPlatform>,
@@ -252,6 +253,7 @@ impl App {
             platform.clone(),
             foreground_platform.clone(),
             Arc::new(FontCache::new(platform.fonts())),
+            Default::default(),
             asset_source,
         ))));
 
@@ -382,6 +384,7 @@ impl App {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl TestAppContext {
     pub fn new(
         foreground_platform: Rc<platform::test::ForegroundPlatform>,
@@ -389,6 +392,7 @@ impl TestAppContext {
         foreground: Rc<executor::Foreground>,
         background: Arc<executor::Background>,
         font_cache: Arc<FontCache>,
+        leak_detector: Arc<Mutex<LeakDetector>>,
         first_entity_id: usize,
     ) -> Self {
         let mut cx = MutableAppContext::new(
@@ -397,6 +401,11 @@ impl TestAppContext {
             platform,
             foreground_platform.clone(),
             font_cache,
+            RefCounts {
+                #[cfg(any(test, feature = "test-support"))]
+                leak_detector,
+                ..Default::default()
+            },
             (),
         );
         cx.next_entity_id = first_entity_id;
@@ -536,6 +545,8 @@ impl TestAppContext {
     }
 
     pub fn simulate_prompt_answer(&self, window_id: usize, answer: usize) {
+        use postage::prelude::Sink as _;
+
         let mut state = self.cx.borrow_mut();
         let (_, window) = state
             .presenters_and_platform_windows
@@ -550,6 +561,11 @@ impl TestAppContext {
             .take()
             .expect("prompt was not called");
         let _ = done_tx.try_send(answer);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn leak_detector(&self) -> Arc<Mutex<LeakDetector>> {
+        self.cx.borrow().leak_detector()
     }
 }
 
@@ -665,6 +681,7 @@ impl ReadViewWith for AsyncAppContext {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl UpdateModel for TestAppContext {
     fn update_model<T: Entity, O>(
         &mut self,
@@ -675,6 +692,7 @@ impl UpdateModel for TestAppContext {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ReadModelWith for TestAppContext {
     fn read_model_with<E: Entity, T>(
         &self,
@@ -687,6 +705,7 @@ impl ReadModelWith for TestAppContext {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl UpdateView for TestAppContext {
     fn update_view<T, S>(
         &mut self,
@@ -700,6 +719,7 @@ impl UpdateView for TestAppContext {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ReadViewWith for TestAppContext {
     fn read_view_with<V, T>(
         &self,
@@ -741,7 +761,6 @@ pub struct MutableAppContext {
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
     presenters_and_platform_windows:
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
-    debug_elements_callbacks: HashMap<usize, Box<dyn Fn(&AppContext) -> crate::json::Value>>,
     foreground: Rc<executor::Foreground>,
     pending_effects: VecDeque<Effect>,
     pending_notifications: HashSet<usize>,
@@ -758,8 +777,8 @@ impl MutableAppContext {
         platform: Arc<dyn platform::Platform>,
         foreground_platform: Rc<dyn platform::ForegroundPlatform>,
         font_cache: Arc<FontCache>,
+        ref_counts: RefCounts,
         asset_source: impl AssetSource,
-        // entity_drop_tx:
     ) -> Self {
         Self {
             weak_self: None,
@@ -771,7 +790,7 @@ impl MutableAppContext {
                 windows: Default::default(),
                 app_states: Default::default(),
                 element_states: Default::default(),
-                ref_counts: Arc::new(Mutex::new(RefCounts::default())),
+                ref_counts: Arc::new(Mutex::new(ref_counts)),
                 background,
                 font_cache,
                 platform,
@@ -788,7 +807,6 @@ impl MutableAppContext {
             observations: Default::default(),
             release_observations: Default::default(),
             presenters_and_platform_windows: HashMap::new(),
-            debug_elements_callbacks: HashMap::new(),
             foreground,
             pending_effects: VecDeque::new(),
             pending_notifications: HashSet::new(),
@@ -829,11 +847,11 @@ impl MutableAppContext {
         }
     }
 
-    fn remove_all_windows(&mut self) {
+    pub fn remove_all_windows(&mut self) {
         for (window_id, _) in self.cx.windows.drain() {
             self.presenters_and_platform_windows.remove(&window_id);
         }
-        self.remove_dropped_entities();
+        self.flush_effects();
     }
 
     pub fn platform(&self) -> Arc<dyn platform::Platform> {
@@ -852,18 +870,10 @@ impl MutableAppContext {
         &self.cx.background
     }
 
-    pub fn on_debug_elements<F>(&mut self, window_id: usize, callback: F)
-    where
-        F: 'static + Fn(&AppContext) -> crate::json::Value,
-    {
-        self.debug_elements_callbacks
-            .insert(window_id, Box::new(callback));
-    }
-
     pub fn debug_elements(&self, window_id: usize) -> Option<crate::json::Value> {
-        self.debug_elements_callbacks
+        self.presenters_and_platform_windows
             .get(&window_id)
-            .map(|debug_elements| debug_elements(&self.cx))
+            .and_then(|(presenter, _)| presenter.borrow().debug_elements(self))
     }
 
     pub fn add_action<A, V, F>(&mut self, handler: F)
@@ -1383,7 +1393,6 @@ impl MutableAppContext {
     pub fn remove_window(&mut self, window_id: usize) {
         self.cx.windows.remove(&window_id);
         self.presenters_and_platform_windows.remove(&window_id);
-        self.remove_dropped_entities();
         self.flush_effects();
     }
 
@@ -1435,10 +1444,6 @@ impl MutableAppContext {
 
         self.presenters_and_platform_windows
             .insert(window_id, (presenter.clone(), window));
-
-        self.on_debug_elements(window_id, move |cx| {
-            presenter.borrow().debug_elements(cx).unwrap()
-        });
     }
 
     pub fn build_presenter(&mut self, window_id: usize, titlebar_height: f32) -> Presenter {
@@ -1808,6 +1813,11 @@ impl MutableAppContext {
     pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.cx.platform.read_from_clipboard()
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn leak_detector(&self) -> Arc<Mutex<LeakDetector>> {
+        self.cx.ref_counts.lock().leak_detector.clone()
+    }
 }
 
 impl ReadModel for MutableAppContext {
@@ -2003,12 +2013,11 @@ impl UpgradeModelHandle for AppContext {
 
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
         if self.models.contains_key(&handle.model_id) {
-            self.ref_counts.lock().inc_model(handle.model_id);
-            Some(AnyModelHandle {
-                model_id: handle.model_id,
-                model_type: handle.model_type,
-                ref_counts: self.ref_counts.clone(),
-            })
+            Some(AnyModelHandle::new(
+                handle.model_id,
+                handle.model_type,
+                self.ref_counts.clone(),
+            ))
         } else {
             None
         }
@@ -2814,19 +2823,33 @@ pub enum EntityLocation {
     View(usize, usize),
 }
 
-pub struct ModelHandle<T> {
+pub struct ModelHandle<T: Entity> {
     model_id: usize,
     model_type: PhantomData<T>,
     ref_counts: Arc<Mutex<RefCounts>>,
+
+    #[cfg(any(test, feature = "test-support"))]
+    handle_id: usize,
 }
 
 impl<T: Entity> ModelHandle<T> {
     fn new(model_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
         ref_counts.lock().inc_model(model_id);
+
+        #[cfg(any(test, feature = "test-support"))]
+        let handle_id = ref_counts
+            .lock()
+            .leak_detector
+            .lock()
+            .handle_created(Some(type_name::<T>()), model_id);
+
         Self {
             model_id,
             model_type: PhantomData,
             ref_counts: ref_counts.clone(),
+
+            #[cfg(any(test, feature = "test-support"))]
+            handle_id,
         }
     }
 
@@ -2866,8 +2889,11 @@ impl<T: Entity> ModelHandle<T> {
         })
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
-        let (mut tx, mut rx) = mpsc::channel(1);
+        use postage::prelude::{Sink as _, Stream as _};
+
+        let (mut tx, mut rx) = postage::mpsc::channel(1);
         let mut cx = cx.cx.borrow_mut();
         let subscription = cx.observe(self, move |_, _| {
             tx.try_send(()).ok();
@@ -2880,7 +2906,7 @@ impl<T: Entity> ModelHandle<T> {
         };
 
         async move {
-            let notification = timeout(duration, rx.recv())
+            let notification = crate::util::timeout(duration, rx.recv())
                 .await
                 .expect("next notification timed out");
             drop(subscription);
@@ -2888,11 +2914,14 @@ impl<T: Entity> ModelHandle<T> {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn next_event(&self, cx: &TestAppContext) -> impl Future<Output = T::Event>
     where
         T::Event: Clone,
     {
-        let (mut tx, mut rx) = mpsc::channel(1);
+        use postage::prelude::{Sink as _, Stream as _};
+
+        let (mut tx, mut rx) = postage::mpsc::channel(1);
         let mut cx = cx.cx.borrow_mut();
         let subscription = cx.subscribe(self, move |_, event, _| {
             tx.blocking_send(event.clone()).ok();
@@ -2905,7 +2934,7 @@ impl<T: Entity> ModelHandle<T> {
         };
 
         async move {
-            let event = timeout(duration, rx.recv())
+            let event = crate::util::timeout(duration, rx.recv())
                 .await
                 .expect("next event timed out");
             drop(subscription);
@@ -2913,12 +2942,15 @@ impl<T: Entity> ModelHandle<T> {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn condition(
         &self,
         cx: &TestAppContext,
         mut predicate: impl FnMut(&T, &AppContext) -> bool,
     ) -> impl Future<Output = ()> {
-        let (tx, mut rx) = mpsc::channel(1024);
+        use postage::prelude::{Sink as _, Stream as _};
+
+        let (tx, mut rx) = postage::mpsc::channel(1024);
 
         let mut cx = cx.cx.borrow_mut();
         let subscriptions = (
@@ -2945,7 +2977,7 @@ impl<T: Entity> ModelHandle<T> {
         };
 
         async move {
-            timeout(duration, async move {
+            crate::util::timeout(duration, async move {
                 loop {
                     {
                         let cx = cx.borrow();
@@ -2975,44 +3007,39 @@ impl<T: Entity> ModelHandle<T> {
     }
 }
 
-impl<T> Clone for ModelHandle<T> {
+impl<T: Entity> Clone for ModelHandle<T> {
     fn clone(&self) -> Self {
-        self.ref_counts.lock().inc_model(self.model_id);
-        Self {
-            model_id: self.model_id,
-            model_type: PhantomData,
-            ref_counts: self.ref_counts.clone(),
-        }
+        Self::new(self.model_id, &self.ref_counts)
     }
 }
 
-impl<T> PartialEq for ModelHandle<T> {
+impl<T: Entity> PartialEq for ModelHandle<T> {
     fn eq(&self, other: &Self) -> bool {
         self.model_id == other.model_id
     }
 }
 
-impl<T> Eq for ModelHandle<T> {}
+impl<T: Entity> Eq for ModelHandle<T> {}
 
-impl<T> PartialEq<WeakModelHandle<T>> for ModelHandle<T> {
+impl<T: Entity> PartialEq<WeakModelHandle<T>> for ModelHandle<T> {
     fn eq(&self, other: &WeakModelHandle<T>) -> bool {
         self.model_id == other.model_id
     }
 }
 
-impl<T> Hash for ModelHandle<T> {
+impl<T: Entity> Hash for ModelHandle<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.model_id.hash(state);
     }
 }
 
-impl<T> std::borrow::Borrow<usize> for ModelHandle<T> {
+impl<T: Entity> std::borrow::Borrow<usize> for ModelHandle<T> {
     fn borrow(&self) -> &usize {
         &self.model_id
     }
 }
 
-impl<T> Debug for ModelHandle<T> {
+impl<T: Entity> Debug for ModelHandle<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple(&format!("ModelHandle<{}>", type_name::<T>()))
             .field(&self.model_id)
@@ -3020,12 +3047,19 @@ impl<T> Debug for ModelHandle<T> {
     }
 }
 
-unsafe impl<T> Send for ModelHandle<T> {}
-unsafe impl<T> Sync for ModelHandle<T> {}
+unsafe impl<T: Entity> Send for ModelHandle<T> {}
+unsafe impl<T: Entity> Sync for ModelHandle<T> {}
 
-impl<T> Drop for ModelHandle<T> {
+impl<T: Entity> Drop for ModelHandle<T> {
     fn drop(&mut self) {
-        self.ref_counts.lock().dec_model(self.model_id);
+        let mut ref_counts = self.ref_counts.lock();
+        ref_counts.dec_model(self.model_id);
+
+        #[cfg(any(test, feature = "test-support"))]
+        ref_counts
+            .leak_detector
+            .lock()
+            .handle_dropped(self.model_id, self.handle_id);
     }
 }
 
@@ -3111,16 +3145,28 @@ pub struct ViewHandle<T> {
     view_id: usize,
     view_type: PhantomData<T>,
     ref_counts: Arc<Mutex<RefCounts>>,
+    #[cfg(any(test, feature = "test-support"))]
+    handle_id: usize,
 }
 
 impl<T: View> ViewHandle<T> {
     fn new(window_id: usize, view_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
         ref_counts.lock().inc_view(window_id, view_id);
+        #[cfg(any(test, feature = "test-support"))]
+        let handle_id = ref_counts
+            .lock()
+            .leak_detector
+            .lock()
+            .handle_created(Some(type_name::<T>()), view_id);
+
         Self {
             window_id,
             view_id,
             view_type: PhantomData,
             ref_counts: ref_counts.clone(),
+
+            #[cfg(any(test, feature = "test-support"))]
+            handle_id,
         }
     }
 
@@ -3180,8 +3226,11 @@ impl<T: View> ViewHandle<T> {
             .map_or(false, |focused_id| focused_id == self.view_id)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
-        let (mut tx, mut rx) = mpsc::channel(1);
+        use postage::prelude::{Sink as _, Stream as _};
+
+        let (mut tx, mut rx) = postage::mpsc::channel(1);
         let mut cx = cx.cx.borrow_mut();
         let subscription = cx.observe(self, move |_, _| {
             tx.try_send(()).ok();
@@ -3194,7 +3243,7 @@ impl<T: View> ViewHandle<T> {
         };
 
         async move {
-            let notification = timeout(duration, rx.recv())
+            let notification = crate::util::timeout(duration, rx.recv())
                 .await
                 .expect("next notification timed out");
             drop(subscription);
@@ -3202,12 +3251,15 @@ impl<T: View> ViewHandle<T> {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn condition(
         &self,
         cx: &TestAppContext,
         mut predicate: impl FnMut(&T, &AppContext) -> bool,
     ) -> impl Future<Output = ()> {
-        let (tx, mut rx) = mpsc::channel(1024);
+        use postage::prelude::{Sink as _, Stream as _};
+
+        let (tx, mut rx) = postage::mpsc::channel(1024);
 
         let mut cx = cx.cx.borrow_mut();
         let subscriptions = self.update(&mut *cx, |_, cx| {
@@ -3236,7 +3288,7 @@ impl<T: View> ViewHandle<T> {
         };
 
         async move {
-            timeout(duration, async move {
+            crate::util::timeout(duration, async move {
                 loop {
                     {
                         let cx = cx.borrow();
@@ -3266,17 +3318,9 @@ impl<T: View> ViewHandle<T> {
     }
 }
 
-impl<T> Clone for ViewHandle<T> {
+impl<T: View> Clone for ViewHandle<T> {
     fn clone(&self) -> Self {
-        self.ref_counts
-            .lock()
-            .inc_view(self.window_id, self.view_id);
-        Self {
-            window_id: self.window_id,
-            view_id: self.view_id,
-            view_type: PhantomData,
-            ref_counts: self.ref_counts.clone(),
-        }
+        ViewHandle::new(self.window_id, self.view_id, &self.ref_counts)
     }
 }
 
@@ -3302,6 +3346,12 @@ impl<T> Drop for ViewHandle<T> {
         self.ref_counts
             .lock()
             .dec_view(self.window_id, self.view_id);
+        #[cfg(any(test, feature = "test-support"))]
+        self.ref_counts
+            .lock()
+            .leak_detector
+            .lock()
+            .handle_dropped(self.view_id, self.handle_id);
     }
 }
 
@@ -3333,9 +3383,37 @@ pub struct AnyViewHandle {
     view_id: usize,
     view_type: TypeId,
     ref_counts: Arc<Mutex<RefCounts>>,
+
+    #[cfg(any(test, feature = "test-support"))]
+    handle_id: usize,
 }
 
 impl AnyViewHandle {
+    fn new(
+        window_id: usize,
+        view_id: usize,
+        view_type: TypeId,
+        ref_counts: Arc<Mutex<RefCounts>>,
+    ) -> Self {
+        ref_counts.lock().inc_view(window_id, view_id);
+
+        #[cfg(any(test, feature = "test-support"))]
+        let handle_id = ref_counts
+            .lock()
+            .leak_detector
+            .lock()
+            .handle_created(None, view_id);
+
+        Self {
+            window_id,
+            view_id,
+            view_type,
+            ref_counts,
+            #[cfg(any(test, feature = "test-support"))]
+            handle_id,
+        }
+    }
+
     pub fn id(&self) -> usize {
         self.view_id
     }
@@ -3356,6 +3434,8 @@ impl AnyViewHandle {
                 view_id: self.view_id,
                 ref_counts: self.ref_counts.clone(),
                 view_type: PhantomData,
+                #[cfg(any(test, feature = "test-support"))]
+                handle_id: self.handle_id,
             });
             unsafe {
                 Arc::decrement_strong_count(&self.ref_counts);
@@ -3370,15 +3450,12 @@ impl AnyViewHandle {
 
 impl Clone for AnyViewHandle {
     fn clone(&self) -> Self {
-        self.ref_counts
-            .lock()
-            .inc_view(self.window_id, self.view_id);
-        Self {
-            window_id: self.window_id,
-            view_id: self.view_id,
-            view_type: self.view_type,
-            ref_counts: self.ref_counts.clone(),
-        }
+        Self::new(
+            self.window_id,
+            self.view_id,
+            self.view_type,
+            self.ref_counts.clone(),
+        )
     }
 }
 
@@ -3390,16 +3467,12 @@ impl From<&AnyViewHandle> for AnyViewHandle {
 
 impl<T: View> From<&ViewHandle<T>> for AnyViewHandle {
     fn from(handle: &ViewHandle<T>) -> Self {
-        handle
-            .ref_counts
-            .lock()
-            .inc_view(handle.window_id, handle.view_id);
-        AnyViewHandle {
-            window_id: handle.window_id,
-            view_id: handle.view_id,
-            view_type: TypeId::of::<T>(),
-            ref_counts: handle.ref_counts.clone(),
-        }
+        Self::new(
+            handle.window_id,
+            handle.view_id,
+            TypeId::of::<T>(),
+            handle.ref_counts.clone(),
+        )
     }
 }
 
@@ -3410,6 +3483,8 @@ impl<T: View> From<ViewHandle<T>> for AnyViewHandle {
             view_id: handle.view_id,
             view_type: TypeId::of::<T>(),
             ref_counts: handle.ref_counts.clone(),
+            #[cfg(any(test, feature = "test-support"))]
+            handle_id: handle.handle_id,
         };
         unsafe {
             Arc::decrement_strong_count(&handle.ref_counts);
@@ -3424,6 +3499,12 @@ impl Drop for AnyViewHandle {
         self.ref_counts
             .lock()
             .dec_view(self.window_id, self.view_id);
+        #[cfg(any(test, feature = "test-support"))]
+        self.ref_counts
+            .lock()
+            .leak_detector
+            .lock()
+            .handle_dropped(self.view_id, self.handle_id);
     }
 }
 
@@ -3431,15 +3512,41 @@ pub struct AnyModelHandle {
     model_id: usize,
     model_type: TypeId,
     ref_counts: Arc<Mutex<RefCounts>>,
+
+    #[cfg(any(test, feature = "test-support"))]
+    handle_id: usize,
 }
 
 impl AnyModelHandle {
+    fn new(model_id: usize, model_type: TypeId, ref_counts: Arc<Mutex<RefCounts>>) -> Self {
+        ref_counts.lock().inc_model(model_id);
+
+        #[cfg(any(test, feature = "test-support"))]
+        let handle_id = ref_counts
+            .lock()
+            .leak_detector
+            .lock()
+            .handle_created(None, model_id);
+
+        Self {
+            model_id,
+            model_type,
+            ref_counts,
+
+            #[cfg(any(test, feature = "test-support"))]
+            handle_id,
+        }
+    }
+
     pub fn downcast<T: Entity>(self) -> Option<ModelHandle<T>> {
         if self.is::<T>() {
             let result = Some(ModelHandle {
                 model_id: self.model_id,
                 model_type: PhantomData,
                 ref_counts: self.ref_counts.clone(),
+
+                #[cfg(any(test, feature = "test-support"))]
+                handle_id: self.handle_id,
             });
             unsafe {
                 Arc::decrement_strong_count(&self.ref_counts);
@@ -3465,29 +3572,30 @@ impl AnyModelHandle {
 
 impl<T: Entity> From<ModelHandle<T>> for AnyModelHandle {
     fn from(handle: ModelHandle<T>) -> Self {
-        handle.ref_counts.lock().inc_model(handle.model_id);
-        Self {
-            model_id: handle.model_id,
-            model_type: TypeId::of::<T>(),
-            ref_counts: handle.ref_counts.clone(),
-        }
+        Self::new(
+            handle.model_id,
+            TypeId::of::<T>(),
+            handle.ref_counts.clone(),
+        )
     }
 }
 
 impl Clone for AnyModelHandle {
     fn clone(&self) -> Self {
-        self.ref_counts.lock().inc_model(self.model_id);
-        Self {
-            model_id: self.model_id,
-            model_type: self.model_type,
-            ref_counts: self.ref_counts.clone(),
-        }
+        Self::new(self.model_id, self.model_type, self.ref_counts.clone())
     }
 }
 
 impl Drop for AnyModelHandle {
     fn drop(&mut self) {
-        self.ref_counts.lock().dec_model(self.model_id);
+        let mut ref_counts = self.ref_counts.lock();
+        ref_counts.dec_model(self.model_id);
+
+        #[cfg(any(test, feature = "test-support"))]
+        ref_counts
+            .leak_detector
+            .lock()
+            .handle_dropped(self.model_id, self.handle_id);
     }
 }
 
@@ -3499,6 +3607,15 @@ pub struct AnyWeakModelHandle {
 impl AnyWeakModelHandle {
     pub fn upgrade(&self, cx: &impl UpgradeModelHandle) -> Option<AnyModelHandle> {
         cx.upgrade_any_model_handle(self)
+    }
+}
+
+impl<T: Entity> From<WeakModelHandle<T>> for AnyWeakModelHandle {
+    fn from(handle: WeakModelHandle<T>) -> Self {
+        AnyWeakModelHandle {
+            model_id: handle.model_id,
+            model_type: TypeId::of::<T>(),
+        }
     }
 }
 
@@ -3694,6 +3811,77 @@ impl Drop for Subscription {
     }
 }
 
+lazy_static! {
+    static ref LEAK_BACKTRACE: bool =
+        std::env::var("LEAK_BACKTRACE").map_or(false, |b| !b.is_empty());
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Default)]
+pub struct LeakDetector {
+    next_handle_id: usize,
+    handle_backtraces: HashMap<
+        usize,
+        (
+            Option<&'static str>,
+            HashMap<usize, Option<backtrace::Backtrace>>,
+        ),
+    >,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl LeakDetector {
+    fn handle_created(&mut self, type_name: Option<&'static str>, entity_id: usize) -> usize {
+        let handle_id = post_inc(&mut self.next_handle_id);
+        let entry = self.handle_backtraces.entry(entity_id).or_default();
+        let backtrace = if *LEAK_BACKTRACE {
+            Some(backtrace::Backtrace::new_unresolved())
+        } else {
+            None
+        };
+        if let Some(type_name) = type_name {
+            entry.0.get_or_insert(type_name);
+        }
+        entry.1.insert(handle_id, backtrace);
+        handle_id
+    }
+
+    fn handle_dropped(&mut self, entity_id: usize, handle_id: usize) {
+        if let Some((_, backtraces)) = self.handle_backtraces.get_mut(&entity_id) {
+            assert!(backtraces.remove(&handle_id).is_some());
+            if backtraces.is_empty() {
+                self.handle_backtraces.remove(&entity_id);
+            }
+        }
+    }
+
+    pub fn detect(&mut self) {
+        let mut found_leaks = false;
+        for (id, (type_name, backtraces)) in self.handle_backtraces.iter_mut() {
+            eprintln!(
+                "leaked {} handles to {:?} {}",
+                backtraces.len(),
+                type_name.unwrap_or("entity"),
+                id
+            );
+            for trace in backtraces.values_mut() {
+                if let Some(trace) = trace {
+                    trace.resolve();
+                    eprintln!("{:?}", crate::util::CwdBacktrace(trace));
+                }
+            }
+            found_leaks = true;
+        }
+
+        let hint = if *LEAK_BACKTRACE {
+            ""
+        } else {
+            " – set LEAK_BACKTRACE=1 for more information"
+        };
+        assert!(!found_leaks, "detected leaked handles{}", hint);
+    }
+}
+
 #[derive(Default)]
 struct RefCounts {
     entity_counts: HashMap<usize, usize>,
@@ -3701,6 +3889,9 @@ struct RefCounts {
     dropped_models: HashSet<usize>,
     dropped_views: HashSet<(usize, usize)>,
     dropped_element_states: HashSet<ElementStateId>,
+
+    #[cfg(any(test, feature = "test-support"))]
+    leak_detector: Arc<Mutex<LeakDetector>>,
 }
 
 struct ElementStateRefCount {
@@ -3881,13 +4072,11 @@ mod tests {
 
         let handle_1 = cx.add_model(|_| Model::default());
         let handle_2 = cx.add_model(|_| Model::default());
-        let handle_2b = handle_2.clone();
-
         handle_1.update(cx, |_, c| {
-            c.subscribe(&handle_2, move |model: &mut Model, _, event, c| {
+            c.subscribe(&handle_2, move |model: &mut Model, emitter, event, c| {
                 model.events.push(*event);
 
-                c.subscribe(&handle_2b, |model, _, event, _| {
+                c.subscribe(&emitter, |model, _, event, _| {
                     model.events.push(*event * 2);
                 })
                 .detach();
@@ -3916,12 +4105,11 @@ mod tests {
 
         let handle_1 = cx.add_model(|_| Model::default());
         let handle_2 = cx.add_model(|_| Model::default());
-        let handle_2b = handle_2.clone();
 
         handle_1.update(cx, |_, c| {
             c.observe(&handle_2, move |model, observed, c| {
                 model.events.push(observed.read(c).count);
-                c.observe(&handle_2b, |model, observed, c| {
+                c.observe(&observed, |model, observed, c| {
                     model.events.push(observed.read(c).count * 2);
                 })
                 .detach();
@@ -4155,14 +4343,13 @@ mod tests {
 
         let (window_id, handle_1) = cx.add_window(Default::default(), |_| View::default());
         let handle_2 = cx.add_view(window_id, |_| View::default());
-        let handle_2b = handle_2.clone();
         let handle_3 = cx.add_model(|_| Model);
 
         handle_1.update(cx, |_, c| {
-            c.subscribe(&handle_2, move |me, _, event, c| {
+            c.subscribe(&handle_2, move |me, emitter, event, c| {
                 me.events.push(*event);
 
-                c.subscribe(&handle_2b, |me, _, event, _| {
+                c.subscribe(&emitter, |me, _, event, _| {
                     me.events.push(*event * 2);
                 })
                 .detach();
@@ -4605,7 +4792,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    async fn test_model_condition(mut cx: TestAppContext) {
+    async fn test_model_condition(cx: &mut TestAppContext) {
         struct Counter(usize);
 
         impl super::Entity for Counter {
@@ -4625,23 +4812,23 @@ mod tests {
         let condition2 = model.condition(&cx, |model, _| model.0 == 3);
         smol::pin!(condition1, condition2);
 
-        model.update(&mut cx, |model, cx| model.inc(cx));
+        model.update(cx, |model, cx| model.inc(cx));
         assert_eq!(poll_once(&mut condition1).await, None);
         assert_eq!(poll_once(&mut condition2).await, None);
 
-        model.update(&mut cx, |model, cx| model.inc(cx));
+        model.update(cx, |model, cx| model.inc(cx));
         assert_eq!(poll_once(&mut condition1).await, Some(()));
         assert_eq!(poll_once(&mut condition2).await, None);
 
-        model.update(&mut cx, |model, cx| model.inc(cx));
+        model.update(cx, |model, cx| model.inc(cx));
         assert_eq!(poll_once(&mut condition2).await, Some(()));
 
-        model.update(&mut cx, |_, cx| cx.notify());
+        model.update(cx, |_, cx| cx.notify());
     }
 
     #[crate::test(self)]
     #[should_panic]
-    async fn test_model_condition_timeout(mut cx: TestAppContext) {
+    async fn test_model_condition_timeout(cx: &mut TestAppContext) {
         struct Model;
 
         impl super::Entity for Model {
@@ -4654,7 +4841,7 @@ mod tests {
 
     #[crate::test(self)]
     #[should_panic(expected = "model dropped with pending condition")]
-    async fn test_model_condition_panic_on_drop(mut cx: TestAppContext) {
+    async fn test_model_condition_panic_on_drop(cx: &mut TestAppContext) {
         struct Model;
 
         impl super::Entity for Model {
@@ -4668,7 +4855,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    async fn test_view_condition(mut cx: TestAppContext) {
+    async fn test_view_condition(cx: &mut TestAppContext) {
         struct Counter(usize);
 
         impl super::Entity for Counter {
@@ -4698,22 +4885,22 @@ mod tests {
         let condition2 = view.condition(&cx, |view, _| view.0 == 3);
         smol::pin!(condition1, condition2);
 
-        view.update(&mut cx, |view, cx| view.inc(cx));
+        view.update(cx, |view, cx| view.inc(cx));
         assert_eq!(poll_once(&mut condition1).await, None);
         assert_eq!(poll_once(&mut condition2).await, None);
 
-        view.update(&mut cx, |view, cx| view.inc(cx));
+        view.update(cx, |view, cx| view.inc(cx));
         assert_eq!(poll_once(&mut condition1).await, Some(()));
         assert_eq!(poll_once(&mut condition2).await, None);
 
-        view.update(&mut cx, |view, cx| view.inc(cx));
+        view.update(cx, |view, cx| view.inc(cx));
         assert_eq!(poll_once(&mut condition2).await, Some(()));
-        view.update(&mut cx, |_, cx| cx.notify());
+        view.update(cx, |_, cx| cx.notify());
     }
 
     #[crate::test(self)]
     #[should_panic]
-    async fn test_view_condition_timeout(mut cx: TestAppContext) {
+    async fn test_view_condition_timeout(cx: &mut TestAppContext) {
         struct View;
 
         impl super::Entity for View {
@@ -4736,7 +4923,7 @@ mod tests {
 
     #[crate::test(self)]
     #[should_panic(expected = "view dropped with pending condition")]
-    async fn test_view_condition_panic_on_drop(mut cx: TestAppContext) {
+    async fn test_view_condition_panic_on_drop(cx: &mut TestAppContext) {
         struct View;
 
         impl super::Entity for View {
