@@ -223,6 +223,12 @@ impl Deterministic {
             if state.scheduled_from_foreground.is_empty()
                 && state.scheduled_from_background.is_empty()
             {
+                if let Some(main_task) = main_task {
+                    if let Poll::Ready(result) = main_task.poll(&mut cx) {
+                        return Some(result);
+                    }
+                }
+
                 return None;
             }
 
@@ -299,6 +305,17 @@ impl Deterministic {
         }
 
         None
+    }
+
+    pub fn advance_clock(&self, duration: Duration) {
+        let mut state = self.state.lock();
+        state.now += duration;
+        let now = state.now;
+        let mut pending_timers = mem::take(&mut state.pending_timers);
+        drop(state);
+
+        pending_timers.retain(|(_, wakeup, _)| *wakeup > now);
+        self.state.lock().pending_timers.extend(pending_timers);
     }
 }
 
@@ -467,15 +484,7 @@ impl Foreground {
         match self {
             Self::Deterministic { executor, .. } => {
                 executor.run_until_parked();
-
-                let mut state = executor.state.lock();
-                state.now += duration;
-                let now = state.now;
-                let mut pending_timers = mem::take(&mut state.pending_timers);
-                drop(state);
-
-                pending_timers.retain(|(_, wakeup, _)| *wakeup > now);
-                executor.state.lock().pending_timers.extend(pending_timers);
+                executor.advance_clock(duration);
             }
             _ => panic!("this method can only be called on a deterministic executor"),
         }
@@ -604,6 +613,9 @@ impl Background {
                     for _ in 0..yields {
                         yield_now().await;
                     }
+
+                    let delay = Duration::from_millis(executor.state.lock().rng.gen_range(0..100));
+                    executor.advance_clock(delay);
                 }
             }
             _ => panic!("this method can only be called on a deterministic executor"),
