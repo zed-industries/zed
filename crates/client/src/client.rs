@@ -230,10 +230,12 @@ impl Client {
     #[cfg(any(test, feature = "test-support"))]
     pub fn tear_down(&self) {
         let mut state = self.state.write();
+        state._maintain_connection.take();
         state.message_handlers.clear();
         state.models_by_message_type.clear();
         state.models_by_entity_type_and_remote_id.clear();
         state.entity_id_extractors.clear();
+        self.peer.reset();
     }
 
     #[cfg(any(test, feature = "test-support"))]
