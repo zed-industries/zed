@@ -1028,12 +1028,14 @@ impl Workspace {
     }
 
     fn activate_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
-        self.active_pane = pane;
-        self.status_bar.update(cx, |status_bar, cx| {
-            status_bar.set_active_pane(&self.active_pane, cx);
-        });
-        cx.focus(&self.active_pane);
-        cx.notify();
+        if self.active_pane != pane {
+            self.active_pane = pane;
+            self.status_bar.update(cx, |status_bar, cx| {
+                status_bar.set_active_pane(&self.active_pane, cx);
+            });
+            cx.focus(&self.active_pane);
+            cx.notify();
+        }
     }
 
     fn handle_pane_event(

@@ -326,6 +326,7 @@ impl Pane {
             }
             self.update_active_toolbar(cx);
             self.focus_active_item(cx);
+            self.activate(cx);
             cx.notify();
         }
     }
