@@ -4234,7 +4234,7 @@ mod tests {
         let mut clients = futures::future::join_all(clients).await;
         cx.foreground().run_until_parked();
 
-        let (host_client, host_cx) = clients.remove(0);
+        let (host_client, mut host_cx) = clients.remove(0);
         let host_project = host_client.project.as_ref().unwrap();
         let host_worktree_snapshots = host_project.read_with(&host_cx, |project, cx| {
             project
@@ -4246,14 +4246,14 @@ mod tests {
                 .collect::<BTreeMap<_, _>>()
         });
 
-        for (guest_client, guest_cx) in clients.iter() {
+        for (guest_client, mut guest_cx) in clients.into_iter() {
             let guest_id = guest_client.client.id();
             let worktree_snapshots =
                 guest_client
                     .project
                     .as_ref()
                     .unwrap()
-                    .read_with(guest_cx, |project, cx| {
+                    .read_with(&guest_cx, |project, cx| {
                         project
                             .worktrees(cx)
                             .map(|worktree| {
@@ -4291,7 +4291,7 @@ mod tests {
                 .project
                 .as_ref()
                 .unwrap()
-                .read_with(guest_cx, |project, cx| {
+                .read_with(&guest_cx, |project, cx| {
                     assert!(
                         !project.has_deferred_operations(cx),
                         "guest {} has deferred operations",
@@ -4300,7 +4300,7 @@ mod tests {
                 });
 
             for guest_buffer in &guest_client.buffers {
-                let buffer_id = guest_buffer.read_with(guest_cx, |buffer, _| buffer.remote_id());
+                let buffer_id = guest_buffer.read_with(&guest_cx, |buffer, _| buffer.remote_id());
                 let host_buffer = host_project.read_with(&host_cx, |project, cx| {
                     project.buffer_for_id(buffer_id, cx).expect(&format!(
                         "host does not have buffer for guest:{}, peer:{}, id:{}",
@@ -4308,7 +4308,7 @@ mod tests {
                     ))
                 });
                 assert_eq!(
-                    guest_buffer.read_with(guest_cx, |buffer, _| buffer.text()),
+                    guest_buffer.read_with(&guest_cx, |buffer, _| buffer.text()),
                     host_buffer.read_with(&host_cx, |buffer, _| buffer.text()),
                     "guest {}, buffer {}, path {:?}, differs from the host's buffer",
                     guest_id,
@@ -4317,7 +4317,11 @@ mod tests {
                         .read_with(&host_cx, |buffer, cx| buffer.file().unwrap().full_path(cx))
                 );
             }
+
+            guest_cx.update(|_| drop(guest_client));
         }
+
+        host_cx.update(|_| drop(host_client));
     }
 
     struct TestServer {
