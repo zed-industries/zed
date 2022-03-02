@@ -491,6 +491,7 @@ pub struct FakeLanguageServer {
     _output_task: Task<Result<()>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 type FakeLanguageServerHandlers = Arc<
     Mutex<
         HashMap<

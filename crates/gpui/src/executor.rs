@@ -16,8 +16,7 @@ use std::{
 
 use crate::{
     platform::{self, Dispatcher},
-    util::{self, post_inc},
-    MutableAppContext,
+    util, MutableAppContext,
 };
 
 pub enum Foreground {
@@ -450,7 +449,7 @@ impl Foreground {
                 {
                     let mut state = executor.state.lock();
                     let wakeup_at = state.now + duration;
-                    timer_id = post_inc(&mut state.next_timer_id);
+                    timer_id = util::post_inc(&mut state.next_timer_id);
                     state.pending_timers.push((timer_id, wakeup_at, tx));
                 }
 
