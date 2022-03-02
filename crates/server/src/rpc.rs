@@ -4246,6 +4246,12 @@ mod tests {
                 .collect::<BTreeMap<_, _>>()
         });
 
+        host_client
+            .project
+            .as_ref()
+            .unwrap()
+            .read_with(&host_cx, |project, cx| project.check_invariants(cx));
+
         for (guest_client, mut guest_cx) in clients.into_iter() {
             let guest_id = guest_client.client.id();
             let worktree_snapshots =
@@ -4287,18 +4293,6 @@ mod tests {
                 );
             }
 
-            guest_client
-                .project
-                .as_ref()
-                .unwrap()
-                .read_with(&guest_cx, |project, cx| {
-                    assert!(
-                        !project.has_deferred_operations(cx),
-                        "guest {} has deferred operations",
-                        guest_id,
-                    );
-                });
-
             for guest_buffer in &guest_client.buffers {
                 let buffer_id = guest_buffer.read_with(&guest_cx, |buffer, _| buffer.remote_id());
                 let host_buffer = host_project.read_with(&host_cx, |project, cx| {
@@ -4307,14 +4301,24 @@ mod tests {
                         guest_id, guest_client.peer_id, buffer_id
                     ))
                 });
+                let path = host_buffer
+                    .read_with(&host_cx, |buffer, cx| buffer.file().unwrap().full_path(cx));
+
+                assert_eq!(
+                    guest_buffer.read_with(&guest_cx, |buffer, _| buffer.deferred_ops_len()),
+                    0,
+                    "guest {}, buffer {}, path {:?} has deferred operations",
+                    guest_id,
+                    buffer_id,
+                    path,
+                );
                 assert_eq!(
                     guest_buffer.read_with(&guest_cx, |buffer, _| buffer.text()),
                     host_buffer.read_with(&host_cx, |buffer, _| buffer.text()),
                     "guest {}, buffer {}, path {:?}, differs from the host's buffer",
                     guest_id,
                     buffer_id,
-                    host_buffer
-                        .read_with(&host_cx, |buffer, cx| buffer.file().unwrap().full_path(cx))
+                    path
                 );
             }
 

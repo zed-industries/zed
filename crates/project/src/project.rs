@@ -413,6 +413,65 @@ impl Project {
         &self.languages
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn check_invariants(&self, cx: &AppContext) {
+        if self.is_local() {
+            let buffers = self.buffers(cx);
+            for (i, buffer) in buffers.iter().enumerate() {
+                let buffer = buffer.read(cx);
+                let path = buffer.file().unwrap().as_local().unwrap().abs_path(cx);
+                for other_buffer in &buffers[0..i] {
+                    let other_buffer = other_buffer.read(cx);
+                    let other_path = other_buffer
+                        .file()
+                        .unwrap()
+                        .as_local()
+                        .unwrap()
+                        .abs_path(cx);
+                    if other_path == path {
+                        panic!(
+                            "buffers {} and {} have the same absolute path: {:?}",
+                            buffer.remote_id(),
+                            other_buffer.remote_id(),
+                            path,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn buffers(&self, cx: &AppContext) -> Vec<ModelHandle<Buffer>> {
+        self.opened_buffers
+            .values()
+            .filter_map(|buffer| match buffer {
+                OpenBuffer::Strong(buffer) => Some(buffer.clone()),
+                OpenBuffer::Weak(buffer) => buffer.upgrade(cx),
+                OpenBuffer::Loading(_) => None,
+            })
+            .collect()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_open_buffer(&self, path: impl Into<ProjectPath>, cx: &AppContext) -> bool {
+        let path = path.into();
+        if let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) {
+            self.opened_buffers.iter().any(|(_, buffer)| {
+                if let Some(buffer) = buffer.upgrade(cx) {
+                    if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
+                        if file.worktree == worktree && file.path() == &path.path {
+                            return true;
+                        }
+                    }
+                }
+                false
+            })
+        } else {
+            false
+        }
+    }
+
     pub fn fs(&self) -> &Arc<dyn Fs> {
         &self.fs
     }
@@ -809,25 +868,6 @@ impl Project {
             });
             Ok(())
         })
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn has_open_buffer(&self, path: impl Into<ProjectPath>, cx: &AppContext) -> bool {
-        let path = path.into();
-        if let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) {
-            self.opened_buffers.iter().any(|(_, buffer)| {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
-                        if file.worktree == worktree && file.path() == &path.path {
-                            return true;
-                        }
-                    }
-                }
-                false
-            })
-        } else {
-            false
-        }
     }
 
     pub fn get_open_buffer(
