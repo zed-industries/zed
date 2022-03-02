@@ -18,7 +18,9 @@ env:
 jobs:
   tests:
     name: Run tests
-    runs-on: self-hosted
+    runs-on:
+        - self-hosted
+        - test
     env:
       RUSTFLAGS: -D warnings
     steps:
@@ -39,7 +41,9 @@ jobs:
 
   bundle:
     name: Bundle app
-    runs-on: self-hosted
+    runs-on:
+        - self-hosted
+        - bundle
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
