@@ -4686,7 +4686,12 @@ mod tests {
                                     .unwrap();
                                 let project_path =
                                     worktree.read_with(&cx, |worktree, _| (worktree.id(), path));
-                                log::info!("Host: opening path {:?}, {:?}", file, project_path);
+                                log::info!(
+                                    "Host: opening path {:?}, worktree {}, relative_path {:?}",
+                                    file,
+                                    project_path.0,
+                                    project_path.1
+                                );
                                 let buffer = project
                                     .update(&mut cx, |project, cx| {
                                         project.open_buffer(project_path, cx)
@@ -4798,11 +4803,11 @@ mod tests {
                             )
                         });
                     log::info!(
-                        "Guest {}: opening path in worktree {:?} {:?} {:?}",
+                        "Guest {}: opening path {:?} in worktree {} ({})",
                         guest_id,
+                        project_path.1,
                         project_path.0,
                         worktree_root_name,
-                        project_path.1
                     );
                     let buffer = project
                         .update(&mut cx, |project, cx| {
@@ -4811,11 +4816,11 @@ mod tests {
                         .await
                         .unwrap();
                     log::info!(
-                        "Guest {}: path in worktree {:?} {:?} {:?} opened with buffer id {:?}",
+                        "Guest {}: opened path {:?} in worktree {} ({}) with buffer id {}",
                         guest_id,
+                        project_path.1,
                         project_path.0,
                         worktree_root_name,
-                        project_path.1,
                         buffer.read_with(&cx, |buffer, _| buffer.remote_id())
                     );
                     self.buffers.insert(buffer.clone());
@@ -4846,8 +4851,9 @@ mod tests {
                     10..=19 => {
                         let completions = project.update(&mut cx, |project, cx| {
                             log::info!(
-                                "Guest {}: requesting completions for buffer {:?}",
+                                "Guest {}: requesting completions for buffer {} ({:?})",
                                 guest_id,
+                                buffer.read(cx).remote_id(),
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
                             let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
@@ -4866,8 +4872,9 @@ mod tests {
                     20..=29 => {
                         let code_actions = project.update(&mut cx, |project, cx| {
                             log::info!(
-                                "Guest {}: requesting code actions for buffer {:?}",
+                                "Guest {}: requesting code actions for buffer {} ({:?})",
                                 guest_id,
+                                buffer.read(cx).remote_id(),
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
                             let range = buffer.read(cx).random_byte_range(0, &mut *rng.lock());
@@ -4886,8 +4893,9 @@ mod tests {
                     30..=39 if buffer.read_with(&cx, |buffer, _| buffer.is_dirty()) => {
                         let (requested_version, save) = buffer.update(&mut cx, |buffer, cx| {
                             log::info!(
-                                "Guest {}: saving buffer {:?}",
+                                "Guest {}: saving buffer {} ({:?})",
                                 guest_id,
+                                buffer.remote_id(),
                                 buffer.file().unwrap().full_path(cx)
                             );
                             (buffer.version(), buffer.save(cx))
@@ -4909,8 +4917,9 @@ mod tests {
                     40..=44 => {
                         let prepare_rename = project.update(&mut cx, |project, cx| {
                             log::info!(
-                                "Guest {}: preparing rename for buffer {:?}",
+                                "Guest {}: preparing rename for buffer {} ({:?})",
                                 guest_id,
+                                buffer.read(cx).remote_id(),
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
                             let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
@@ -4929,8 +4938,9 @@ mod tests {
                     45..=49 => {
                         let definitions = project.update(&mut cx, |project, cx| {
                             log::info!(
-                                "Guest {}: requesting definitions for buffer {:?}",
+                                "Guest {}: requesting definitions for buffer {} ({:?})",
                                 guest_id,
+                                buffer.read(cx).remote_id(),
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
                             let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
@@ -4950,8 +4960,9 @@ mod tests {
                     50..=54 => {
                         let highlights = project.update(&mut cx, |project, cx| {
                             log::info!(
-                                "Guest {}: requesting highlights for buffer {:?}",
+                                "Guest {}: requesting highlights for buffer {} ({:?})",
                                 guest_id,
+                                buffer.read(cx).remote_id(),
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
                             let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
@@ -4986,8 +4997,9 @@ mod tests {
                     _ => {
                         buffer.update(&mut cx, |buffer, cx| {
                             log::info!(
-                                "Guest {}: updating buffer {:?}",
+                                "Guest {}: updating buffer {} ({:?})",
                                 guest_id,
+                                buffer.remote_id(),
                                 buffer.file().unwrap().full_path(cx)
                             );
                             buffer.randomly_edit(&mut *rng.lock(), 5, cx)
