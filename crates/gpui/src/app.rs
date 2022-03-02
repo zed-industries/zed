@@ -15,7 +15,7 @@ use platform::Event;
 use postage::oneshot;
 use smol::prelude::*;
 use std::{
-    any::{self, type_name, Any, TypeId},
+    any::{type_name, Any, TypeId},
     cell::RefCell,
     collections::{hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque},
     fmt::{self, Debug},
@@ -3382,8 +3382,8 @@ pub struct AnyViewHandle {
     window_id: usize,
     view_id: usize,
     view_type: TypeId,
-    type_name: &'static str,
     ref_counts: Arc<Mutex<RefCounts>>,
+
     #[cfg(any(test, feature = "test-support"))]
     handle_id: usize,
 }
@@ -3393,7 +3393,6 @@ impl AnyViewHandle {
         window_id: usize,
         view_id: usize,
         view_type: TypeId,
-        type_name: &'static str,
         ref_counts: Arc<Mutex<RefCounts>>,
     ) -> Self {
         ref_counts.lock().inc_view(window_id, view_id);
@@ -3403,13 +3402,12 @@ impl AnyViewHandle {
             .lock()
             .leak_detector
             .lock()
-            .handle_created(Some(type_name), view_id);
+            .handle_created(None, view_id);
 
         Self {
             window_id,
             view_id,
             view_type,
-            type_name,
             ref_counts,
             #[cfg(any(test, feature = "test-support"))]
             handle_id,
@@ -3456,7 +3454,6 @@ impl Clone for AnyViewHandle {
             self.window_id,
             self.view_id,
             self.view_type,
-            self.type_name,
             self.ref_counts.clone(),
         )
     }
@@ -3474,7 +3471,6 @@ impl<T: View> From<&ViewHandle<T>> for AnyViewHandle {
             handle.window_id,
             handle.view_id,
             TypeId::of::<T>(),
-            any::type_name::<T>(),
             handle.ref_counts.clone(),
         )
     }
@@ -3486,7 +3482,6 @@ impl<T: View> From<ViewHandle<T>> for AnyViewHandle {
             window_id: handle.window_id,
             view_id: handle.view_id,
             view_type: TypeId::of::<T>(),
-            type_name: any::type_name::<T>(),
             ref_counts: handle.ref_counts.clone(),
             #[cfg(any(test, feature = "test-support"))]
             handle_id: handle.handle_id,
