@@ -59,18 +59,21 @@ impl Connection {
     ) {
         use futures::channel::mpsc;
         use io::{Error, ErrorKind};
+        use std::sync::Arc;
 
         let (tx, rx) = mpsc::unbounded::<WebSocketMessage>();
         let tx = tx
             .sink_map_err(|e| WebSocketError::from(Error::new(ErrorKind::Other, e)))
             .with({
+                let executor = Arc::downgrade(&executor);
                 let kill_rx = kill_rx.clone();
-                let executor = executor.clone();
                 move |msg| {
                     let kill_rx = kill_rx.clone();
                     let executor = executor.clone();
                     Box::pin(async move {
-                        executor.simulate_random_delay().await;
+                        if let Some(executor) = executor.upgrade() {
+                            executor.simulate_random_delay().await;
+                        }
                         if kill_rx.borrow().is_none() {
                             Ok(msg)
                         } else {
@@ -80,9 +83,11 @@ impl Connection {
                 }
             });
         let rx = rx.then(move |msg| {
-            let executor = executor.clone();
+            let executor = Arc::downgrade(&executor);
             Box::pin(async move {
-                executor.simulate_random_delay().await;
+                if let Some(executor) = executor.upgrade() {
+                    executor.simulate_random_delay().await;
+                }
                 msg
             })
         });
