@@ -485,10 +485,10 @@ impl Project {
     ) -> impl 'a + Iterator<Item = ModelHandle<Worktree>> {
         self.worktrees.iter().filter_map(|worktree| {
             worktree.upgrade(cx).and_then(|worktree| {
-                if worktree.read(cx).is_weak() {
-                    None
-                } else {
+                if worktree.read(cx).is_visible() {
                     Some(worktree)
+                } else {
+                    None
                 }
             })
         })
@@ -589,7 +589,7 @@ impl Project {
                     for worktree_handle in this.worktrees.iter_mut() {
                         match worktree_handle {
                             WorktreeHandle::Strong(worktree) => {
-                                if worktree.read(cx).is_weak() {
+                                if !worktree.read(cx).is_visible() {
                                     *worktree_handle = WorktreeHandle::Weak(worktree.downgrade());
                                 }
                             }
@@ -768,7 +768,7 @@ impl Project {
             } else {
                 let worktree = this
                     .update(&mut cx, |this, cx| {
-                        this.create_local_worktree(&abs_path, true, cx)
+                        this.create_local_worktree(&abs_path, false, cx)
                     })
                     .await?;
                 this.update(&mut cx, |this, cx| {
@@ -793,7 +793,7 @@ impl Project {
         abs_path: PathBuf,
         cx: &mut ModelContext<Project>,
     ) -> Task<Result<()>> {
-        let worktree_task = self.find_or_create_local_worktree(&abs_path, false, cx);
+        let worktree_task = self.find_or_create_local_worktree(&abs_path, true, cx);
         cx.spawn(|this, mut cx| async move {
             let (worktree, path) = worktree_task.await?;
             worktree
@@ -2301,14 +2301,14 @@ impl Project {
     pub fn find_or_create_local_worktree(
         &self,
         abs_path: impl AsRef<Path>,
-        weak: bool,
+        visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<(ModelHandle<Worktree>, PathBuf)>> {
         let abs_path = abs_path.as_ref();
         if let Some((tree, relative_path)) = self.find_local_worktree(abs_path, cx) {
             Task::ready(Ok((tree.clone(), relative_path.into())))
         } else {
-            let worktree = self.create_local_worktree(abs_path, weak, cx);
+            let worktree = self.create_local_worktree(abs_path, visible, cx);
             cx.foreground()
                 .spawn(async move { Ok((worktree.await?, PathBuf::new())) })
         }
@@ -2341,14 +2341,14 @@ impl Project {
     fn create_local_worktree(
         &self,
         abs_path: impl AsRef<Path>,
-        weak: bool,
+        visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Worktree>>> {
         let fs = self.fs.clone();
         let client = self.client.clone();
         let path = Arc::from(abs_path.as_ref());
         cx.spawn(|project, mut cx| async move {
-            let worktree = Worktree::local(client.clone(), path, weak, fs, &mut cx).await?;
+            let worktree = Worktree::local(client.clone(), path, visible, fs, &mut cx).await?;
 
             let (remote_project_id, is_shared) = project.update(&mut cx, |project, cx| {
                 project.add_worktree(&worktree, cx);
@@ -2394,7 +2394,7 @@ impl Project {
 
         let push_strong_handle = {
             let worktree = worktree.read(cx);
-            self.is_shared() || worktree.is_remote()
+            self.is_shared() || worktree.is_visible() || worktree.is_remote()
         };
         if push_strong_handle {
             self.worktrees
@@ -2627,7 +2627,7 @@ impl Project {
                 root_name: envelope.payload.root_name,
                 entries: Default::default(),
                 diagnostic_summaries: Default::default(),
-                weak: envelope.payload.weak,
+                visible: envelope.payload.visible,
             };
             let (worktree, load_task) =
                 Worktree::remote(remote_id, replica_id, worktree, client, cx);
@@ -3361,7 +3361,7 @@ impl Project {
     ) -> impl 'a + Future<Output = Vec<PathMatch>> {
         let worktrees = self
             .worktrees(cx)
-            .filter(|worktree| !worktree.read(cx).is_weak())
+            .filter(|worktree| worktree.read(cx).is_visible())
             .collect::<Vec<_>>();
         let include_root_name = worktrees.len() > 1;
         let candidate_sets = worktrees
@@ -3656,7 +3656,7 @@ mod tests {
 
         let (tree, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree(&root_link_path, false, cx)
+                project.find_or_create_local_worktree(&root_link_path, true, cx)
             })
             .await
             .unwrap();
@@ -3725,7 +3725,7 @@ mod tests {
 
         let (tree, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", false, cx)
+                project.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();
@@ -3823,7 +3823,7 @@ mod tests {
         let project = Project::test(Arc::new(RealFs), cx);
         let (tree, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree(&dir.path(), false, cx)
+                project.find_or_create_local_worktree(&dir.path(), true, cx)
             })
             .await
             .unwrap();
@@ -3871,7 +3871,7 @@ mod tests {
 
         let (tree, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir/b.rs", false, cx)
+                project.find_or_create_local_worktree("/dir/b.rs", true, cx)
             })
             .await
             .unwrap();
@@ -3928,16 +3928,13 @@ mod tests {
             assert_eq!(definition.range.to_offset(target_buffer), 9..10);
             assert_eq!(
                 list_worktrees(&project, cx),
-                [("/dir/b.rs".as_ref(), false), ("/dir/a.rs".as_ref(), true)]
+                [("/dir/b.rs".as_ref(), true), ("/dir/a.rs".as_ref(), false)]
             );
 
             drop(definition);
         });
         cx.read(|cx| {
-            assert_eq!(
-                list_worktrees(&project, cx),
-                [("/dir/b.rs".as_ref(), false)]
-            );
+            assert_eq!(list_worktrees(&project, cx), [("/dir/b.rs".as_ref(), true)]);
         });
 
         fn list_worktrees<'a>(
@@ -3951,7 +3948,7 @@ mod tests {
                     let worktree = worktree.read(cx);
                     (
                         worktree.as_local().unwrap().abs_path().as_ref(),
-                        worktree.is_weak(),
+                        worktree.is_visible(),
                     )
                 })
                 .collect::<Vec<_>>()
@@ -3972,7 +3969,7 @@ mod tests {
         let project = Project::test(fs.clone(), cx);
         let worktree_id = project
             .update(cx, |p, cx| {
-                p.find_or_create_local_worktree("/dir", false, cx)
+                p.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap()
@@ -4010,7 +4007,7 @@ mod tests {
         let project = Project::test(fs.clone(), cx);
         let worktree_id = project
             .update(cx, |p, cx| {
-                p.find_or_create_local_worktree("/dir/file1", false, cx)
+                p.find_or_create_local_worktree("/dir/file1", true, cx)
             })
             .await
             .unwrap()
@@ -4054,7 +4051,7 @@ mod tests {
 
         let (tree, _) = project
             .update(cx, |p, cx| {
-                p.find_or_create_local_worktree(dir.path(), false, cx)
+                p.find_or_create_local_worktree(dir.path(), true, cx)
             })
             .await
             .unwrap();
@@ -4091,7 +4088,7 @@ mod tests {
             Worktree::remote(
                 1,
                 1,
-                initial_snapshot.to_proto(&Default::default(), Default::default()),
+                initial_snapshot.to_proto(&Default::default(), true),
                 rpc.clone(),
                 cx,
             )
@@ -4200,7 +4197,7 @@ mod tests {
         let project = Project::test(fs.clone(), cx);
         let worktree_id = project
             .update(cx, |p, cx| {
-                p.find_or_create_local_worktree("/the-dir", false, cx)
+                p.find_or_create_local_worktree("/the-dir", true, cx)
             })
             .await
             .unwrap()
@@ -4250,7 +4247,7 @@ mod tests {
         let project = Project::test(Arc::new(RealFs), cx);
         let (worktree, _) = project
             .update(cx, |p, cx| {
-                p.find_or_create_local_worktree(dir.path(), false, cx)
+                p.find_or_create_local_worktree(dir.path(), true, cx)
             })
             .await
             .unwrap();
@@ -4384,7 +4381,7 @@ mod tests {
         let project = Project::test(Arc::new(RealFs), cx);
         let (worktree, _) = project
             .update(cx, |p, cx| {
-                p.find_or_create_local_worktree(dir.path(), false, cx)
+                p.find_or_create_local_worktree(dir.path(), true, cx)
             })
             .await
             .unwrap();
@@ -4493,7 +4490,7 @@ mod tests {
         let project = Project::test(fs.clone(), cx);
         let (worktree, _) = project
             .update(cx, |p, cx| {
-                p.find_or_create_local_worktree("/the-dir", false, cx)
+                p.find_or_create_local_worktree("/the-dir", true, cx)
             })
             .await
             .unwrap();
@@ -4761,7 +4758,7 @@ mod tests {
 
         let (tree, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", false, cx)
+                project.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();
@@ -4889,7 +4886,7 @@ mod tests {
         let project = Project::test(fs.clone(), cx);
         let (tree, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", false, cx)
+                project.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();

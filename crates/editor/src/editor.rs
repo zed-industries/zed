@@ -8217,7 +8217,7 @@ mod tests {
 
         let (worktree, relative_path) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/file", false, cx)
+                project.find_or_create_local_worktree("/file", true, cx)
             })
             .await
             .unwrap();

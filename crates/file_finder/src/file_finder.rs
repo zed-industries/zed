@@ -448,7 +448,7 @@ mod tests {
         params
             .project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root", false, cx)
+                project.find_or_create_local_worktree("/root", true, cx)
             })
             .await
             .unwrap();
@@ -517,7 +517,7 @@ mod tests {
         params
             .project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", false, cx)
+                project.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();
@@ -583,7 +583,7 @@ mod tests {
         params
             .project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root/the-parent-dir/the-file", false, cx)
+                project.find_or_create_local_worktree("/root/the-parent-dir/the-file", true, cx)
             })
             .await
             .unwrap();

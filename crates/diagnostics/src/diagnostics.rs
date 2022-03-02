@@ -761,7 +761,7 @@ mod tests {
 
         project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/test", false, cx)
+                project.find_or_create_local_worktree("/test", true, cx)
             })
             .await
             .unwrap();

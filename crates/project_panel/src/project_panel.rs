@@ -327,7 +327,7 @@ impl ProjectPanel {
             .project
             .read(cx)
             .worktrees(cx)
-            .filter(|worktree| !worktree.read(cx).is_weak());
+            .filter(|worktree| worktree.read(cx).is_visible());
         self.visible_entries.clear();
 
         let mut entry_ix = 0;
@@ -642,7 +642,7 @@ mod tests {
         });
         let (root1, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root1", false, cx)
+                project.find_or_create_local_worktree("/root1", true, cx)
             })
             .await
             .unwrap();
@@ -651,7 +651,7 @@ mod tests {
             .await;
         let (root2, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root2", false, cx)
+                project.find_or_create_local_worktree("/root2", true, cx)
             })
             .await
             .unwrap();

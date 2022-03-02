@@ -71,7 +71,7 @@ pub struct LocalWorktree {
     queued_operations: Vec<(u64, Operation)>,
     client: Arc<Client>,
     fs: Arc<dyn Fs>,
-    weak: bool,
+    visible: bool,
 }
 
 pub struct RemoteWorktree {
@@ -83,7 +83,7 @@ pub struct RemoteWorktree {
     replica_id: ReplicaId,
     queued_operations: Vec<(u64, Operation)>,
     diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
-    weak: bool,
+    visible: bool,
 }
 
 #[derive(Clone)]
@@ -169,11 +169,12 @@ impl Worktree {
     pub async fn local(
         client: Arc<Client>,
         path: impl Into<Arc<Path>>,
-        weak: bool,
+        visible: bool,
         fs: Arc<dyn Fs>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
-        let (tree, scan_states_tx) = LocalWorktree::new(client, path, weak, fs.clone(), cx).await?;
+        let (tree, scan_states_tx) =
+            LocalWorktree::new(client, path, visible, fs.clone(), cx).await?;
         tree.update(cx, |tree, cx| {
             let tree = tree.as_local_mut().unwrap();
             let abs_path = tree.abs_path().clone();
@@ -203,7 +204,7 @@ impl Worktree {
             .map(|c| c.to_ascii_lowercase())
             .collect();
         let root_name = worktree.root_name.clone();
-        let weak = worktree.weak;
+        let visible = worktree.visible;
         let snapshot = Snapshot {
             id: WorktreeId(remote_id as usize),
             root_name,
@@ -236,7 +237,7 @@ impl Worktree {
                         )
                     }),
                 ),
-                weak,
+                visible,
             })
         });
 
@@ -356,10 +357,10 @@ impl Worktree {
         }
     }
 
-    pub fn is_weak(&self) -> bool {
+    pub fn is_visible(&self) -> bool {
         match self {
-            Worktree::Local(worktree) => worktree.weak,
-            Worktree::Remote(worktree) => worktree.weak,
+            Worktree::Local(worktree) => worktree.visible,
+            Worktree::Remote(worktree) => worktree.visible,
         }
     }
 
@@ -458,7 +459,7 @@ impl LocalWorktree {
     async fn new(
         client: Arc<Client>,
         path: impl Into<Arc<Path>>,
-        weak: bool,
+        visible: bool,
         fs: Arc<dyn Fs>,
         cx: &mut AsyncAppContext,
     ) -> Result<(ModelHandle<Worktree>, UnboundedSender<ScanState>)> {
@@ -525,7 +526,7 @@ impl LocalWorktree {
                 queued_operations: Default::default(),
                 client,
                 fs,
-                weak,
+                visible,
             };
 
             cx.spawn_weak(|this, mut cx| async move {
@@ -738,7 +739,7 @@ impl LocalWorktree {
             worktree_id: self.id().to_proto(),
             root_name: self.root_name().to_string(),
             authorized_logins: self.authorized_logins(),
-            weak: self.weak,
+            visible: self.visible,
         };
         cx.spawn(|this, mut cx| async move {
             let response = client.request(register_message).await;
@@ -1028,7 +1029,7 @@ impl LocalSnapshot {
     pub(crate) fn to_proto(
         &self,
         diagnostic_summaries: &TreeMap<PathKey, DiagnosticSummary>,
-        weak: bool,
+        visible: bool,
     ) -> proto::Worktree {
         let root_name = self.root_name.clone();
         proto::Worktree {
@@ -1044,7 +1045,7 @@ impl LocalSnapshot {
                 .iter()
                 .map(|(path, summary)| summary.to_proto(&path.0))
                 .collect(),
-            weak,
+            visible,
         }
     }
 
@@ -2468,7 +2469,7 @@ mod tests {
         let tree = Worktree::local(
             client,
             Arc::from(Path::new("/root")),
-            false,
+            true,
             fs,
             &mut cx.to_async(),
         )
@@ -2511,7 +2512,7 @@ mod tests {
         let tree = Worktree::local(
             client,
             dir.path(),
-            false,
+            true,
             Arc::new(RealFs),
             &mut cx.to_async(),
         )

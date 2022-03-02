@@ -134,7 +134,7 @@ message RegisterWorktree {
     uint64 worktree_id = 2;
     string root_name = 3;
     repeated string authorized_logins = 4;
-    bool weak = 5;
+    bool visible = 5;
 }
 
 message UnregisterWorktree {
@@ -502,7 +502,7 @@ message Worktree {
     string root_name = 2;
     repeated Entry entries = 3;
     repeated DiagnosticSummary diagnostic_summaries = 4;
-    bool weak = 5;
+    bool visible = 5;
 }
 
 message File {

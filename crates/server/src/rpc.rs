@@ -351,7 +351,7 @@ impl Server {
                                 .values()
                                 .cloned()
                                 .collect(),
-                            weak: worktree.weak,
+                            visible: worktree.visible,
                         })
                     })
                     .collect();
@@ -440,7 +440,7 @@ impl Server {
                 Worktree {
                     authorized_user_ids: contact_user_ids.clone(),
                     root_name: request.payload.root_name.clone(),
-                    weak: request.payload.weak,
+                    visible: request.payload.visible,
                 },
             )?;
         }
@@ -1070,7 +1070,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -1202,7 +1202,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -1303,7 +1303,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -1475,7 +1475,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/dir", false, cx)
+                p.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();
@@ -1557,7 +1557,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/dir", false, cx)
+                p.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();
@@ -1638,7 +1638,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/dir", false, cx)
+                p.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();
@@ -1717,7 +1717,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/dir", false, cx)
+                p.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();
@@ -1790,7 +1790,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -1878,7 +1878,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -2104,7 +2104,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -2303,7 +2303,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -2409,7 +2409,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/root-1", false, cx)
+                p.find_or_create_local_worktree("/root-1", true, cx)
             })
             .await
             .unwrap();
@@ -2545,7 +2545,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/root-1", false, cx)
+                p.find_or_create_local_worktree("/root-1", true, cx)
             })
             .await
             .unwrap();
@@ -2666,7 +2666,7 @@ mod tests {
 
         let (worktree_1, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/root-1", false, cx)
+                p.find_or_create_local_worktree("/root-1", true, cx)
             })
             .await
             .unwrap();
@@ -2675,7 +2675,7 @@ mod tests {
             .await;
         let (worktree_2, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/root-2", false, cx)
+                p.find_or_create_local_worktree("/root-2", true, cx)
             })
             .await
             .unwrap();
@@ -2775,7 +2775,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/root-1", false, cx)
+                p.find_or_create_local_worktree("/root-1", true, cx)
             })
             .await
             .unwrap();
@@ -2921,7 +2921,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/code/crate-1", false, cx)
+                p.find_or_create_local_worktree("/code/crate-1", true, cx)
             })
             .await
             .unwrap();
@@ -3051,7 +3051,7 @@ mod tests {
 
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/root", false, cx)
+                p.find_or_create_local_worktree("/root", true, cx)
             })
             .await
             .unwrap();
@@ -3155,7 +3155,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -3391,7 +3391,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/dir", false, cx)
+                p.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();
@@ -4005,7 +4005,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -4165,7 +4165,7 @@ mod tests {
 
         let (collab_worktree, _) = host_project
             .update(&mut host_cx, |project, cx| {
-                project.find_or_create_local_worktree("/_collab", false, cx)
+                project.find_or_create_local_worktree("/_collab", true, cx)
             })
             .await
             .unwrap();
@@ -4662,7 +4662,7 @@ mod tests {
                             log::info!("Host: find/create local worktree {:?}", path);
                             project
                                 .update(&mut cx, |project, cx| {
-                                    project.find_or_create_local_worktree(path, false, cx)
+                                    project.find_or_create_local_worktree(path, true, cx)
                                 })
                                 .await
                                 .unwrap();
@@ -4674,7 +4674,7 @@ mod tests {
                                     .update(&mut cx, |project, cx| {
                                         project.find_or_create_local_worktree(
                                             file.clone(),
-                                            false,
+                                            true,
                                             cx,
                                         )
                                     })
@@ -4769,7 +4769,8 @@ mod tests {
                             .worktrees(&cx)
                             .filter(|worktree| {
                                 let worktree = worktree.read(cx);
-                                !worktree.is_weak() && worktree.entries(false).any(|e| e.is_file())
+                                worktree.is_visible()
+                                    && worktree.entries(false).any(|e| e.is_file())
                             })
                             .choose(&mut *rng.lock())
                     }) {
