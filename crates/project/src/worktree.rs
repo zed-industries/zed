@@ -345,6 +345,10 @@ impl Worktree {
         matches!(self, Worktree::Local(_))
     }
 
+    pub fn is_remote(&self) -> bool {
+        !self.is_local()
+    }
+
     pub fn snapshot(&self) -> Snapshot {
         match self {
             Worktree::Local(worktree) => worktree.snapshot().snapshot,

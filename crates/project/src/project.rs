@@ -514,6 +514,7 @@ impl Project {
                 } = &mut this.client_state
                 {
                     *is_shared = true;
+
                     for open_buffer in this.opened_buffers.values_mut() {
                         match open_buffer {
                             OpenBuffer::Strong(_) => {}
@@ -525,6 +526,18 @@ impl Project {
                             OpenBuffer::Loading(_) => unreachable!(),
                         }
                     }
+
+                    for worktree_handle in this.worktrees.iter_mut() {
+                        match worktree_handle {
+                            WorktreeHandle::Strong(_) => {}
+                            WorktreeHandle::Weak(worktree) => {
+                                if let Some(worktree) = worktree.upgrade(cx) {
+                                    *worktree_handle = WorktreeHandle::Strong(worktree);
+                                }
+                            }
+                        }
+                    }
+
                     remote_id_rx
                         .borrow()
                         .ok_or_else(|| anyhow!("no project id"))
@@ -555,7 +568,7 @@ impl Project {
     pub fn unshare(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let rpc = self.client.clone();
         cx.spawn(|this, mut cx| async move {
-            let project_id = this.update(&mut cx, |this, _| {
+            let project_id = this.update(&mut cx, |this, cx| {
                 if let ProjectClientState::Local {
                     is_shared,
                     remote_id_rx,
@@ -563,15 +576,27 @@ impl Project {
                 } = &mut this.client_state
                 {
                     *is_shared = false;
+
                     for open_buffer in this.opened_buffers.values_mut() {
                         match open_buffer {
                             OpenBuffer::Strong(buffer) => {
                                 *open_buffer = OpenBuffer::Weak(buffer.downgrade());
                             }
-                            OpenBuffer::Weak(_) => {}
-                            OpenBuffer::Loading(_) => unreachable!(),
+                            _ => {}
                         }
                     }
+
+                    for worktree_handle in this.worktrees.iter_mut() {
+                        match worktree_handle {
+                            WorktreeHandle::Strong(worktree) => {
+                                if worktree.read(cx).is_weak() {
+                                    *worktree_handle = WorktreeHandle::Weak(worktree.downgrade());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
                     remote_id_rx
                         .borrow()
                         .ok_or_else(|| anyhow!("no project id"))
@@ -2367,11 +2392,14 @@ impl Project {
             .detach();
         }
 
-        let push_weak_handle = {
+        let push_strong_handle = {
             let worktree = worktree.read(cx);
-            worktree.is_local() && worktree.is_weak()
+            self.is_shared() || worktree.is_remote()
         };
-        if push_weak_handle {
+        if push_strong_handle {
+            self.worktrees
+                .push(WorktreeHandle::Strong(worktree.clone()));
+        } else {
             cx.observe_release(&worktree, |this, cx| {
                 this.worktrees
                     .retain(|worktree| worktree.upgrade(cx).is_some());
@@ -2380,9 +2408,6 @@ impl Project {
             .detach();
             self.worktrees
                 .push(WorktreeHandle::Weak(worktree.downgrade()));
-        } else {
-            self.worktrees
-                .push(WorktreeHandle::Strong(worktree.clone()));
         }
         cx.notify();
     }
