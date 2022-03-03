@@ -1322,6 +1322,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<DocumentHighlight>>> {
         let position = position.to_point_utf16(buffer.read(cx));
+
         self.request_lsp(buffer.clone(), GetDocumentHighlights { position }, cx)
     }
 
@@ -1721,6 +1722,17 @@ impl Project {
                     return Task::ready(Ok(Default::default()));
                 };
             } else {
+                return Task::ready(Ok(Default::default()));
+            }
+
+            if !lang_server
+                .capabilities()
+                .borrow()
+                .as_ref()
+                .map_or(false, |capabilities| {
+                    capabilities.code_action_provider.is_some()
+                })
+            {
                 return Task::ready(Ok(Default::default()));
             }
 
@@ -2251,6 +2263,17 @@ impl Project {
             if let Some((file, language_server)) = file.zip(buffer.language_server().cloned()) {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), cx);
                 return cx.spawn(|this, cx| async move {
+                    if !language_server
+                        .capabilities()
+                        .borrow()
+                        .as_ref()
+                        .map_or(false, |capabilities| {
+                            request.check_capabilities(capabilities)
+                        })
+                    {
+                        return Ok(Default::default());
+                    }
+
                     let response = language_server
                         .request::<R::LspRequest>(lsp_params)
                         .await

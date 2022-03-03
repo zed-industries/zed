@@ -8,7 +8,7 @@ use language::{
     proto::{deserialize_anchor, serialize_anchor},
     range_from_lsp, Anchor, Bias, Buffer, PointUtf16, ToLspPosition, ToPointUtf16,
 };
-use lsp::DocumentHighlightKind;
+use lsp::{DocumentHighlightKind, ServerCapabilities};
 use std::{cmp::Reverse, ops::Range, path::Path};
 
 #[async_trait(?Send)]
@@ -16,6 +16,10 @@ pub(crate) trait LspCommand: 'static + Sized {
     type Response: 'static + Default + Send;
     type LspRequest: 'static + Send + lsp::request::Request;
     type ProtoRequest: 'static + Send + proto::RequestMessage;
+
+    fn check_capabilities(&self, _: &lsp::ServerCapabilities) -> bool {
+        true
+    }
 
     fn to_lsp(
         &self,
@@ -609,6 +613,10 @@ impl LspCommand for GetDocumentHighlights {
     type Response = Vec<DocumentHighlight>;
     type LspRequest = lsp::request::DocumentHighlightRequest;
     type ProtoRequest = proto::GetDocumentHighlights;
+
+    fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
+        capabilities.document_highlight_provider.is_some()
+    }
 
     fn to_lsp(&self, path: &Path, _: &AppContext) -> lsp::DocumentHighlightParams {
         lsp::DocumentHighlightParams {
