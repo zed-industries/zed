@@ -512,8 +512,16 @@ type FakeLanguageServerHandlers = Arc<
 
 #[cfg(any(test, feature = "test-support"))]
 impl LanguageServer {
+    pub fn full_capabilities() -> ServerCapabilities {
+        ServerCapabilities {
+            document_highlight_provider: Some(OneOf::Left(true)),
+            code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+            ..Default::default()
+        }
+    }
+
     pub fn fake(cx: &mut gpui::MutableAppContext) -> (Arc<Self>, FakeLanguageServer) {
-        Self::fake_with_capabilities(Default::default(), cx)
+        Self::fake_with_capabilities(Self::full_capabilities(), cx)
     }
 
     pub fn fake_with_capabilities(

@@ -574,7 +574,7 @@ impl LanguageServerConfig {
             Self {
                 fake_config: Some(FakeLanguageServerConfig {
                     servers_tx,
-                    capabilities: Default::default(),
+                    capabilities: lsp::LanguageServer::full_capabilities(),
                     initializer: None,
                 }),
                 disk_based_diagnostics_progress_token: Some("fakeServer/check".to_string()),
