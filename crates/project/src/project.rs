@@ -22,7 +22,7 @@ use language::{
 };
 use lsp::{DiagnosticSeverity, DocumentHighlightKind, LanguageServer};
 use lsp_command::*;
-use postage::watch;
+use postage::{prelude::Stream, watch};
 use rand::prelude::*;
 use search::SearchQuery;
 use sha2::{Digest, Sha256};
@@ -1725,22 +1725,25 @@ impl Project {
                 return Task::ready(Ok(Default::default()));
             }
 
-            if !lang_server
-                .capabilities()
-                .borrow()
-                .as_ref()
-                .map_or(false, |capabilities| {
-                    capabilities.code_action_provider.is_some()
-                })
-            {
-                return Task::ready(Ok(Default::default()));
-            }
-
             let lsp_range = lsp::Range::new(
                 range.start.to_point_utf16(buffer).to_lsp_position(),
                 range.end.to_point_utf16(buffer).to_lsp_position(),
             );
             cx.foreground().spawn(async move {
+                let mut capabilities = lang_server.capabilities();
+                while capabilities.borrow().is_none() {
+                    capabilities.recv().await;
+                }
+                if !capabilities
+                    .borrow()
+                    .as_ref()
+                    .map_or(false, |capabilities| {
+                        capabilities.code_action_provider.is_some()
+                    })
+                {
+                    return Ok(Default::default());
+                }
+
                 Ok(lang_server
                     .request::<lsp::request::CodeActionRequest>(lsp::CodeActionParams {
                         text_document: lsp::TextDocumentIdentifier::new(
@@ -2263,12 +2266,16 @@ impl Project {
             if let Some((file, language_server)) = file.zip(buffer.language_server().cloned()) {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), cx);
                 return cx.spawn(|this, cx| async move {
-                    if !language_server
-                        .capabilities()
+                    let mut capabilities = language_server.capabilities();
+                    while capabilities.borrow().is_none() {
+                        capabilities.recv().await;
+                    }
+
+                    if !capabilities
                         .borrow()
                         .as_ref()
                         .map_or(false, |capabilities| {
-                            request.check_capabilities(capabilities)
+                            request.check_capabilities(&capabilities)
                         })
                     {
                         return Ok(Default::default());
