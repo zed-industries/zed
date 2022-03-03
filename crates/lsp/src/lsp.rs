@@ -102,10 +102,13 @@ struct Error {
 impl LanguageServer {
     pub fn new(
         binary_path: &Path,
+        args: &[&str],
         root_path: &Path,
         background: Arc<executor::Background>,
     ) -> Result<Arc<Self>> {
         let mut server = Command::new(binary_path)
+            .current_dir(root_path)
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())

@@ -8,21 +8,16 @@ use regex::Regex;
 use rust_embed::RustEmbed;
 use serde::Deserialize;
 use smol::fs::{self, File};
-use std::{
-    borrow::Cow,
-    env::consts,
-    path::{Path, PathBuf},
-    str,
-    sync::Arc,
-};
+use std::{borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
 #[derive(RustEmbed)]
 #[folder = "languages"]
 struct LanguageDir;
 
-struct RustLsp;
-struct CLsp;
+struct RustLspAdapter;
+struct CLspAdapter;
+struct JsonLspAdapter;
 
 #[derive(Deserialize)]
 struct GithubRelease {
@@ -36,7 +31,11 @@ struct GithubReleaseAsset {
     browser_download_url: http::Url,
 }
 
-impl LspExt for RustLsp {
+impl LspAdapter for RustLspAdapter {
+    fn name(&self) -> &'static str {
+        "rust-analyzer"
+    }
+
     fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,
@@ -67,7 +66,7 @@ impl LspExt for RustLsp {
                 .ok_or_else(|| anyhow!("no release found matching {:?}", asset_name))?;
             Ok(LspBinaryVersion {
                 name: release.name,
-                url: asset.browser_download_url.clone(),
+                url: Some(asset.browser_download_url.clone()),
             })
         }
         .boxed()
@@ -77,18 +76,15 @@ impl LspExt for RustLsp {
         &self,
         version: LspBinaryVersion,
         http: Arc<dyn HttpClient>,
-        download_dir: Arc<Path>,
+        container_dir: PathBuf,
     ) -> BoxFuture<'static, Result<PathBuf>> {
         async move {
-            let destination_dir_path = download_dir.join("rust-analyzer");
-            fs::create_dir_all(&destination_dir_path).await?;
-            let destination_path =
-                destination_dir_path.join(format!("rust-analyzer-{}", version.name));
+            let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
 
             if fs::metadata(&destination_path).await.is_err() {
                 let response = http
                     .send(
-                        surf::RequestBuilder::new(Method::Get, version.url)
+                        surf::RequestBuilder::new(Method::Get, version.url.unwrap())
                             .middleware(surf::middleware::Redirect::default())
                             .build(),
                     )
@@ -103,7 +99,7 @@ impl LspExt for RustLsp {
                 )
                 .await?;
 
-                if let Some(mut entries) = fs::read_dir(&destination_dir_path).await.log_err() {
+                if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
                     while let Some(entry) = entries.next().await {
                         if let Some(entry) = entry.log_err() {
                             let entry_path = entry.path();
@@ -120,13 +116,10 @@ impl LspExt for RustLsp {
         .boxed()
     }
 
-    fn cached_server_binary(&self, download_dir: Arc<Path>) -> BoxFuture<'static, Option<PathBuf>> {
+    fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
         async move {
-            let destination_dir_path = download_dir.join("rust-analyzer");
-            fs::create_dir_all(&destination_dir_path).await?;
-
             let mut last = None;
-            let mut entries = fs::read_dir(&destination_dir_path).await?;
+            let mut entries = fs::read_dir(&container_dir).await?;
             while let Some(entry) = entries.next().await {
                 last = Some(entry?.path());
             }
@@ -292,7 +285,11 @@ impl LspExt for RustLsp {
     }
 }
 
-impl LspExt for CLsp {
+impl LspAdapter for CLspAdapter {
+    fn name(&self) -> &'static str {
+        "clangd"
+    }
+
     fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,
@@ -323,7 +320,7 @@ impl LspExt for CLsp {
                 .ok_or_else(|| anyhow!("no release found matching {:?}", asset_name))?;
             Ok(LspBinaryVersion {
                 name: release.name,
-                url: asset.browser_download_url.clone(),
+                url: Some(asset.browser_download_url.clone()),
             })
         }
         .boxed()
@@ -333,14 +330,9 @@ impl LspExt for CLsp {
         &self,
         version: LspBinaryVersion,
         http: Arc<dyn HttpClient>,
-        download_dir: Arc<Path>,
+        container_dir: PathBuf,
     ) -> BoxFuture<'static, Result<PathBuf>> {
         async move {
-            let container_dir = download_dir.join("clangd");
-            fs::create_dir_all(&container_dir)
-                .await
-                .context("failed to create container directory")?;
-
             let zip_path = container_dir.join(format!("clangd_{}.zip", version.name));
             let version_dir = container_dir.join(format!("clangd_{}", version.name));
             let binary_path = version_dir.join("bin/clangd");
@@ -348,7 +340,7 @@ impl LspExt for CLsp {
             if fs::metadata(&binary_path).await.is_err() {
                 let response = http
                     .send(
-                        surf::RequestBuilder::new(Method::Get, version.url)
+                        surf::RequestBuilder::new(Method::Get, version.url.unwrap())
                             .middleware(surf::middleware::Redirect::default())
                             .build(),
                     )
@@ -390,13 +382,10 @@ impl LspExt for CLsp {
         .boxed()
     }
 
-    fn cached_server_binary(&self, download_dir: Arc<Path>) -> BoxFuture<'static, Option<PathBuf>> {
+    fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
         async move {
-            let destination_dir_path = download_dir.join("clangd");
-            fs::create_dir_all(&destination_dir_path).await?;
-
             let mut last_clangd_dir = None;
-            let mut entries = fs::read_dir(&destination_dir_path).await?;
+            let mut entries = fs::read_dir(&container_dir).await?;
             while let Some(entry) = entries.next().await {
                 let entry = entry?;
                 if entry.file_type().await?.is_dir() {
@@ -411,6 +400,120 @@ impl LspExt for CLsp {
                 Err(anyhow!(
                     "missing clangd binary in directory {:?}",
                     clangd_dir
+                ))
+            }
+        }
+        .log_err()
+        .boxed()
+    }
+
+    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+}
+
+impl JsonLspAdapter {
+    const BIN_PATH: &'static str =
+        "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
+}
+
+impl LspAdapter for JsonLspAdapter {
+    fn name(&self) -> &'static str {
+        "vscode-json-languageserver"
+    }
+
+    fn server_args(&self) -> &[&str] {
+        &["--stdio"]
+    }
+
+    fn fetch_latest_server_version(
+        &self,
+        _: Arc<dyn HttpClient>,
+    ) -> BoxFuture<'static, Result<LspBinaryVersion>> {
+        async move {
+            #[derive(Deserialize)]
+            struct NpmInfo {
+                versions: Vec<String>,
+            }
+
+            let output = smol::process::Command::new("npm")
+                .args(["info", "vscode-json-languageserver", "--json"])
+                .output()
+                .await?;
+            if !output.status.success() {
+                Err(anyhow!("failed to execute npm info"))?;
+            }
+            let mut info: NpmInfo = serde_json::from_slice(&output.stdout)?;
+
+            Ok(LspBinaryVersion {
+                name: info
+                    .versions
+                    .pop()
+                    .ok_or_else(|| anyhow!("no versions found in npm info"))?,
+                url: Default::default(),
+            })
+        }
+        .boxed()
+    }
+
+    fn fetch_server_binary(
+        &self,
+        version: LspBinaryVersion,
+        _: Arc<dyn HttpClient>,
+        container_dir: PathBuf,
+    ) -> BoxFuture<'static, Result<PathBuf>> {
+        async move {
+            let version_dir = container_dir.join(&version.name);
+            fs::create_dir_all(&version_dir)
+                .await
+                .context("failed to create version directory")?;
+            let binary_path = version_dir.join(Self::BIN_PATH);
+
+            if fs::metadata(&binary_path).await.is_err() {
+                let output = smol::process::Command::new("npm")
+                    .current_dir(&version_dir)
+                    .arg("install")
+                    .arg(format!("vscode-json-languageserver@{}", version.name))
+                    .output()
+                    .await
+                    .context("failed to run npm install")?;
+                if !output.status.success() {
+                    Err(anyhow!("failed to install vscode-json-languageserver"))?;
+                }
+
+                if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
+                    while let Some(entry) = entries.next().await {
+                        if let Some(entry) = entry.log_err() {
+                            let entry_path = entry.path();
+                            if entry_path.as_path() != version_dir {
+                                fs::remove_dir_all(&entry_path).await.log_err();
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(binary_path)
+        }
+        .boxed()
+    }
+
+    fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
+        async move {
+            let mut last_version_dir = None;
+            let mut entries = fs::read_dir(&container_dir).await?;
+            while let Some(entry) = entries.next().await {
+                let entry = entry?;
+                if entry.file_type().await?.is_dir() {
+                    last_version_dir = Some(entry.path());
+                }
+            }
+            let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
+            let bin_path = last_version_dir.join(Self::BIN_PATH);
+            if bin_path.exists() {
+                Ok(bin_path)
+            } else {
+                Err(anyhow!(
+                    "missing executable in directory {:?}",
+                    last_version_dir
                 ))
             }
         }
@@ -447,7 +550,7 @@ fn rust() -> Language {
         .unwrap()
         .with_outline_query(load_query("rust/outline.scm").as_ref())
         .unwrap()
-        .with_lsp_ext(RustLsp)
+        .with_lsp_adapter(RustLspAdapter)
 }
 
 fn c() -> Language {
@@ -462,7 +565,7 @@ fn c() -> Language {
         .unwrap()
         .with_outline_query(load_query("c/outline.scm").as_ref())
         .unwrap()
-        .with_lsp_ext(CLsp)
+        .with_lsp_adapter(CLspAdapter)
 }
 
 fn json() -> Language {
@@ -477,6 +580,7 @@ fn json() -> Language {
         .unwrap()
         .with_outline_query(load_query("json/outline.scm").as_ref())
         .unwrap()
+        .with_lsp_adapter(JsonLspAdapter)
 }
 
 fn markdown() -> Language {
@@ -498,7 +602,7 @@ fn load_query(path: &str) -> Cow<'static, str> {
 mod tests {
     use super::*;
     use gpui::color::Color;
-    use language::LspExt;
+    use language::LspAdapter;
     use theme::SyntaxTheme;
 
     #[test]
@@ -525,7 +629,7 @@ mod tests {
                 },
             ],
         };
-        RustLsp.process_diagnostics(&mut params);
+        RustLspAdapter.process_diagnostics(&mut params);
 
         assert_eq!(params.diagnostics[0].message, "use of moved value `a`");
 

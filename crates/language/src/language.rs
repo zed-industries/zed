@@ -6,7 +6,7 @@ pub mod proto;
 #[cfg(test)]
 mod tests;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use client::http::{self, HttpClient};
 use collections::HashSet;
 use futures::{
@@ -61,10 +61,11 @@ pub trait ToLspPosition {
 
 pub struct LspBinaryVersion {
     pub name: String,
-    pub url: http::Url,
+    pub url: Option<http::Url>,
 }
 
-pub trait LspExt: 'static + Send + Sync {
+pub trait LspAdapter: 'static + Send + Sync {
+    fn name(&self) -> &'static str;
     fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,
@@ -73,15 +74,19 @@ pub trait LspExt: 'static + Send + Sync {
         &self,
         version: LspBinaryVersion,
         http: Arc<dyn HttpClient>,
-        download_dir: Arc<Path>,
+        container_dir: PathBuf,
     ) -> BoxFuture<'static, Result<PathBuf>>;
-    fn cached_server_binary(&self, download_dir: Arc<Path>) -> BoxFuture<'static, Option<PathBuf>>;
+    fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>>;
     fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams);
     fn label_for_completion(&self, _: &lsp::CompletionItem, _: &Language) -> Option<CodeLabel> {
         None
     }
     fn label_for_symbol(&self, _: &str, _: lsp::SymbolKind, _: &Language) -> Option<CodeLabel> {
         None
+    }
+
+    fn server_args(&self) -> &[&str] {
+        &[]
     }
 }
 
@@ -140,7 +145,7 @@ pub struct BracketPair {
 pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
-    pub(crate) lsp_ext: Option<Arc<dyn LspExt>>,
+    pub(crate) adapter: Option<Arc<dyn LspAdapter>>,
     lsp_binary_path: Mutex<Option<Shared<BoxFuture<'static, Result<PathBuf, Arc<anyhow::Error>>>>>>,
 }
 
@@ -260,7 +265,7 @@ impl LanguageRegistry {
             .ok_or_else(|| anyhow!("language server download directory has not been assigned"))
             .log_err()?;
 
-        let lsp_ext = language.lsp_ext.clone()?;
+        let adapter = language.adapter.clone()?;
         let background = cx.background().clone();
         let server_binary_path = {
             Some(
@@ -269,7 +274,7 @@ impl LanguageRegistry {
                     .lock()
                     .get_or_insert_with(|| {
                         get_server_binary_path(
-                            lsp_ext,
+                            adapter.clone(),
                             language.clone(),
                             http_client,
                             download_dir,
@@ -285,7 +290,9 @@ impl LanguageRegistry {
         }?;
         Some(cx.background().spawn(async move {
             let server_binary_path = server_binary_path.await?;
-            let server = lsp::LanguageServer::new(&server_binary_path, &root_path, background)?;
+            let server_args = adapter.server_args();
+            let server =
+                lsp::LanguageServer::new(&server_binary_path, server_args, &root_path, background)?;
             Ok(server)
         }))
     }
@@ -298,22 +305,29 @@ impl LanguageRegistry {
 }
 
 async fn get_server_binary_path(
-    lsp_ext: Arc<dyn LspExt>,
+    adapter: Arc<dyn LspAdapter>,
     language: Arc<Language>,
     http_client: Arc<dyn HttpClient>,
     download_dir: Arc<Path>,
     statuses: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
 ) -> Result<PathBuf> {
+    let container_dir = download_dir.join(adapter.name());
+    if !container_dir.exists() {
+        smol::fs::create_dir_all(&container_dir)
+            .await
+            .context("failed to create container directory")?;
+    }
+
     let path = fetch_latest_server_binary_path(
-        lsp_ext.clone(),
+        adapter.clone(),
         language.clone(),
         http_client,
-        download_dir.clone(),
+        &container_dir,
         statuses.clone(),
     )
     .await;
     if path.is_err() {
-        if let Some(cached_path) = lsp_ext.cached_server_binary(download_dir).await {
+        if let Some(cached_path) = adapter.cached_server_binary(container_dir).await {
             statuses
                 .broadcast((language.clone(), LanguageServerBinaryStatus::Cached))
                 .await?;
@@ -328,10 +342,10 @@ async fn get_server_binary_path(
 }
 
 async fn fetch_latest_server_binary_path(
-    lsp_ext: Arc<dyn LspExt>,
+    adapter: Arc<dyn LspAdapter>,
     language: Arc<Language>,
     http_client: Arc<dyn HttpClient>,
-    download_dir: Arc<Path>,
+    container_dir: &Path,
     lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
 ) -> Result<PathBuf> {
     lsp_binary_statuses_tx
@@ -340,14 +354,14 @@ async fn fetch_latest_server_binary_path(
             LanguageServerBinaryStatus::CheckingForUpdate,
         ))
         .await?;
-    let version_info = lsp_ext
+    let version_info = adapter
         .fetch_latest_server_version(http_client.clone())
         .await?;
     lsp_binary_statuses_tx
         .broadcast((language.clone(), LanguageServerBinaryStatus::Downloading))
         .await?;
-    let path = lsp_ext
-        .fetch_server_binary(version_info, http_client, download_dir)
+    let path = adapter
+        .fetch_server_binary(version_info, http_client, container_dir.to_path_buf())
         .await?;
     lsp_binary_statuses_tx
         .broadcast((language.clone(), LanguageServerBinaryStatus::Downloaded))
@@ -369,7 +383,7 @@ impl Language {
                     highlight_map: Default::default(),
                 })
             }),
-            lsp_ext: None,
+            adapter: None,
             lsp_binary_path: Default::default(),
         }
     }
@@ -414,8 +428,8 @@ impl Language {
         Ok(self)
     }
 
-    pub fn with_lsp_ext(mut self, lsp_ext: impl LspExt) -> Self {
-        self.lsp_ext = Some(Arc::new(lsp_ext));
+    pub fn with_lsp_adapter(mut self, lsp_adapter: impl LspAdapter) -> Self {
+        self.adapter = Some(Arc::new(lsp_adapter));
         self
     }
 
@@ -442,19 +456,19 @@ impl Language {
     }
 
     pub fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams) {
-        if let Some(processor) = self.lsp_ext.as_ref() {
+        if let Some(processor) = self.adapter.as_ref() {
             processor.process_diagnostics(diagnostics);
         }
     }
 
     pub fn label_for_completion(&self, completion: &lsp::CompletionItem) -> Option<CodeLabel> {
-        self.lsp_ext
+        self.adapter
             .as_ref()?
             .label_for_completion(completion, self)
     }
 
     pub fn label_for_symbol(&self, name: &str, kind: lsp::SymbolKind) -> Option<CodeLabel> {
-        self.lsp_ext.as_ref()?.label_for_symbol(name, kind, self)
+        self.adapter.as_ref()?.label_for_symbol(name, kind, self)
     }
 
     pub fn highlight_text<'a>(

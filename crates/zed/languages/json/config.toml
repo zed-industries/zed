@@ -5,3 +5,6 @@ brackets = [
     { start = "[", end = "]", close = true, newline = true },
     { start = "\"", end = "\"", close = true, newline = false },
 ]
+
+[language_server]
+disk_based_diagnostic_sources = []
