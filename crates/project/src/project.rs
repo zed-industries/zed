@@ -1218,6 +1218,10 @@ impl Project {
         let (worktree, relative_path) = self
             .find_local_worktree(&abs_path, cx)
             .ok_or_else(|| anyhow!("no worktree found for diagnostics"))?;
+        if !worktree.read(cx).is_visible() {
+            return Ok(());
+        }
+
         let project_path = ProjectPath {
             worktree_id: worktree.read(cx).id(),
             path: relative_path.into(),
