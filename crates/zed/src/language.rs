@@ -429,6 +429,7 @@ pub fn build_language_registry() -> LanguageRegistry {
             .join(".zed"),
     );
     languages.add(Arc::new(c()));
+    languages.add(Arc::new(json()));
     languages.add(Arc::new(rust()));
     languages.add(Arc::new(markdown()));
     languages
@@ -455,11 +456,27 @@ fn c() -> Language {
     Language::new(config, Some(grammar))
         .with_highlights_query(load_query("c/highlights.scm").as_ref())
         .unwrap()
+        .with_brackets_query(load_query("c/brackets.scm").as_ref())
+        .unwrap()
         .with_indents_query(load_query("c/indents.scm").as_ref())
         .unwrap()
         .with_outline_query(load_query("c/outline.scm").as_ref())
         .unwrap()
         .with_lsp_ext(CLsp)
+}
+
+fn json() -> Language {
+    let grammar = tree_sitter_json::language();
+    let config = toml::from_slice(&LanguageDir::get("json/config.toml").unwrap().data).unwrap();
+    Language::new(config, Some(grammar))
+        .with_highlights_query(load_query("json/highlights.scm").as_ref())
+        .unwrap()
+        .with_brackets_query(load_query("json/brackets.scm").as_ref())
+        .unwrap()
+        .with_indents_query(load_query("json/indents.scm").as_ref())
+        .unwrap()
+        .with_outline_query(load_query("json/outline.scm").as_ref())
+        .unwrap()
 }
 
 fn markdown() -> Language {

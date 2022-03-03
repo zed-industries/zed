@@ -1,0 +1,7 @@
+name = "JSON"
+path_suffixes = ["json"]
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false },
+]
