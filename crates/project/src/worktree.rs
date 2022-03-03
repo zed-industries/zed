@@ -768,15 +768,13 @@ impl LocalWorktree {
         if self.share.is_some() {
             let _ = share_tx.try_send(Ok(()));
         } else {
-            let snapshot = self.snapshot();
             let rpc = self.client.clone();
             let worktree_id = cx.model_id() as u64;
-
             let maintain_remote_snapshot = cx.background().spawn({
                 let rpc = rpc.clone();
                 let diagnostic_summaries = self.diagnostic_summaries.clone();
                 async move {
-                    match snapshots_to_send_rx.recv().await {
+                    let mut prev_snapshot = match snapshots_to_send_rx.recv().await {
                         Ok(snapshot) => {
                             if let Err(error) = rpc
                                 .request(proto::UpdateWorktree {
@@ -797,13 +795,14 @@ impl LocalWorktree {
                                 return Err(anyhow!("failed to send initial update worktree"));
                             } else {
                                 let _ = share_tx.try_send(Ok(()));
+                                snapshot
                             }
                         }
                         Err(error) => {
                             let _ = share_tx.try_send(Err(error.into()));
                             return Err(anyhow!("failed to send initial update worktree"));
                         }
-                    }
+                    };
 
                     for (path, summary) in diagnostic_summaries.iter() {
                         rpc.send(proto::UpdateDiagnosticSummary {
@@ -813,7 +812,6 @@ impl LocalWorktree {
                         })?;
                     }
 
-                    let mut prev_snapshot = snapshot;
                     while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
                         let message =
                             snapshot.build_update(&prev_snapshot, project_id, worktree_id, false);
