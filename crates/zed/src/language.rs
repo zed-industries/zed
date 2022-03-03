@@ -7,6 +7,7 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use rust_embed::RustEmbed;
 use serde::Deserialize;
+use serde_json::json;
 use smol::fs::{self, File};
 use std::{borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
 use util::{ResultExt, TryFutureExt};
@@ -522,6 +523,12 @@ impl LspAdapter for JsonLspAdapter {
     }
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+
+    fn initialization_options(&self) -> Option<serde_json::Value> {
+        Some(json!({
+            "provideFormatter": true
+        }))
+    }
 }
 
 pub fn build_language_registry() -> LanguageRegistry {

@@ -103,6 +103,7 @@ impl LanguageServer {
     pub fn new(
         binary_path: &Path,
         args: &[&str],
+        options: Option<Value>,
         root_path: &Path,
         background: Arc<executor::Background>,
     ) -> Result<Arc<Self>> {
@@ -115,13 +116,14 @@ impl LanguageServer {
             .spawn()?;
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
-        Self::new_internal(stdin, stdout, root_path, background)
+        Self::new_internal(stdin, stdout, root_path, options, background)
     }
 
     fn new_internal<Stdin, Stdout>(
         stdin: Stdin,
         stdout: Stdout,
         root_path: &Path,
+        options: Option<Value>,
         executor: Arc<executor::Background>,
     ) -> Result<Arc<Self>>
     where
@@ -232,7 +234,7 @@ impl LanguageServer {
             .spawn({
                 let this = this.clone();
                 async move {
-                    if let Some(capabilities) = this.init(root_uri).log_err().await {
+                    if let Some(capabilities) = this.init(root_uri, options).log_err().await {
                         *capabilities_tx.borrow_mut() = Some(capabilities);
                     }
 
@@ -244,13 +246,17 @@ impl LanguageServer {
         Ok(this)
     }
 
-    async fn init(self: Arc<Self>, root_uri: Url) -> Result<ServerCapabilities> {
+    async fn init(
+        self: Arc<Self>,
+        root_uri: Url,
+        options: Option<Value>,
+    ) -> Result<ServerCapabilities> {
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: Default::default(),
             root_path: Default::default(),
             root_uri: Some(root_uri),
-            initialization_options: Default::default(),
+            initialization_options: options,
             capabilities: ClientCapabilities {
                 text_document: Some(TextDocumentClientCapabilities {
                     definition: Some(GotoCapability {
@@ -530,6 +536,7 @@ impl LanguageServer {
             stdin_writer,
             stdout_reader,
             Path::new("/"),
+            None,
             cx.background().clone(),
         )
         .unwrap();

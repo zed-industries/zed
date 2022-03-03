@@ -18,6 +18,7 @@ use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
 use serde::Deserialize;
+use serde_json::Value;
 use std::{
     cell::RefCell,
     ops::Range,
@@ -78,15 +79,21 @@ pub trait LspAdapter: 'static + Send + Sync {
     ) -> BoxFuture<'static, Result<PathBuf>>;
     fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>>;
     fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams);
+
     fn label_for_completion(&self, _: &lsp::CompletionItem, _: &Language) -> Option<CodeLabel> {
         None
     }
+
     fn label_for_symbol(&self, _: &str, _: lsp::SymbolKind, _: &Language) -> Option<CodeLabel> {
         None
     }
 
     fn server_args(&self) -> &[&str] {
         &[]
+    }
+
+    fn initialization_options(&self) -> Option<Value> {
+        None
     }
 }
 
@@ -291,8 +298,13 @@ impl LanguageRegistry {
         Some(cx.background().spawn(async move {
             let server_binary_path = server_binary_path.await?;
             let server_args = adapter.server_args();
-            let server =
-                lsp::LanguageServer::new(&server_binary_path, server_args, &root_path, background)?;
+            let server = lsp::LanguageServer::new(
+                &server_binary_path,
+                server_args,
+                adapter.initialization_options(),
+                &root_path,
+                background,
+            )?;
             Ok(server)
         }))
     }
