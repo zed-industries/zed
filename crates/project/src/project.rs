@@ -2396,15 +2396,16 @@ impl Project {
             });
 
             if let Some(project_id) = remote_project_id {
-                worktree
-                    .update(&mut cx, |worktree, cx| {
-                        worktree.as_local_mut().unwrap().register(project_id, cx)
-                    })
-                    .await?;
                 if is_shared {
                     worktree
                         .update(&mut cx, |worktree, cx| {
                             worktree.as_local_mut().unwrap().share(project_id, cx)
+                        })
+                        .await?;
+                } else {
+                    worktree
+                        .update(&mut cx, |worktree, cx| {
+                            worktree.as_local_mut().unwrap().register(project_id, cx)
                         })
                         .await?;
                 }

@@ -4664,12 +4664,17 @@ mod tests {
                             }
 
                             log::info!("Host: find/create local worktree {:?}", path);
-                            project
-                                .update(&mut cx, |project, cx| {
-                                    project.find_or_create_local_worktree(path, true, cx)
-                                })
-                                .await
-                                .unwrap();
+                            let find_or_create_worktree = project.update(&mut cx, |project, cx| {
+                                project.find_or_create_local_worktree(path, true, cx)
+                            });
+                            let find_or_create_worktree = async move {
+                                find_or_create_worktree.await.unwrap();
+                            };
+                            if rng.lock().gen() {
+                                cx.background().spawn(find_or_create_worktree).detach();
+                            } else {
+                                find_or_create_worktree.await;
+                            }
                         }
                         10..=80 if !files.lock().is_empty() => {
                             let buffer = if self.buffers.is_empty() || rng.lock().gen() {

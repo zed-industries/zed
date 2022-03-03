@@ -741,8 +741,9 @@ impl LocalWorktree {
             authorized_logins: self.authorized_logins(),
             visible: self.visible,
         };
+        let request = client.request(register_message);
         cx.spawn(|this, mut cx| async move {
-            let response = client.request(register_message).await;
+            let response = request.await;
             this.update(&mut cx, |this, _| {
                 let worktree = this.as_local_mut().unwrap();
                 match response {
@@ -759,44 +760,49 @@ impl LocalWorktree {
         })
     }
 
-    pub fn share(
-        &mut self,
-        project_id: u64,
-        cx: &mut ModelContext<Worktree>,
-    ) -> impl Future<Output = Result<()>> {
+    pub fn share(&mut self, project_id: u64, cx: &mut ModelContext<Worktree>) -> Task<Result<()>> {
+        let register = self.register(project_id, cx);
         let (mut share_tx, mut share_rx) = oneshot::channel();
+        let (snapshots_to_send_tx, snapshots_to_send_rx) =
+            smol::channel::unbounded::<LocalSnapshot>();
         if self.share.is_some() {
             let _ = share_tx.try_send(Ok(()));
         } else {
             let snapshot = self.snapshot();
             let rpc = self.client.clone();
             let worktree_id = cx.model_id() as u64;
-            let (snapshots_to_send_tx, snapshots_to_send_rx) =
-                smol::channel::unbounded::<LocalSnapshot>();
+
             let maintain_remote_snapshot = cx.background().spawn({
                 let rpc = rpc.clone();
-                let snapshot = snapshot.clone();
                 let diagnostic_summaries = self.diagnostic_summaries.clone();
                 async move {
-                    if let Err(error) = rpc
-                        .request(proto::UpdateWorktree {
-                            project_id,
-                            worktree_id,
-                            root_name: snapshot.root_name().to_string(),
-                            updated_entries: snapshot
-                                .entries_by_path
-                                .iter()
-                                .filter(|e| !e.is_ignored)
-                                .map(Into::into)
-                                .collect(),
-                            removed_entries: Default::default(),
-                        })
-                        .await
-                    {
-                        let _ = share_tx.try_send(Err(error));
-                        return Err(anyhow!("failed to send initial update worktree"));
-                    } else {
-                        let _ = share_tx.try_send(Ok(()));
+                    match snapshots_to_send_rx.recv().await {
+                        Ok(snapshot) => {
+                            if let Err(error) = rpc
+                                .request(proto::UpdateWorktree {
+                                    project_id,
+                                    worktree_id,
+                                    root_name: snapshot.root_name().to_string(),
+                                    updated_entries: snapshot
+                                        .entries_by_path
+                                        .iter()
+                                        .filter(|e| !e.is_ignored)
+                                        .map(Into::into)
+                                        .collect(),
+                                    removed_entries: Default::default(),
+                                })
+                                .await
+                            {
+                                let _ = share_tx.try_send(Err(error));
+                                return Err(anyhow!("failed to send initial update worktree"));
+                            } else {
+                                let _ = share_tx.try_send(Ok(()));
+                            }
+                        }
+                        Err(error) => {
+                            let _ = share_tx.try_send(Err(error.into()));
+                            return Err(anyhow!("failed to send initial update worktree"));
+                        }
                     }
 
                     for (path, summary) in diagnostic_summaries.iter() {
@@ -821,17 +827,24 @@ impl LocalWorktree {
             });
             self.share = Some(ShareState {
                 project_id,
-                snapshots_tx: snapshots_to_send_tx,
+                snapshots_tx: snapshots_to_send_tx.clone(),
                 _maintain_remote_snapshot: Some(maintain_remote_snapshot),
             });
         }
 
-        async move {
+        cx.spawn_weak(|this, cx| async move {
+            register.await?;
+            if let Some(this) = this.upgrade(&cx) {
+                this.read_with(&cx, |this, _| {
+                    let this = this.as_local().unwrap();
+                    let _ = snapshots_to_send_tx.try_send(this.snapshot());
+                });
+            }
             share_rx
                 .next()
                 .await
                 .unwrap_or_else(|| Err(anyhow!("share ended")))
-        }
+        })
     }
 
     pub fn unshare(&mut self) {
