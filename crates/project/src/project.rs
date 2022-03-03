@@ -398,17 +398,6 @@ impl Project {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn has_deferred_operations(&self, cx: &AppContext) -> bool {
-        self.opened_buffers.values().any(|buffer| match buffer {
-            OpenBuffer::Strong(buffer) => buffer.read(cx).deferred_ops_len() > 0,
-            OpenBuffer::Weak(buffer) => buffer
-                .upgrade(cx)
-                .map_or(false, |buffer| buffer.read(cx).deferred_ops_len() > 0),
-            OpenBuffer::Loading(_) => false,
-        })
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
     pub fn languages(&self) -> &Arc<LanguageRegistry> {
         &self.languages
     }
@@ -416,41 +405,35 @@ impl Project {
     #[cfg(any(test, feature = "test-support"))]
     pub fn check_invariants(&self, cx: &AppContext) {
         if self.is_local() {
-            let buffers = self.buffers(cx);
-            for (i, buffer) in buffers.iter().enumerate() {
-                let buffer = buffer.read(cx);
-                let path = buffer.file().unwrap().as_local().unwrap().abs_path(cx);
-                for other_buffer in &buffers[0..i] {
-                    let other_buffer = other_buffer.read(cx);
-                    let other_path = other_buffer
-                        .file()
-                        .unwrap()
-                        .as_local()
-                        .unwrap()
-                        .abs_path(cx);
-                    if other_path == path {
-                        panic!(
-                            "buffers {} and {} have the same absolute path: {:?}",
-                            buffer.remote_id(),
-                            other_buffer.remote_id(),
-                            path,
-                        );
-                    }
+            let mut worktree_root_paths = HashMap::default();
+            for worktree in self.worktrees(cx) {
+                let worktree = worktree.read(cx);
+                let abs_path = worktree.as_local().unwrap().abs_path().clone();
+                let prev_worktree_id = worktree_root_paths.insert(abs_path.clone(), worktree.id());
+                assert_eq!(
+                    prev_worktree_id,
+                    None,
+                    "abs path {:?} for worktree {:?} is not unique ({:?} was already registered with the same path)",
+                    abs_path,
+                    worktree.id(),
+                    prev_worktree_id
+                )
+            }
+        } else {
+            let replica_id = self.replica_id();
+            for buffer in self.opened_buffers.values() {
+                if let Some(buffer) = buffer.upgrade(cx) {
+                    let buffer = buffer.read(cx);
+                    assert_eq!(
+                        buffer.deferred_ops_len(),
+                        0,
+                        "replica {}, buffer {} has deferred operations",
+                        replica_id,
+                        buffer.remote_id()
+                    );
                 }
             }
         }
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn buffers(&self, cx: &AppContext) -> Vec<ModelHandle<Buffer>> {
-        self.opened_buffers
-            .values()
-            .filter_map(|buffer| match buffer {
-                OpenBuffer::Strong(buffer) => Some(buffer.clone()),
-                OpenBuffer::Weak(buffer) => buffer.upgrade(cx),
-                OpenBuffer::Loading(_) => None,
-            })
-            .collect()
     }
 
     #[cfg(any(test, feature = "test-support"))]

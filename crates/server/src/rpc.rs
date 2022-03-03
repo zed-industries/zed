@@ -4293,6 +4293,12 @@ mod tests {
                 );
             }
 
+            guest_client
+                .project
+                .as_ref()
+                .unwrap()
+                .read_with(&guest_cx, |project, cx| project.check_invariants(cx));
+
             for guest_buffer in &guest_client.buffers {
                 let buffer_id = guest_buffer.read_with(&guest_cx, |buffer, _| buffer.remote_id());
                 let host_buffer = host_project.read_with(&host_cx, |project, cx| {
