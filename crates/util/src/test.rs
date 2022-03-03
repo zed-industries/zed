@@ -40,23 +40,10 @@ impl<T: Clone, R: rand::Rng> Network<T, R> {
         for (replica, inbox) in self.inboxes.iter_mut() {
             if *replica != sender {
                 for message in &messages {
-                    let min_index = inbox
-                        .iter()
-                        .enumerate()
-                        .rev()
-                        .find_map(|(index, envelope)| {
-                            if sender == envelope.sender {
-                                Some(index + 1)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(0);
-
-                    // Insert one or more duplicates of this message *after* the previous
-                    // message delivered by this replica.
+                    // Insert one or more duplicates of this message, potentially *before* the previous
+                    // message sent by this peer to simulate out-of-order delivery.
                     for _ in 0..self.rng.gen_range(1..4) {
-                        let insertion_index = self.rng.gen_range(min_index..inbox.len() + 1);
+                        let insertion_index = self.rng.gen_range(0..inbox.len() + 1);
                         inbox.insert(
                             insertion_index,
                             Envelope {

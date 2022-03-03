@@ -629,9 +629,10 @@ message Operation {
         uint32 replica_id = 1;
         uint32 local_timestamp = 2;
         uint32 lamport_timestamp = 3;
-        repeated Range ranges = 4;
-        repeated VectorClockEntry version = 5;
-        repeated UndoCount counts = 6;
+        repeated VectorClockEntry version = 4;
+        repeated Range transaction_ranges = 5;
+        repeated VectorClockEntry transaction_version = 6;
+        repeated UndoCount counts = 7;
     }
 
     message UpdateSelections {
