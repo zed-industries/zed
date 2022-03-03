@@ -31,10 +31,11 @@ pub(crate) trait LspCommand: 'static + Sized {
     ) -> Result<Self::Response>;
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest;
-    fn from_proto(
+    async fn from_proto(
         message: Self::ProtoRequest,
-        project: &mut Project,
-        buffer: &Buffer,
+        project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        cx: AsyncAppContext,
     ) -> Result<Self>;
     fn response_to_proto(
         response: Self::Response,
@@ -121,19 +122,28 @@ impl LspCommand for PrepareRename {
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
+            version: (&buffer.version()).into(),
         }
     }
 
-    fn from_proto(message: proto::PrepareRename, _: &mut Project, buffer: &Buffer) -> Result<Self> {
+    async fn from_proto(
+        message: proto::PrepareRename,
+        _: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
         let position = message
             .position
             .and_then(deserialize_anchor)
             .ok_or_else(|| anyhow!("invalid position"))?;
-        if !buffer.can_resolve(&position) {
-            Err(anyhow!("cannot resolve position"))?;
-        }
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(message.version.into())
+            })
+            .await;
+
         Ok(Self {
-            position: position.to_point_utf16(buffer),
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
         })
     }
 
@@ -241,19 +251,27 @@ impl LspCommand for PerformRename {
                 &buffer.anchor_before(self.position),
             )),
             new_name: self.new_name.clone(),
+            version: (&buffer.version()).into(),
         }
     }
 
-    fn from_proto(message: proto::PerformRename, _: &mut Project, buffer: &Buffer) -> Result<Self> {
+    async fn from_proto(
+        message: proto::PerformRename,
+        _: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
         let position = message
             .position
             .and_then(deserialize_anchor)
             .ok_or_else(|| anyhow!("invalid position"))?;
-        if !buffer.can_resolve(&position) {
-            Err(anyhow!("cannot resolve position"))?;
-        }
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(message.version.into())
+            })
+            .await;
         Ok(Self {
-            position: position.to_point_utf16(buffer),
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
             new_name: message.new_name,
             push_to_history: false,
         })
@@ -385,19 +403,27 @@ impl LspCommand for GetDefinition {
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
+            version: (&buffer.version()).into(),
         }
     }
 
-    fn from_proto(message: proto::GetDefinition, _: &mut Project, buffer: &Buffer) -> Result<Self> {
+    async fn from_proto(
+        message: proto::GetDefinition,
+        _: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
         let position = message
             .position
             .and_then(deserialize_anchor)
             .ok_or_else(|| anyhow!("invalid position"))?;
-        if !buffer.can_resolve(&position) {
-            Err(anyhow!("cannot resolve position"))?;
-        }
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(message.version.into())
+            })
+            .await;
         Ok(Self {
-            position: position.to_point_utf16(buffer),
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
         })
     }
 
@@ -443,6 +469,9 @@ impl LspCommand for GetDefinition {
                 .end
                 .and_then(deserialize_anchor)
                 .ok_or_else(|| anyhow!("missing target end"))?;
+            buffer
+                .update(&mut cx, |buffer, _| buffer.wait_for_anchors([&start, &end]))
+                .await;
             locations.push(Location {
                 buffer,
                 range: start..end,
@@ -533,19 +562,27 @@ impl LspCommand for GetReferences {
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
+            version: (&buffer.version()).into(),
         }
     }
 
-    fn from_proto(message: proto::GetReferences, _: &mut Project, buffer: &Buffer) -> Result<Self> {
+    async fn from_proto(
+        message: proto::GetReferences,
+        _: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
         let position = message
             .position
             .and_then(deserialize_anchor)
             .ok_or_else(|| anyhow!("invalid position"))?;
-        if !buffer.can_resolve(&position) {
-            Err(anyhow!("cannot resolve position"))?;
-        }
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(message.version.into())
+            })
+            .await;
         Ok(Self {
-            position: position.to_point_utf16(buffer),
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
         })
     }
 
@@ -591,6 +628,9 @@ impl LspCommand for GetReferences {
                 .end
                 .and_then(deserialize_anchor)
                 .ok_or_else(|| anyhow!("missing target end"))?;
+            target_buffer
+                .update(&mut cx, |buffer, _| buffer.wait_for_anchors([&start, &end]))
+                .await;
             locations.push(Location {
                 buffer: target_buffer,
                 range: start..end,
@@ -658,23 +698,27 @@ impl LspCommand for GetDocumentHighlights {
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
+            version: (&buffer.version()).into(),
         }
     }
 
-    fn from_proto(
+    async fn from_proto(
         message: proto::GetDocumentHighlights,
-        _: &mut Project,
-        buffer: &Buffer,
+        _: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
     ) -> Result<Self> {
         let position = message
             .position
             .and_then(deserialize_anchor)
             .ok_or_else(|| anyhow!("invalid position"))?;
-        if !buffer.can_resolve(&position) {
-            Err(anyhow!("cannot resolve position"))?;
-        }
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(message.version.into())
+            })
+            .await;
         Ok(Self {
-            position: position.to_point_utf16(buffer),
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
         })
     }
 
@@ -705,33 +749,34 @@ impl LspCommand for GetDocumentHighlights {
         self,
         message: proto::GetDocumentHighlightsResponse,
         _: ModelHandle<Project>,
-        _: ModelHandle<Buffer>,
-        _: AsyncAppContext,
+        buffer: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
     ) -> Result<Vec<DocumentHighlight>> {
-        Ok(message
-            .highlights
-            .into_iter()
-            .map(|highlight| {
-                let start = highlight
-                    .start
-                    .and_then(deserialize_anchor)
-                    .ok_or_else(|| anyhow!("missing target start"))?;
-                let end = highlight
-                    .end
-                    .and_then(deserialize_anchor)
-                    .ok_or_else(|| anyhow!("missing target end"))?;
-                let kind = match proto::document_highlight::Kind::from_i32(highlight.kind) {
-                    Some(proto::document_highlight::Kind::Text) => DocumentHighlightKind::TEXT,
-                    Some(proto::document_highlight::Kind::Read) => DocumentHighlightKind::READ,
-                    Some(proto::document_highlight::Kind::Write) => DocumentHighlightKind::WRITE,
-                    None => DocumentHighlightKind::TEXT,
-                };
-                Ok(DocumentHighlight {
-                    range: start..end,
-                    kind,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?)
+        let mut highlights = Vec::new();
+        for highlight in message.highlights {
+            let start = highlight
+                .start
+                .and_then(deserialize_anchor)
+                .ok_or_else(|| anyhow!("missing target start"))?;
+            let end = highlight
+                .end
+                .and_then(deserialize_anchor)
+                .ok_or_else(|| anyhow!("missing target end"))?;
+            buffer
+                .update(&mut cx, |buffer, _| buffer.wait_for_anchors([&start, &end]))
+                .await;
+            let kind = match proto::document_highlight::Kind::from_i32(highlight.kind) {
+                Some(proto::document_highlight::Kind::Text) => DocumentHighlightKind::TEXT,
+                Some(proto::document_highlight::Kind::Read) => DocumentHighlightKind::READ,
+                Some(proto::document_highlight::Kind::Write) => DocumentHighlightKind::WRITE,
+                None => DocumentHighlightKind::TEXT,
+            };
+            highlights.push(DocumentHighlight {
+                range: start..end,
+                kind,
+            });
+        }
+        Ok(highlights)
     }
 
     fn buffer_id_from_proto(message: &proto::GetDocumentHighlights) -> u64 {

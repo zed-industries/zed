@@ -1307,6 +1307,32 @@ impl Buffer {
         }
     }
 
+    pub fn wait_for_anchors<'a>(
+        &mut self,
+        anchors: impl IntoIterator<Item = &'a Anchor>,
+    ) -> impl 'static + Future<Output = ()> {
+        let mut futures = Vec::new();
+        for anchor in anchors {
+            if !self.version.observed(anchor.timestamp)
+                && *anchor != Anchor::max()
+                && *anchor != Anchor::min()
+            {
+                let (tx, rx) = oneshot::channel();
+                self.edit_id_resolvers
+                    .entry(anchor.timestamp)
+                    .or_default()
+                    .push(tx);
+                futures.push(rx);
+            }
+        }
+
+        async move {
+            for mut future in futures {
+                future.recv().await;
+            }
+        }
+    }
+
     pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = ()> {
         let (tx, mut rx) = barrier::channel();
         if !self.snapshot.version.observed_all(&version) {

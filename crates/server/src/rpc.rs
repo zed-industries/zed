@@ -4911,12 +4911,9 @@ mod tests {
                             );
                             (buffer.version(), buffer.save(cx))
                         });
-                        let save = cx.spawn(|cx| async move {
+                        let save = cx.background().spawn(async move {
                             let (saved_version, _) = save.await.expect("save request failed");
-                            buffer.read_with(&cx, |buffer, _| {
-                                assert!(buffer.version().observed_all(&saved_version));
-                                assert!(saved_version.observed_all(&requested_version));
-                            });
+                            assert!(saved_version.observed_all(&requested_version));
                         });
                         if rng.lock().gen_bool(0.3) {
                             log::info!("Guest {}: detaching save request", guest_id);

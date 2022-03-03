@@ -1291,6 +1291,13 @@ impl Buffer {
         self.text.wait_for_edits(edit_ids)
     }
 
+    pub fn wait_for_anchors<'a>(
+        &mut self,
+        anchors: impl IntoIterator<Item = &'a Anchor>,
+    ) -> impl Future<Output = ()> {
+        self.text.wait_for_anchors(anchors)
+    }
+
     pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = ()> {
         self.text.wait_for_version(version)
     }

@@ -164,6 +164,7 @@ message GetDefinition {
      uint64 project_id = 1;
      uint64 buffer_id = 2;
      Anchor position = 3;
+     repeated VectorClockEntry version = 4;
  }
 
 message GetDefinitionResponse {
@@ -174,6 +175,7 @@ message GetReferences {
      uint64 project_id = 1;
      uint64 buffer_id = 2;
      Anchor position = 3;
+     repeated VectorClockEntry version = 4;
  }
 
 message GetReferencesResponse {
@@ -184,6 +186,7 @@ message GetDocumentHighlights {
      uint64 project_id = 1;
      uint64 buffer_id = 2;
      Anchor position = 3;
+     repeated VectorClockEntry version = 4;
  }
 
 message GetDocumentHighlightsResponse {
@@ -328,6 +331,7 @@ message GetCodeActions {
     uint64 buffer_id = 2;
     Anchor start = 3;
     Anchor end = 4;
+    repeated VectorClockEntry version = 5;
 }
 
 message GetCodeActionsResponse {
@@ -349,6 +353,7 @@ message PrepareRename {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     Anchor position = 3;
+    repeated VectorClockEntry version = 4;
 }
 
 message PrepareRenameResponse {
@@ -363,6 +368,7 @@ message PerformRename {
     uint64 buffer_id = 2;
     Anchor position = 3;
     string new_name = 4;
+    repeated VectorClockEntry version = 5;
 }
 
 message PerformRenameResponse {

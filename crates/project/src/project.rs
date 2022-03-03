@@ -1815,6 +1815,7 @@ impl Project {
             })
         } else if let Some(project_id) = self.remote_id() {
             let rpc = self.client.clone();
+            let version = buffer.version();
             cx.spawn_weak(|_, mut cx| async move {
                 let response = rpc
                     .request(proto::GetCodeActions {
@@ -1822,6 +1823,7 @@ impl Project {
                         buffer_id,
                         start: Some(language::proto::serialize_anchor(&range.start)),
                         end: Some(language::proto::serialize_anchor(&range.end)),
+                        version: (&version).into(),
                     })
                     .await?;
 
@@ -2840,13 +2842,11 @@ impl Project {
                 .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
             Ok::<_, anyhow::Error>((project_id, buffer))
         })?;
-
-        if !buffer
-            .read_with(&cx, |buffer, _| buffer.version())
-            .observed_all(&requested_version)
-        {
-            Err(anyhow!("save request depends on unreceived edits"))?;
-        }
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(requested_version)
+            })
+            .await;
 
         let (saved_version, mtime) = buffer.update(&mut cx, |buffer, cx| buffer.save(cx)).await?;
         Ok(proto::BufferSaved {
@@ -2904,12 +2904,9 @@ impl Project {
                 .map(|buffer| buffer.upgrade(cx).unwrap())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })?;
-        if !buffer
-            .read_with(&cx, |buffer, _| buffer.version())
-            .observed_all(&version)
-        {
-            Err(anyhow!("completion request depends on unreceived edits"))?;
-        }
+        buffer
+            .update(&mut cx, |buffer, _| buffer.wait_for_version(version))
+            .await;
         let version = buffer.read_with(&cx, |buffer, _| buffer.version());
         let completions = this
             .update(&mut cx, |this, cx| this.completions(&buffer, position, cx))
@@ -2979,10 +2976,13 @@ impl Project {
                 .map(|buffer| buffer.upgrade(cx).unwrap())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })?;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(envelope.payload.version.into())
+            })
+            .await;
+
         let version = buffer.read_with(&cx, |buffer, _| buffer.version());
-        if !version.observed(start.timestamp) || !version.observed(end.timestamp) {
-            Err(anyhow!("code action request references unreceived edits"))?;
-        }
         let code_actions = this.update(&mut cx, |this, cx| {
             Ok::<_, anyhow::Error>(this.code_actions(&buffer, start..end, cx))
         })?;
@@ -3038,19 +3038,26 @@ impl Project {
         <T::LspRequest as lsp::request::Request>::Result: Send,
     {
         let sender_id = envelope.original_sender_id()?;
-        let (request, buffer_version) = this.update(&mut cx, |this, cx| {
-            let buffer_id = T::buffer_id_from_proto(&envelope.payload);
-            let buffer_handle = this
-                .opened_buffers
+        let buffer_id = T::buffer_id_from_proto(&envelope.payload);
+        let buffer_handle = this.read_with(&cx, |this, _| {
+            this.opened_buffers
                 .get(&buffer_id)
-                .map(|buffer| buffer.upgrade(cx).unwrap())
-                .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
-            let buffer = buffer_handle.read(cx);
-            let buffer_version = buffer.version();
-            let request = T::from_proto(envelope.payload, this, buffer)?;
-            Ok::<_, anyhow::Error>((this.request_lsp(buffer_handle, request, cx), buffer_version))
+                .map(|buffer| buffer.upgrade(&cx).unwrap())
+                .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))
         })?;
-        let response = request.await?;
+        let request = T::from_proto(
+            envelope.payload,
+            this.clone(),
+            buffer_handle.clone(),
+            cx.clone(),
+        )
+        .await?;
+        let buffer_version = buffer_handle.read_with(&cx, |buffer, _| buffer.version());
+        let response = this
+            .update(&mut cx, |this, cx| {
+                this.request_lsp(buffer_handle, request, cx)
+            })
+            .await?;
         this.update(&mut cx, |this, cx| {
             Ok(T::response_to_proto(
                 response,
