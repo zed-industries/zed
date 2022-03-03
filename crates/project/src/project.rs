@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
-use futures::{future::Shared, Future, FutureExt, StreamExt};
+use futures::{future::Shared, Future, FutureExt, StreamExt, TryFutureExt};
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
@@ -64,6 +64,8 @@ pub struct Project {
         ProjectPath,
         postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
     >,
+    loading_local_worktrees:
+        HashMap<Arc<Path>, Shared<Task<Result<ModelHandle<Worktree>, Arc<anyhow::Error>>>>>,
     opened_buffers: HashMap<u64, OpenBuffer>,
     nonce: u128,
 }
@@ -282,6 +284,7 @@ impl Project {
                 opened_buffers: Default::default(),
                 shared_buffers: Default::default(),
                 loading_buffers: Default::default(),
+                loading_local_worktrees: Default::default(),
                 client_state: ProjectClientState::Local {
                     is_shared: false,
                     remote_id_tx,
@@ -336,6 +339,7 @@ impl Project {
                 loading_buffers: Default::default(),
                 opened_buffer: (Rc::new(RefCell::new(opened_buffer_tx)), opened_buffer_rx),
                 shared_buffers: Default::default(),
+                loading_local_worktrees: Default::default(),
                 active_entry: None,
                 collaborators: Default::default(),
                 languages,
@@ -830,7 +834,7 @@ impl Project {
     }
 
     pub fn save_buffer_as(
-        &self,
+        &mut self,
         buffer: ModelHandle<Buffer>,
         abs_path: PathBuf,
         cx: &mut ModelContext<Project>,
@@ -2322,7 +2326,7 @@ impl Project {
     }
 
     pub fn find_or_create_local_worktree(
-        &self,
+        &mut self,
         abs_path: impl AsRef<Path>,
         visible: bool,
         cx: &mut ModelContext<Self>,
@@ -2362,39 +2366,62 @@ impl Project {
     }
 
     fn create_local_worktree(
-        &self,
+        &mut self,
         abs_path: impl AsRef<Path>,
         visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Worktree>>> {
         let fs = self.fs.clone();
         let client = self.client.clone();
-        let path = Arc::from(abs_path.as_ref());
-        cx.spawn(|project, mut cx| async move {
-            let worktree = Worktree::local(client.clone(), path, visible, fs, &mut cx).await?;
+        let path: Arc<Path> = abs_path.as_ref().into();
+        let task = self
+            .loading_local_worktrees
+            .entry(path.clone())
+            .or_insert_with(|| {
+                cx.spawn(|project, mut cx| {
+                    async move {
+                        let worktree =
+                            Worktree::local(client.clone(), path.clone(), visible, fs, &mut cx)
+                                .await;
+                        project.update(&mut cx, |project, _| {
+                            project.loading_local_worktrees.remove(&path);
+                        });
+                        let worktree = worktree?;
 
-            let (remote_project_id, is_shared) = project.update(&mut cx, |project, cx| {
-                project.add_worktree(&worktree, cx);
-                (project.remote_id(), project.is_shared())
-            });
+                        let (remote_project_id, is_shared) =
+                            project.update(&mut cx, |project, cx| {
+                                project.add_worktree(&worktree, cx);
+                                (project.remote_id(), project.is_shared())
+                            });
 
-            if let Some(project_id) = remote_project_id {
-                if is_shared {
-                    worktree
-                        .update(&mut cx, |worktree, cx| {
-                            worktree.as_local_mut().unwrap().share(project_id, cx)
-                        })
-                        .await?;
-                } else {
-                    worktree
-                        .update(&mut cx, |worktree, cx| {
-                            worktree.as_local_mut().unwrap().register(project_id, cx)
-                        })
-                        .await?;
-                }
+                        if let Some(project_id) = remote_project_id {
+                            if is_shared {
+                                worktree
+                                    .update(&mut cx, |worktree, cx| {
+                                        worktree.as_local_mut().unwrap().share(project_id, cx)
+                                    })
+                                    .await?;
+                            } else {
+                                worktree
+                                    .update(&mut cx, |worktree, cx| {
+                                        worktree.as_local_mut().unwrap().register(project_id, cx)
+                                    })
+                                    .await?;
+                            }
+                        }
+
+                        Ok(worktree)
+                    }
+                    .map_err(|err| Arc::new(err))
+                })
+                .shared()
+            })
+            .clone();
+        cx.foreground().spawn(async move {
+            match task.await {
+                Ok(worktree) => Ok(worktree),
+                Err(err) => Err(anyhow!("{}", err)),
             }
-
-            Ok(worktree)
         })
     }
 
