@@ -8,6 +8,7 @@ version = "0.18.1"
 [lib]
 name = "zed"
 path = "src/zed.rs"
+doctest = false
 
 [[bin]]
 name = "Zed"

@@ -5,6 +5,7 @@ edition = "2021"
 
 [lib]
 path = "src/project_panel.rs"
+doctest = false
 
 [dependencies]
 gpui = { path = "../gpui" }

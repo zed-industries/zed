@@ -6,6 +6,7 @@ version = "0.1.0"
 
 [lib]
 path = "src/gpui.rs"
+doctest = false
 
 [features]
 test-support = ["backtrace", "dhat", "env_logger", "collections/test-support"]

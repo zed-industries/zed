@@ -6,6 +6,7 @@ edition = "2021"
 [lib]
 path = "src/gpui_macros.rs"
 proc-macro = true
+doctest = false
 
 [dependencies]
 syn = "1.0"

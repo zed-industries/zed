@@ -6,6 +6,7 @@ edition = "2021"
 
 [lib]
 path = "src/fsevent.rs"
+doctest = false
 
 [dependencies]
 bitflags = "1"

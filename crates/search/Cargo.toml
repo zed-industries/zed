@@ -5,6 +5,7 @@ edition = "2021"
 
 [lib]
 path = "src/search.rs"
+doctest = false
 
 [dependencies]
 collections = { path = "../collections" }

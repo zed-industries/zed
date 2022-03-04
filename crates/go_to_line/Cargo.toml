@@ -5,6 +5,7 @@ edition = "2021"
 
 [lib]
 path = "src/go_to_line.rs"
+doctest = false
 
 [dependencies]
 text = { path = "../text" }

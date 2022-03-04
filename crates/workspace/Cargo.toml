@@ -5,6 +5,7 @@ edition = "2021"
 
 [lib]
 path = "src/workspace.rs"
+doctest = false
 
 [features]
 test-support = ["client/test-support", "project/test-support"]

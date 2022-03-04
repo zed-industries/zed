@@ -5,6 +5,7 @@ edition = "2021"
 
 [lib]
 path = "src/project_symbols.rs"
+doctest = false
 
 [dependencies]
 editor = { path = "../editor" }

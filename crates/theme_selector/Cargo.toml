@@ -5,6 +5,7 @@ edition = "2021"
 
 [lib]
 path = "src/theme_selector.rs"
+doctest = false
 
 [dependencies]
 editor = { path = "../editor" }

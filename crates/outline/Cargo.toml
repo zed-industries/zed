@@ -5,6 +5,7 @@ edition = "2021"
 
 [lib]
 path = "src/outline.rs"
+doctest = false
 
 [dependencies]
 editor = { path = "../editor" }

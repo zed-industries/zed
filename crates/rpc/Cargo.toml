@@ -6,6 +6,7 @@ version = "0.1.0"
 
 [lib]
 path = "src/rpc.rs"
+doctest = false
 
 [features]
 test-support = ["gpui/test-support"]

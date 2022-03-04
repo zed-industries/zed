@@ -5,6 +5,7 @@ edition = "2021"
 
 [lib]
 path = "src/text.rs"
+doctest = false
 
 [features]
 test-support = ["rand"]

@@ -5,6 +5,7 @@ edition = "2021"
 
 [lib]
 path = "src/client.rs"
+doctest = false
 
 [features]
 test-support = ["gpui/test-support", "rpc/test-support"]

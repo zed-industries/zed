@@ -5,6 +5,7 @@ edition = "2021"
 
 [lib]
 path = "src/chat_panel.rs"
+doctest = false
 
 [dependencies]
 client = { path = "../client" }

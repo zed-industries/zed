@@ -5,6 +5,7 @@ edition = "2021"
 
 [lib]
 path = "src/diagnostics.rs"
+doctest = false
 
 [dependencies]
 anyhow = "1.0"
