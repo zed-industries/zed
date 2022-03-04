@@ -520,7 +520,8 @@ pub struct EditOperation {
 pub struct UndoOperation {
     pub id: clock::Local,
     pub counts: HashMap<clock::Local, u32>,
-    pub ranges: Vec<Range<FullOffset>>,
+    pub transaction_ranges: Vec<Range<FullOffset>>,
+    pub transaction_version: clock::Global,
     pub version: clock::Global,
 }
 
@@ -1039,7 +1040,7 @@ impl Buffer {
         let mut edits = Patch::default();
         self.snapshot.undo_map.insert(undo);
 
-        let mut cx = undo.version.clone();
+        let mut cx = undo.transaction_version.clone();
         for edit_id in undo.counts.keys().copied() {
             cx.observe(edit_id);
         }
@@ -1047,7 +1048,7 @@ impl Buffer {
 
         let mut old_fragments = self.fragments.cursor::<(VersionedFullOffset, usize)>();
         let mut new_fragments = old_fragments.slice(
-            &VersionedFullOffset::Offset(undo.ranges[0].start),
+            &VersionedFullOffset::Offset(undo.transaction_ranges[0].start),
             Bias::Right,
             &cx,
         );
@@ -1055,7 +1056,7 @@ impl Buffer {
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
         new_ropes.push_tree(new_fragments.summary().text);
 
-        for range in &undo.ranges {
+        for range in &undo.transaction_ranges {
             let mut end_offset = old_fragments.end(&cx).0.full_offset();
 
             if end_offset < range.start {
@@ -1073,7 +1074,7 @@ impl Buffer {
                     let mut fragment = fragment.clone();
                     let fragment_was_visible = fragment.visible;
 
-                    if fragment.was_visible(&undo.version, &self.undo_map)
+                    if fragment.was_visible(&undo.transaction_version, &self.undo_map)
                         || undo
                             .counts
                             .contains_key(&fragment.insertion_timestamp.local())
@@ -1264,9 +1265,10 @@ impl Buffer {
 
         let undo = UndoOperation {
             id: self.local_clock.tick(),
+            version: self.version(),
             counts,
-            ranges: transaction.ranges,
-            version: transaction.start.clone(),
+            transaction_ranges: transaction.ranges,
+            transaction_version: transaction.start.clone(),
         };
         self.apply_undo(&undo)?;
         let operation = Operation::Undo {
@@ -1296,6 +1298,32 @@ impl Buffer {
             if !self.version.observed(edit_id) {
                 let (tx, rx) = oneshot::channel();
                 self.edit_id_resolvers.entry(edit_id).or_default().push(tx);
+                futures.push(rx);
+            }
+        }
+
+        async move {
+            for mut future in futures {
+                future.recv().await;
+            }
+        }
+    }
+
+    pub fn wait_for_anchors<'a>(
+        &mut self,
+        anchors: impl IntoIterator<Item = &'a Anchor>,
+    ) -> impl 'static + Future<Output = ()> {
+        let mut futures = Vec::new();
+        for anchor in anchors {
+            if !self.version.observed(anchor.timestamp)
+                && *anchor != Anchor::max()
+                && *anchor != Anchor::min()
+            {
+                let (tx, rx) = oneshot::channel();
+                self.edit_id_resolvers
+                    .entry(anchor.timestamp)
+                    .or_default()
+                    .push(tx);
                 futures.push(rx);
             }
         }

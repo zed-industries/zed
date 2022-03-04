@@ -735,7 +735,7 @@ mod tests {
         let project = Project::test(fs.clone(), cx);
         let (tree, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", false, cx)
+                project.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();

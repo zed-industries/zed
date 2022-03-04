@@ -270,7 +270,7 @@ impl ProjectSymbolsView {
                 range.end = cmp::min(range.end, view.matches.len());
 
                 let show_worktree_root_name =
-                    view.project.read(cx).strong_worktrees(cx).count() > 1;
+                    view.project.read(cx).visible_worktrees(cx).count() > 1;
                 items.extend(view.matches[range].iter().enumerate().map(move |(ix, m)| {
                     view.render_match(m, start + ix, show_worktree_root_name, cx)
                 }));

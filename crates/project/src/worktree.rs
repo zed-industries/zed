@@ -71,7 +71,7 @@ pub struct LocalWorktree {
     queued_operations: Vec<(u64, Operation)>,
     client: Arc<Client>,
     fs: Arc<dyn Fs>,
-    weak: bool,
+    visible: bool,
 }
 
 pub struct RemoteWorktree {
@@ -83,7 +83,7 @@ pub struct RemoteWorktree {
     replica_id: ReplicaId,
     queued_operations: Vec<(u64, Operation)>,
     diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
-    weak: bool,
+    visible: bool,
 }
 
 #[derive(Clone)]
@@ -169,11 +169,12 @@ impl Worktree {
     pub async fn local(
         client: Arc<Client>,
         path: impl Into<Arc<Path>>,
-        weak: bool,
+        visible: bool,
         fs: Arc<dyn Fs>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
-        let (tree, scan_states_tx) = LocalWorktree::new(client, path, weak, fs.clone(), cx).await?;
+        let (tree, scan_states_tx) =
+            LocalWorktree::new(client, path, visible, fs.clone(), cx).await?;
         tree.update(cx, |tree, cx| {
             let tree = tree.as_local_mut().unwrap();
             let abs_path = tree.abs_path().clone();
@@ -203,7 +204,7 @@ impl Worktree {
             .map(|c| c.to_ascii_lowercase())
             .collect();
         let root_name = worktree.root_name.clone();
-        let weak = worktree.weak;
+        let visible = worktree.visible;
         let snapshot = Snapshot {
             id: WorktreeId(remote_id as usize),
             root_name,
@@ -236,7 +237,7 @@ impl Worktree {
                         )
                     }),
                 ),
-                weak,
+                visible,
             })
         });
 
@@ -345,6 +346,10 @@ impl Worktree {
         matches!(self, Worktree::Local(_))
     }
 
+    pub fn is_remote(&self) -> bool {
+        !self.is_local()
+    }
+
     pub fn snapshot(&self) -> Snapshot {
         match self {
             Worktree::Local(worktree) => worktree.snapshot().snapshot,
@@ -352,10 +357,10 @@ impl Worktree {
         }
     }
 
-    pub fn is_weak(&self) -> bool {
+    pub fn is_visible(&self) -> bool {
         match self {
-            Worktree::Local(worktree) => worktree.weak,
-            Worktree::Remote(worktree) => worktree.weak,
+            Worktree::Local(worktree) => worktree.visible,
+            Worktree::Remote(worktree) => worktree.visible,
         }
     }
 
@@ -454,7 +459,7 @@ impl LocalWorktree {
     async fn new(
         client: Arc<Client>,
         path: impl Into<Arc<Path>>,
-        weak: bool,
+        visible: bool,
         fs: Arc<dyn Fs>,
         cx: &mut AsyncAppContext,
     ) -> Result<(ModelHandle<Worktree>, UnboundedSender<ScanState>)> {
@@ -521,7 +526,7 @@ impl LocalWorktree {
                 queued_operations: Default::default(),
                 client,
                 fs,
-                weak,
+                visible,
             };
 
             cx.spawn_weak(|this, mut cx| async move {
@@ -734,10 +739,11 @@ impl LocalWorktree {
             worktree_id: self.id().to_proto(),
             root_name: self.root_name().to_string(),
             authorized_logins: self.authorized_logins(),
-            weak: self.weak,
+            visible: self.visible,
         };
+        let request = client.request(register_message);
         cx.spawn(|this, mut cx| async move {
-            let response = client.request(register_message).await;
+            let response = request.await;
             this.update(&mut cx, |this, _| {
                 let worktree = this.as_local_mut().unwrap();
                 match response {
@@ -754,45 +760,49 @@ impl LocalWorktree {
         })
     }
 
-    pub fn share(
-        &mut self,
-        project_id: u64,
-        cx: &mut ModelContext<Worktree>,
-    ) -> impl Future<Output = Result<()>> {
+    pub fn share(&mut self, project_id: u64, cx: &mut ModelContext<Worktree>) -> Task<Result<()>> {
+        let register = self.register(project_id, cx);
         let (mut share_tx, mut share_rx) = oneshot::channel();
+        let (snapshots_to_send_tx, snapshots_to_send_rx) =
+            smol::channel::unbounded::<LocalSnapshot>();
         if self.share.is_some() {
             let _ = share_tx.try_send(Ok(()));
         } else {
-            let snapshot = self.snapshot();
             let rpc = self.client.clone();
             let worktree_id = cx.model_id() as u64;
-            let (snapshots_to_send_tx, snapshots_to_send_rx) =
-                smol::channel::unbounded::<LocalSnapshot>();
             let maintain_remote_snapshot = cx.background().spawn({
                 let rpc = rpc.clone();
-                let snapshot = snapshot.clone();
                 let diagnostic_summaries = self.diagnostic_summaries.clone();
                 async move {
-                    if let Err(error) = rpc
-                        .request(proto::UpdateWorktree {
-                            project_id,
-                            worktree_id,
-                            root_name: snapshot.root_name().to_string(),
-                            updated_entries: snapshot
-                                .entries_by_path
-                                .iter()
-                                .filter(|e| !e.is_ignored)
-                                .map(Into::into)
-                                .collect(),
-                            removed_entries: Default::default(),
-                        })
-                        .await
-                    {
-                        let _ = share_tx.try_send(Err(error));
-                        return Err(anyhow!("failed to send initial update worktree"));
-                    } else {
-                        let _ = share_tx.try_send(Ok(()));
-                    }
+                    let mut prev_snapshot = match snapshots_to_send_rx.recv().await {
+                        Ok(snapshot) => {
+                            if let Err(error) = rpc
+                                .request(proto::UpdateWorktree {
+                                    project_id,
+                                    worktree_id,
+                                    root_name: snapshot.root_name().to_string(),
+                                    updated_entries: snapshot
+                                        .entries_by_path
+                                        .iter()
+                                        .filter(|e| !e.is_ignored)
+                                        .map(Into::into)
+                                        .collect(),
+                                    removed_entries: Default::default(),
+                                })
+                                .await
+                            {
+                                let _ = share_tx.try_send(Err(error));
+                                return Err(anyhow!("failed to send initial update worktree"));
+                            } else {
+                                let _ = share_tx.try_send(Ok(()));
+                                snapshot
+                            }
+                        }
+                        Err(error) => {
+                            let _ = share_tx.try_send(Err(error.into()));
+                            return Err(anyhow!("failed to send initial update worktree"));
+                        }
+                    };
 
                     for (path, summary) in diagnostic_summaries.iter() {
                         rpc.send(proto::UpdateDiagnosticSummary {
@@ -802,7 +812,6 @@ impl LocalWorktree {
                         })?;
                     }
 
-                    let mut prev_snapshot = snapshot;
                     while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
                         let message =
                             snapshot.build_update(&prev_snapshot, project_id, worktree_id, false);
@@ -816,17 +825,24 @@ impl LocalWorktree {
             });
             self.share = Some(ShareState {
                 project_id,
-                snapshots_tx: snapshots_to_send_tx,
+                snapshots_tx: snapshots_to_send_tx.clone(),
                 _maintain_remote_snapshot: Some(maintain_remote_snapshot),
             });
         }
 
-        async move {
+        cx.spawn_weak(|this, cx| async move {
+            register.await?;
+            if let Some(this) = this.upgrade(&cx) {
+                this.read_with(&cx, |this, _| {
+                    let this = this.as_local().unwrap();
+                    let _ = snapshots_to_send_tx.try_send(this.snapshot());
+                });
+            }
             share_rx
                 .next()
                 .await
                 .unwrap_or_else(|| Err(anyhow!("share ended")))
-        }
+        })
     }
 
     pub fn unshare(&mut self) {
@@ -1024,7 +1040,7 @@ impl LocalSnapshot {
     pub(crate) fn to_proto(
         &self,
         diagnostic_summaries: &TreeMap<PathKey, DiagnosticSummary>,
-        weak: bool,
+        visible: bool,
     ) -> proto::Worktree {
         let root_name = self.root_name.clone();
         proto::Worktree {
@@ -1040,7 +1056,7 @@ impl LocalSnapshot {
                 .iter()
                 .map(|(path, summary)| summary.to_proto(&path.0))
                 .collect(),
-            weak,
+            visible,
         }
     }
 
@@ -2464,7 +2480,7 @@ mod tests {
         let tree = Worktree::local(
             client,
             Arc::from(Path::new("/root")),
-            false,
+            true,
             fs,
             &mut cx.to_async(),
         )
@@ -2507,7 +2523,7 @@ mod tests {
         let tree = Worktree::local(
             client,
             dir.path(),
-            false,
+            true,
             Arc::new(RealFs),
             &mut cx.to_async(),
         )

@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
-use futures::{future::Shared, Future, FutureExt, StreamExt};
+use futures::{future::Shared, Future, FutureExt, StreamExt, TryFutureExt};
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
@@ -64,6 +64,8 @@ pub struct Project {
         ProjectPath,
         postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
     >,
+    loading_local_worktrees:
+        HashMap<Arc<Path>, Shared<Task<Result<ModelHandle<Worktree>, Arc<anyhow::Error>>>>>,
     opened_buffers: HashMap<u64, OpenBuffer>,
     nonce: u128,
 }
@@ -282,6 +284,7 @@ impl Project {
                 opened_buffers: Default::default(),
                 shared_buffers: Default::default(),
                 loading_buffers: Default::default(),
+                loading_local_worktrees: Default::default(),
                 client_state: ProjectClientState::Local {
                     is_shared: false,
                     remote_id_tx,
@@ -336,6 +339,7 @@ impl Project {
                 loading_buffers: Default::default(),
                 opened_buffer: (Rc::new(RefCell::new(opened_buffer_tx)), opened_buffer_rx),
                 shared_buffers: Default::default(),
+                loading_local_worktrees: Default::default(),
                 active_entry: None,
                 collaborators: Default::default(),
                 languages,
@@ -398,19 +402,61 @@ impl Project {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn has_deferred_operations(&self, cx: &AppContext) -> bool {
-        self.opened_buffers.values().any(|buffer| match buffer {
-            OpenBuffer::Strong(buffer) => buffer.read(cx).deferred_ops_len() > 0,
-            OpenBuffer::Weak(buffer) => buffer
-                .upgrade(cx)
-                .map_or(false, |buffer| buffer.read(cx).deferred_ops_len() > 0),
-            OpenBuffer::Loading(_) => false,
-        })
+    pub fn languages(&self) -> &Arc<LanguageRegistry> {
+        &self.languages
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn languages(&self) -> &Arc<LanguageRegistry> {
-        &self.languages
+    pub fn check_invariants(&self, cx: &AppContext) {
+        if self.is_local() {
+            let mut worktree_root_paths = HashMap::default();
+            for worktree in self.worktrees(cx) {
+                let worktree = worktree.read(cx);
+                let abs_path = worktree.as_local().unwrap().abs_path().clone();
+                let prev_worktree_id = worktree_root_paths.insert(abs_path.clone(), worktree.id());
+                assert_eq!(
+                    prev_worktree_id,
+                    None,
+                    "abs path {:?} for worktree {:?} is not unique ({:?} was already registered with the same path)",
+                    abs_path,
+                    worktree.id(),
+                    prev_worktree_id
+                )
+            }
+        } else {
+            let replica_id = self.replica_id();
+            for buffer in self.opened_buffers.values() {
+                if let Some(buffer) = buffer.upgrade(cx) {
+                    let buffer = buffer.read(cx);
+                    assert_eq!(
+                        buffer.deferred_ops_len(),
+                        0,
+                        "replica {}, buffer {} has deferred operations",
+                        replica_id,
+                        buffer.remote_id()
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_open_buffer(&self, path: impl Into<ProjectPath>, cx: &AppContext) -> bool {
+        let path = path.into();
+        if let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) {
+            self.opened_buffers.iter().any(|(_, buffer)| {
+                if let Some(buffer) = buffer.upgrade(cx) {
+                    if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
+                        if file.worktree == worktree && file.path() == &path.path {
+                            return true;
+                        }
+                    }
+                }
+                false
+            })
+        } else {
+            false
+        }
     }
 
     pub fn fs(&self) -> &Arc<dyn Fs> {
@@ -479,16 +525,16 @@ impl Project {
             .filter_map(move |worktree| worktree.upgrade(cx))
     }
 
-    pub fn strong_worktrees<'a>(
+    pub fn visible_worktrees<'a>(
         &'a self,
         cx: &'a AppContext,
     ) -> impl 'a + Iterator<Item = ModelHandle<Worktree>> {
         self.worktrees.iter().filter_map(|worktree| {
             worktree.upgrade(cx).and_then(|worktree| {
-                if worktree.read(cx).is_weak() {
-                    None
-                } else {
+                if worktree.read(cx).is_visible() {
                     Some(worktree)
+                } else {
+                    None
                 }
             })
         })
@@ -514,6 +560,7 @@ impl Project {
                 } = &mut this.client_state
                 {
                     *is_shared = true;
+
                     for open_buffer in this.opened_buffers.values_mut() {
                         match open_buffer {
                             OpenBuffer::Strong(_) => {}
@@ -525,6 +572,18 @@ impl Project {
                             OpenBuffer::Loading(_) => unreachable!(),
                         }
                     }
+
+                    for worktree_handle in this.worktrees.iter_mut() {
+                        match worktree_handle {
+                            WorktreeHandle::Strong(_) => {}
+                            WorktreeHandle::Weak(worktree) => {
+                                if let Some(worktree) = worktree.upgrade(cx) {
+                                    *worktree_handle = WorktreeHandle::Strong(worktree);
+                                }
+                            }
+                        }
+                    }
+
                     remote_id_rx
                         .borrow()
                         .ok_or_else(|| anyhow!("no project id"))
@@ -555,7 +614,7 @@ impl Project {
     pub fn unshare(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let rpc = self.client.clone();
         cx.spawn(|this, mut cx| async move {
-            let project_id = this.update(&mut cx, |this, _| {
+            let project_id = this.update(&mut cx, |this, cx| {
                 if let ProjectClientState::Local {
                     is_shared,
                     remote_id_rx,
@@ -563,15 +622,27 @@ impl Project {
                 } = &mut this.client_state
                 {
                     *is_shared = false;
+
                     for open_buffer in this.opened_buffers.values_mut() {
                         match open_buffer {
                             OpenBuffer::Strong(buffer) => {
                                 *open_buffer = OpenBuffer::Weak(buffer.downgrade());
                             }
-                            OpenBuffer::Weak(_) => {}
-                            OpenBuffer::Loading(_) => unreachable!(),
+                            _ => {}
                         }
                     }
+
+                    for worktree_handle in this.worktrees.iter_mut() {
+                        match worktree_handle {
+                            WorktreeHandle::Strong(worktree) => {
+                                if !worktree.read(cx).is_visible() {
+                                    *worktree_handle = WorktreeHandle::Weak(worktree.downgrade());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
                     remote_id_rx
                         .borrow()
                         .ok_or_else(|| anyhow!("no project id"))
@@ -743,7 +814,7 @@ impl Project {
             } else {
                 let worktree = this
                     .update(&mut cx, |this, cx| {
-                        this.create_local_worktree(&abs_path, true, cx)
+                        this.create_local_worktree(&abs_path, false, cx)
                     })
                     .await?;
                 this.update(&mut cx, |this, cx| {
@@ -763,12 +834,12 @@ impl Project {
     }
 
     pub fn save_buffer_as(
-        &self,
+        &mut self,
         buffer: ModelHandle<Buffer>,
         abs_path: PathBuf,
         cx: &mut ModelContext<Project>,
     ) -> Task<Result<()>> {
-        let worktree_task = self.find_or_create_local_worktree(&abs_path, false, cx);
+        let worktree_task = self.find_or_create_local_worktree(&abs_path, true, cx);
         cx.spawn(|this, mut cx| async move {
             let (worktree, path) = worktree_task.await?;
             worktree
@@ -784,25 +855,6 @@ impl Project {
             });
             Ok(())
         })
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn has_open_buffer(&self, path: impl Into<ProjectPath>, cx: &AppContext) -> bool {
-        let path = path.into();
-        if let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) {
-            self.opened_buffers.iter().any(|(_, buffer)| {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
-                        if file.worktree == worktree && file.path() == &path.path {
-                            return true;
-                        }
-                    }
-                }
-                false
-            })
-        } else {
-            false
-        }
     }
 
     pub fn get_open_buffer(
@@ -1166,6 +1218,10 @@ impl Project {
         let (worktree, relative_path) = self
             .find_local_worktree(&abs_path, cx)
             .ok_or_else(|| anyhow!("no worktree found for diagnostics"))?;
+        if !worktree.read(cx).is_visible() {
+            return Ok(());
+        }
+
         let project_path = ProjectPath {
             worktree_id: worktree.read(cx).id(),
             path: relative_path.into(),
@@ -1774,6 +1830,7 @@ impl Project {
             })
         } else if let Some(project_id) = self.remote_id() {
             let rpc = self.client.clone();
+            let version = buffer.version();
             cx.spawn_weak(|_, mut cx| async move {
                 let response = rpc
                     .request(proto::GetCodeActions {
@@ -1781,6 +1838,7 @@ impl Project {
                         buffer_id,
                         start: Some(language::proto::serialize_anchor(&range.start)),
                         end: Some(language::proto::serialize_anchor(&range.end)),
+                        version: (&version).into(),
                     })
                     .await?;
 
@@ -2051,7 +2109,7 @@ impl Project {
     ) -> Task<Result<HashMap<ModelHandle<Buffer>, Vec<Range<Anchor>>>>> {
         if self.is_local() {
             let snapshots = self
-                .strong_worktrees(cx)
+                .visible_worktrees(cx)
                 .filter_map(|tree| {
                     let tree = tree.read(cx).as_local()?;
                     Some(tree.snapshot())
@@ -2295,16 +2353,16 @@ impl Project {
     }
 
     pub fn find_or_create_local_worktree(
-        &self,
+        &mut self,
         abs_path: impl AsRef<Path>,
-        weak: bool,
+        visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<(ModelHandle<Worktree>, PathBuf)>> {
         let abs_path = abs_path.as_ref();
         if let Some((tree, relative_path)) = self.find_local_worktree(abs_path, cx) {
             Task::ready(Ok((tree.clone(), relative_path.into())))
         } else {
-            let worktree = self.create_local_worktree(abs_path, weak, cx);
+            let worktree = self.create_local_worktree(abs_path, visible, cx);
             cx.foreground()
                 .spawn(async move { Ok((worktree.await?, PathBuf::new())) })
         }
@@ -2335,38 +2393,62 @@ impl Project {
     }
 
     fn create_local_worktree(
-        &self,
+        &mut self,
         abs_path: impl AsRef<Path>,
-        weak: bool,
+        visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Worktree>>> {
         let fs = self.fs.clone();
         let client = self.client.clone();
-        let path = Arc::from(abs_path.as_ref());
-        cx.spawn(|project, mut cx| async move {
-            let worktree = Worktree::local(client.clone(), path, weak, fs, &mut cx).await?;
+        let path: Arc<Path> = abs_path.as_ref().into();
+        let task = self
+            .loading_local_worktrees
+            .entry(path.clone())
+            .or_insert_with(|| {
+                cx.spawn(|project, mut cx| {
+                    async move {
+                        let worktree =
+                            Worktree::local(client.clone(), path.clone(), visible, fs, &mut cx)
+                                .await;
+                        project.update(&mut cx, |project, _| {
+                            project.loading_local_worktrees.remove(&path);
+                        });
+                        let worktree = worktree?;
 
-            let (remote_project_id, is_shared) = project.update(&mut cx, |project, cx| {
-                project.add_worktree(&worktree, cx);
-                (project.remote_id(), project.is_shared())
-            });
+                        let (remote_project_id, is_shared) =
+                            project.update(&mut cx, |project, cx| {
+                                project.add_worktree(&worktree, cx);
+                                (project.remote_id(), project.is_shared())
+                            });
 
-            if let Some(project_id) = remote_project_id {
-                worktree
-                    .update(&mut cx, |worktree, cx| {
-                        worktree.as_local_mut().unwrap().register(project_id, cx)
-                    })
-                    .await?;
-                if is_shared {
-                    worktree
-                        .update(&mut cx, |worktree, cx| {
-                            worktree.as_local_mut().unwrap().share(project_id, cx)
-                        })
-                        .await?;
-                }
+                        if let Some(project_id) = remote_project_id {
+                            if is_shared {
+                                worktree
+                                    .update(&mut cx, |worktree, cx| {
+                                        worktree.as_local_mut().unwrap().share(project_id, cx)
+                                    })
+                                    .await?;
+                            } else {
+                                worktree
+                                    .update(&mut cx, |worktree, cx| {
+                                        worktree.as_local_mut().unwrap().register(project_id, cx)
+                                    })
+                                    .await?;
+                            }
+                        }
+
+                        Ok(worktree)
+                    }
+                    .map_err(|err| Arc::new(err))
+                })
+                .shared()
+            })
+            .clone();
+        cx.foreground().spawn(async move {
+            match task.await {
+                Ok(worktree) => Ok(worktree),
+                Err(err) => Err(anyhow!("{}", err)),
             }
-
-            Ok(worktree)
         })
     }
 
@@ -2388,11 +2470,14 @@ impl Project {
             .detach();
         }
 
-        let push_weak_handle = {
+        let push_strong_handle = {
             let worktree = worktree.read(cx);
-            worktree.is_local() && worktree.is_weak()
+            self.is_shared() || worktree.is_visible() || worktree.is_remote()
         };
-        if push_weak_handle {
+        if push_strong_handle {
+            self.worktrees
+                .push(WorktreeHandle::Strong(worktree.clone()));
+        } else {
             cx.observe_release(&worktree, |this, cx| {
                 this.worktrees
                     .retain(|worktree| worktree.upgrade(cx).is_some());
@@ -2401,9 +2486,6 @@ impl Project {
             .detach();
             self.worktrees
                 .push(WorktreeHandle::Weak(worktree.downgrade()));
-        } else {
-            self.worktrees
-                .push(WorktreeHandle::Strong(worktree.clone()));
         }
         cx.notify();
     }
@@ -2623,7 +2705,7 @@ impl Project {
                 root_name: envelope.payload.root_name,
                 entries: Default::default(),
                 diagnostic_summaries: Default::default(),
-                weak: envelope.payload.weak,
+                visible: envelope.payload.visible,
             };
             let (worktree, load_task) =
                 Worktree::remote(remote_id, replica_id, worktree, client, cx);
@@ -2731,7 +2813,7 @@ impl Project {
                         buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
                     }
                     OpenBuffer::Loading(operations) => operations.extend_from_slice(&ops),
-                    _ => unreachable!(),
+                    OpenBuffer::Weak(_) => {}
                 },
                 hash_map::Entry::Vacant(e) => {
                     e.insert(OpenBuffer::Loading(ops));
@@ -2785,13 +2867,11 @@ impl Project {
                 .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
             Ok::<_, anyhow::Error>((project_id, buffer))
         })?;
-
-        if !buffer
-            .read_with(&cx, |buffer, _| buffer.version())
-            .observed_all(&requested_version)
-        {
-            Err(anyhow!("save request depends on unreceived edits"))?;
-        }
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(requested_version)
+            })
+            .await;
 
         let (saved_version, mtime) = buffer.update(&mut cx, |buffer, cx| buffer.save(cx)).await?;
         Ok(proto::BufferSaved {
@@ -2849,12 +2929,9 @@ impl Project {
                 .map(|buffer| buffer.upgrade(cx).unwrap())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })?;
-        if !buffer
-            .read_with(&cx, |buffer, _| buffer.version())
-            .observed_all(&version)
-        {
-            Err(anyhow!("completion request depends on unreceived edits"))?;
-        }
+        buffer
+            .update(&mut cx, |buffer, _| buffer.wait_for_version(version))
+            .await;
         let version = buffer.read_with(&cx, |buffer, _| buffer.version());
         let completions = this
             .update(&mut cx, |this, cx| this.completions(&buffer, position, cx))
@@ -2924,10 +3001,13 @@ impl Project {
                 .map(|buffer| buffer.upgrade(cx).unwrap())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })?;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(envelope.payload.version.into())
+            })
+            .await;
+
         let version = buffer.read_with(&cx, |buffer, _| buffer.version());
-        if !version.observed(start.timestamp) || !version.observed(end.timestamp) {
-            Err(anyhow!("code action request references unreceived edits"))?;
-        }
         let code_actions = this.update(&mut cx, |this, cx| {
             Ok::<_, anyhow::Error>(this.code_actions(&buffer, start..end, cx))
         })?;
@@ -2983,19 +3063,26 @@ impl Project {
         <T::LspRequest as lsp::request::Request>::Result: Send,
     {
         let sender_id = envelope.original_sender_id()?;
-        let (request, buffer_version) = this.update(&mut cx, |this, cx| {
-            let buffer_id = T::buffer_id_from_proto(&envelope.payload);
-            let buffer_handle = this
-                .opened_buffers
+        let buffer_id = T::buffer_id_from_proto(&envelope.payload);
+        let buffer_handle = this.read_with(&cx, |this, _| {
+            this.opened_buffers
                 .get(&buffer_id)
-                .map(|buffer| buffer.upgrade(cx).unwrap())
-                .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
-            let buffer = buffer_handle.read(cx);
-            let buffer_version = buffer.version();
-            let request = T::from_proto(envelope.payload, this, buffer)?;
-            Ok::<_, anyhow::Error>((this.request_lsp(buffer_handle, request, cx), buffer_version))
+                .map(|buffer| buffer.upgrade(&cx).unwrap())
+                .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))
         })?;
-        let response = request.await?;
+        let request = T::from_proto(
+            envelope.payload,
+            this.clone(),
+            buffer_handle.clone(),
+            cx.clone(),
+        )
+        .await?;
+        let buffer_version = buffer_handle.read_with(&cx, |buffer, _| buffer.version());
+        let response = this
+            .update(&mut cx, |this, cx| {
+                this.request_lsp(buffer_handle, request, cx)
+            })
+            .await?;
         this.update(&mut cx, |this, cx| {
             Ok(T::response_to_proto(
                 response,
@@ -3357,7 +3444,7 @@ impl Project {
     ) -> impl 'a + Future<Output = Vec<PathMatch>> {
         let worktrees = self
             .worktrees(cx)
-            .filter(|worktree| !worktree.read(cx).is_weak())
+            .filter(|worktree| worktree.read(cx).is_visible())
             .collect::<Vec<_>>();
         let include_root_name = worktrees.len() > 1;
         let candidate_sets = worktrees
@@ -3652,7 +3739,7 @@ mod tests {
 
         let (tree, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree(&root_link_path, false, cx)
+                project.find_or_create_local_worktree(&root_link_path, true, cx)
             })
             .await
             .unwrap();
@@ -3721,7 +3808,7 @@ mod tests {
 
         let (tree, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", false, cx)
+                project.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();
@@ -3819,7 +3906,7 @@ mod tests {
         let project = Project::test(Arc::new(RealFs), cx);
         let (tree, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree(&dir.path(), false, cx)
+                project.find_or_create_local_worktree(&dir.path(), true, cx)
             })
             .await
             .unwrap();
@@ -3867,7 +3954,7 @@ mod tests {
 
         let (tree, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir/b.rs", false, cx)
+                project.find_or_create_local_worktree("/dir/b.rs", true, cx)
             })
             .await
             .unwrap();
@@ -3924,16 +4011,13 @@ mod tests {
             assert_eq!(definition.range.to_offset(target_buffer), 9..10);
             assert_eq!(
                 list_worktrees(&project, cx),
-                [("/dir/b.rs".as_ref(), false), ("/dir/a.rs".as_ref(), true)]
+                [("/dir/b.rs".as_ref(), true), ("/dir/a.rs".as_ref(), false)]
             );
 
             drop(definition);
         });
         cx.read(|cx| {
-            assert_eq!(
-                list_worktrees(&project, cx),
-                [("/dir/b.rs".as_ref(), false)]
-            );
+            assert_eq!(list_worktrees(&project, cx), [("/dir/b.rs".as_ref(), true)]);
         });
 
         fn list_worktrees<'a>(
@@ -3947,7 +4031,7 @@ mod tests {
                     let worktree = worktree.read(cx);
                     (
                         worktree.as_local().unwrap().abs_path().as_ref(),
-                        worktree.is_weak(),
+                        worktree.is_visible(),
                     )
                 })
                 .collect::<Vec<_>>()
@@ -3968,7 +4052,7 @@ mod tests {
         let project = Project::test(fs.clone(), cx);
         let worktree_id = project
             .update(cx, |p, cx| {
-                p.find_or_create_local_worktree("/dir", false, cx)
+                p.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap()
@@ -4006,7 +4090,7 @@ mod tests {
         let project = Project::test(fs.clone(), cx);
         let worktree_id = project
             .update(cx, |p, cx| {
-                p.find_or_create_local_worktree("/dir/file1", false, cx)
+                p.find_or_create_local_worktree("/dir/file1", true, cx)
             })
             .await
             .unwrap()
@@ -4050,7 +4134,7 @@ mod tests {
 
         let (tree, _) = project
             .update(cx, |p, cx| {
-                p.find_or_create_local_worktree(dir.path(), false, cx)
+                p.find_or_create_local_worktree(dir.path(), true, cx)
             })
             .await
             .unwrap();
@@ -4087,7 +4171,7 @@ mod tests {
             Worktree::remote(
                 1,
                 1,
-                initial_snapshot.to_proto(&Default::default(), Default::default()),
+                initial_snapshot.to_proto(&Default::default(), true),
                 rpc.clone(),
                 cx,
             )
@@ -4196,7 +4280,7 @@ mod tests {
         let project = Project::test(fs.clone(), cx);
         let worktree_id = project
             .update(cx, |p, cx| {
-                p.find_or_create_local_worktree("/the-dir", false, cx)
+                p.find_or_create_local_worktree("/the-dir", true, cx)
             })
             .await
             .unwrap()
@@ -4246,7 +4330,7 @@ mod tests {
         let project = Project::test(Arc::new(RealFs), cx);
         let (worktree, _) = project
             .update(cx, |p, cx| {
-                p.find_or_create_local_worktree(dir.path(), false, cx)
+                p.find_or_create_local_worktree(dir.path(), true, cx)
             })
             .await
             .unwrap();
@@ -4380,7 +4464,7 @@ mod tests {
         let project = Project::test(Arc::new(RealFs), cx);
         let (worktree, _) = project
             .update(cx, |p, cx| {
-                p.find_or_create_local_worktree(dir.path(), false, cx)
+                p.find_or_create_local_worktree(dir.path(), true, cx)
             })
             .await
             .unwrap();
@@ -4489,7 +4573,7 @@ mod tests {
         let project = Project::test(fs.clone(), cx);
         let (worktree, _) = project
             .update(cx, |p, cx| {
-                p.find_or_create_local_worktree("/the-dir", false, cx)
+                p.find_or_create_local_worktree("/the-dir", true, cx)
             })
             .await
             .unwrap();
@@ -4757,7 +4841,7 @@ mod tests {
 
         let (tree, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", false, cx)
+                project.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();
@@ -4885,7 +4969,7 @@ mod tests {
         let project = Project::test(fs.clone(), cx);
         let (tree, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", false, cx)
+                project.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();

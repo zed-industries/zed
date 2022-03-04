@@ -30,7 +30,7 @@ pub struct Project {
 pub struct Worktree {
     pub authorized_user_ids: Vec<UserId>,
     pub root_name: String,
-    pub weak: bool,
+    pub visible: bool,
 }
 
 #[derive(Default)]
@@ -204,7 +204,7 @@ impl Store {
                 let mut worktree_root_names = project
                     .worktrees
                     .values()
-                    .filter(|worktree| !worktree.weak)
+                    .filter(|worktree| worktree.visible)
                     .map(|worktree| worktree.root_name.clone())
                     .collect::<Vec<_>>();
                 worktree_root_names.sort_unstable();
@@ -534,7 +534,12 @@ impl Store {
         for entry in updated_entries {
             worktree.entries.insert(entry.id, entry.clone());
         }
-        Ok(project.connection_ids())
+        let connection_ids = project.connection_ids();
+
+        #[cfg(test)]
+        self.check_invariants();
+
+        Ok(connection_ids)
     }
 
     pub fn project_connection_ids(
@@ -618,6 +623,23 @@ impl Store {
                         .unwrap()
                         .guests
                         .contains_key(connection_id));
+                }
+
+                if let Some(share) = project.share.as_ref() {
+                    for (worktree_id, worktree) in share.worktrees.iter() {
+                        let mut paths = HashMap::default();
+                        for entry in worktree.entries.values() {
+                            let prev_entry = paths.insert(&entry.path, entry);
+                            assert_eq!(
+                                prev_entry,
+                                None,
+                                "worktree {:?}, duplicate path for entries {:?} and {:?}",
+                                worktree_id,
+                                prev_entry.unwrap(),
+                                entry
+                            );
+                        }
+                    }
                 }
             }
             for channel_id in &connection.channels {

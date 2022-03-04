@@ -351,7 +351,7 @@ impl Server {
                                 .values()
                                 .cloned()
                                 .collect(),
-                            weak: worktree.weak,
+                            visible: worktree.visible,
                         })
                     })
                     .collect();
@@ -440,7 +440,7 @@ impl Server {
                 Worktree {
                     authorized_user_ids: contact_user_ids.clone(),
                     root_name: request.payload.root_name.clone(),
-                    weak: request.payload.weak,
+                    visible: request.payload.visible,
                 },
             )?;
         }
@@ -1070,7 +1070,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -1202,7 +1202,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -1303,7 +1303,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -1475,7 +1475,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/dir", false, cx)
+                p.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();
@@ -1557,7 +1557,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/dir", false, cx)
+                p.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();
@@ -1638,7 +1638,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/dir", false, cx)
+                p.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();
@@ -1717,7 +1717,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/dir", false, cx)
+                p.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();
@@ -1790,7 +1790,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -1878,7 +1878,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -2104,7 +2104,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -2303,7 +2303,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -2409,7 +2409,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/root-1", false, cx)
+                p.find_or_create_local_worktree("/root-1", true, cx)
             })
             .await
             .unwrap();
@@ -2545,7 +2545,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/root-1", false, cx)
+                p.find_or_create_local_worktree("/root-1", true, cx)
             })
             .await
             .unwrap();
@@ -2666,7 +2666,7 @@ mod tests {
 
         let (worktree_1, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/root-1", false, cx)
+                p.find_or_create_local_worktree("/root-1", true, cx)
             })
             .await
             .unwrap();
@@ -2675,7 +2675,7 @@ mod tests {
             .await;
         let (worktree_2, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/root-2", false, cx)
+                p.find_or_create_local_worktree("/root-2", true, cx)
             })
             .await
             .unwrap();
@@ -2775,7 +2775,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/root-1", false, cx)
+                p.find_or_create_local_worktree("/root-1", true, cx)
             })
             .await
             .unwrap();
@@ -2921,7 +2921,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/code/crate-1", false, cx)
+                p.find_or_create_local_worktree("/code/crate-1", true, cx)
             })
             .await
             .unwrap();
@@ -3051,7 +3051,7 @@ mod tests {
 
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/root", false, cx)
+                p.find_or_create_local_worktree("/root", true, cx)
             })
             .await
             .unwrap();
@@ -3155,7 +3155,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -3391,7 +3391,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/dir", false, cx)
+                p.find_or_create_local_worktree("/dir", true, cx)
             })
             .await
             .unwrap();
@@ -4005,7 +4005,7 @@ mod tests {
         });
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", false, cx)
+                p.find_or_create_local_worktree("/a", true, cx)
             })
             .await
             .unwrap();
@@ -4165,7 +4165,7 @@ mod tests {
 
         let (collab_worktree, _) = host_project
             .update(&mut host_cx, |project, cx| {
-                project.find_or_create_local_worktree("/_collab", false, cx)
+                project.find_or_create_local_worktree("/_collab", true, cx)
             })
             .await
             .unwrap();
@@ -4246,6 +4246,12 @@ mod tests {
                 .collect::<BTreeMap<_, _>>()
         });
 
+        host_client
+            .project
+            .as_ref()
+            .unwrap()
+            .read_with(&host_cx, |project, cx| project.check_invariants(cx));
+
         for (guest_client, mut guest_cx) in clients.into_iter() {
             let guest_id = guest_client.client.id();
             let worktree_snapshots =
@@ -4291,13 +4297,7 @@ mod tests {
                 .project
                 .as_ref()
                 .unwrap()
-                .read_with(&guest_cx, |project, cx| {
-                    assert!(
-                        !project.has_deferred_operations(cx),
-                        "guest {} has deferred operations",
-                        guest_id,
-                    );
-                });
+                .read_with(&guest_cx, |project, cx| project.check_invariants(cx));
 
             for guest_buffer in &guest_client.buffers {
                 let buffer_id = guest_buffer.read_with(&guest_cx, |buffer, _| buffer.remote_id());
@@ -4307,14 +4307,24 @@ mod tests {
                         guest_id, guest_client.peer_id, buffer_id
                     ))
                 });
+                let path = host_buffer
+                    .read_with(&host_cx, |buffer, cx| buffer.file().unwrap().full_path(cx));
+
+                assert_eq!(
+                    guest_buffer.read_with(&guest_cx, |buffer, _| buffer.deferred_ops_len()),
+                    0,
+                    "guest {}, buffer {}, path {:?} has deferred operations",
+                    guest_id,
+                    buffer_id,
+                    path,
+                );
                 assert_eq!(
                     guest_buffer.read_with(&guest_cx, |buffer, _| buffer.text()),
                     host_buffer.read_with(&host_cx, |buffer, _| buffer.text()),
                     "guest {}, buffer {}, path {:?}, differs from the host's buffer",
                     guest_id,
                     buffer_id,
-                    host_buffer
-                        .read_with(&host_cx, |buffer, cx| buffer.file().unwrap().full_path(cx))
+                    path
                 );
             }
 
@@ -4660,12 +4670,17 @@ mod tests {
                             }
 
                             log::info!("Host: find/create local worktree {:?}", path);
-                            project
-                                .update(&mut cx, |project, cx| {
-                                    project.find_or_create_local_worktree(path, false, cx)
-                                })
-                                .await
-                                .unwrap();
+                            let find_or_create_worktree = project.update(&mut cx, |project, cx| {
+                                project.find_or_create_local_worktree(path, true, cx)
+                            });
+                            let find_or_create_worktree = async move {
+                                find_or_create_worktree.await.unwrap();
+                            };
+                            if rng.lock().gen() {
+                                cx.background().spawn(find_or_create_worktree).detach();
+                            } else {
+                                find_or_create_worktree.await;
+                            }
                         }
                         10..=80 if !files.lock().is_empty() => {
                             let buffer = if self.buffers.is_empty() || rng.lock().gen() {
@@ -4674,7 +4689,7 @@ mod tests {
                                     .update(&mut cx, |project, cx| {
                                         project.find_or_create_local_worktree(
                                             file.clone(),
-                                            false,
+                                            true,
                                             cx,
                                         )
                                     })
@@ -4682,7 +4697,12 @@ mod tests {
                                     .unwrap();
                                 let project_path =
                                     worktree.read_with(&cx, |worktree, _| (worktree.id(), path));
-                                log::info!("Host: opening path {:?}, {:?}", file, project_path);
+                                log::info!(
+                                    "Host: opening path {:?}, worktree {}, relative_path {:?}",
+                                    file,
+                                    project_path.0,
+                                    project_path.1
+                                );
                                 let buffer = project
                                     .update(&mut cx, |project, cx| {
                                         project.open_buffer(project_path, cx)
@@ -4769,7 +4789,8 @@ mod tests {
                             .worktrees(&cx)
                             .filter(|worktree| {
                                 let worktree = worktree.read(cx);
-                                !worktree.is_weak() && worktree.entries(false).any(|e| e.is_file())
+                                worktree.is_visible()
+                                    && worktree.entries(false).any(|e| e.is_file())
                             })
                             .choose(&mut *rng.lock())
                     }) {
@@ -4793,11 +4814,11 @@ mod tests {
                             )
                         });
                     log::info!(
-                        "Guest {}: opening path in worktree {:?} {:?} {:?}",
+                        "Guest {}: opening path {:?} in worktree {} ({})",
                         guest_id,
+                        project_path.1,
                         project_path.0,
                         worktree_root_name,
-                        project_path.1
                     );
                     let buffer = project
                         .update(&mut cx, |project, cx| {
@@ -4806,11 +4827,11 @@ mod tests {
                         .await
                         .unwrap();
                     log::info!(
-                        "Guest {}: path in worktree {:?} {:?} {:?} opened with buffer id {:?}",
+                        "Guest {}: opened path {:?} in worktree {} ({}) with buffer id {}",
                         guest_id,
+                        project_path.1,
                         project_path.0,
                         worktree_root_name,
-                        project_path.1,
                         buffer.read_with(&cx, |buffer, _| buffer.remote_id())
                     );
                     self.buffers.insert(buffer.clone());
@@ -4841,8 +4862,9 @@ mod tests {
                     10..=19 => {
                         let completions = project.update(&mut cx, |project, cx| {
                             log::info!(
-                                "Guest {}: requesting completions for buffer {:?}",
+                                "Guest {}: requesting completions for buffer {} ({:?})",
                                 guest_id,
+                                buffer.read(cx).remote_id(),
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
                             let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
@@ -4861,8 +4883,9 @@ mod tests {
                     20..=29 => {
                         let code_actions = project.update(&mut cx, |project, cx| {
                             log::info!(
-                                "Guest {}: requesting code actions for buffer {:?}",
+                                "Guest {}: requesting code actions for buffer {} ({:?})",
                                 guest_id,
+                                buffer.read(cx).remote_id(),
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
                             let range = buffer.read(cx).random_byte_range(0, &mut *rng.lock());
@@ -4881,18 +4904,16 @@ mod tests {
                     30..=39 if buffer.read_with(&cx, |buffer, _| buffer.is_dirty()) => {
                         let (requested_version, save) = buffer.update(&mut cx, |buffer, cx| {
                             log::info!(
-                                "Guest {}: saving buffer {:?}",
+                                "Guest {}: saving buffer {} ({:?})",
                                 guest_id,
+                                buffer.remote_id(),
                                 buffer.file().unwrap().full_path(cx)
                             );
                             (buffer.version(), buffer.save(cx))
                         });
-                        let save = cx.spawn(|cx| async move {
+                        let save = cx.background().spawn(async move {
                             let (saved_version, _) = save.await.expect("save request failed");
-                            buffer.read_with(&cx, |buffer, _| {
-                                assert!(buffer.version().observed_all(&saved_version));
-                                assert!(saved_version.observed_all(&requested_version));
-                            });
+                            assert!(saved_version.observed_all(&requested_version));
                         });
                         if rng.lock().gen_bool(0.3) {
                             log::info!("Guest {}: detaching save request", guest_id);
@@ -4904,8 +4925,9 @@ mod tests {
                     40..=44 => {
                         let prepare_rename = project.update(&mut cx, |project, cx| {
                             log::info!(
-                                "Guest {}: preparing rename for buffer {:?}",
+                                "Guest {}: preparing rename for buffer {} ({:?})",
                                 guest_id,
+                                buffer.read(cx).remote_id(),
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
                             let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
@@ -4924,8 +4946,9 @@ mod tests {
                     45..=49 => {
                         let definitions = project.update(&mut cx, |project, cx| {
                             log::info!(
-                                "Guest {}: requesting definitions for buffer {:?}",
+                                "Guest {}: requesting definitions for buffer {} ({:?})",
                                 guest_id,
+                                buffer.read(cx).remote_id(),
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
                             let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
@@ -4945,8 +4968,9 @@ mod tests {
                     50..=54 => {
                         let highlights = project.update(&mut cx, |project, cx| {
                             log::info!(
-                                "Guest {}: requesting highlights for buffer {:?}",
+                                "Guest {}: requesting highlights for buffer {} ({:?})",
                                 guest_id,
+                                buffer.read(cx).remote_id(),
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
                             let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
@@ -4981,8 +5005,9 @@ mod tests {
                     _ => {
                         buffer.update(&mut cx, |buffer, cx| {
                             log::info!(
-                                "Guest {}: updating buffer {:?}",
+                                "Guest {}: updating buffer {} ({:?})",
                                 guest_id,
+                                buffer.remote_id(),
                                 buffer.file().unwrap().full_path(cx)
                             );
                             buffer.randomly_edit(&mut *rng.lock(), 5, cx)

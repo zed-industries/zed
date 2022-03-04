@@ -737,7 +737,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<ProjectPath>> {
         let entry = self.project().update(cx, |project, cx| {
-            project.find_or_create_local_worktree(abs_path, false, cx)
+            project.find_or_create_local_worktree(abs_path, true, cx)
         });
         cx.spawn(|_, cx| async move {
             let (worktree, path) = entry.await?;

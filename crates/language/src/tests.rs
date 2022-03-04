@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 use unindent::Unindent as _;
-use util::test::Network;
+use util::{post_inc, test::Network};
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -1194,6 +1194,7 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
 
     let mut now = Instant::now();
     let mut mutation_count = operations;
+    let mut next_diagnostic_id = 0;
     let mut active_selections = BTreeMap::default();
     loop {
         let replica_index = rng.gen_range(0..replica_ids.len());
@@ -1234,7 +1235,27 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
                 });
                 mutation_count -= 1;
             }
-            40..=49 if replica_ids.len() < max_peers => {
+            40..=49 if mutation_count != 0 && replica_id == 0 => {
+                let entry_count = rng.gen_range(1..=5);
+                buffer.update(cx, |buffer, cx| {
+                    let diagnostics = (0..entry_count)
+                        .map(|_| {
+                            let range = buffer.random_byte_range(0, &mut rng);
+                            DiagnosticEntry {
+                                range,
+                                diagnostic: Diagnostic {
+                                    message: post_inc(&mut next_diagnostic_id).to_string(),
+                                    ..Default::default()
+                                },
+                            }
+                        })
+                        .collect();
+                    log::info!("peer {} setting diagnostics: {:?}", replica_id, diagnostics);
+                    buffer.update_diagnostics(diagnostics, None, cx).unwrap();
+                });
+                mutation_count -= 1;
+            }
+            50..=59 if replica_ids.len() < max_peers => {
                 let old_buffer = buffer.read(cx).to_proto();
                 let new_replica_id = replica_ids.len() as ReplicaId;
                 log::info!(
@@ -1251,14 +1272,14 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
                 replica_ids.push(new_replica_id);
                 network.replicate(replica_id, new_replica_id);
             }
-            50..=69 if mutation_count != 0 => {
+            60..=69 if mutation_count != 0 => {
                 buffer.update(cx, |buffer, cx| {
                     buffer.randomly_undo_redo(&mut rng, cx);
                     log::info!("buffer {} text: {:?}", buffer.replica_id(), buffer.text());
                 });
                 mutation_count -= 1;
             }
-            70..=99 if network.has_unreceived(replica_id) => {
+            _ if network.has_unreceived(replica_id) => {
                 let ops = network
                     .receive(replica_id)
                     .into_iter()
@@ -1295,13 +1316,23 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
         }
     }
 
-    let first_buffer = buffers[0].read(cx);
+    let first_buffer = buffers[0].read(cx).snapshot();
     for buffer in &buffers[1..] {
-        let buffer = buffer.read(cx);
+        let buffer = buffer.read(cx).snapshot();
         assert_eq!(
             buffer.text(),
             first_buffer.text(),
             "Replica {} text != Replica 0 text",
+            buffer.replica_id()
+        );
+        assert_eq!(
+            buffer
+                .diagnostics_in_range::<_, usize>(0..buffer.len())
+                .collect::<Vec<_>>(),
+            first_buffer
+                .diagnostics_in_range::<_, usize>(0..first_buffer.len())
+                .collect::<Vec<_>>(),
+            "Replica {} diagnostics != Replica 0 diagnostics",
             buffer.replica_id()
         );
     }

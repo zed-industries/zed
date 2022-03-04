@@ -134,7 +134,7 @@ message RegisterWorktree {
     uint64 worktree_id = 2;
     string root_name = 3;
     repeated string authorized_logins = 4;
-    bool weak = 5;
+    bool visible = 5;
 }
 
 message UnregisterWorktree {
@@ -164,6 +164,7 @@ message GetDefinition {
      uint64 project_id = 1;
      uint64 buffer_id = 2;
      Anchor position = 3;
+     repeated VectorClockEntry version = 4;
  }
 
 message GetDefinitionResponse {
@@ -174,6 +175,7 @@ message GetReferences {
      uint64 project_id = 1;
      uint64 buffer_id = 2;
      Anchor position = 3;
+     repeated VectorClockEntry version = 4;
  }
 
 message GetReferencesResponse {
@@ -184,6 +186,7 @@ message GetDocumentHighlights {
      uint64 project_id = 1;
      uint64 buffer_id = 2;
      Anchor position = 3;
+     repeated VectorClockEntry version = 4;
  }
 
 message GetDocumentHighlightsResponse {
@@ -328,6 +331,7 @@ message GetCodeActions {
     uint64 buffer_id = 2;
     Anchor start = 3;
     Anchor end = 4;
+    repeated VectorClockEntry version = 5;
 }
 
 message GetCodeActionsResponse {
@@ -349,6 +353,7 @@ message PrepareRename {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     Anchor position = 3;
+    repeated VectorClockEntry version = 4;
 }
 
 message PrepareRenameResponse {
@@ -363,6 +368,7 @@ message PerformRename {
     uint64 buffer_id = 2;
     Anchor position = 3;
     string new_name = 4;
+    repeated VectorClockEntry version = 5;
 }
 
 message PerformRenameResponse {
@@ -502,7 +508,7 @@ message Worktree {
     string root_name = 2;
     repeated Entry entries = 3;
     repeated DiagnosticSummary diagnostic_summaries = 4;
-    bool weak = 5;
+    bool visible = 5;
 }
 
 message File {
@@ -536,7 +542,8 @@ message BufferState {
     repeated Operation operations = 4;
     repeated SelectionSet selections = 5;
     repeated Diagnostic diagnostics = 6;
-    repeated string completion_triggers = 7;
+    uint32 diagnostics_timestamp = 7;
+    repeated string completion_triggers = 8;
 }
 
 message BufferFragment {
@@ -623,9 +630,10 @@ message Operation {
         uint32 replica_id = 1;
         uint32 local_timestamp = 2;
         uint32 lamport_timestamp = 3;
-        repeated Range ranges = 4;
-        repeated VectorClockEntry version = 5;
-        repeated UndoCount counts = 6;
+        repeated VectorClockEntry version = 4;
+        repeated Range transaction_ranges = 5;
+        repeated VectorClockEntry transaction_version = 6;
+        repeated UndoCount counts = 7;
     }
 
     message UpdateSelections {

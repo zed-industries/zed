@@ -25,7 +25,13 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 replica_id: undo.id.replica_id as u32,
                 local_timestamp: undo.id.value,
                 lamport_timestamp: lamport_timestamp.value,
-                ranges: undo.ranges.iter().map(serialize_range).collect(),
+                version: From::from(&undo.version),
+                transaction_ranges: undo
+                    .transaction_ranges
+                    .iter()
+                    .map(serialize_range)
+                    .collect(),
+                transaction_version: From::from(&undo.transaction_version),
                 counts: undo
                     .counts
                     .iter()
@@ -35,7 +41,6 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                         count: *count,
                     })
                     .collect(),
-                version: From::from(&undo.version),
             }),
             Operation::UpdateSelections {
                 selections,
@@ -183,6 +188,7 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                         replica_id: undo.replica_id as ReplicaId,
                         value: undo.local_timestamp,
                     },
+                    version: undo.version.into(),
                     counts: undo
                         .counts
                         .into_iter()
@@ -196,8 +202,12 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                             )
                         })
                         .collect(),
-                    ranges: undo.ranges.into_iter().map(deserialize_range).collect(),
-                    version: undo.version.into(),
+                    transaction_ranges: undo
+                        .transaction_ranges
+                        .into_iter()
+                        .map(deserialize_range)
+                        .collect(),
+                    transaction_version: undo.transaction_version.into(),
                 },
             }),
             proto::operation::Variant::UpdateSelections(message) => {
