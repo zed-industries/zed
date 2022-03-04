@@ -126,6 +126,10 @@ impl Rope {
         self.chunks.extent(&())
     }
 
+    pub fn max_point_utf16(&self) -> PointUtf16 {
+        self.chunks.extent(&())
+    }
+
     pub fn cursor(&self, offset: usize) -> Cursor {
         Cursor::new(self, offset)
     }

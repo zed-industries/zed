@@ -940,9 +940,15 @@ impl Editor {
         _: &workspace::OpenNew,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let buffer = cx
-            .add_model(|cx| Buffer::new(0, "", cx).with_language(language::PLAIN_TEXT.clone(), cx));
-        workspace.open_item(BufferItemHandle(buffer), cx);
+        let project = workspace.project();
+        if project.read(cx).is_remote() {
+            cx.propagate_action();
+        } else if let Some(buffer) = project
+            .update(cx, |project, cx| project.create_buffer(cx))
+            .log_err()
+        {
+            workspace.open_item(BufferItemHandle(buffer), cx);
+        }
     }
 
     pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {

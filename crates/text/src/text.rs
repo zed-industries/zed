@@ -1526,6 +1526,10 @@ impl BufferSnapshot {
         self.visible_text.max_point()
     }
 
+    pub fn max_point_utf16(&self) -> PointUtf16 {
+        self.visible_text.max_point_utf16()
+    }
+
     pub fn point_to_offset(&self, point: Point) -> usize {
         self.visible_text.point_to_offset(point)
     }
