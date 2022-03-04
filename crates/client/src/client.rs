@@ -127,6 +127,12 @@ pub enum Status {
     ReconnectionError { next_reconnection: Instant },
 }
 
+impl Status {
+    pub fn is_connected(&self) -> bool {
+        matches!(self, Self::Connected { .. })
+    }
+}
+
 struct ClientState {
     credentials: Option<Credentials>,
     status: (watch::Sender<Status>, watch::Receiver<Status>),

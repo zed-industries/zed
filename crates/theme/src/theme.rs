@@ -39,6 +39,7 @@ pub struct Workspace {
     pub right_sidebar: Sidebar,
     pub status_bar: StatusBar,
     pub toolbar: Toolbar,
+    pub disconnected_overlay: ContainedText,
 }
 
 #[derive(Clone, Deserialize, Default)]

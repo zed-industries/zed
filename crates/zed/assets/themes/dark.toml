@@ -60,3 +60,8 @@ emphasis = "#4ec9b0"
 link_uri = { color = "#6a9955", underline = true }
 link_text = { color = "#cb8f77", italic = true }
 list_marker = "#4e94ce"
+
+[workspace.disconnected_overlay]
+extends = "$text.base"
+color = "#ffffff"
+background = "#000000aa"
