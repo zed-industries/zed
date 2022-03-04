@@ -371,7 +371,7 @@ mod tests {
         let client1 = Peer::new();
         let client2 = Peer::new();
 
-        let (client1_to_server_conn, server_to_client_1_conn, _) =
+        let (client1_to_server_conn, server_to_client_1_conn, _kill) =
             Connection::in_memory(cx.background());
         let (client1_conn_id, io_task1, client1_incoming) = client1
             .add_test_connection(client1_to_server_conn, cx.background())
@@ -380,7 +380,7 @@ mod tests {
             .add_test_connection(server_to_client_1_conn, cx.background())
             .await;
 
-        let (client2_to_server_conn, server_to_client_2_conn, _) =
+        let (client2_to_server_conn, server_to_client_2_conn, _kill) =
             Connection::in_memory(cx.background());
         let (client2_conn_id, io_task3, client2_incoming) = client2
             .add_test_connection(client2_to_server_conn, cx.background())
@@ -468,7 +468,7 @@ mod tests {
         let server = Peer::new();
         let client = Peer::new();
 
-        let (client_to_server_conn, server_to_client_conn, _) =
+        let (client_to_server_conn, server_to_client_conn, _kill) =
             Connection::in_memory(cx.background());
         let (client_to_server_conn_id, io_task1, mut client_incoming) = client
             .add_test_connection(client_to_server_conn, cx.background())
@@ -568,7 +568,7 @@ mod tests {
         let server = Peer::new();
         let client = Peer::new();
 
-        let (client_to_server_conn, server_to_client_conn, _) =
+        let (client_to_server_conn, server_to_client_conn, _kill) =
             Connection::in_memory(cx.background());
         let (client_to_server_conn_id, io_task1, mut client_incoming) = client
             .add_test_connection(client_to_server_conn, cx.background())
@@ -680,7 +680,7 @@ mod tests {
     async fn test_disconnect(cx: &mut TestAppContext) {
         let executor = cx.foreground();
 
-        let (client_conn, mut server_conn, _) = Connection::in_memory(cx.background());
+        let (client_conn, mut server_conn, _kill) = Connection::in_memory(cx.background());
 
         let client = Peer::new();
         let (connection_id, io_handler, mut incoming) = client
@@ -716,7 +716,7 @@ mod tests {
     #[gpui::test(iterations = 50)]
     async fn test_io_error(cx: &mut TestAppContext) {
         let executor = cx.foreground();
-        let (client_conn, mut server_conn, _) = Connection::in_memory(cx.background());
+        let (client_conn, mut server_conn, _kill) = Connection::in_memory(cx.background());
 
         let client = Peer::new();
         let (connection_id, io_handler, mut incoming) = client

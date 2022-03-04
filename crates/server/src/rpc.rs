@@ -1030,7 +1030,7 @@ mod tests {
     };
     use lsp;
     use parking_lot::Mutex;
-    use postage::{sink::Sink, watch};
+    use postage::{barrier, watch};
     use project::{
         fs::{FakeFs, Fs as _},
         search::SearchQuery,
@@ -1872,6 +1872,7 @@ mod tests {
 
         // Simulate connection loss for client B and ensure client A observes client B leaving the project.
         server.disconnect_client(client_b.current_user_id(cx_b));
+        cx_a.foreground().advance_clock(Duration::from_secs(3));
         project_a
             .condition(&cx_a, |p, _| p.collaborators().len() == 0)
             .await;
@@ -3898,6 +3899,7 @@ mod tests {
         // Disconnect client B, ensuring we can still access its cached channel data.
         server.forbid_connections();
         server.disconnect_client(client_b.current_user_id(&cx_b));
+        cx_b.foreground().advance_clock(Duration::from_secs(3));
         while !matches!(
             status_b.next().await,
             Some(client::Status::ReconnectionError { .. })
@@ -4388,7 +4390,7 @@ mod tests {
         server: Arc<Server>,
         foreground: Rc<executor::Foreground>,
         notifications: mpsc::UnboundedReceiver<()>,
-        connection_killers: Arc<Mutex<HashMap<UserId, watch::Sender<Option<()>>>>>,
+        connection_killers: Arc<Mutex<HashMap<UserId, barrier::Sender>>>,
         forbid_connections: Arc<AtomicBool>,
         _test_db: TestDb,
     }
@@ -4492,9 +4494,7 @@ mod tests {
         }
 
         fn disconnect_client(&self, user_id: UserId) {
-            if let Some(mut kill_conn) = self.connection_killers.lock().remove(&user_id) {
-                let _ = kill_conn.try_send(Some(()));
-            }
+            self.connection_killers.lock().remove(&user_id);
         }
 
         fn forbid_connections(&self) {

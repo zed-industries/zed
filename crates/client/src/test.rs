@@ -6,6 +6,7 @@ use anyhow::{anyhow, Result};
 use futures::{future::BoxFuture, stream::BoxStream, Future, StreamExt};
 use gpui::{executor, ModelHandle, TestAppContext};
 use parking_lot::Mutex;
+use postage::barrier;
 use rpc::{proto, ConnectionId, Peer, Receipt, TypedEnvelope};
 use std::{fmt, rc::Rc, sync::Arc};
 
@@ -22,6 +23,7 @@ struct FakeServerState {
     connection_id: Option<ConnectionId>,
     forbid_connections: bool,
     auth_count: usize,
+    connection_killer: Option<barrier::Sender>,
     access_token: usize,
 }
 
@@ -74,13 +76,15 @@ impl FakeServer {
                             Err(EstablishConnectionError::Unauthorized)?
                         }
 
-                        let (client_conn, server_conn, _) = Connection::in_memory(cx.background());
+                        let (client_conn, server_conn, kill) =
+                            Connection::in_memory(cx.background());
                         let (connection_id, io, incoming) =
                             peer.add_test_connection(server_conn, cx.background()).await;
                         cx.background().spawn(io).detach();
                         let mut state = state.lock();
                         state.connection_id = Some(connection_id);
                         state.incoming = Some(incoming);
+                        state.connection_killer = Some(kill);
                         Ok(client_conn)
                     })
                 }
