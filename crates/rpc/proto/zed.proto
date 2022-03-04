@@ -542,7 +542,8 @@ message BufferState {
     repeated Operation operations = 4;
     repeated SelectionSet selections = 5;
     repeated Diagnostic diagnostics = 6;
-    repeated string completion_triggers = 7;
+    uint32 diagnostics_timestamp = 7;
+    repeated string completion_triggers = 8;
 }
 
 message BufferFragment {

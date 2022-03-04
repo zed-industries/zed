@@ -68,6 +68,7 @@ pub struct Buffer {
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     selections_update_count: usize,
     diagnostics_update_count: usize,
+    diagnostics_timestamp: clock::Lamport,
     file_update_count: usize,
     language_server: Option<LanguageServerState>,
     completion_triggers: Vec<String>,
@@ -439,9 +440,14 @@ impl Buffer {
         let snapshot = this.snapshot();
         let entries = proto::deserialize_diagnostics(message.diagnostics);
         this.apply_diagnostic_update(
-            DiagnosticSet::from_sorted_entries(entries.into_iter().cloned(), &snapshot),
+            DiagnosticSet::from_sorted_entries(entries.iter().cloned(), &snapshot),
+            clock::Lamport {
+                replica_id: 0,
+                value: message.diagnostics_timestamp,
+            },
             cx,
         );
+
         this.completion_triggers = message.completion_triggers;
 
         Ok(this)
@@ -470,6 +476,7 @@ impl Buffer {
                 })
                 .collect(),
             diagnostics: proto::serialize_diagnostics(self.diagnostics.iter()),
+            diagnostics_timestamp: self.diagnostics_timestamp.value,
             completion_triggers: self.completion_triggers.clone(),
         }
     }
@@ -512,6 +519,7 @@ impl Buffer {
             selections_update_count: 0,
             diagnostics: Default::default(),
             diagnostics_update_count: 0,
+            diagnostics_timestamp: Default::default(),
             file_update_count: 0,
             language_server: None,
             completion_triggers: Default::default(),
@@ -1008,11 +1016,12 @@ impl Buffer {
         drop(edits_since_save);
 
         let set = DiagnosticSet::new(sanitized_diagnostics, content);
-        self.apply_diagnostic_update(set.clone(), cx);
+        let lamport_timestamp = self.text.lamport_clock.tick();
+        self.apply_diagnostic_update(set.clone(), lamport_timestamp, cx);
 
         let op = Operation::UpdateDiagnostics {
             diagnostics: set.iter().cloned().collect(),
-            lamport_timestamp: self.text.lamport_clock.tick(),
+            lamport_timestamp,
         };
         self.send_operation(op, cx);
         Ok(())
@@ -1682,11 +1691,12 @@ impl Buffer {
             }
             Operation::UpdateDiagnostics {
                 diagnostics: diagnostic_set,
-                ..
+                lamport_timestamp,
             } => {
                 let snapshot = self.snapshot();
                 self.apply_diagnostic_update(
                     DiagnosticSet::from_sorted_entries(diagnostic_set.iter().cloned(), &snapshot),
+                    lamport_timestamp,
                     cx,
                 );
             }
@@ -1720,11 +1730,20 @@ impl Buffer {
         }
     }
 
-    fn apply_diagnostic_update(&mut self, diagnostics: DiagnosticSet, cx: &mut ModelContext<Self>) {
-        self.diagnostics = diagnostics;
-        self.diagnostics_update_count += 1;
-        cx.notify();
-        cx.emit(Event::DiagnosticsUpdated);
+    fn apply_diagnostic_update(
+        &mut self,
+        diagnostics: DiagnosticSet,
+        lamport_timestamp: clock::Lamport,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if lamport_timestamp > self.diagnostics_timestamp {
+            self.diagnostics = diagnostics;
+            self.diagnostics_timestamp = lamport_timestamp;
+            self.diagnostics_update_count += 1;
+            self.text.lamport_clock.observe(lamport_timestamp);
+            cx.notify();
+            cx.emit(Event::DiagnosticsUpdated);
+        }
     }
 
     #[cfg(not(test))]

@@ -5,7 +5,6 @@ use tempdir::TempDir;
 #[derive(Clone)]
 struct Envelope<T: Clone> {
     message: T,
-    sender: ReplicaId,
 }
 
 pub struct Network<T: Clone, R: rand::Rng> {
@@ -48,7 +47,6 @@ impl<T: Clone, R: rand::Rng> Network<T, R> {
                             insertion_index,
                             Envelope {
                                 message: message.clone(),
-                                sender,
                             },
                         );
                     }
