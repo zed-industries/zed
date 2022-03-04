@@ -849,7 +849,7 @@ mod tests {
         lazy_static::lazy_static! {
             static ref DEFAULT_THEME: parking_lot::Mutex<Option<Arc<Theme>>> = Default::default();
             static ref FONTS: Vec<Arc<Vec<u8>>> = vec![
-                Assets.load("fonts/zed-sans/zed-sans-regular.ttf").unwrap().to_vec().into()
+                Assets.load("fonts/zed-sans/zed-sans-extended.ttf").unwrap().to_vec().into()
             ];
         }
 
