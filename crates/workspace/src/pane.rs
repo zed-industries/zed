@@ -65,7 +65,7 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("shift-cmd-{", ActivatePrevItem, Some("Pane")),
         Binding::new("shift-cmd-}", ActivateNextItem, Some("Pane")),
         Binding::new("cmd-w", CloseActiveItem, Some("Pane")),
-        Binding::new("alt-cmd-t", CloseInactiveItems, Some("Pane")),
+        Binding::new("alt-cmd-w", CloseInactiveItems, Some("Pane")),
         Binding::new("cmd-k up", Split(SplitDirection::Up), Some("Pane")),
         Binding::new("cmd-k down", Split(SplitDirection::Down), Some("Pane")),
         Binding::new("cmd-k left", Split(SplitDirection::Left), Some("Pane")),
