@@ -1314,15 +1314,41 @@ impl Project {
             }
 
             for (buffer, buffer_abs_path, lang_server) in local_buffers {
-                let lsp_edits = lang_server
-                    .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
-                        text_document: lsp::TextDocumentIdentifier::new(
-                            lsp::Url::from_file_path(&buffer_abs_path).unwrap(),
-                        ),
-                        options: Default::default(),
-                        work_done_progress_params: Default::default(),
-                    })
-                    .await?;
+                let capabilities = if let Some(capabilities) = lang_server.capabilities().await {
+                    capabilities
+                } else {
+                    continue;
+                };
+
+                let text_document = lsp::TextDocumentIdentifier::new(
+                    lsp::Url::from_file_path(&buffer_abs_path).unwrap(),
+                );
+                let lsp_edits = if capabilities.document_formatting_provider.is_some() {
+                    lang_server
+                        .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
+                            text_document,
+                            options: Default::default(),
+                            work_done_progress_params: Default::default(),
+                        })
+                        .await?
+                } else if capabilities.document_range_formatting_provider.is_some() {
+                    let buffer_start = lsp::Position::new(0, 0);
+                    let buffer_end = buffer
+                        .read_with(&cx, |buffer, _| buffer.max_point_utf16())
+                        .to_lsp_position();
+                    lang_server
+                        .request::<lsp::request::RangeFormatting>(
+                            lsp::DocumentRangeFormattingParams {
+                                text_document,
+                                range: lsp::Range::new(buffer_start, buffer_end),
+                                options: Default::default(),
+                                work_done_progress_params: Default::default(),
+                            },
+                        )
+                        .await?
+                } else {
+                    continue;
+                };
 
                 if let Some(lsp_edits) = lsp_edits {
                     let edits = buffer
