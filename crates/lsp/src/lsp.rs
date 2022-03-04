@@ -378,8 +378,16 @@ impl LanguageServer {
         }
     }
 
-    pub fn capabilities(&self) -> watch::Receiver<Option<ServerCapabilities>> {
-        self.capabilities.clone()
+    pub fn capabilities(&self) -> impl 'static + Future<Output = Option<ServerCapabilities>> {
+        let mut rx = self.capabilities.clone();
+        async move {
+            loop {
+                let value = rx.recv().await?;
+                if value.is_some() {
+                    return value;
+                }
+            }
+        }
     }
 
     pub fn request<T: request::Request>(

@@ -22,7 +22,7 @@ use language::{
 };
 use lsp::{DiagnosticSeverity, DocumentHighlightKind, LanguageServer};
 use lsp_command::*;
-use postage::{prelude::Stream, watch};
+use postage::watch;
 use rand::prelude::*;
 use search::SearchQuery;
 use sha2::{Digest, Sha256};
@@ -1730,13 +1730,9 @@ impl Project {
                 range.end.to_point_utf16(buffer).to_lsp_position(),
             );
             cx.foreground().spawn(async move {
-                let mut capabilities = lang_server.capabilities();
-                while capabilities.borrow().is_none() {
-                    capabilities.recv().await;
-                }
-                if !capabilities
-                    .borrow()
-                    .as_ref()
+                if !lang_server
+                    .capabilities()
+                    .await
                     .map_or(false, |capabilities| {
                         capabilities.code_action_provider.is_some()
                     })
@@ -2266,14 +2262,9 @@ impl Project {
             if let Some((file, language_server)) = file.zip(buffer.language_server().cloned()) {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), cx);
                 return cx.spawn(|this, cx| async move {
-                    let mut capabilities = language_server.capabilities();
-                    while capabilities.borrow().is_none() {
-                        capabilities.recv().await;
-                    }
-
-                    if !capabilities
-                        .borrow()
-                        .as_ref()
+                    if !language_server
+                        .capabilities()
+                        .await
                         .map_or(false, |capabilities| {
                             request.check_capabilities(&capabilities)
                         })

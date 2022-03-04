@@ -132,7 +132,7 @@ struct LanguageServerState {
     latest_snapshot: watch::Sender<LanguageServerSnapshot>,
     pending_snapshots: BTreeMap<usize, LanguageServerSnapshot>,
     next_version: usize,
-    _maintain_server: Task<()>,
+    _maintain_server: Task<Option<()>>,
 }
 
 #[derive(Clone)]
@@ -589,33 +589,30 @@ impl Buffer {
                 next_version: 1,
                 server: server.clone(),
                 _maintain_server: cx.spawn_weak(|this, mut cx| async move {
-                    let mut capabilities = server.capabilities();
-                    loop {
-                        if let Some(capabilities) = capabilities.recv().await.flatten() {
-                            if let Some(this) = this.upgrade(&cx) {
-                                let triggers = capabilities
-                                    .completion_provider
-                                    .and_then(|c| c.trigger_characters)
-                                    .unwrap_or_default();
-                                this.update(&mut cx, |this, cx| {
-                                    let lamport_timestamp = this.text.lamport_clock.tick();
-                                    this.completion_triggers = triggers.clone();
-                                    this.send_operation(
-                                        Operation::UpdateCompletionTriggers {
-                                            triggers,
-                                            lamport_timestamp,
-                                        },
-                                        cx,
-                                    );
-                                    cx.notify();
-                                });
-                            } else {
-                                return;
-                            }
-
-                            break;
+                    let capabilities = server.capabilities().await.or_else(|| {
+                        log::info!("language server exited");
+                        if let Some(this) = this.upgrade(&cx) {
+                            this.update(&mut cx, |this, _| this.language_server = None);
                         }
-                    }
+                        None
+                    })?;
+
+                    let triggers = capabilities
+                        .completion_provider
+                        .and_then(|c| c.trigger_characters)
+                        .unwrap_or_default();
+                    this.upgrade(&cx)?.update(&mut cx, |this, cx| {
+                        let lamport_timestamp = this.text.lamport_clock.tick();
+                        this.completion_triggers = triggers.clone();
+                        this.send_operation(
+                            Operation::UpdateCompletionTriggers {
+                                triggers,
+                                lamport_timestamp,
+                            },
+                            cx,
+                        );
+                        cx.notify();
+                    });
 
                     let maintain_changes = cx.background().spawn(async move {
                         let initial_snapshot =
@@ -674,7 +671,7 @@ impl Buffer {
                         Ok::<_, anyhow::Error>(())
                     });
 
-                    maintain_changes.log_err().await;
+                    maintain_changes.log_err().await
                 }),
             })
         } else {

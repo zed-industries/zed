@@ -242,8 +242,6 @@ impl LanguageRegistry {
         #[cfg(any(test, feature = "test-support"))]
         if let Some(config) = &language.config.language_server {
             if let Some(fake_config) = &config.fake_config {
-                use postage::prelude::Stream;
-
                 let (server, mut fake_server) = lsp::LanguageServer::fake_with_capabilities(
                     fake_config.capabilities.clone(),
                     cx,
@@ -254,11 +252,12 @@ impl LanguageRegistry {
                 }
 
                 let servers_tx = fake_config.servers_tx.clone();
-                let mut initialized = server.capabilities();
+                let initialized = server.capabilities();
                 cx.background()
                     .spawn(async move {
-                        while initialized.recv().await.is_none() {}
-                        servers_tx.unbounded_send(fake_server).ok();
+                        if initialized.await.is_some() {
+                            servers_tx.unbounded_send(fake_server).ok();
+                        }
                     })
                     .detach();
 

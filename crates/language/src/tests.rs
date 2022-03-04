@@ -836,6 +836,27 @@ async fn test_diagnostics(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_language_server_has_exited(cx: &mut gpui::TestAppContext) {
+    let (language_server, fake) = cx.update(lsp::LanguageServer::fake);
+
+    // Simulate the language server failing to start up.
+    drop(fake);
+
+    let buffer = cx.add_model(|cx| {
+        Buffer::from_file(0, "", Box::new(FakeFile::new("/some/path")), cx)
+            .with_language(Arc::new(rust_lang()), cx)
+            .with_language_server(language_server, cx)
+    });
+
+    // Run the buffer's task that retrieves the server's capabilities.
+    cx.foreground().advance_clock(Duration::from_millis(1));
+
+    buffer.read_with(cx, |buffer, _| {
+        assert!(buffer.language_server().is_none());
+    });
+}
+
+#[gpui::test]
 async fn test_edits_from_lsp_with_past_version(cx: &mut gpui::TestAppContext) {
     let (language_server, mut fake) = cx.update(lsp::LanguageServer::fake);
 
