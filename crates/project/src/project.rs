@@ -22,7 +22,7 @@ use language::{
 };
 use lsp::{DiagnosticSeverity, DocumentHighlightKind, LanguageServer};
 use lsp_command::*;
-use postage::watch;
+use postage::{prelude::Stream, watch};
 use rand::prelude::*;
 use search::SearchQuery;
 use sha2::{Digest, Sha256};
@@ -1322,6 +1322,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<DocumentHighlight>>> {
         let position = position.to_point_utf16(buffer.read(cx));
+
         self.request_lsp(buffer.clone(), GetDocumentHighlights { position }, cx)
     }
 
@@ -1729,6 +1730,20 @@ impl Project {
                 range.end.to_point_utf16(buffer).to_lsp_position(),
             );
             cx.foreground().spawn(async move {
+                let mut capabilities = lang_server.capabilities();
+                while capabilities.borrow().is_none() {
+                    capabilities.recv().await;
+                }
+                if !capabilities
+                    .borrow()
+                    .as_ref()
+                    .map_or(false, |capabilities| {
+                        capabilities.code_action_provider.is_some()
+                    })
+                {
+                    return Ok(Default::default());
+                }
+
                 Ok(lang_server
                     .request::<lsp::request::CodeActionRequest>(lsp::CodeActionParams {
                         text_document: lsp::TextDocumentIdentifier::new(
@@ -2251,6 +2266,21 @@ impl Project {
             if let Some((file, language_server)) = file.zip(buffer.language_server().cloned()) {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), cx);
                 return cx.spawn(|this, cx| async move {
+                    let mut capabilities = language_server.capabilities();
+                    while capabilities.borrow().is_none() {
+                        capabilities.recv().await;
+                    }
+
+                    if !capabilities
+                        .borrow()
+                        .as_ref()
+                        .map_or(false, |capabilities| {
+                            request.check_capabilities(&capabilities)
+                        })
+                    {
+                        return Ok(Default::default());
+                    }
+
                     let response = language_server
                         .request::<R::LspRequest>(lsp_params)
                         .await

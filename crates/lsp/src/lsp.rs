@@ -102,23 +102,28 @@ struct Error {
 impl LanguageServer {
     pub fn new(
         binary_path: &Path,
+        args: &[&str],
+        options: Option<Value>,
         root_path: &Path,
         background: Arc<executor::Background>,
     ) -> Result<Arc<Self>> {
         let mut server = Command::new(binary_path)
+            .current_dir(root_path)
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()?;
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
-        Self::new_internal(stdin, stdout, root_path, background)
+        Self::new_internal(stdin, stdout, root_path, options, background)
     }
 
     fn new_internal<Stdin, Stdout>(
         stdin: Stdin,
         stdout: Stdout,
         root_path: &Path,
+        options: Option<Value>,
         executor: Arc<executor::Background>,
     ) -> Result<Arc<Self>>
     where
@@ -229,7 +234,7 @@ impl LanguageServer {
             .spawn({
                 let this = this.clone();
                 async move {
-                    if let Some(capabilities) = this.init(root_uri).log_err().await {
+                    if let Some(capabilities) = this.init(root_uri, options).log_err().await {
                         *capabilities_tx.borrow_mut() = Some(capabilities);
                     }
 
@@ -241,13 +246,17 @@ impl LanguageServer {
         Ok(this)
     }
 
-    async fn init(self: Arc<Self>, root_uri: Url) -> Result<ServerCapabilities> {
+    async fn init(
+        self: Arc<Self>,
+        root_uri: Url,
+        options: Option<Value>,
+    ) -> Result<ServerCapabilities> {
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: Default::default(),
             root_path: Default::default(),
             root_uri: Some(root_uri),
-            initialization_options: Default::default(),
+            initialization_options: options,
             capabilities: ClientCapabilities {
                 text_document: Some(TextDocumentClientCapabilities {
                     definition: Some(GotoCapability {
@@ -503,8 +512,16 @@ type FakeLanguageServerHandlers = Arc<
 
 #[cfg(any(test, feature = "test-support"))]
 impl LanguageServer {
+    pub fn full_capabilities() -> ServerCapabilities {
+        ServerCapabilities {
+            document_highlight_provider: Some(OneOf::Left(true)),
+            code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+            ..Default::default()
+        }
+    }
+
     pub fn fake(cx: &mut gpui::MutableAppContext) -> (Arc<Self>, FakeLanguageServer) {
-        Self::fake_with_capabilities(Default::default(), cx)
+        Self::fake_with_capabilities(Self::full_capabilities(), cx)
     }
 
     pub fn fake_with_capabilities(
@@ -527,6 +544,7 @@ impl LanguageServer {
             stdin_writer,
             stdout_reader,
             Path::new("/"),
+            None,
             cx.background().clone(),
         )
         .unwrap();
