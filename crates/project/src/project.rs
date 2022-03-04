@@ -92,6 +92,7 @@ enum ProjectClientState {
         sharing_has_stopped: bool,
         remote_id: u64,
         replica_id: ReplicaId,
+        _detect_unshare_task: Task<Option<()>>,
     },
 }
 
@@ -244,7 +245,7 @@ impl Project {
                         let mut status = rpc.status();
                         while let Some(status) = status.next().await {
                             if let Some(this) = this.upgrade(&cx) {
-                                let remote_id = if let client::Status::Connected { .. } = status {
+                                let remote_id = if status.is_connected() {
                                     let response = rpc.request(proto::RegisterProject {}).await?;
                                     Some(response.project_id)
                                 } else {
@@ -333,7 +334,7 @@ impl Project {
         }
 
         let (opened_buffer_tx, opened_buffer_rx) = watch::channel();
-        let this = cx.add_model(|cx| {
+        let this = cx.add_model(|cx: &mut ModelContext<Self>| {
             let mut this = Self {
                 worktrees: Vec::new(),
                 loading_buffers: Default::default(),
@@ -346,11 +347,26 @@ impl Project {
                 user_store: user_store.clone(),
                 fs,
                 subscriptions: vec![client.add_model_for_remote_entity(remote_id, cx)],
-                client,
+                client: client.clone(),
                 client_state: ProjectClientState::Remote {
                     sharing_has_stopped: false,
                     remote_id,
                     replica_id,
+                    _detect_unshare_task: cx.spawn_weak(move |this, mut cx| {
+                        async move {
+                            let mut status = client.status();
+                            let is_connected =
+                                status.next().await.map_or(false, |s| s.is_connected());
+                            // Even if we're initially connected, any future change of the status means we momentarily disconnected.
+                            if !is_connected || status.next().await.is_some() {
+                                if let Some(this) = this.upgrade(&cx) {
+                                    this.update(&mut cx, |this, cx| this.project_unshared(cx))
+                                }
+                            }
+                            Ok(())
+                        }
+                        .log_err()
+                    }),
                 },
                 language_servers_with_diagnostics_running: 0,
                 language_servers: Default::default(),
@@ -664,6 +680,18 @@ impl Project {
             });
             Ok(())
         })
+    }
+
+    fn project_unshared(&mut self, cx: &mut ModelContext<Self>) {
+        if let ProjectClientState::Remote {
+            sharing_has_stopped,
+            ..
+        } = &mut self.client_state
+        {
+            *sharing_has_stopped = true;
+            self.collaborators.clear();
+            cx.notify();
+        }
     }
 
     pub fn is_read_only(&self) -> bool {
@@ -2628,20 +2656,7 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
-            if let ProjectClientState::Remote {
-                sharing_has_stopped,
-                ..
-            } = &mut this.client_state
-            {
-                *sharing_has_stopped = true;
-                this.collaborators.clear();
-                cx.notify();
-            } else {
-                unreachable!()
-            }
-        });
-
+        this.update(&mut cx, |this, cx| this.project_unshared(cx));
         Ok(())
     }
 

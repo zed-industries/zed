@@ -1297,6 +1297,24 @@ impl Workspace {
             None
         }
     }
+
+    fn render_disconnected_overlay(&self, cx: &AppContext) -> Option<ElementBox> {
+        if self.project.read(cx).is_read_only() {
+            let theme = &self.settings.borrow().theme;
+            Some(
+                Label::new(
+                    "Your connection to the remote project has been lost.".to_string(),
+                    theme.workspace.disconnected_overlay.text.clone(),
+                )
+                .aligned()
+                .contained()
+                .with_style(theme.workspace.disconnected_overlay.container)
+                .boxed(),
+            )
+        } else {
+            None
+        }
+    }
 }
 
 impl Entity for Workspace {
@@ -1339,6 +1357,7 @@ impl View for Workspace {
                         content.boxed()
                     })
                     .with_children(self.modal.as_ref().map(|m| ChildView::new(m).boxed()))
+                    .with_children(self.render_disconnected_overlay(cx))
                     .flexible(1.0, true)
                     .boxed(),
             )
