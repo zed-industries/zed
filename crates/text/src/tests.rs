@@ -1,4 +1,4 @@
-use super::*;
+use super::{network::Network, *};
 use clock::ReplicaId;
 use rand::prelude::*;
 use std::{
@@ -7,7 +7,6 @@ use std::{
     iter::Iterator,
     time::{Duration, Instant},
 };
-use util::test::Network;
 
 #[cfg(test)]
 #[ctor::ctor]

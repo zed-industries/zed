@@ -7,10 +7,9 @@ edition = "2021"
 doctest = false
 
 [features]
-test-support = ["clock", "rand", "serde_json", "tempdir"]
+test-support = ["rand", "serde_json", "tempdir"]
 
 [dependencies]
-clock = { path = "../clock", optional = true }
 anyhow = "1.0.38"
 futures = "0.3"
 log = "0.4"
