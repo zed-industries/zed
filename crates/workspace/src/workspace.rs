@@ -576,7 +576,13 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(params: &WorkspaceParams, cx: &mut ViewContext<Self>) -> Self {
-        cx.observe(&params.project, |_, _, cx| cx.notify()).detach();
+        cx.observe(&params.project, |_, project, cx| {
+            if project.read(cx).is_read_only() {
+                cx.blur();
+            }
+            cx.notify()
+        })
+        .detach();
 
         let pane = cx.add_view(|_| Pane::new(params.settings.clone()));
         let pane_id = pane.id();

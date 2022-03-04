@@ -1376,7 +1376,7 @@ impl MutableAppContext {
                 window_id,
                 Window {
                     root_view: root_view.clone().into(),
-                    focused_view_id: root_view.id(),
+                    focused_view_id: Some(root_view.id()),
                     invalidation: None,
                 },
             );
@@ -1544,7 +1544,7 @@ impl MutableAppContext {
                         .get_or_insert_with(Default::default)
                         .removed
                         .push(view_id);
-                    if window.focused_view_id == view_id {
+                    if window.focused_view_id == Some(view_id) {
                         Some(window.root_view.id())
                     } else {
                         None
@@ -1552,7 +1552,7 @@ impl MutableAppContext {
                 });
 
                 if let Some(view_id) = change_focus_to {
-                    self.focus(window_id, view_id);
+                    self.focus(window_id, Some(view_id));
                 }
 
                 self.pending_effects
@@ -1755,7 +1755,7 @@ impl MutableAppContext {
         }
     }
 
-    fn focus(&mut self, window_id: usize, focused_id: usize) {
+    fn focus(&mut self, window_id: usize, focused_id: Option<usize>) {
         if self
             .cx
             .windows
@@ -1767,7 +1767,7 @@ impl MutableAppContext {
         }
 
         self.update(|this| {
-            let blurred_id = this.cx.windows.get_mut(&window_id).map(|window| {
+            let blurred_id = this.cx.windows.get_mut(&window_id).and_then(|window| {
                 let blurred_id = window.focused_view_id;
                 window.focused_view_id = focused_id;
                 blurred_id
@@ -1780,9 +1780,11 @@ impl MutableAppContext {
                 }
             }
 
-            if let Some(mut focused_view) = this.cx.views.remove(&(window_id, focused_id)) {
-                focused_view.on_focus(this, window_id, focused_id);
-                this.cx.views.insert((window_id, focused_id), focused_view);
+            if let Some(focused_id) = focused_id {
+                if let Some(mut focused_view) = this.cx.views.remove(&(window_id, focused_id)) {
+                    focused_view.on_focus(this, window_id, focused_id);
+                    this.cx.views.insert((window_id, focused_id), focused_view);
+                }
             }
         })
     }
@@ -1958,7 +1960,7 @@ impl AppContext {
     pub fn focused_view_id(&self, window_id: usize) -> Option<usize> {
         self.windows
             .get(&window_id)
-            .map(|window| window.focused_view_id)
+            .and_then(|window| window.focused_view_id)
     }
 
     pub fn background(&self) -> &Arc<executor::Background> {
@@ -2052,7 +2054,7 @@ impl ReadView for AppContext {
 
 struct Window {
     root_view: AnyViewHandle,
-    focused_view_id: usize,
+    focused_view_id: Option<usize>,
     invalidation: Option<WindowInvalidation>,
 }
 
@@ -2080,7 +2082,7 @@ pub enum Effect {
     },
     Focus {
         window_id: usize,
-        view_id: usize,
+        view_id: Option<usize>,
     },
     ResizeWindow {
         window_id: usize,
@@ -2514,14 +2516,21 @@ impl<'a, T: View> ViewContext<'a, T> {
         let handle = handle.into();
         self.app.pending_effects.push_back(Effect::Focus {
             window_id: handle.window_id,
-            view_id: handle.view_id,
+            view_id: Some(handle.view_id),
         });
     }
 
     pub fn focus_self(&mut self) {
         self.app.pending_effects.push_back(Effect::Focus {
             window_id: self.window_id,
-            view_id: self.view_id,
+            view_id: Some(self.view_id),
+        });
+    }
+
+    pub fn blur(&mut self) {
+        self.app.pending_effects.push_back(Effect::Focus {
+            window_id: self.window_id,
+            view_id: None,
         });
     }
 
