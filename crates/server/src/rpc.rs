@@ -6,6 +6,7 @@ use super::{
     AppState,
 };
 use anyhow::anyhow;
+use async_io::Timer;
 use async_std::task;
 use async_tungstenite::{tungstenite::protocol::Role, WebSocketStream};
 use collections::{HashMap, HashSet};
@@ -16,7 +17,12 @@ use rpc::{
     Connection, ConnectionId, Peer, TypedEnvelope,
 };
 use sha1::{Digest as _, Sha1};
-use std::{any::TypeId, future::Future, sync::Arc, time::Instant};
+use std::{
+    any::TypeId,
+    future::Future,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use store::{Store, Worktree};
 use surf::StatusCode;
 use tide::log;
@@ -40,10 +46,13 @@ pub struct Server {
     notifications: Option<mpsc::UnboundedSender<()>>,
 }
 
-pub trait Executor {
+pub trait Executor: Send + Clone {
+    type Timer: Send + Future;
     fn spawn_detached<F: 'static + Send + Future<Output = ()>>(&self, future: F);
+    fn timer(&self, duration: Duration) -> Self::Timer;
 }
 
+#[derive(Clone)]
 pub struct RealExecutor;
 
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
@@ -167,8 +176,18 @@ impl Server {
     ) -> impl Future<Output = ()> {
         let mut this = self.clone();
         async move {
-            let (connection_id, handle_io, mut incoming_rx) =
-                this.peer.add_connection(connection).await;
+            let (connection_id, handle_io, mut incoming_rx) = this
+                .peer
+                .add_connection(connection, {
+                    let executor = executor.clone();
+                    move |duration| {
+                        let timer = executor.timer(duration);
+                        async move {
+                            timer.await;
+                        }
+                    }
+                })
+                .await;
 
             if let Some(send_connection_id) = send_connection_id.as_mut() {
                 let _ = send_connection_id.send(connection_id).await;
@@ -883,8 +902,14 @@ impl Server {
 }
 
 impl Executor for RealExecutor {
+    type Timer = Timer;
+
     fn spawn_detached<F: 'static + Send + Future<Output = ()>>(&self, future: F) {
         task::spawn(future);
+    }
+
+    fn timer(&self, duration: Duration) -> Self::Timer {
+        Timer::after(duration)
     }
 }
 
@@ -1759,7 +1784,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_peer_disconnection(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    async fn test_leaving_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = FakeFs::new(cx_a.background());
@@ -1817,13 +1842,36 @@ mod tests {
         .await
         .unwrap();
 
-        // See that a guest has joined as client A.
+        // Client A sees that a guest has joined.
         project_a
             .condition(&cx_a, |p, _| p.collaborators().len() == 1)
             .await;
 
-        // Drop client B's connection and ensure client A observes client B leaving the worktree.
+        // Drop client B's connection and ensure client A observes client B leaving the project.
         client_b.disconnect(&cx_b.to_async()).unwrap();
+        project_a
+            .condition(&cx_a, |p, _| p.collaborators().len() == 0)
+            .await;
+
+        // Rejoin the project as client B
+        let _project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        // Client A sees that a guest has re-joined.
+        project_a
+            .condition(&cx_a, |p, _| p.collaborators().len() == 1)
+            .await;
+
+        // Simulate connection loss for client B and ensure client A observes client B leaving the project.
+        server.disconnect_client(client_b.current_user_id(cx_b));
         project_a
             .condition(&cx_a, |p, _| p.collaborators().len() == 0)
             .await;
@@ -5031,8 +5079,14 @@ mod tests {
     }
 
     impl Executor for Arc<gpui::executor::Background> {
+        type Timer = BoxFuture<'static, ()>;
+
         fn spawn_detached<F: 'static + Send + Future<Output = ()>>(&self, future: F) {
             self.spawn(future).detach();
+        }
+
+        fn timer(&self, duration: Duration) -> Self::Timer {
+            self.as_ref().timer(duration).boxed()
         }
     }
 

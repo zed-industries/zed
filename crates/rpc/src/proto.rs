@@ -318,6 +318,13 @@ where
         self.stream.send(WebSocketMessage::Binary(buffer)).await?;
         Ok(())
     }
+
+    pub async fn ping(&mut self) -> Result<(), WebSocketError> {
+        self.stream
+            .send(WebSocketMessage::Ping(Default::default()))
+            .await?;
+        Ok(())
+    }
 }
 
 impl<S> MessageStream<S>

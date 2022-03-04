@@ -998,7 +998,6 @@ dependencies = [
 name = "clock"
 version = "0.1.0"
 dependencies = [
- "rpc",
  "smallvec",
 ]
 
@@ -2236,6 +2235,7 @@ dependencies = [
  "tiny-skia",
  "tree-sitter",
  "usvg",
+ "util",
  "waker-fn",
 ]
 
@@ -3959,6 +3959,7 @@ dependencies = [
  "async-lock",
  "async-tungstenite",
  "base64 0.13.0",
+ "clock",
  "futures",
  "gpui",
  "log",
@@ -3972,6 +3973,7 @@ dependencies = [
  "smol",
  "smol-timeout",
  "tempdir",
+ "util",
  "zstd",
 ]
 
@@ -5574,7 +5576,6 @@ name = "util"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clock",
  "futures",
  "log",
  "rand 0.8.3",
@@ -5959,6 +5960,7 @@ name = "zed-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-io",
  "async-sqlx-session",
  "async-std",
  "async-trait",

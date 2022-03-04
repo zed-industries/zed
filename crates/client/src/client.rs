@@ -137,8 +137,8 @@ struct ClientState {
     credentials: Option<Credentials>,
     status: (watch::Sender<Status>, watch::Receiver<Status>),
     entity_id_extractors: HashMap<TypeId, Box<dyn Send + Sync + Fn(&dyn AnyTypedEnvelope) -> u64>>,
-    _maintain_connection: Option<Task<()>>,
-    heartbeat_interval: Duration,
+    _reconnect_task: Option<Task<()>>,
+    reconnect_interval: Duration,
     models_by_entity_type_and_remote_id: HashMap<(TypeId, u64), AnyWeakModelHandle>,
     models_by_message_type: HashMap<TypeId, AnyWeakModelHandle>,
     model_types_by_message_type: HashMap<TypeId, TypeId>,
@@ -168,8 +168,8 @@ impl Default for ClientState {
             credentials: None,
             status: watch::channel_with(Status::SignedOut),
             entity_id_extractors: Default::default(),
-            _maintain_connection: None,
-            heartbeat_interval: Duration::from_secs(5),
+            _reconnect_task: None,
+            reconnect_interval: Duration::from_secs(5),
             models_by_message_type: Default::default(),
             models_by_entity_type_and_remote_id: Default::default(),
             model_types_by_message_type: Default::default(),
@@ -236,7 +236,7 @@ impl Client {
     #[cfg(any(test, feature = "test-support"))]
     pub fn tear_down(&self) {
         let mut state = self.state.write();
-        state._maintain_connection.take();
+        state._reconnect_task.take();
         state.message_handlers.clear();
         state.models_by_message_type.clear();
         state.models_by_entity_type_and_remote_id.clear();
@@ -283,21 +283,13 @@ impl Client {
 
         match status {
             Status::Connected { .. } => {
-                let heartbeat_interval = state.heartbeat_interval;
-                let this = self.clone();
-                let foreground = cx.foreground();
-                state._maintain_connection = Some(cx.foreground().spawn(async move {
-                    loop {
-                        foreground.timer(heartbeat_interval).await;
-                        let _ = this.request(proto::Ping {}).await;
-                    }
-                }));
+                state._reconnect_task = None;
             }
             Status::ConnectionLost => {
                 let this = self.clone();
                 let foreground = cx.foreground();
-                let heartbeat_interval = state.heartbeat_interval;
-                state._maintain_connection = Some(cx.spawn(|cx| async move {
+                let reconnect_interval = state.reconnect_interval;
+                state._reconnect_task = Some(cx.spawn(|cx| async move {
                     let mut rng = StdRng::from_entropy();
                     let mut delay = Duration::from_millis(100);
                     while let Err(error) = this.authenticate_and_connect(&cx).await {
@@ -311,12 +303,12 @@ impl Client {
                         foreground.timer(delay).await;
                         delay = delay
                             .mul_f32(rng.gen_range(1.0..=2.0))
-                            .min(heartbeat_interval);
+                            .min(reconnect_interval);
                     }
                 }));
             }
             Status::SignedOut | Status::UpgradeRequired => {
-                state._maintain_connection.take();
+                state._reconnect_task.take();
             }
             _ => {}
         }
@@ -548,7 +540,11 @@ impl Client {
     }
 
     async fn set_connection(self: &Arc<Self>, conn: Connection, cx: &AsyncAppContext) {
-        let (connection_id, handle_io, mut incoming) = self.peer.add_connection(conn).await;
+        let executor = cx.background();
+        let (connection_id, handle_io, mut incoming) = self
+            .peer
+            .add_connection(conn, move |duration| executor.timer(duration))
+            .await;
         cx.foreground()
             .spawn({
                 let cx = cx.clone();
@@ -939,26 +935,6 @@ mod tests {
     use super::*;
     use crate::test::{FakeHttpClient, FakeServer};
     use gpui::TestAppContext;
-
-    #[gpui::test(iterations = 10)]
-    async fn test_heartbeat(cx: &mut TestAppContext) {
-        cx.foreground().forbid_parking();
-
-        let user_id = 5;
-        let mut client = Client::new(FakeHttpClient::with_404_response());
-        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
-
-        cx.foreground().advance_clock(Duration::from_secs(10));
-        let ping = server.receive::<proto::Ping>().await.unwrap();
-        server.respond(ping.receipt(), proto::Ack {}).await;
-
-        cx.foreground().advance_clock(Duration::from_secs(10));
-        let ping = server.receive::<proto::Ping>().await.unwrap();
-        server.respond(ping.receipt(), proto::Ack {}).await;
-
-        client.disconnect(&cx.to_async()).unwrap();
-        assert!(server.receive::<proto::Ping>().await.is_err());
-    }
 
     #[gpui::test(iterations = 10)]
     async fn test_reconnection(cx: &mut TestAppContext) {
