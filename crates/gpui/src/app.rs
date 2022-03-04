@@ -979,14 +979,6 @@ impl MutableAppContext {
             .and_then(|window| window.root_view.clone().downcast::<T>())
     }
 
-    pub fn root_view_id(&self, window_id: usize) -> Option<usize> {
-        self.cx.root_view_id(window_id)
-    }
-
-    pub fn focused_view_id(&self, window_id: usize) -> Option<usize> {
-        self.cx.focused_view_id(window_id)
-    }
-
     pub fn render_view(
         &mut self,
         window_id: usize,
