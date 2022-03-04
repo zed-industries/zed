@@ -524,6 +524,8 @@ impl LanguageServer {
         ServerCapabilities {
             document_highlight_provider: Some(OneOf::Left(true)),
             code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+            document_formatting_provider: Some(OneOf::Left(true)),
+            document_range_formatting_provider: Some(OneOf::Left(true)),
             ..Default::default()
         }
     }
