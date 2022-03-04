@@ -687,6 +687,18 @@ impl Project {
         !self.is_local()
     }
 
+    pub fn create_buffer(&mut self, cx: &mut ModelContext<Self>) -> Result<ModelHandle<Buffer>> {
+        if self.is_remote() {
+            return Err(anyhow!("creating buffers as a guest is not supported yet"));
+        }
+
+        let buffer = cx.add_model(|cx| {
+            Buffer::new(self.replica_id(), "", cx).with_language(language::PLAIN_TEXT.clone(), cx)
+        });
+        self.register_buffer(&buffer, None, cx)?;
+        Ok(buffer)
+    }
+
     pub fn open_buffer(
         &mut self,
         path: impl Into<ProjectPath>,
@@ -4111,6 +4123,48 @@ mod tests {
 
         let new_text = fs.load(Path::new("/dir/file1")).await.unwrap();
         assert_eq!(new_text, buffer.read_with(cx, |buffer, _| buffer.text()));
+    }
+
+    #[gpui::test]
+    async fn test_save_as(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree("/dir", json!({})).await;
+
+        let project = Project::test(fs.clone(), cx);
+        let (worktree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/dir", true, cx)
+            })
+            .await
+            .unwrap();
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+
+        let buffer = project.update(cx, |project, cx| project.create_buffer(cx).unwrap());
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([0..0], "abc", cx);
+            assert!(buffer.is_dirty());
+            assert!(!buffer.has_conflict());
+        });
+        project
+            .update(cx, |project, cx| {
+                project.save_buffer_as(buffer.clone(), "/dir/file1".into(), cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(fs.load(Path::new("/dir/file1")).await.unwrap(), "abc");
+        buffer.read_with(cx, |buffer, cx| {
+            assert_eq!(buffer.file().unwrap().full_path(cx), Path::new("dir/file1"));
+            assert!(!buffer.is_dirty());
+            assert!(!buffer.has_conflict());
+        });
+
+        let opened_buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, "file1"), cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(opened_buffer, buffer);
     }
 
     #[gpui::test(retries = 5)]
