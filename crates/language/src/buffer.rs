@@ -426,16 +426,18 @@ impl Buffer {
         this.apply_ops(ops, cx)?;
 
         for selection_set in message.selections {
+            let lamport_timestamp = clock::Lamport {
+                replica_id: selection_set.replica_id as ReplicaId,
+                value: selection_set.lamport_timestamp,
+            };
             this.remote_selections.insert(
                 selection_set.replica_id as ReplicaId,
                 SelectionSet {
                     selections: proto::deserialize_selections(selection_set.selections),
-                    lamport_timestamp: clock::Lamport {
-                        replica_id: selection_set.replica_id as ReplicaId,
-                        value: selection_set.lamport_timestamp,
-                    },
+                    lamport_timestamp,
                 },
             );
+            this.text.lamport_clock.observe(lamport_timestamp);
         }
         let snapshot = this.snapshot();
         let entries = proto::deserialize_diagnostics(message.diagnostics);
