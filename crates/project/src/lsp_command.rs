@@ -5,7 +5,7 @@ use client::{proto, PeerId};
 use gpui::{AppContext, AsyncAppContext, ModelHandle};
 use language::{
     point_from_lsp,
-    proto::{deserialize_anchor, serialize_anchor},
+    proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, Anchor, Bias, Buffer, PointUtf16, ToLspPosition, ToPointUtf16,
 };
 use lsp::{DocumentHighlightKind, ServerCapabilities};
@@ -126,7 +126,7 @@ impl LspCommand for PrepareRename {
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
-            version: (&buffer.version()).into(),
+            version: serialize_version(&buffer.version()),
         }
     }
 
@@ -142,7 +142,7 @@ impl LspCommand for PrepareRename {
             .ok_or_else(|| anyhow!("invalid position"))?;
         buffer
             .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(message.version.into())
+                buffer.wait_for_version(deserialize_version(message.version))
             })
             .await;
 
@@ -166,7 +166,7 @@ impl LspCommand for PrepareRename {
             end: range
                 .as_ref()
                 .map(|range| language::proto::serialize_anchor(&range.end)),
-            version: buffer_version.into(),
+            version: serialize_version(buffer_version),
         }
     }
 
@@ -180,7 +180,7 @@ impl LspCommand for PrepareRename {
         if message.can_rename {
             buffer
                 .update(&mut cx, |buffer, _| {
-                    buffer.wait_for_version(message.version.into())
+                    buffer.wait_for_version(deserialize_version(message.version))
                 })
                 .await;
             let start = message.start.and_then(deserialize_anchor);
@@ -255,7 +255,7 @@ impl LspCommand for PerformRename {
                 &buffer.anchor_before(self.position),
             )),
             new_name: self.new_name.clone(),
-            version: (&buffer.version()).into(),
+            version: serialize_version(&buffer.version()),
         }
     }
 
@@ -271,7 +271,7 @@ impl LspCommand for PerformRename {
             .ok_or_else(|| anyhow!("invalid position"))?;
         buffer
             .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(message.version.into())
+                buffer.wait_for_version(deserialize_version(message.version))
             })
             .await;
         Ok(Self {
@@ -407,7 +407,7 @@ impl LspCommand for GetDefinition {
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
-            version: (&buffer.version()).into(),
+            version: serialize_version(&buffer.version()),
         }
     }
 
@@ -423,7 +423,7 @@ impl LspCommand for GetDefinition {
             .ok_or_else(|| anyhow!("invalid position"))?;
         buffer
             .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(message.version.into())
+                buffer.wait_for_version(deserialize_version(message.version))
             })
             .await;
         Ok(Self {
@@ -566,7 +566,7 @@ impl LspCommand for GetReferences {
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
-            version: (&buffer.version()).into(),
+            version: serialize_version(&buffer.version()),
         }
     }
 
@@ -582,7 +582,7 @@ impl LspCommand for GetReferences {
             .ok_or_else(|| anyhow!("invalid position"))?;
         buffer
             .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(message.version.into())
+                buffer.wait_for_version(deserialize_version(message.version))
             })
             .await;
         Ok(Self {
@@ -706,7 +706,7 @@ impl LspCommand for GetDocumentHighlights {
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
-            version: (&buffer.version()).into(),
+            version: serialize_version(&buffer.version()),
         }
     }
 
@@ -722,7 +722,7 @@ impl LspCommand for GetDocumentHighlights {
             .ok_or_else(|| anyhow!("invalid position"))?;
         buffer
             .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(message.version.into())
+                buffer.wait_for_version(deserialize_version(message.version))
             })
             .await;
         Ok(Self {
