@@ -1323,7 +1323,10 @@ impl Project {
                 let text_document = lsp::TextDocumentIdentifier::new(
                     lsp::Url::from_file_path(&buffer_abs_path).unwrap(),
                 );
-                let lsp_edits = if capabilities.document_formatting_provider.is_some() {
+                let lsp_edits = if capabilities
+                    .document_formatting_provider
+                    .map_or(false, |provider| provider != lsp::OneOf::Left(false))
+                {
                     lang_server
                         .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
                             text_document,
@@ -1331,7 +1334,10 @@ impl Project {
                             work_done_progress_params: Default::default(),
                         })
                         .await?
-                } else if capabilities.document_range_formatting_provider.is_some() {
+                } else if capabilities
+                    .document_range_formatting_provider
+                    .map_or(false, |provider| provider != lsp::OneOf::Left(false))
+                {
                     let buffer_start = lsp::Position::new(0, 0);
                     let buffer_end = buffer
                         .read_with(&cx, |buffer, _| buffer.max_point_utf16())
