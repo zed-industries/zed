@@ -1308,13 +1308,17 @@ impl Workspace {
         if self.project.read(cx).is_read_only() {
             let theme = &self.settings.borrow().theme;
             Some(
-                Label::new(
-                    "Your connection to the remote project has been lost.".to_string(),
-                    theme.workspace.disconnected_overlay.text.clone(),
+                EventHandler::new(
+                    Label::new(
+                        "Your connection to the remote project has been lost.".to_string(),
+                        theme.workspace.disconnected_overlay.text.clone(),
+                    )
+                    .aligned()
+                    .contained()
+                    .with_style(theme.workspace.disconnected_overlay.container)
+                    .boxed(),
                 )
-                .aligned()
-                .contained()
-                .with_style(theme.workspace.disconnected_overlay.container)
+                .capture(|_, _, _| true)
                 .boxed(),
             )
         } else {
@@ -1335,40 +1339,51 @@ impl View for Workspace {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
         let theme = &settings.theme;
-        Flex::column()
-            .with_child(self.render_titlebar(&theme, cx))
+        Stack::new()
             .with_child(
-                Stack::new()
-                    .with_child({
-                        let mut content = Flex::row();
-                        content.add_child(self.left_sidebar.render(&settings, cx));
-                        if let Some(element) = self.left_sidebar.render_active_item(&settings, cx) {
-                            content.add_child(Flexible::new(0.8, false, element).boxed());
-                        }
-                        content.add_child(
-                            Flex::column()
-                                .with_child(
-                                    Flexible::new(1., true, self.center.render(&settings.theme))
+                Flex::column()
+                    .with_child(self.render_titlebar(&theme, cx))
+                    .with_child(
+                        Stack::new()
+                            .with_child({
+                                let mut content = Flex::row();
+                                content.add_child(self.left_sidebar.render(&settings, cx));
+                                if let Some(element) =
+                                    self.left_sidebar.render_active_item(&settings, cx)
+                                {
+                                    content.add_child(Flexible::new(0.8, false, element).boxed());
+                                }
+                                content.add_child(
+                                    Flex::column()
+                                        .with_child(
+                                            Flexible::new(
+                                                1.,
+                                                true,
+                                                self.center.render(&settings.theme),
+                                            )
+                                            .boxed(),
+                                        )
+                                        .with_child(ChildView::new(&self.status_bar).boxed())
+                                        .flexible(1., true)
                                         .boxed(),
-                                )
-                                .with_child(ChildView::new(&self.status_bar).boxed())
-                                .flexible(1., true)
-                                .boxed(),
-                        );
-                        if let Some(element) = self.right_sidebar.render_active_item(&settings, cx)
-                        {
-                            content.add_child(Flexible::new(0.8, false, element).boxed());
-                        }
-                        content.add_child(self.right_sidebar.render(&settings, cx));
-                        content.boxed()
-                    })
-                    .with_children(self.modal.as_ref().map(|m| ChildView::new(m).boxed()))
-                    .with_children(self.render_disconnected_overlay(cx))
-                    .flexible(1.0, true)
+                                );
+                                if let Some(element) =
+                                    self.right_sidebar.render_active_item(&settings, cx)
+                                {
+                                    content.add_child(Flexible::new(0.8, false, element).boxed());
+                                }
+                                content.add_child(self.right_sidebar.render(&settings, cx));
+                                content.boxed()
+                            })
+                            .with_children(self.modal.as_ref().map(|m| ChildView::new(m).boxed()))
+                            .flexible(1.0, true)
+                            .boxed(),
+                    )
+                    .contained()
+                    .with_background_color(settings.theme.workspace.background)
                     .boxed(),
             )
-            .contained()
-            .with_background_color(settings.theme.workspace.background)
+            .with_children(self.render_disconnected_overlay(cx))
             .named("workspace")
     }
 

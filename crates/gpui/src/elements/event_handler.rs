@@ -8,6 +8,7 @@ use crate::{
 
 pub struct EventHandler {
     child: ElementBox,
+    capture: Option<Box<dyn FnMut(&Event, RectF, &mut EventContext) -> bool>>,
     mouse_down: Option<Box<dyn FnMut(&mut EventContext) -> bool>>,
 }
 
@@ -15,6 +16,7 @@ impl EventHandler {
     pub fn new(child: ElementBox) -> Self {
         Self {
             child,
+            capture: None,
             mouse_down: None,
         }
     }
@@ -24,6 +26,14 @@ impl EventHandler {
         F: 'static + FnMut(&mut EventContext) -> bool,
     {
         self.mouse_down = Some(Box::new(callback));
+        self
+    }
+
+    pub fn capture<F>(mut self, callback: F) -> Self
+    where
+        F: 'static + FnMut(&Event, RectF, &mut EventContext) -> bool,
+    {
+        self.capture = Some(Box::new(callback));
         self
     }
 }
@@ -59,6 +69,12 @@ impl Element for EventHandler {
         _: &mut Self::PaintState,
         cx: &mut EventContext,
     ) -> bool {
+        if let Some(capture) = self.capture.as_mut() {
+            if capture(event, bounds, cx) {
+                return true;
+            }
+        }
+
         if self.child.dispatch_event(event, cx) {
             true
         } else {
