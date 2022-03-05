@@ -25,6 +25,7 @@ action!(ActivateItem, usize);
 action!(ActivatePrevItem);
 action!(ActivateNextItem);
 action!(CloseActiveItem);
+action!(CloseInactiveItems);
 action!(CloseItem, usize);
 action!(GoBack);
 action!(GoForward);
@@ -44,6 +45,9 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, _: &CloseActiveItem, cx| {
         pane.close_active_item(cx);
     });
+    cx.add_action(|pane: &mut Pane, _: &CloseInactiveItems, cx| {
+        pane.close_inactive_items(cx);
+    });
     cx.add_action(|pane: &mut Pane, action: &CloseItem, cx| {
         pane.close_item(action.0, cx);
     });
@@ -61,6 +65,7 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("shift-cmd-{", ActivatePrevItem, Some("Pane")),
         Binding::new("shift-cmd-}", ActivateNextItem, Some("Pane")),
         Binding::new("cmd-w", CloseActiveItem, Some("Pane")),
+        Binding::new("alt-cmd-w", CloseInactiveItems, Some("Pane")),
         Binding::new("cmd-k up", Split(SplitDirection::Up), Some("Pane")),
         Binding::new("cmd-k down", Split(SplitDirection::Down), Some("Pane")),
         Binding::new("cmd-k left", Split(SplitDirection::Left), Some("Pane")),
@@ -357,12 +362,32 @@ impl Pane {
         }
     }
 
-    pub fn close_item(&mut self, item_view_id: usize, cx: &mut ViewContext<Self>) {
+    pub fn close_inactive_items(&mut self, cx: &mut ViewContext<Self>) {
+        if !self.item_views.is_empty() {
+            let active_item_id = self.item_views[self.active_item_index].1.id();
+            self.close_items(cx, |id| id != active_item_id);
+        }
+    }
+
+    pub fn close_item(&mut self, view_id_to_close: usize, cx: &mut ViewContext<Self>) {
+        self.close_items(cx, |view_id| view_id == view_id_to_close);
+    }
+
+    pub fn close_items(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        should_close: impl Fn(usize) -> bool,
+    ) {
         let mut item_ix = 0;
+        let mut new_active_item_index = self.active_item_index;
         self.item_views.retain(|(_, item_view)| {
-            if item_view.id() == item_view_id {
+            if should_close(item_view.id()) {
                 if item_ix == self.active_item_index {
                     item_view.deactivated(cx);
+                }
+
+                if item_ix < self.active_item_index {
+                    new_active_item_index -= 1;
                 }
 
                 let mut nav_history = self.nav_history.borrow_mut();
@@ -379,17 +404,12 @@ impl Pane {
                 true
             }
         });
-        self.activate_item(
-            cmp::min(
-                self.active_item_index,
-                self.item_views.len().saturating_sub(1),
-            ),
-            cx,
-        );
 
         if self.item_views.is_empty() {
             self.update_active_toolbar(cx);
             cx.emit(Event::Remove);
+        } else {
+            self.activate_item(new_active_item_index, cx);
         }
 
         cx.notify();
