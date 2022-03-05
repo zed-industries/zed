@@ -406,11 +406,13 @@ impl Pane {
         });
 
         if self.item_views.is_empty() {
-            self.update_active_toolbar(cx);
             cx.emit(Event::Remove);
         } else {
-            self.activate_item(new_active_item_index, cx);
+            self.active_item_index = cmp::min(new_active_item_index, self.item_views.len() - 1);
+            self.focus_active_item(cx);
+            self.activate(cx);
         }
+        self.update_active_toolbar(cx);
 
         cx.notify();
     }
