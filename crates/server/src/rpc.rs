@@ -5079,14 +5079,14 @@ mod tests {
     }
 
     impl Executor for Arc<gpui::executor::Background> {
-        type Timer = BoxFuture<'static, ()>;
+        type Timer = gpui::executor::Timer;
 
         fn spawn_detached<F: 'static + Send + Future<Output = ()>>(&self, future: F) {
             self.spawn(future).detach();
         }
 
         fn timer(&self, duration: Duration) -> Self::Timer {
-            self.as_ref().timer(duration).boxed()
+            self.as_ref().timer(duration)
         }
     }
 

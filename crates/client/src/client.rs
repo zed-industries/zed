@@ -287,7 +287,6 @@ impl Client {
             }
             Status::ConnectionLost => {
                 let this = self.clone();
-                let foreground = cx.foreground();
                 let reconnect_interval = state.reconnect_interval;
                 state._reconnect_task = Some(cx.spawn(|cx| async move {
                     let mut rng = StdRng::from_entropy();
@@ -300,7 +299,7 @@ impl Client {
                             },
                             &cx,
                         );
-                        foreground.timer(delay).await;
+                        cx.background().timer(delay).await;
                         delay = delay
                             .mul_f32(rng.gen_range(1.0..=2.0))
                             .min(reconnect_interval);
