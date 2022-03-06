@@ -1239,7 +1239,7 @@ impl MutableAppContext {
             }
 
             if !this.halt_action_dispatch {
-                this.dispatch_global_action_any(action);
+                this.halt_action_dispatch = this.dispatch_global_action_any(action);
             }
             this.halt_action_dispatch
         })
@@ -4716,8 +4716,6 @@ mod tests {
 
     #[crate::test(self)]
     fn test_dispatch_keystroke(cx: &mut MutableAppContext) {
-        use std::cell::Cell;
-
         action!(Action, &'static str);
 
         struct View {
@@ -4774,13 +4772,28 @@ mod tests {
             Some("a && b && !c"),
         )]);
 
-        let handled_action = Rc::new(Cell::new(false));
-        let handled_action_clone = handled_action.clone();
-        cx.add_action(move |view: &mut View, action: &Action, _| {
-            handled_action_clone.set(true);
-            assert_eq!(view.id, 2);
-            assert_eq!(action.0, "a");
-        });
+        cx.add_bindings(vec![keymap::Binding::new("b", Action("b"), None)]);
+
+        let actions = Rc::new(RefCell::new(Vec::new()));
+        {
+            let actions = actions.clone();
+            cx.add_action(move |view: &mut View, action: &Action, cx| {
+                if action.0 == "a" {
+                    actions.borrow_mut().push(format!("{} a", view.id));
+                } else {
+                    actions
+                        .borrow_mut()
+                        .push(format!("{} {}", view.id, action.0));
+                    cx.propagate_action();
+                }
+            });
+        }
+        {
+            let actions = actions.clone();
+            cx.add_global_action(move |action: &Action, _| {
+                actions.borrow_mut().push(format!("global {}", action.0));
+            });
+        }
 
         cx.dispatch_keystroke(
             window_id,
@@ -4789,7 +4802,17 @@ mod tests {
         )
         .unwrap();
 
-        assert!(handled_action.get());
+        assert_eq!(&*actions.borrow(), &["2 a"]);
+
+        actions.borrow_mut().clear();
+        cx.dispatch_keystroke(
+            window_id,
+            vec![view_1.id(), view_2.id(), view_3.id()],
+            &Keystroke::parse("b").unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(&*actions.borrow(), &["3 b", "2 b", "1 b", "global b"]);
     }
 
     #[crate::test(self)]
