@@ -94,8 +94,7 @@ pub struct ConnectionState {
         Arc<Mutex<Option<HashMap<u32, oneshot::Sender<(proto::Envelope, barrier::Sender)>>>>>,
 }
 
-const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(2);
-const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 
 impl Peer {
     pub fn new() -> Arc<Self> {
@@ -144,13 +143,17 @@ impl Peer {
             });
 
             loop {
-                let read_message = reader.read_message().fuse();
+                let read_message = reader.read().fuse();
                 futures::pin_mut!(read_message);
+                let read_timeout = create_timer(2 * KEEPALIVE_INTERVAL).fuse();
+                futures::pin_mut!(read_timeout);
+
                 loop {
                     futures::select_biased! {
                         outgoing = outgoing_rx.next().fuse() => match outgoing {
                             Some(outgoing) => {
-                                if let Some(result) = writer.write_message(&outgoing).timeout(WRITE_TIMEOUT).await {
+                                let outgoing = proto::Message::Envelope(outgoing);
+                                if let Some(result) = writer.write(outgoing).timeout(2 * KEEPALIVE_INTERVAL).await {
                                     result.context("failed to write RPC message")?;
                                 } else {
                                     Err(anyhow!("timed out writing message"))?;
@@ -159,18 +162,24 @@ impl Peer {
                             None => return Ok(()),
                         },
                         incoming = read_message => {
-                            let incoming = incoming.context("received invalid rpc message")?;
-                            if incoming_tx.send(incoming).await.is_err() {
-                                return Ok(());
+                            let incoming = incoming.context("received invalid RPC message")?;
+                            if let proto::Message::Envelope(incoming) = incoming {
+                                if incoming_tx.send(incoming).await.is_err() {
+                                    return Ok(());
+                                }
                             }
+
                             break;
                         },
                         _ = create_timer(KEEPALIVE_INTERVAL).fuse() => {
-                            if let Some(result) = writer.ping().timeout(WRITE_TIMEOUT).await {
+                            if let Some(result) = writer.write(proto::Message::Ping).timeout(2 * KEEPALIVE_INTERVAL).await {
                                 result.context("failed to send websocket ping")?;
                             } else {
                                 Err(anyhow!("timed out sending websocket ping"))?;
                             }
+                        }
+                        _ = read_timeout => {
+                            Err(anyhow!("timed out reading message"))?
                         }
                     }
                 }
