@@ -2732,8 +2732,6 @@ mod tests {
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
 
-        eprintln!("sharing");
-
         project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.

@@ -330,14 +330,34 @@ impl Deterministic {
     }
 
     pub fn advance_clock(&self, duration: Duration) {
-        let mut state = self.state.lock();
-        state.now += duration;
-        let now = state.now;
-        let mut pending_timers = mem::take(&mut state.pending_timers);
-        drop(state);
+        let new_now = self.state.lock().now + duration;
+        loop {
+            self.run_until_parked();
+            let mut state = self.state.lock();
 
-        pending_timers.retain(|(_, wakeup, _)| *wakeup > now);
-        self.state.lock().pending_timers.extend(pending_timers);
+            if let Some((_, wakeup_time, _)) = state.pending_timers.first() {
+                let wakeup_time = *wakeup_time;
+                if wakeup_time < new_now {
+                    let timer_count = state
+                        .pending_timers
+                        .iter()
+                        .take_while(|(_, t, _)| *t == wakeup_time)
+                        .count();
+                    state.now = wakeup_time;
+                    let timers_to_wake = state
+                        .pending_timers
+                        .drain(0..timer_count)
+                        .collect::<Vec<_>>();
+                    drop(state);
+                    drop(timers_to_wake);
+                    continue;
+                }
+            }
+
+            break;
+        }
+
+        self.state.lock().now = new_now;
     }
 }
 
@@ -640,9 +660,6 @@ impl Background {
                     for _ in 0..yields {
                         yield_now().await;
                     }
-
-                    let delay = Duration::from_millis(executor.state.lock().rng.gen_range(0..100));
-                    executor.advance_clock(delay);
                 }
             }
             _ => panic!("this method can only be called on a deterministic executor"),

@@ -283,6 +283,7 @@ pub struct MessageStream<S> {
     encoding_buffer: Vec<u8>,
 }
 
+#[derive(Debug)]
 pub enum Message {
     Envelope(Envelope),
     Ping,

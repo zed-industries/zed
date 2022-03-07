@@ -966,8 +966,6 @@ mod tests {
         server.roll_access_token();
         server.allow_connections();
         cx.foreground().advance_clock(Duration::from_secs(10));
-        assert_eq!(server.auth_count(), 1);
-        cx.foreground().advance_clock(Duration::from_secs(10));
         while !matches!(status.next().await, Some(Status::Connected { .. })) {}
         assert_eq!(server.auth_count(), 2); // Client re-authenticated due to an invalid token
     }

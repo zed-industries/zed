@@ -88,13 +88,14 @@ pub struct Peer {
 
 #[derive(Clone)]
 pub struct ConnectionState {
-    outgoing_tx: futures::channel::mpsc::UnboundedSender<proto::Envelope>,
+    outgoing_tx: futures::channel::mpsc::UnboundedSender<proto::Message>,
     next_message_id: Arc<AtomicU32>,
     response_channels:
         Arc<Mutex<Option<HashMap<u32, oneshot::Sender<(proto::Envelope, barrier::Sender)>>>>>,
 }
 
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl Peer {
     pub fn new() -> Arc<Self> {
@@ -142,19 +143,25 @@ impl Peer {
                 this.connections.write().remove(&connection_id);
             });
 
+            // Send messages on this frequency so the connection isn't closed.
+            let keepalive_timer = create_timer(KEEPALIVE_INTERVAL).fuse();
+            futures::pin_mut!(keepalive_timer);
+
             loop {
                 let read_message = reader.read().fuse();
                 futures::pin_mut!(read_message);
-                let read_timeout = create_timer(2 * KEEPALIVE_INTERVAL).fuse();
-                futures::pin_mut!(read_timeout);
+
+                // Disconnect if we don't receive messages at least this frequently.
+                let receive_timeout = create_timer(3 * KEEPALIVE_INTERVAL).fuse();
+                futures::pin_mut!(receive_timeout);
 
                 loop {
                     futures::select_biased! {
                         outgoing = outgoing_rx.next().fuse() => match outgoing {
                             Some(outgoing) => {
-                                let outgoing = proto::Message::Envelope(outgoing);
-                                if let Some(result) = writer.write(outgoing).timeout(2 * KEEPALIVE_INTERVAL).await {
+                                if let Some(result) = writer.write(outgoing).timeout(WRITE_TIMEOUT).await {
                                     result.context("failed to write RPC message")?;
+                                    keepalive_timer.set(create_timer(KEEPALIVE_INTERVAL).fuse());
                                 } else {
                                     Err(anyhow!("timed out writing message"))?;
                                 }
@@ -168,18 +175,18 @@ impl Peer {
                                     return Ok(());
                                 }
                             }
-
                             break;
                         },
-                        _ = create_timer(KEEPALIVE_INTERVAL).fuse() => {
-                            if let Some(result) = writer.write(proto::Message::Ping).timeout(2 * KEEPALIVE_INTERVAL).await {
-                                result.context("failed to send websocket ping")?;
+                        _ = keepalive_timer => {
+                            if let Some(result) = writer.write(proto::Message::Ping).timeout(WRITE_TIMEOUT).await {
+                                result.context("failed to send keepalive")?;
+                                keepalive_timer.set(create_timer(KEEPALIVE_INTERVAL).fuse());
                             } else {
-                                Err(anyhow!("timed out sending websocket ping"))?;
+                                Err(anyhow!("timed out sending keepalive"))?;
                             }
                         }
-                        _ = read_timeout => {
-                            Err(anyhow!("timed out reading message"))?
+                        _ = receive_timeout => {
+                            Err(anyhow!("delay between messages too long"))?
                         }
                     }
                 }
@@ -278,11 +285,11 @@ impl Peer {
                 .insert(message_id, tx);
             connection
                 .outgoing_tx
-                .unbounded_send(request.into_envelope(
+                .unbounded_send(proto::Message::Envelope(request.into_envelope(
                     message_id,
                     None,
                     original_sender_id.map(|id| id.0),
-                ))
+                )))
                 .map_err(|_| anyhow!("connection was closed"))?;
             Ok(())
         });
@@ -305,7 +312,9 @@ impl Peer {
             .fetch_add(1, atomic::Ordering::SeqCst);
         connection
             .outgoing_tx
-            .unbounded_send(message.into_envelope(message_id, None, None))?;
+            .unbounded_send(proto::Message::Envelope(
+                message.into_envelope(message_id, None, None),
+            ))?;
         Ok(())
     }
 
@@ -321,7 +330,11 @@ impl Peer {
             .fetch_add(1, atomic::Ordering::SeqCst);
         connection
             .outgoing_tx
-            .unbounded_send(message.into_envelope(message_id, None, Some(sender_id.0)))?;
+            .unbounded_send(proto::Message::Envelope(message.into_envelope(
+                message_id,
+                None,
+                Some(sender_id.0),
+            )))?;
         Ok(())
     }
 
@@ -336,7 +349,11 @@ impl Peer {
             .fetch_add(1, atomic::Ordering::SeqCst);
         connection
             .outgoing_tx
-            .unbounded_send(response.into_envelope(message_id, Some(receipt.message_id), None))?;
+            .unbounded_send(proto::Message::Envelope(response.into_envelope(
+                message_id,
+                Some(receipt.message_id),
+                None,
+            )))?;
         Ok(())
     }
 
@@ -351,7 +368,11 @@ impl Peer {
             .fetch_add(1, atomic::Ordering::SeqCst);
         connection
             .outgoing_tx
-            .unbounded_send(response.into_envelope(message_id, Some(receipt.message_id), None))?;
+            .unbounded_send(proto::Message::Envelope(response.into_envelope(
+                message_id,
+                Some(receipt.message_id),
+                None,
+            )))?;
         Ok(())
     }
 
