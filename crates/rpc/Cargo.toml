@@ -26,7 +26,9 @@ rsa = "0.4"
 serde = { version = "1", features = ["derive"] }
 smol-timeout = "0.6"
 zstd = "0.9"
+clock = { path = "../clock" }
 gpui = { path = "../gpui", optional = true }
+util = { path = "../util" }
 
 [build-dependencies]
 prost-build = "0.8"

@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
-use smol::{channel, prelude::*, Executor, Timer};
+use smol::{channel, prelude::*, Executor};
 use std::{
     any::Any,
     fmt::{self, Display},
@@ -84,6 +84,19 @@ struct ForegroundRunnable {
 pub struct Deterministic {
     state: Arc<parking_lot::Mutex<DeterministicState>>,
     parker: parking_lot::Mutex<parking::Parker>,
+}
+
+pub enum Timer {
+    Production(smol::Timer),
+    #[cfg(any(test, feature = "test-support"))]
+    Deterministic(DeterministicTimer),
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub struct DeterministicTimer {
+    rx: postage::barrier::Receiver,
+    id: usize,
+    state: Arc<parking_lot::Mutex<DeterministicState>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -306,15 +319,82 @@ impl Deterministic {
         None
     }
 
-    pub fn advance_clock(&self, duration: Duration) {
+    pub fn timer(&self, duration: Duration) -> Timer {
+        let (tx, rx) = postage::barrier::channel();
         let mut state = self.state.lock();
-        state.now += duration;
-        let now = state.now;
-        let mut pending_timers = mem::take(&mut state.pending_timers);
-        drop(state);
+        let wakeup_at = state.now + duration;
+        let id = util::post_inc(&mut state.next_timer_id);
+        state.pending_timers.push((id, wakeup_at, tx));
+        let state = self.state.clone();
+        Timer::Deterministic(DeterministicTimer { rx, id, state })
+    }
 
-        pending_timers.retain(|(_, wakeup, _)| *wakeup > now);
-        self.state.lock().pending_timers.extend(pending_timers);
+    pub fn advance_clock(&self, duration: Duration) {
+        let new_now = self.state.lock().now + duration;
+        loop {
+            self.run_until_parked();
+            let mut state = self.state.lock();
+
+            if let Some((_, wakeup_time, _)) = state.pending_timers.first() {
+                let wakeup_time = *wakeup_time;
+                if wakeup_time < new_now {
+                    let timer_count = state
+                        .pending_timers
+                        .iter()
+                        .take_while(|(_, t, _)| *t == wakeup_time)
+                        .count();
+                    state.now = wakeup_time;
+                    let timers_to_wake = state
+                        .pending_timers
+                        .drain(0..timer_count)
+                        .collect::<Vec<_>>();
+                    drop(state);
+                    drop(timers_to_wake);
+                    continue;
+                }
+            }
+
+            break;
+        }
+
+        self.state.lock().now = new_now;
+    }
+}
+
+impl Drop for Timer {
+    fn drop(&mut self) {
+        #[cfg(any(test, feature = "test-support"))]
+        if let Timer::Deterministic(DeterministicTimer { state, id, .. }) = self {
+            state
+                .lock()
+                .pending_timers
+                .retain(|(timer_id, _, _)| timer_id != id)
+        }
+    }
+}
+
+impl Future for Timer {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match &mut *self {
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Deterministic(DeterministicTimer { rx, .. }) => {
+                use postage::stream::{PollRecv, Stream as _};
+                smol::pin!(rx);
+                match rx.poll_recv(&mut postage::Context::from_waker(cx.waker())) {
+                    PollRecv::Ready(()) | PollRecv::Closed => Poll::Ready(()),
+                    PollRecv::Pending => Poll::Pending,
+                }
+            }
+            Self::Production(timer) => {
+                smol::pin!(timer);
+                match timer.poll(cx) {
+                    Poll::Ready(_) => Poll::Ready(()),
+                    Poll::Pending => Poll::Pending,
+                }
+            }
+        }
     }
 }
 
@@ -435,46 +515,6 @@ impl Foreground {
                 state.rng = StdRng::seed_from_u64(state.seed);
             }
             _ => panic!("this method can only be called on a deterministic executor"),
-        }
-    }
-
-    pub async fn timer(&self, duration: Duration) {
-        match self {
-            #[cfg(any(test, feature = "test-support"))]
-            Self::Deterministic { executor, .. } => {
-                use postage::prelude::Stream as _;
-
-                let (tx, mut rx) = postage::barrier::channel();
-                let timer_id;
-                {
-                    let mut state = executor.state.lock();
-                    let wakeup_at = state.now + duration;
-                    timer_id = util::post_inc(&mut state.next_timer_id);
-                    state.pending_timers.push((timer_id, wakeup_at, tx));
-                }
-
-                struct DropTimer<'a>(usize, &'a Foreground);
-                impl<'a> Drop for DropTimer<'a> {
-                    fn drop(&mut self) {
-                        match self.1 {
-                            Foreground::Deterministic { executor, .. } => {
-                                executor
-                                    .state
-                                    .lock()
-                                    .pending_timers
-                                    .retain(|(timer_id, _, _)| *timer_id != self.0);
-                            }
-                            _ => unreachable!(),
-                        }
-                    }
-                }
-
-                let _guard = DropTimer(timer_id, self);
-                rx.recv().await;
-            }
-            _ => {
-                Timer::after(duration).await;
-            }
         }
     }
 
@@ -600,6 +640,14 @@ impl Background {
         }
     }
 
+    pub fn timer(&self, duration: Duration) -> Timer {
+        match self {
+            Background::Production { .. } => Timer::Production(smol::Timer::after(duration)),
+            #[cfg(any(test, feature = "test-support"))]
+            Background::Deterministic { executor } => executor.timer(duration),
+        }
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub async fn simulate_random_delay(&self) {
         use rand::prelude::*;
@@ -612,9 +660,6 @@ impl Background {
                     for _ in 0..yields {
                         yield_now().await;
                     }
-
-                    let delay = Duration::from_millis(executor.state.lock().rng.gen_range(0..100));
-                    executor.advance_clock(delay);
                 }
             }
             _ => panic!("this method can only be called on a deterministic executor"),

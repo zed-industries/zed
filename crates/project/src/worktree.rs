@@ -17,7 +17,10 @@ use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
 };
-use language::{Buffer, DiagnosticEntry, Operation, PointUtf16, Rope};
+use language::{
+    proto::{deserialize_version, serialize_version},
+    Buffer, DiagnosticEntry, Operation, PointUtf16, Rope,
+};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
@@ -30,7 +33,7 @@ use smol::channel::{self, Sender};
 use std::{
     any::Any,
     cmp::{self, Ordering},
-    convert::{TryFrom, TryInto},
+    convert::TryFrom,
     ffi::{OsStr, OsString},
     fmt,
     future::Future,
@@ -1423,7 +1426,7 @@ impl language::File for File {
                         rpc.send(proto::BufferSaved {
                             project_id,
                             buffer_id,
-                            version: (&version).into(),
+                            version: serialize_version(&version),
                             mtime: Some(entry.mtime.into()),
                         })?;
                     }
@@ -1438,10 +1441,10 @@ impl language::File for File {
                         .request(proto::SaveBuffer {
                             project_id,
                             buffer_id,
-                            version: (&version).into(),
+                            version: serialize_version(&version),
                         })
                         .await?;
-                    let version = response.version.try_into()?;
+                    let version = deserialize_version(response.version);
                     let mtime = response
                         .mtime
                         .ok_or_else(|| anyhow!("missing mtime"))?
@@ -1518,7 +1521,7 @@ impl language::LocalFile for File {
                 .send(proto::BufferReloaded {
                     project_id,
                     buffer_id,
-                    version: version.into(),
+                    version: serialize_version(&version),
                     mtime: Some(mtime.into()),
                 })
                 .log_err();

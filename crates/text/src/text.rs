@@ -1,5 +1,7 @@
 mod anchor;
 pub mod locator;
+#[cfg(any(test, feature = "test-support"))]
+pub mod network;
 pub mod operation_queue;
 mod patch;
 mod point;

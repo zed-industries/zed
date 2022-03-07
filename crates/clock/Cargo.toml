@@ -9,4 +9,3 @@ doctest = false
 
 [dependencies]
 smallvec = { version = "1.6", features = ["union"] }
-rpc = { path = "../rpc" }

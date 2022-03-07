@@ -15,7 +15,7 @@ use gpui::{
     UpgradeModelHandle, WeakModelHandle,
 };
 use language::{
-    proto::{deserialize_anchor, serialize_anchor},
+    proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, Anchor, AnchorRangeExt, Bias, Buffer, CodeAction, CodeLabel, Completion,
     Diagnostic, DiagnosticEntry, File as _, Language, LanguageRegistry, Operation, PointUtf16,
     ToLspPosition, ToOffset, ToPointUtf16, Transaction,
@@ -1713,14 +1713,14 @@ impl Project {
                 project_id,
                 buffer_id,
                 position: Some(language::proto::serialize_anchor(&anchor)),
-                version: (&source_buffer.version()).into(),
+                version: serialize_version(&source_buffer.version()),
             };
             cx.spawn_weak(|_, mut cx| async move {
                 let response = rpc.request(message).await?;
 
                 source_buffer_handle
                     .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_version(response.version.into())
+                        buffer.wait_for_version(deserialize_version(response.version))
                     })
                     .await;
 
@@ -1910,13 +1910,13 @@ impl Project {
                         buffer_id,
                         start: Some(language::proto::serialize_anchor(&range.start)),
                         end: Some(language::proto::serialize_anchor(&range.end)),
-                        version: (&version).into(),
+                        version: serialize_version(&version),
                     })
                     .await?;
 
                 buffer_handle
                     .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_version(response.version.into())
+                        buffer.wait_for_version(deserialize_version(response.version))
                     })
                     .await;
 
@@ -2915,7 +2915,7 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<proto::BufferSaved> {
         let buffer_id = envelope.payload.buffer_id;
-        let requested_version = envelope.payload.version.try_into()?;
+        let requested_version = deserialize_version(envelope.payload.version);
 
         let (project_id, buffer) = this.update(&mut cx, |this, cx| {
             let project_id = this.remote_id().ok_or_else(|| anyhow!("not connected"))?;
@@ -2936,7 +2936,7 @@ impl Project {
         Ok(proto::BufferSaved {
             project_id,
             buffer_id,
-            version: (&saved_version).into(),
+            version: serialize_version(&saved_version),
             mtime: Some(mtime.into()),
         })
     }
@@ -2981,7 +2981,7 @@ impl Project {
             .position
             .and_then(language::proto::deserialize_anchor)
             .ok_or_else(|| anyhow!("invalid position"))?;
-        let version = clock::Global::from(envelope.payload.version);
+        let version = deserialize_version(envelope.payload.version);
         let buffer = this.read_with(&cx, |this, cx| {
             this.opened_buffers
                 .get(&envelope.payload.buffer_id)
@@ -3001,7 +3001,7 @@ impl Project {
                 .iter()
                 .map(language::proto::serialize_completion)
                 .collect(),
-            version: (&version).into(),
+            version: serialize_version(&version),
         })
     }
 
@@ -3062,7 +3062,7 @@ impl Project {
         })?;
         buffer
             .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(envelope.payload.version.into())
+                buffer.wait_for_version(deserialize_version(envelope.payload.version))
             })
             .await;
 
@@ -3077,7 +3077,7 @@ impl Project {
                 .iter()
                 .map(language::proto::serialize_code_action)
                 .collect(),
-            version: (&version).into(),
+            version: serialize_version(&version),
         })
     }
 
@@ -3445,7 +3445,7 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        let version = envelope.payload.version.try_into()?;
+        let version = deserialize_version(envelope.payload.version);
         let mtime = envelope
             .payload
             .mtime
@@ -3473,7 +3473,7 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let payload = envelope.payload.clone();
-        let version = payload.version.try_into()?;
+        let version = deserialize_version(payload.version);
         let mtime = payload
             .mtime
             .ok_or_else(|| anyhow!("missing mtime"))?

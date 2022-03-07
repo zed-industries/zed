@@ -16,6 +16,7 @@ required-features = ["seed-support"]
 collections = { path = "../collections" }
 rpc = { path = "../rpc" }
 anyhow = "1.0.40"
+async-io = "1.3"
 async-std = { version = "1.8.0", features = ["attributes"] }
 async-trait = "0.1.50"
 async-tungstenite = "0.16"

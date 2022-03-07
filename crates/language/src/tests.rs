@@ -11,8 +11,9 @@ use std::{
     rc::Rc,
     time::{Duration, Instant},
 };
+use text::network::Network;
 use unindent::Unindent as _;
-use util::{post_inc, test::Network};
+use util::post_inc;
 
 #[cfg(test)]
 #[ctor::ctor]

@@ -25,13 +25,13 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 replica_id: undo.id.replica_id as u32,
                 local_timestamp: undo.id.value,
                 lamport_timestamp: lamport_timestamp.value,
-                version: From::from(&undo.version),
+                version: serialize_version(&undo.version),
                 transaction_ranges: undo
                     .transaction_ranges
                     .iter()
                     .map(serialize_range)
                     .collect(),
-                transaction_version: From::from(&undo.transaction_version),
+                transaction_version: serialize_version(&undo.transaction_version),
                 counts: undo
                     .counts
                     .iter()
@@ -77,7 +77,7 @@ pub fn serialize_edit_operation(operation: &EditOperation) -> proto::operation::
         replica_id: operation.timestamp.replica_id as u32,
         local_timestamp: operation.timestamp.local,
         lamport_timestamp: operation.timestamp.lamport,
-        version: From::from(&operation.version),
+        version: serialize_version(&operation.version),
         ranges: operation.ranges.iter().map(serialize_range).collect(),
         new_text: operation.new_text.clone(),
     }
@@ -116,7 +116,7 @@ pub fn serialize_buffer_fragment(fragment: &text::Fragment) -> proto::BufferFrag
                 timestamp: clock.value,
             })
             .collect(),
-        max_undos: From::from(&fragment.max_undos),
+        max_undos: serialize_version(&fragment.max_undos),
     }
 }
 
@@ -188,7 +188,7 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                         replica_id: undo.replica_id as ReplicaId,
                         value: undo.local_timestamp,
                     },
-                    version: undo.version.into(),
+                    version: deserialize_version(undo.version),
                     counts: undo
                         .counts
                         .into_iter()
@@ -207,7 +207,7 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                         .into_iter()
                         .map(deserialize_range)
                         .collect(),
-                    transaction_version: undo.transaction_version.into(),
+                    transaction_version: deserialize_version(undo.transaction_version),
                 },
             }),
             proto::operation::Variant::UpdateSelections(message) => {
@@ -260,7 +260,7 @@ pub fn deserialize_edit_operation(edit: proto::operation::Edit) -> EditOperation
             local: edit.local_timestamp,
             lamport: edit.lamport_timestamp,
         },
-        version: edit.version.into(),
+        version: deserialize_version(edit.version),
         ranges: edit.ranges.into_iter().map(deserialize_range).collect(),
         new_text: edit.new_text,
     }
@@ -309,7 +309,7 @@ pub fn deserialize_buffer_fragment(
             replica_id: entry.replica_id as ReplicaId,
             value: entry.timestamp,
         })),
-        max_undos: From::from(message.max_undos),
+        max_undos: deserialize_version(message.max_undos),
     }
 }
 
@@ -472,8 +472,8 @@ pub fn serialize_transaction(transaction: &Transaction) -> proto::Transaction {
             .copied()
             .map(serialize_local_timestamp)
             .collect(),
-        start: (&transaction.start).into(),
-        end: (&transaction.end).into(),
+        start: serialize_version(&transaction.start),
+        end: serialize_version(&transaction.end),
         ranges: transaction.ranges.iter().map(serialize_range).collect(),
     }
 }
@@ -490,8 +490,8 @@ pub fn deserialize_transaction(transaction: proto::Transaction) -> Result<Transa
             .into_iter()
             .map(deserialize_local_timestamp)
             .collect(),
-        start: transaction.start.into(),
-        end: transaction.end.into(),
+        start: deserialize_version(transaction.start.into()),
+        end: deserialize_version(transaction.end),
         ranges: transaction
             .ranges
             .into_iter()
@@ -523,4 +523,25 @@ pub fn serialize_range(range: &Range<FullOffset>) -> proto::Range {
 
 pub fn deserialize_range(range: proto::Range) -> Range<FullOffset> {
     FullOffset(range.start as usize)..FullOffset(range.end as usize)
+}
+
+pub fn deserialize_version(message: Vec<proto::VectorClockEntry>) -> clock::Global {
+    let mut version = clock::Global::new();
+    for entry in message {
+        version.observe(clock::Local {
+            replica_id: entry.replica_id as ReplicaId,
+            value: entry.timestamp,
+        });
+    }
+    version
+}
+
+pub fn serialize_version(version: &clock::Global) -> Vec<proto::VectorClockEntry> {
+    version
+        .iter()
+        .map(|entry| proto::VectorClockEntry {
+            replica_id: entry.replica_id as u32,
+            timestamp: entry.value,
+        })
+        .collect()
 }
