@@ -19,7 +19,7 @@ use gpui::{
 };
 use language::{
     proto::{deserialize_version, serialize_version},
-    Buffer, DiagnosticEntry, Operation, PointUtf16, Rope,
+    Buffer, DiagnosticEntry, PointUtf16, Rope,
 };
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -71,7 +71,6 @@ pub struct LocalWorktree {
     share: Option<ShareState>,
     diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
     diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
-    queued_operations: Vec<(u64, Operation)>,
     client: Arc<Client>,
     fs: Arc<dyn Fs>,
     visible: bool,
@@ -84,7 +83,6 @@ pub struct RemoteWorktree {
     client: Arc<Client>,
     updates_tx: UnboundedSender<proto::UpdateWorktree>,
     replica_id: ReplicaId,
-    queued_operations: Vec<(u64, Operation)>,
     diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
     visible: bool,
 }
@@ -226,7 +224,6 @@ impl Worktree {
                 snapshot_rx: snapshot_rx.clone(),
                 updates_tx,
                 client: client.clone(),
-                queued_operations: Default::default(),
                 diagnostic_summaries: TreeMap::from_ordered_entries(
                     worktree.diagnostic_summaries.into_iter().map(|summary| {
                         (
@@ -420,42 +417,6 @@ impl Worktree {
 
         cx.notify();
     }
-
-    fn send_buffer_update(
-        &mut self,
-        buffer_id: u64,
-        operation: Operation,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if let Some((project_id, rpc)) = match self {
-            Worktree::Local(worktree) => worktree
-                .share
-                .as_ref()
-                .map(|share| (share.project_id, worktree.client.clone())),
-            Worktree::Remote(worktree) => Some((worktree.project_id, worktree.client.clone())),
-        } {
-            cx.spawn(|worktree, mut cx| async move {
-                if let Err(error) = rpc
-                    .request(proto::UpdateBuffer {
-                        project_id,
-                        buffer_id,
-                        operations: vec![language::proto::serialize_operation(&operation)],
-                    })
-                    .await
-                {
-                    worktree.update(&mut cx, |worktree, _| {
-                        log::error!("error sending buffer operation: {}", error);
-                        match worktree {
-                            Worktree::Local(t) => &mut t.queued_operations,
-                            Worktree::Remote(t) => &mut t.queued_operations,
-                        }
-                        .push((buffer_id, operation));
-                    });
-                }
-            })
-            .detach();
-        }
-    }
 }
 
 impl LocalWorktree {
@@ -526,7 +487,6 @@ impl LocalWorktree {
                 poll_task: None,
                 diagnostics: Default::default(),
                 diagnostic_summaries: Default::default(),
-                queued_operations: Default::default(),
                 client,
                 fs,
                 visible,
@@ -1453,12 +1413,6 @@ impl language::File for File {
                 })
             }
         })
-    }
-
-    fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext) {
-        self.worktree.update(cx, |worktree, cx| {
-            worktree.send_buffer_update(buffer_id, operation, cx);
-        });
     }
 
     fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext) {

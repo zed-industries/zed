@@ -73,8 +73,6 @@ pub struct Buffer {
     language_server: Option<LanguageServerState>,
     completion_triggers: Vec<String>,
     deferred_ops: OperationQueue<Operation>,
-    #[cfg(test)]
-    pub(crate) operations: Vec<Operation>,
 }
 
 pub struct BufferSnapshot {
@@ -143,7 +141,7 @@ struct LanguageServerSnapshot {
     path: Arc<Path>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Operation {
     Buffer(text::Operation),
     UpdateDiagnostics {
@@ -160,8 +158,9 @@ pub enum Operation {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
+    Operation(Operation),
     Edited,
     Dirtied,
     Saved,
@@ -201,8 +200,6 @@ pub trait File {
         version: clock::Global,
         cx: &mut MutableAppContext,
     ) -> Task<Result<(clock::Global, SystemTime)>>;
-
-    fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext);
 
     fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext);
 
@@ -275,8 +272,6 @@ impl File for FakeFile {
     ) -> Task<Result<(clock::Global, SystemTime)>> {
         cx.spawn(|_| async move { Ok((Default::default(), SystemTime::UNIX_EPOCH)) })
     }
-
-    fn buffer_updated(&self, _: u64, _: Operation, _: &mut MutableAppContext) {}
 
     fn buffer_removed(&self, _: u64, _: &mut MutableAppContext) {}
 
@@ -526,8 +521,6 @@ impl Buffer {
             language_server: None,
             completion_triggers: Default::default(),
             deferred_ops: OperationQueue::new(),
-            #[cfg(test)]
-            operations: Default::default(),
         }
     }
 
@@ -1745,16 +1738,8 @@ impl Buffer {
         }
     }
 
-    #[cfg(not(test))]
-    pub fn send_operation(&mut self, operation: Operation, cx: &mut ModelContext<Self>) {
-        if let Some(file) = &self.file {
-            file.buffer_updated(self.remote_id(), operation, cx.as_mut());
-        }
-    }
-
-    #[cfg(test)]
-    pub fn send_operation(&mut self, operation: Operation, _: &mut ModelContext<Self>) {
-        self.operations.push(operation);
+    fn send_operation(&mut self, operation: Operation, cx: &mut ModelContext<Self>) {
+        cx.emit(Event::Operation(operation));
     }
 
     pub fn remove_peer(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Self>) {

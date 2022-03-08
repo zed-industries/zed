@@ -17,8 +17,8 @@ use gpui::{
 use language::{
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, Anchor, AnchorRangeExt, Bias, Buffer, CodeAction, CodeLabel, Completion,
-    Diagnostic, DiagnosticEntry, File as _, Language, LanguageRegistry, Operation, PointUtf16,
-    ToLspPosition, ToOffset, ToPointUtf16, Transaction,
+    Diagnostic, DiagnosticEntry, Event as BufferEvent, File as _, Language, LanguageRegistry,
+    Operation, PointUtf16, ToLspPosition, ToOffset, ToPointUtf16, Transaction,
 };
 use lsp::{DiagnosticSeverity, DocumentHighlightKind, LanguageServer};
 use lsp_command::*;
@@ -945,8 +945,35 @@ impl Project {
                 remote_id
             ))?,
         }
-        self.assign_language_to_buffer(&buffer, worktree, cx);
+        cx.become_delegate(buffer, Self::on_buffer_event).detach();
+        self.assign_language_to_buffer(buffer, worktree, cx);
+
         Ok(())
+    }
+
+    fn on_buffer_event(
+        &mut self,
+        buffer: ModelHandle<Buffer>,
+        event: BufferEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            BufferEvent::Operation(operation) => {
+                if let Some(project_id) = self.remote_id() {
+                    let request = self.client.request(proto::UpdateBuffer {
+                        project_id,
+                        buffer_id: buffer.read(cx).remote_id(),
+                        operations: vec![language::proto::serialize_operation(&operation)],
+                    });
+                    cx.foreground()
+                        .spawn(async move {
+                            request.await.log_err();
+                        })
+                        .detach();
+                }
+            }
+            _ => {}
+        }
     }
 
     fn assign_language_to_buffer(
@@ -4452,7 +4479,10 @@ mod tests {
         buffer1.update(cx, |buffer, cx| {
             cx.subscribe(&buffer1, {
                 let events = events.clone();
-                move |_, _, event, _| events.borrow_mut().push(event.clone())
+                move |_, _, event, _| match event {
+                    BufferEvent::Operation(_) => {}
+                    _ => events.borrow_mut().push(event.clone()),
+                }
             })
             .detach();
 

@@ -76,43 +76,48 @@ fn test_edit_events(cx: &mut gpui::MutableAppContext) {
 
     let buffer1 = cx.add_model(|cx| Buffer::new(0, "abcdef", cx));
     let buffer2 = cx.add_model(|cx| Buffer::new(1, "abcdef", cx));
-    let buffer_ops = buffer1.update(cx, |buffer, cx| {
-        let buffer_1_events = buffer_1_events.clone();
-        cx.subscribe(&buffer1, move |_, _, event, _| {
-            buffer_1_events.borrow_mut().push(event.clone())
-        })
-        .detach();
-        let buffer_2_events = buffer_2_events.clone();
-        cx.subscribe(&buffer2, move |_, _, event, _| {
-            buffer_2_events.borrow_mut().push(event.clone())
-        })
-        .detach();
+    let buffer1_ops = Rc::new(RefCell::new(Vec::new()));
+    buffer1.update(cx, {
+        let buffer1_ops = buffer1_ops.clone();
+        |buffer, cx| {
+            let buffer_1_events = buffer_1_events.clone();
+            cx.become_delegate(&buffer1, move |_, _, event, _| match event {
+                Event::Operation(op) => buffer1_ops.borrow_mut().push(op),
+                event @ _ => buffer_1_events.borrow_mut().push(event),
+            })
+            .detach();
+            let buffer_2_events = buffer_2_events.clone();
+            cx.subscribe(&buffer2, move |_, _, event, _| {
+                buffer_2_events.borrow_mut().push(event.clone())
+            })
+            .detach();
 
-        // An edit emits an edited event, followed by a dirtied event,
-        // since the buffer was previously in a clean state.
-        buffer.edit(Some(2..4), "XYZ", cx);
+            // An edit emits an edited event, followed by a dirtied event,
+            // since the buffer was previously in a clean state.
+            buffer.edit(Some(2..4), "XYZ", cx);
 
-        // An empty transaction does not emit any events.
-        buffer.start_transaction();
-        buffer.end_transaction(cx);
+            // An empty transaction does not emit any events.
+            buffer.start_transaction();
+            buffer.end_transaction(cx);
 
-        // A transaction containing two edits emits one edited event.
-        now += Duration::from_secs(1);
-        buffer.start_transaction_at(now);
-        buffer.edit(Some(5..5), "u", cx);
-        buffer.edit(Some(6..6), "w", cx);
-        buffer.end_transaction_at(now, cx);
+            // A transaction containing two edits emits one edited event.
+            now += Duration::from_secs(1);
+            buffer.start_transaction_at(now);
+            buffer.edit(Some(5..5), "u", cx);
+            buffer.edit(Some(6..6), "w", cx);
+            buffer.end_transaction_at(now, cx);
 
-        // Undoing a transaction emits one edited event.
-        buffer.undo(cx);
-
-        buffer.operations.clone()
+            // Undoing a transaction emits one edited event.
+            buffer.undo(cx);
+        }
     });
 
     // Incorporating a set of remote ops emits a single edited event,
     // followed by a dirtied event.
     buffer2.update(cx, |buffer, cx| {
-        buffer.apply_ops(buffer_ops, cx).unwrap();
+        buffer
+            .apply_ops(buffer1_ops.borrow_mut().drain(..), cx)
+            .unwrap();
     });
 
     let buffer_1_events = buffer_1_events.borrow();
@@ -1177,17 +1182,26 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
         .collect::<String>();
     let mut replica_ids = Vec::new();
     let mut buffers = Vec::new();
-    let mut network = Network::new(rng.clone());
+    let network = Rc::new(RefCell::new(Network::new(rng.clone())));
 
     for i in 0..rng.gen_range(min_peers..=max_peers) {
         let buffer = cx.add_model(|cx| {
             let mut buffer = Buffer::new(i as ReplicaId, base_text.as_str(), cx);
             buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
+            let network = network.clone();
+            cx.become_delegate(&cx.handle(), move |buffer, _, event, _| {
+                if let Event::Operation(op) = event {
+                    network
+                        .borrow_mut()
+                        .broadcast(buffer.replica_id(), vec![proto::serialize_operation(&op)]);
+                }
+            })
+            .detach();
             buffer
         });
         buffers.push(buffer);
         replica_ids.push(i as ReplicaId);
-        network.add_peer(i as ReplicaId);
+        network.borrow_mut().add_peer(i as ReplicaId);
         log::info!("Adding initial peer with replica id {}", i);
     }
 
@@ -1268,10 +1282,20 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
                     let mut new_buffer =
                         Buffer::from_proto(new_replica_id, old_buffer, None, cx).unwrap();
                     new_buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
+                    let network = network.clone();
+                    cx.become_delegate(&cx.handle(), move |buffer, _, event, _| {
+                        if let Event::Operation(op) = event {
+                            network.borrow_mut().broadcast(
+                                buffer.replica_id(),
+                                vec![proto::serialize_operation(&op)],
+                            );
+                        }
+                    })
+                    .detach();
                     new_buffer
                 }));
                 replica_ids.push(new_replica_id);
-                network.replicate(replica_id, new_replica_id);
+                network.borrow_mut().replicate(replica_id, new_replica_id);
             }
             60..=69 if mutation_count != 0 => {
                 buffer.update(cx, |buffer, cx| {
@@ -1280,8 +1304,9 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
                 });
                 mutation_count -= 1;
             }
-            _ if network.has_unreceived(replica_id) => {
+            _ if network.borrow().has_unreceived(replica_id) => {
                 let ops = network
+                    .borrow_mut()
                     .receive(replica_id)
                     .into_iter()
                     .map(|op| proto::deserialize_operation(op).unwrap());
@@ -1297,14 +1322,6 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
             _ => {}
         }
 
-        buffer.update(cx, |buffer, _| {
-            let ops = buffer
-                .operations
-                .drain(..)
-                .map(|op| proto::serialize_operation(&op))
-                .collect();
-            network.broadcast(buffer.replica_id(), ops);
-        });
         now += Duration::from_millis(rng.gen_range(0..=200));
         buffers.extend(new_buffer);
 
@@ -1312,7 +1329,7 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
             buffer.read(cx).check_invariants();
         }
 
-        if mutation_count == 0 && network.is_idle() {
+        if mutation_count == 0 && network.borrow().is_idle() {
             break;
         }
     }

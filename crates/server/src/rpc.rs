@@ -1034,6 +1034,7 @@ mod tests {
     use project::{
         fs::{FakeFs, Fs as _},
         search::SearchQuery,
+        worktree::WorktreeHandle,
         DiagnosticSummary, Project, ProjectPath,
     };
     use rand::prelude::*;
@@ -1410,6 +1411,8 @@ mod tests {
         buffer_a.read_with(cx_a, |buf, _| assert!(!buf.is_dirty()));
         buffer_b.read_with(cx_b, |buf, _| assert!(!buf.is_dirty()));
         buffer_c.condition(cx_c, |buf, _| !buf.is_dirty()).await;
+
+        worktree_a.flush_fs_events(cx_a).await;
 
         // Make changes on host's file system, see those changes on guest worktrees.
         fs.rename(
