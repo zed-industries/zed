@@ -42,7 +42,6 @@ message Envelope {
 
         OpenBuffer open_buffer = 35;
         OpenBufferResponse open_buffer_response = 36;
-        CloseBuffer close_buffer = 37;
         UpdateBuffer update_buffer = 38;
         UpdateBufferFile update_buffer_file = 39;
         SaveBuffer save_buffer = 40;

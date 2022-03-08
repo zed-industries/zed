@@ -102,7 +102,6 @@ impl Server {
             .add_request_handler(Server::forward_project_request::<proto::PrepareRename>)
             .add_request_handler(Server::forward_project_request::<proto::PerformRename>)
             .add_request_handler(Server::forward_project_request::<proto::FormatBuffers>)
-            .add_message_handler(Server::close_buffer)
             .add_request_handler(Server::update_buffer)
             .add_message_handler(Server::update_buffer_file)
             .add_message_handler(Server::buffer_reloaded)
@@ -579,19 +578,6 @@ impl Server {
             .peer
             .forward_request(request.sender_id, host_connection_id, request.payload)
             .await?)
-    }
-
-    async fn close_buffer(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::CloseBuffer>,
-    ) -> tide::Result<()> {
-        let host_connection_id = self
-            .state()
-            .read_project(request.payload.project_id, request.sender_id)?
-            .host_connection_id;
-        self.peer
-            .forward_send(request.sender_id, host_connection_id, request.payload)?;
-        Ok(())
     }
 
     async fn save_buffer(

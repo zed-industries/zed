@@ -201,7 +201,6 @@ impl Project {
         client.add_entity_message_handler(Self::handle_add_collaborator);
         client.add_entity_message_handler(Self::handle_buffer_reloaded);
         client.add_entity_message_handler(Self::handle_buffer_saved);
-        client.add_entity_message_handler(Self::handle_close_buffer);
         client.add_entity_message_handler(Self::handle_disk_based_diagnostics_updated);
         client.add_entity_message_handler(Self::handle_disk_based_diagnostics_updating);
         client.add_entity_message_handler(Self::handle_remove_collaborator);
@@ -3454,16 +3453,6 @@ impl Project {
                 .try_into()
                 .map_err(|_| anyhow!("invalid signature"))?,
         })
-    }
-
-    async fn handle_close_buffer(
-        _: ModelHandle<Self>,
-        _: TypedEnvelope<proto::CloseBuffer>,
-        _: Arc<Client>,
-        _: AsyncAppContext,
-    ) -> Result<()> {
-        // TODO: use this for following
-        Ok(())
     }
 
     async fn handle_buffer_saved(

@@ -201,8 +201,6 @@ pub trait File {
         cx: &mut MutableAppContext,
     ) -> Task<Result<(clock::Global, SystemTime)>>;
 
-    fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext);
-
     fn as_any(&self) -> &dyn Any;
 
     fn to_proto(&self) -> rpc::proto::File;
@@ -272,8 +270,6 @@ impl File for FakeFile {
     ) -> Task<Result<(clock::Global, SystemTime)>> {
         cx.spawn(|_| async move { Ok((Default::default(), SystemTime::UNIX_EPOCH)) })
     }
-
-    fn buffer_removed(&self, _: u64, _: &mut MutableAppContext) {}
 
     fn as_any(&self) -> &dyn Any {
         self
@@ -1870,7 +1866,6 @@ impl Entity for Buffer {
 
     fn release(&mut self, cx: &mut gpui::MutableAppContext) {
         if let Some(file) = self.file.as_ref() {
-            file.buffer_removed(self.remote_id(), cx);
             if let Some((lang_server, file)) = self.language_server.as_ref().zip(file.as_local()) {
                 let request = lang_server
                     .server

@@ -1415,20 +1415,6 @@ impl language::File for File {
         })
     }
 
-    fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext) {
-        self.worktree.update(cx, |worktree, _| {
-            if let Worktree::Remote(worktree) = worktree {
-                worktree
-                    .client
-                    .send(proto::CloseBuffer {
-                        project_id: worktree.project_id,
-                        buffer_id,
-                    })
-                    .log_err();
-            }
-        });
-    }
-
     fn as_any(&self) -> &dyn Any {
         self
     }
