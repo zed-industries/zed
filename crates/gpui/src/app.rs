@@ -60,6 +60,10 @@ pub trait View: Entity + Sized {
     }
 }
 
+pub trait Delegator: Entity {
+    type Delegation;
+}
+
 pub trait ReadModel {
     fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T;
 }
@@ -740,6 +744,7 @@ type ActionCallback =
 type GlobalActionCallback = dyn FnMut(&dyn AnyAction, &mut MutableAppContext);
 
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
+type DelegationCallback = Box<dyn FnMut(Box<dyn Any>, &mut MutableAppContext) -> bool>;
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type ReleaseObservationCallback = Box<dyn FnMut(&mut MutableAppContext)>;
 
@@ -757,6 +762,7 @@ pub struct MutableAppContext {
     next_subscription_id: usize,
     frame_count: usize,
     subscriptions: Arc<Mutex<HashMap<usize, BTreeMap<usize, SubscriptionCallback>>>>,
+    delegations: Arc<Mutex<HashMap<usize, (usize, DelegationCallback)>>>,
     observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ObservationCallback>>>>,
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
     presenters_and_platform_windows:
@@ -804,6 +810,7 @@ impl MutableAppContext {
             next_subscription_id: 0,
             frame_count: 0,
             subscriptions: Default::default(),
+            delegations: Default::default(),
             observations: Default::default(),
             release_observations: Default::default(),
             presenters_and_platform_windows: HashMap::new(),
@@ -1146,6 +1153,37 @@ impl MutableAppContext {
             id,
             entity_id: handle.id(),
             observations: Some(Arc::downgrade(&self.observations)),
+        }
+    }
+
+    pub fn become_delegate_internal<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
+    where
+        E: Entity,
+        E::Event: 'static,
+        H: Handle<E>,
+        F: 'static + FnMut(H, &E::Event, &mut Self) -> bool,
+    {
+        let id = post_inc(&mut self.next_subscription_id);
+        let emitter = handle.downgrade();
+        self.subscriptions
+            .lock()
+            .entry(handle.id())
+            .or_default()
+            .insert(
+                id,
+                Box::new(move |payload, cx| {
+                    if let Some(emitter) = H::upgrade_from(&emitter, cx.as_ref()) {
+                        let payload = payload.downcast_ref().expect("downcast is type safe");
+                        callback(emitter, payload, cx)
+                    } else {
+                        false
+                    }
+                }),
+            );
+        Subscription::Subscription {
+            id,
+            entity_id: handle.id(),
+            subscriptions: Some(Arc::downgrade(&self.subscriptions)),
         }
     }
 
@@ -2588,6 +2626,27 @@ impl<'a, T: View> ViewContext<'a, T> {
                 false
             }
         })
+    }
+
+    pub fn become_delegate<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
+    where
+        E: Delegator,
+        E::Event: 'static,
+        H: Handle<E>,
+        F: 'static + FnMut(&mut T, H, E::Event, &mut ViewContext<T>),
+    {
+        // let subscriber = self.weak_handle();
+        // self.app
+        //     .subscribe_internal(handle, move |emitter, event, cx| {
+        //         if let Some(subscriber) = subscriber.upgrade(cx) {
+        //             subscriber.update(cx, |subscriber, cx| {
+        //                 callback(subscriber, emitter, event, cx);
+        //             });
+        //             true
+        //         } else {
+        //             false
+        //         }
+        //     })
     }
 
     pub fn observe_release<E, F, H>(&mut self, handle: &H, mut callback: F) -> Subscription
