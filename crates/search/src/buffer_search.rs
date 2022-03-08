@@ -5,7 +5,7 @@ use gpui::{
     action, elements::*, keymap::Binding, platform::CursorStyle, Entity, MutableAppContext,
     RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use language::AnchorRangeExt;
+use language::OffsetRangeExt;
 use postage::watch;
 use project::search::SearchQuery;
 use std::ops::Range;

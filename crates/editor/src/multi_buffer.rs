@@ -8,8 +8,8 @@ use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
     char_kind, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, DiagnosticEntry, Event, File,
-    Language, Outline, OutlineItem, Selection, ToOffset as _, ToPoint as _, ToPointUtf16 as _,
-    TransactionId,
+    Language, OffsetRangeExt, Outline, OutlineItem, Selection, ToOffset as _, ToPoint as _,
+    ToPointUtf16 as _, TransactionId,
 };
 use std::{
     cell::{Ref, RefCell},
@@ -25,7 +25,7 @@ use text::{
     locator::Locator,
     rope::TextDimension,
     subscription::{Subscription, Topic},
-    AnchorRangeExt as _, Edit, Point, PointUtf16, TextSummary,
+    Edit, Point, PointUtf16, TextSummary,
 };
 use theme::SyntaxTheme;
 

@@ -556,6 +556,7 @@ impl LocalWorktree {
     }
 
     pub fn diagnostics_for_path(&self, path: &Path) -> Option<Vec<DiagnosticEntry<PointUtf16>>> {
+        dbg!(&self.diagnostics);
         self.diagnostics.get(path).cloned()
     }
 

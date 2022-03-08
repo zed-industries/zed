@@ -32,8 +32,8 @@ use items::{BufferItemHandle, MultiBufferItemHandle};
 use itertools::Itertools as _;
 pub use language::{char_kind, CharKind};
 use language::{
-    AnchorRangeExt as _, BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic,
-    DiagnosticSeverity, Language, Point, Selection, SelectionGoal, TransactionId,
+    BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticSeverity,
+    Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
 use multi_buffer::MultiBufferChunks;
 pub use multi_buffer::{
@@ -8235,9 +8235,6 @@ mod tests {
             .update(cx, |project, cx| project.open_buffer(project_path, cx))
             .await
             .unwrap();
-        buffer.update(cx, |buffer, cx| {
-            buffer.set_language_server(Some(language_server), cx);
-        });
 
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         buffer.next_notification(&cx).await;

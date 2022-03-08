@@ -1011,8 +1011,8 @@ mod tests {
     };
     use gpui::{executor, ModelHandle, TestAppContext};
     use language::{
-        tree_sitter_rust, AnchorRangeExt, Diagnostic, DiagnosticEntry, Language, LanguageConfig,
-        LanguageRegistry, LanguageServerConfig, Point, ToLspPosition,
+        tree_sitter_rust, Diagnostic, DiagnosticEntry, Language, LanguageConfig, LanguageRegistry,
+        LanguageServerConfig, OffsetRangeExt, Point, ToLspPosition,
     };
     use lsp;
     use parking_lot::Mutex;
