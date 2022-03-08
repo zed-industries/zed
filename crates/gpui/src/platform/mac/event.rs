@@ -125,6 +125,48 @@ impl Event {
                     window_height - native_event.locationInWindow().y as f32,
                 ),
             }),
+            NSEventType::NSRightMouseDown => {
+                let modifiers = native_event.modifierFlags();
+                window_height.map(|window_height| Self::RightMouseDown {
+                    position: vec2f(
+                        native_event.locationInWindow().x as f32,
+                        window_height - native_event.locationInWindow().y as f32,
+                    ),
+                    ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
+                    alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
+                    shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
+                    cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
+                    click_count: native_event.clickCount() as usize,
+                })
+            }
+            NSEventType::NSRightMouseUp => window_height.map(|window_height| Self::RightMouseUp {
+                position: vec2f(
+                    native_event.locationInWindow().x as f32,
+                    window_height - native_event.locationInWindow().y as f32,
+                ),
+            }),
+            NSEventType::NSOtherMouseDown => {
+                let modifiers = native_event.modifierFlags();
+                window_height.map(|window_height| Self::OtherMouseDown {
+                    position: vec2f(
+                        native_event.locationInWindow().x as f32,
+                        window_height - native_event.locationInWindow().y as f32,
+                    ),
+                    button: native_event.buttonNumber() as u16,
+                    ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
+                    alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
+                    shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
+                    cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
+                    click_count: native_event.clickCount() as usize,
+                })
+            }
+            NSEventType::NSOtherMouseUp => window_height.map(|window_height| Self::OtherMouseUp {
+                position: vec2f(
+                    native_event.locationInWindow().x as f32,
+                    window_height - native_event.locationInWindow().y as f32,
+                ),
+                button: native_event.buttonNumber() as u16,
+            }),
             NSEventType::NSLeftMouseDragged => {
                 window_height.map(|window_height| Self::LeftMouseDragged {
                     position: vec2f(

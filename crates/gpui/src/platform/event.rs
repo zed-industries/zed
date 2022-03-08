@@ -26,6 +26,30 @@ pub enum Event {
     LeftMouseDragged {
         position: Vector2F,
     },
+    RightMouseDown {
+        position: Vector2F,
+        ctrl: bool,
+        alt: bool,
+        shift: bool,
+        cmd: bool,
+        click_count: usize,
+    },
+    RightMouseUp {
+        position: Vector2F,
+    },
+    OtherMouseDown {
+        position: Vector2F,
+        button: u16,
+        ctrl: bool,
+        alt: bool,
+        shift: bool,
+        cmd: bool,
+        click_count: usize,
+    },
+    OtherMouseUp {
+        position: Vector2F,
+        button: u16,
+    },
     MouseMoved {
         position: Vector2F,
         left_mouse_down: bool,

@@ -8,7 +8,7 @@ use gpui::{
     keymap::Binding,
     platform::CursorStyle,
     AnyViewHandle, Entity, MutableAppContext, Quad, RenderContext, Task, View, ViewContext,
-    ViewHandle,
+    ViewHandle, WeakViewHandle,
 };
 use postage::watch;
 use project::ProjectPath;
@@ -27,8 +27,8 @@ action!(ActivateNextItem);
 action!(CloseActiveItem);
 action!(CloseInactiveItems);
 action!(CloseItem, usize);
-action!(GoBack);
-action!(GoForward);
+action!(GoBack, Option<WeakViewHandle<Pane>>);
+action!(GoForward, Option<WeakViewHandle<Pane>>);
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -54,11 +54,19 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, action: &Split, cx| {
         pane.split(action.0, cx);
     });
-    cx.add_action(|workspace: &mut Workspace, _: &GoBack, cx| {
-        Pane::go_back(workspace, cx).detach();
+    cx.add_action(|workspace: &mut Workspace, action: &GoBack, cx| {
+        Pane::go_back(
+            workspace,
+            action.0.as_ref().and_then(|weak_handle| weak_handle.upgrade(cx)),
+            cx
+        ).detach();
     });
-    cx.add_action(|workspace: &mut Workspace, _: &GoForward, cx| {
-        Pane::go_forward(workspace, cx).detach();
+    cx.add_action(|workspace: &mut Workspace, action: &GoForward, cx| {
+        Pane::go_forward(
+            workspace,
+            action.0.as_ref().and_then(|weak_handle| weak_handle.upgrade(cx)),
+            cx
+        ).detach();
     });
 
     cx.add_bindings(vec![
@@ -70,8 +78,8 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("cmd-k down", Split(SplitDirection::Down), Some("Pane")),
         Binding::new("cmd-k left", Split(SplitDirection::Left), Some("Pane")),
         Binding::new("cmd-k right", Split(SplitDirection::Right), Some("Pane")),
-        Binding::new("ctrl--", GoBack, Some("Pane")),
-        Binding::new("shift-ctrl-_", GoForward, Some("Pane")),
+        Binding::new("ctrl--", GoBack(None), Some("Pane")),
+        Binding::new("shift-ctrl-_", GoForward(None), Some("Pane")),
     ]);
 }
 
@@ -163,19 +171,19 @@ impl Pane {
         cx.emit(Event::Activate);
     }
 
-    pub fn go_back(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> Task<()> {
+    pub fn go_back(workspace: &mut Workspace, pane: Option<ViewHandle<Pane>>, cx: &mut ViewContext<Workspace>) -> Task<()> {
         Self::navigate_history(
             workspace,
-            workspace.active_pane().clone(),
+            pane.unwrap_or_else(|| workspace.active_pane().clone()),
             NavigationMode::GoingBack,
             cx,
         )
     }
 
-    pub fn go_forward(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> Task<()> {
+    pub fn go_forward(workspace: &mut Workspace, pane: Option<ViewHandle<Pane>>, cx: &mut ViewContext<Workspace>) -> Task<()> {
         Self::navigate_history(
             workspace,
-            workspace.active_pane().clone(),
+            pane.unwrap_or_else(|| workspace.active_pane().clone()),
             NavigationMode::GoingForward,
             cx,
         )
@@ -187,6 +195,8 @@ impl Pane {
         mode: NavigationMode,
         cx: &mut ViewContext<Workspace>,
     ) -> Task<()> {
+        workspace.activate_pane(pane.clone(), cx);
+
         let to_load = pane.update(cx, |pane, cx| {
             // Retrieve the weak item handle from the history.
             let entry = pane.nav_history.borrow_mut().pop(mode)?;
@@ -634,19 +644,33 @@ impl View for Pane {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        if let Some(active_item) = self.active_item() {
-            Flex::column()
-                .with_child(self.render_tabs(cx))
-                .with_children(
-                    self.active_toolbar()
-                        .as_ref()
-                        .map(|view| ChildView::new(view).boxed()),
-                )
-                .with_child(ChildView::new(active_item).flexible(1., true).boxed())
-                .named("pane")
-        } else {
-            Empty::new().named("pane")
-        }
+        let this = cx.handle();
+
+        EventHandler::new(
+            if let Some(active_item) = self.active_item() {
+                Flex::column()
+                    .with_child(self.render_tabs(cx))
+                    .with_children(
+                        self.active_toolbar()
+                            .as_ref()
+                            .map(|view| ChildView::new(view).boxed()),
+                    )
+                    .with_child(ChildView::new(active_item).flexible(1., true).boxed())
+                    .boxed()
+            } else {
+                Empty::new().boxed()
+            }
+        )
+        .on_other_mouse_down(move |button, cx| {
+            match button {
+                3 => cx.dispatch_action(GoBack(Some(this.clone()))),
+                4 => cx.dispatch_action(GoForward(Some(this.clone()))),
+                _ => return false,
+            };
+            true
+        })
+        .named("pane")
+
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {

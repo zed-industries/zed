@@ -10,6 +10,8 @@ pub struct EventHandler {
     child: ElementBox,
     capture: Option<Box<dyn FnMut(&Event, RectF, &mut EventContext) -> bool>>,
     mouse_down: Option<Box<dyn FnMut(&mut EventContext) -> bool>>,
+    right_mouse_down: Option<Box<dyn FnMut(&mut EventContext) -> bool>>,
+    other_mouse_down: Option<Box<dyn FnMut(u16, &mut EventContext) -> bool>>,
 }
 
 impl EventHandler {
@@ -18,6 +20,8 @@ impl EventHandler {
             child,
             capture: None,
             mouse_down: None,
+            right_mouse_down: None,
+            other_mouse_down: None,
         }
     }
 
@@ -26,6 +30,22 @@ impl EventHandler {
         F: 'static + FnMut(&mut EventContext) -> bool,
     {
         self.mouse_down = Some(Box::new(callback));
+        self
+    }
+
+    pub fn on_right_mouse_down<F>(mut self, callback: F) -> Self
+    where
+        F: 'static + FnMut(&mut EventContext) -> bool,
+    {
+        self.right_mouse_down = Some(Box::new(callback));
+        self
+    }
+
+    pub fn on_other_mouse_down<F>(mut self, callback: F) -> Self
+    where
+        F: 'static + FnMut(u16, &mut EventContext) -> bool,
+    {
+        self.other_mouse_down = Some(Box::new(callback));
         self
     }
 
@@ -86,7 +106,23 @@ impl Element for EventHandler {
                         }
                     }
                     false
-                }
+                },
+                Event::RightMouseDown { position, .. } => {
+                    if let Some(callback) = self.right_mouse_down.as_mut() {
+                        if bounds.contains_point(*position) {
+                            return callback(cx);
+                        }
+                    }
+                    false
+                },
+                Event::OtherMouseDown { position, button, .. } => {
+                    if let Some(callback) = self.other_mouse_down.as_mut() {
+                        if bounds.contains_point(*position) {
+                            return callback(*button, cx);
+                        }
+                    }
+                    false
+                },
                 _ => false,
             }
         }

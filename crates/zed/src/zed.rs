@@ -747,44 +747,44 @@ mod tests {
             (file3.clone(), DisplayPoint::new(15, 0))
         );
 
-        workspace.update(cx, |w, cx| Pane::go_back(w, cx)).await;
+        workspace.update(cx, |w, cx| Pane::go_back(w, None, cx)).await;
         assert_eq!(
             active_location(&workspace, cx),
             (file3.clone(), DisplayPoint::new(0, 0))
         );
 
-        workspace.update(cx, |w, cx| Pane::go_back(w, cx)).await;
+        workspace.update(cx, |w, cx| Pane::go_back(w, None, cx)).await;
         assert_eq!(
             active_location(&workspace, cx),
             (file2.clone(), DisplayPoint::new(0, 0))
         );
 
-        workspace.update(cx, |w, cx| Pane::go_back(w, cx)).await;
+        workspace.update(cx, |w, cx| Pane::go_back(w, None, cx)).await;
         assert_eq!(
             active_location(&workspace, cx),
             (file1.clone(), DisplayPoint::new(10, 0))
         );
 
-        workspace.update(cx, |w, cx| Pane::go_back(w, cx)).await;
+        workspace.update(cx, |w, cx| Pane::go_back(w, None, cx)).await;
         assert_eq!(
             active_location(&workspace, cx),
             (file1.clone(), DisplayPoint::new(0, 0))
         );
 
         // Go back one more time and ensure we don't navigate past the first item in the history.
-        workspace.update(cx, |w, cx| Pane::go_back(w, cx)).await;
+        workspace.update(cx, |w, cx| Pane::go_back(w, None, cx)).await;
         assert_eq!(
             active_location(&workspace, cx),
             (file1.clone(), DisplayPoint::new(0, 0))
         );
 
-        workspace.update(cx, |w, cx| Pane::go_forward(w, cx)).await;
+        workspace.update(cx, |w, cx| Pane::go_forward(w, None, cx)).await;
         assert_eq!(
             active_location(&workspace, cx),
             (file1.clone(), DisplayPoint::new(10, 0))
         );
 
-        workspace.update(cx, |w, cx| Pane::go_forward(w, cx)).await;
+        workspace.update(cx, |w, cx| Pane::go_forward(w, None, cx)).await;
         assert_eq!(
             active_location(&workspace, cx),
             (file2.clone(), DisplayPoint::new(0, 0))
@@ -798,7 +798,7 @@ mod tests {
                 .update(cx, |pane, cx| pane.close_item(editor3.id(), cx));
             drop(editor3);
         });
-        workspace.update(cx, |w, cx| Pane::go_forward(w, cx)).await;
+        workspace.update(cx, |w, cx| Pane::go_forward(w, None, cx)).await;
         assert_eq!(
             active_location(&workspace, cx),
             (file3.clone(), DisplayPoint::new(0, 0))
@@ -818,12 +818,12 @@ mod tests {
             })
             .await
             .unwrap();
-        workspace.update(cx, |w, cx| Pane::go_back(w, cx)).await;
+        workspace.update(cx, |w, cx| Pane::go_back(w, None, cx)).await;
         assert_eq!(
             active_location(&workspace, cx),
             (file1.clone(), DisplayPoint::new(10, 0))
         );
-        workspace.update(cx, |w, cx| Pane::go_forward(w, cx)).await;
+        workspace.update(cx, |w, cx| Pane::go_forward(w, None, cx)).await;
         assert_eq!(
             active_location(&workspace, cx),
             (file3.clone(), DisplayPoint::new(0, 0))
