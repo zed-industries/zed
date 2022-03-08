@@ -505,7 +505,7 @@ impl WorkspaceParams {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut MutableAppContext) -> Self {
         let fs = project::FakeFs::new(cx.background().clone());
-        let languages = Arc::new(LanguageRegistry::new());
+        let languages = Arc::new(LanguageRegistry::test());
         let http_client = client::test::FakeHttpClient::new(|_| async move {
             Ok(client::http::ServerResponse::new(404))
         });
