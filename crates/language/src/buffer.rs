@@ -691,26 +691,6 @@ impl Buffer {
             self.file = Some(new_file);
             self.file_update_count += 1;
         }
-        if let Some((state, local_file)) = &self
-            .language_server
-            .as_ref()
-            .zip(self.file.as_ref().and_then(|f| f.as_local()))
-        {
-            cx.background()
-                .spawn(
-                    state
-                        .server
-                        .notify::<lsp::notification::DidSaveTextDocument>(
-                            lsp::DidSaveTextDocumentParams {
-                                text_document: lsp::TextDocumentIdentifier {
-                                    uri: lsp::Url::from_file_path(local_file.abs_path(cx)).unwrap(),
-                                },
-                                text: None,
-                            },
-                        ),
-                )
-                .detach()
-        }
         cx.emit(Event::Saved);
         cx.notify();
     }

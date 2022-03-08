@@ -964,11 +964,37 @@ impl Project {
                         buffer_id: buffer.read(cx).remote_id(),
                         operations: vec![language::proto::serialize_operation(&operation)],
                     });
-                    cx.foreground()
-                        .spawn(async move {
-                            request.await.log_err();
-                        })
-                        .detach();
+                    cx.background().spawn(request).detach_and_log_err(cx);
+                }
+            }
+            BufferEvent::Saved => {
+                if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
+                    let worktree_id = file.worktree_id(cx);
+                    if let Some(abs_path) = file.as_local().map(|file| file.abs_path(cx)) {
+                        let text_document = lsp::TextDocumentIdentifier {
+                            uri: lsp::Url::from_file_path(abs_path).unwrap(),
+                        };
+
+                        let mut notifications = Vec::new();
+                        for ((lang_server_worktree_id, _), lang_server) in &self.language_servers {
+                            if *lang_server_worktree_id != worktree_id {
+                                continue;
+                            }
+
+                            notifications.push(
+                                lang_server.notify::<lsp::notification::DidSaveTextDocument>(
+                                    lsp::DidSaveTextDocumentParams {
+                                        text_document: text_document.clone(),
+                                        text: None,
+                                    },
+                                ),
+                            );
+                        }
+
+                        cx.background()
+                            .spawn(futures::future::try_join_all(notifications))
+                            .detach_and_log_err(cx);
+                    }
                 }
             }
             _ => {}
