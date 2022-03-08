@@ -25,7 +25,7 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
     let http = FakeHttpClient::with_404_response();
     let client = Client::new(http.clone());
     let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
-    let languages = LanguageRegistry::new();
+    let languages = LanguageRegistry::test();
     languages.add(Arc::new(language::Language::new(
         language::LanguageConfig {
             name: "Rust".into(),

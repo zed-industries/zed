@@ -1065,7 +1065,7 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_share_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         let (window_b, _) = cx_b.add_window(|_| EmptyView);
-        let lang_registry = Arc::new(LanguageRegistry::new());
+        let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
         cx_a.foreground().forbid_parking();
 
@@ -1197,7 +1197,7 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_unshare_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-        let lang_registry = Arc::new(LanguageRegistry::new());
+        let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
         cx_a.foreground().forbid_parking();
 
@@ -1297,7 +1297,7 @@ mod tests {
         cx_b: &mut TestAppContext,
         cx_c: &mut TestAppContext,
     ) {
-        let lang_registry = Arc::new(LanguageRegistry::new());
+        let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
         cx_a.foreground().forbid_parking();
 
@@ -1471,7 +1471,7 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_buffer_conflict_after_save(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
-        let lang_registry = Arc::new(LanguageRegistry::new());
+        let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
 
         // Connect to a server as 2 clients.
@@ -1553,7 +1553,7 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_buffer_reloading(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
-        let lang_registry = Arc::new(LanguageRegistry::new());
+        let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
 
         // Connect to a server as 2 clients.
@@ -1635,7 +1635,7 @@ mod tests {
         cx_b: &mut TestAppContext,
     ) {
         cx_a.foreground().forbid_parking();
-        let lang_registry = Arc::new(LanguageRegistry::new());
+        let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
 
         // Connect to a server as 2 clients.
@@ -1714,7 +1714,7 @@ mod tests {
         cx_b: &mut TestAppContext,
     ) {
         cx_a.foreground().forbid_parking();
-        let lang_registry = Arc::new(LanguageRegistry::new());
+        let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
 
         // Connect to a server as 2 clients.
@@ -1786,7 +1786,7 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_leaving_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
-        let lang_registry = Arc::new(LanguageRegistry::new());
+        let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
 
         // Connect to a server as 2 clients.
@@ -1884,7 +1884,7 @@ mod tests {
         cx_b: &mut TestAppContext,
     ) {
         cx_a.foreground().forbid_parking();
-        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let mut lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
 
         // Set up a fake language server.
@@ -2103,7 +2103,7 @@ mod tests {
         cx_b: &mut TestAppContext,
     ) {
         cx_a.foreground().forbid_parking();
-        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let mut lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
 
         // Set up a fake language server.
@@ -2310,7 +2310,7 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
-        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let mut lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
 
         // Set up a fake language server.
@@ -2409,7 +2409,7 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
-        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let mut lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
         fs.insert_tree(
             "/root-1",
@@ -2544,7 +2544,7 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_references(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
-        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let mut lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
         fs.insert_tree(
             "/root-1",
@@ -2675,7 +2675,7 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_project_search(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
-        let lang_registry = Arc::new(LanguageRegistry::new());
+        let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
         fs.insert_tree(
             "/root-1",
@@ -2782,7 +2782,7 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_document_highlights(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
-        let lang_registry = Arc::new(LanguageRegistry::new());
+        let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
         fs.insert_tree(
             "/root-1",
@@ -2918,7 +2918,7 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_project_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
-        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let mut lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
         fs.insert_tree(
             "/code",
@@ -3053,7 +3053,7 @@ mod tests {
         mut rng: StdRng,
     ) {
         cx_a.foreground().forbid_parking();
-        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let mut lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
         fs.insert_tree(
             "/root",
@@ -3157,7 +3157,7 @@ mod tests {
         cx_b: &mut TestAppContext,
     ) {
         cx_a.foreground().forbid_parking();
-        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let mut lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
         let mut path_openers_b = Vec::new();
         cx_b.update(|cx| editor::init(cx, &mut path_openers_b));
@@ -3393,7 +3393,7 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
-        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let mut lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
         let mut path_openers_b = Vec::new();
         cx_b.update(|cx| editor::init(cx, &mut path_openers_b));
@@ -4024,7 +4024,7 @@ mod tests {
         cx_c: &mut TestAppContext,
     ) {
         cx_a.foreground().forbid_parking();
-        let lang_registry = Arc::new(LanguageRegistry::new());
+        let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
 
         // Connect to a server as 3 clients.
@@ -4171,7 +4171,7 @@ mod tests {
 
         let rng = Arc::new(Mutex::new(rng));
 
-        let guest_lang_registry = Arc::new(LanguageRegistry::new());
+        let guest_lang_registry = Arc::new(LanguageRegistry::test());
         let (language_server_config, _fake_language_servers) = LanguageServerConfig::fake();
 
         let fs = FakeFs::new(cx.background());
@@ -4202,7 +4202,7 @@ mod tests {
             Project::local(
                 host.client.clone(),
                 host.user_store.clone(),
-                Arc::new(LanguageRegistry::new()),
+                Arc::new(LanguageRegistry::test()),
                 fs.clone(),
                 cx,
             )

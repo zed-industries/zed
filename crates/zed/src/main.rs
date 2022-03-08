@@ -1,14 +1,17 @@
 // Allow binary to be called Zed for a nice application menu when running executable direcly
 #![allow(non_snake_case)]
 
+use anyhow::{anyhow, Context, Result};
 use client::{self, http, ChannelList, UserStore};
 use fs::OpenOptions;
-use gpui::{App, AssetSource};
+use gpui::{App, AssetSource, Task};
 use log::LevelFilter;
 use parking_lot::Mutex;
 use simplelog::SimpleLogger;
-use std::{fs, path::PathBuf, sync::Arc};
+use smol::process::Command;
+use std::{env, fs, path::PathBuf, sync::Arc};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
+use util::ResultExt;
 use workspace::{self, settings, AppState, OpenNew, OpenParams, OpenPaths, Settings};
 use zed::{
     self, assets::Assets, build_window_options, build_workspace, fs::RealFs, language, menus,
@@ -39,7 +42,16 @@ fn main() {
             },
         );
     let (settings_tx, settings) = postage::watch::channel_with(settings);
-    let languages = Arc::new(language::build_language_registry());
+
+    let login_shell_env_loaded = if stdout_is_a_pty() {
+        Task::ready(())
+    } else {
+        app.background().spawn(async {
+            load_login_shell_environment().await.log_err();
+        })
+    };
+
+    let languages = Arc::new(language::build_language_registry(login_shell_env_loaded));
     languages.set_theme(&settings.borrow().theme.editor.syntax);
 
     app.run(move |cx| {
@@ -127,12 +139,47 @@ fn init_logger() {
     }
 }
 
+async fn load_login_shell_environment() -> Result<()> {
+    let marker = "ZED_LOGIN_SHELL_START";
+    let shell = env::var("SHELL").context(
+        "SHELL environment variable is not assigned so we can't source login environment variables",
+    )?;
+    let output = Command::new(&shell)
+        .args(["-lic", &format!("echo {marker} && /usr/bin/env")])
+        .output()
+        .await
+        .context("failed to spawn login shell to source login environment variables")?;
+    if !output.status.success() {
+        Err(anyhow!("login shell exited with error"))?;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    if let Some(env_output_start) = stdout.find(marker) {
+        let env_output = &stdout[env_output_start + marker.len()..];
+        for line in env_output.lines() {
+            if let Some(separator_index) = line.find('=') {
+                let key = &line[..separator_index];
+                let value = &line[separator_index + 1..];
+                env::set_var(key, value);
+            }
+        }
+        log::info!(
+            "set environment variables from shell:{}, path:{}",
+            shell,
+            env::var("PATH").unwrap_or_default(),
+        );
+    }
+
+    Ok(())
+}
+
 fn stdout_is_a_pty() -> bool {
     unsafe { libc::isatty(libc::STDOUT_FILENO as i32) != 0 }
 }
 
 fn collect_path_args() -> Vec<PathBuf> {
-    std::env::args()
+    env::args()
         .skip(1)
         .filter_map(|arg| match fs::canonicalize(arg) {
             Ok(path) => Some(path),

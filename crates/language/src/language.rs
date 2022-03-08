@@ -179,17 +179,24 @@ pub struct LanguageRegistry {
     language_server_download_dir: Option<Arc<Path>>,
     lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
     lsp_binary_statuses_rx: async_broadcast::Receiver<(Arc<Language>, LanguageServerBinaryStatus)>,
+    login_shell_env_loaded: Shared<Task<()>>,
 }
 
 impl LanguageRegistry {
-    pub fn new() -> Self {
+    pub fn new(login_shell_env_loaded: Task<()>) -> Self {
         let (lsp_binary_statuses_tx, lsp_binary_statuses_rx) = async_broadcast::broadcast(16);
         Self {
             language_server_download_dir: None,
             languages: Default::default(),
             lsp_binary_statuses_tx,
             lsp_binary_statuses_rx,
+            login_shell_env_loaded: login_shell_env_loaded.shared(),
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test() -> Self {
+        Self::new(Task::ready(()))
     }
 
     pub fn add(&self, language: Arc<Language>) {
@@ -234,7 +241,7 @@ impl LanguageRegistry {
 
     pub fn start_language_server(
         &self,
-        language: &Arc<Language>,
+        language: Arc<Language>,
         root_path: Arc<Path>,
         http_client: Arc<dyn HttpClient>,
         cx: &mut MutableAppContext,
@@ -273,28 +280,28 @@ impl LanguageRegistry {
 
         let adapter = language.adapter.clone()?;
         let background = cx.background().clone();
-        let server_binary_path = {
-            Some(
-                language
-                    .lsp_binary_path
-                    .lock()
-                    .get_or_insert_with(|| {
-                        get_server_binary_path(
-                            adapter.clone(),
-                            language.clone(),
-                            http_client,
-                            download_dir,
-                            self.lsp_binary_statuses_tx.clone(),
-                        )
-                        .map_err(Arc::new)
-                        .boxed()
-                        .shared()
-                    })
-                    .clone()
-                    .map_err(|e| anyhow!(e)),
-            )
-        }?;
+        let lsp_binary_statuses = self.lsp_binary_statuses_tx.clone();
+        let login_shell_env_loaded = self.login_shell_env_loaded.clone();
         Some(cx.background().spawn(async move {
+            login_shell_env_loaded.await;
+            let server_binary_path = language
+                .lsp_binary_path
+                .lock()
+                .get_or_insert_with(|| {
+                    get_server_binary_path(
+                        adapter.clone(),
+                        language.clone(),
+                        http_client,
+                        download_dir,
+                        lsp_binary_statuses,
+                    )
+                    .map_err(Arc::new)
+                    .boxed()
+                    .shared()
+                })
+                .clone()
+                .map_err(|e| anyhow!(e));
+
             let server_binary_path = server_binary_path.await?;
             let server_args = adapter.server_args();
             let server = lsp::LanguageServer::new(

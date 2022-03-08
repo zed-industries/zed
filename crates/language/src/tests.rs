@@ -25,7 +25,7 @@ fn init_logger() {
 
 #[gpui::test]
 fn test_select_language() {
-    let registry = LanguageRegistry::new();
+    let registry = LanguageRegistry::test();
     registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),

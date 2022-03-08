@@ -403,7 +403,7 @@ impl Project {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(fs: Arc<dyn Fs>, cx: &mut gpui::TestAppContext) -> ModelHandle<Project> {
-        let languages = Arc::new(LanguageRegistry::new());
+        let languages = Arc::new(LanguageRegistry::test());
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = client::Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
@@ -1017,7 +1017,7 @@ impl Project {
             .entry(key.clone())
             .or_insert_with(|| {
                 let language_server = self.languages.start_language_server(
-                    &language,
+                    language.clone(),
                     worktree_path,
                     self.client.http_client(),
                     cx,
