@@ -7,10 +7,13 @@ use crate::{Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
 use fold_map::{FoldMap, ToFoldPoint as _};
-use gpui::{fonts::FontId, Entity, ModelContext, ModelHandle};
+use gpui::{
+    fonts::{FontId, HighlightStyle},
+    Entity, ModelContext, ModelHandle,
+};
 use language::{Point, Subscription as BufferSubscription};
-use std::ops::Range;
-use sum_tree::Bias;
+use std::{any::TypeId, ops::Range, sync::Arc};
+use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
 use wrap_map::WrapMap;
 
@@ -23,6 +26,8 @@ pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
+type TextHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
+
 pub struct DisplayMap {
     buffer: ModelHandle<MultiBuffer>,
     buffer_subscription: BufferSubscription,
@@ -30,6 +35,7 @@ pub struct DisplayMap {
     tab_map: TabMap,
     wrap_map: ModelHandle<WrapMap>,
     block_map: BlockMap,
+    text_highlights: TextHighlights,
 }
 
 impl Entity for DisplayMap {
@@ -60,6 +66,7 @@ impl DisplayMap {
             tab_map,
             wrap_map,
             block_map,
+            text_highlights: Default::default(),
         }
     }
 
@@ -79,6 +86,7 @@ impl DisplayMap {
             tabs_snapshot,
             wraps_snapshot,
             blocks_snapshot,
+            text_highlights: self.text_highlights.clone(),
         }
     }
 
@@ -156,6 +164,20 @@ impl DisplayMap {
         block_map.remove(ids);
     }
 
+    pub fn highlight_text(
+        &mut self,
+        type_id: TypeId,
+        ranges: Vec<Range<Anchor>>,
+        style: HighlightStyle,
+    ) {
+        self.text_highlights
+            .insert(Some(type_id), Arc::new((style, ranges)));
+    }
+
+    pub fn clear_text_highlights(&mut self, type_id: TypeId) {
+        self.text_highlights.remove(&Some(type_id));
+    }
+
     pub fn set_font(&self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) {
         self.wrap_map
             .update(cx, |map, cx| map.set_font(font_id, font_size, cx));
@@ -178,6 +200,7 @@ pub struct DisplaySnapshot {
     tabs_snapshot: tab_map::TabSnapshot,
     wraps_snapshot: wrap_map::WrapSnapshot,
     blocks_snapshot: block_map::BlockSnapshot,
+    text_highlights: TextHighlights,
 }
 
 impl DisplaySnapshot {
@@ -1146,7 +1169,7 @@ mod tests {
         let mut chunks: Vec<(String, Option<Color>)> = Vec::new();
         for chunk in snapshot.chunks(rows, true) {
             let color = chunk
-                .highlight_id
+                .syntax_highlight_id
                 .and_then(|id| id.style(theme).map(|s| s.color));
             if let Some((last_chunk, last_color)) = chunks.last_mut() {
                 if color == *last_color {

@@ -440,7 +440,7 @@ pub struct Editor {
     vertical_scroll_margin: f32,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
-    highlighted_ranges: BTreeMap<TypeId, (Color, Vec<Range<Anchor>>)>,
+    background_highlights: BTreeMap<TypeId, (Color, Vec<Range<Anchor>>)>,
     nav_history: Option<ItemNavHistory>,
     context_menu: Option<ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
@@ -920,7 +920,7 @@ impl Editor {
             vertical_scroll_margin: 3.0,
             placeholder_text: None,
             highlighted_rows: None,
-            highlighted_ranges: Default::default(),
+            background_highlights: Default::default(),
             nav_history: None,
             context_menu: None,
             completion_tasks: Default::default(),
@@ -2350,7 +2350,7 @@ impl Editor {
             if let Some(editor) = editor.act_as::<Self>(cx) {
                 editor.update(cx, |editor, cx| {
                     let color = editor.style(cx).highlighted_line_background;
-                    editor.highlight_ranges::<Self>(ranges_to_highlight, color, cx);
+                    editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
                 });
             }
         });
@@ -2444,12 +2444,12 @@ impl Editor {
                         }
                     }
 
-                    this.highlight_ranges::<DocumentHighlightRead>(
+                    this.highlight_background::<DocumentHighlightRead>(
                         read_ranges,
                         read_background,
                         cx,
                     );
-                    this.highlight_ranges::<DocumentHighlightWrite>(
+                    this.highlight_background::<DocumentHighlightWrite>(
                         write_ranges,
                         write_background,
                         cx,
@@ -4333,7 +4333,7 @@ impl Editor {
                 if let Some(editor) = editor.act_as::<Self>(cx) {
                     editor.update(cx, |editor, cx| {
                         let color = editor.style(cx).highlighted_line_background;
-                        editor.highlight_ranges::<Self>(ranges_to_highlight, color, cx);
+                        editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
                     });
                 }
             });
@@ -4398,14 +4398,14 @@ impl Editor {
                             None,
                             cx,
                         );
-                        editor.highlight_ranges::<Rename>(
+                        editor.highlight_background::<Rename>(
                             vec![Anchor::min()..Anchor::max()],
                             style.diff_background_inserted,
                             cx,
                         );
                         editor
                     });
-                    this.highlight_ranges::<Rename>(
+                    this.highlight_background::<Rename>(
                         vec![range.clone()],
                         style.diff_background_deleted,
                         cx,
@@ -4500,7 +4500,7 @@ impl Editor {
     fn take_rename(&mut self, cx: &mut ViewContext<Self>) -> Option<RenameState> {
         let rename = self.pending_rename.take()?;
         self.remove_blocks([rename.block_id].into_iter().collect(), cx);
-        self.clear_highlighted_ranges::<Rename>(cx);
+        self.clear_background_highlights::<Rename>(cx);
 
         let editor = rename.editor.read(cx);
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -4545,7 +4545,7 @@ impl Editor {
             }
             let rename = self.pending_rename.take().unwrap();
             self.remove_blocks([rename.block_id].into_iter().collect(), cx);
-            self.clear_highlighted_ranges::<Rename>(cx);
+            self.clear_background_highlights::<Rename>(cx);
         }
     }
 
@@ -5265,7 +5265,7 @@ impl Editor {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
-    pub fn set_highlighted_rows(&mut self, rows: Option<Range<u32>>) {
+    pub fn highlight_rows(&mut self, rows: Option<Range<u32>>) {
         self.highlighted_rows = rows;
     }
 
@@ -5273,27 +5273,27 @@ impl Editor {
         self.highlighted_rows.clone()
     }
 
-    pub fn highlight_ranges<T: 'static>(
+    pub fn highlight_background<T: 'static>(
         &mut self,
         ranges: Vec<Range<Anchor>>,
         color: Color,
         cx: &mut ViewContext<Self>,
     ) {
-        self.highlighted_ranges
+        self.background_highlights
             .insert(TypeId::of::<T>(), (color, ranges));
         cx.notify();
     }
 
-    pub fn clear_highlighted_ranges<T: 'static>(
+    pub fn clear_background_highlights<T: 'static>(
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> Option<(Color, Vec<Range<Anchor>>)> {
         cx.notify();
-        self.highlighted_ranges.remove(&TypeId::of::<T>())
+        self.background_highlights.remove(&TypeId::of::<T>())
     }
 
     #[cfg(feature = "test-support")]
-    pub fn all_highlighted_ranges(
+    pub fn all_background_highlights(
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> Vec<(Range<DisplayPoint>, Color)> {
@@ -5301,23 +5301,23 @@ impl Editor {
         let buffer = &snapshot.buffer_snapshot;
         let start = buffer.anchor_before(0);
         let end = buffer.anchor_after(buffer.len());
-        self.highlighted_ranges_in_range(start..end, &snapshot)
+        self.background_highlights_in_range(start..end, &snapshot)
     }
 
-    pub fn highlighted_ranges_for_type<T: 'static>(&self) -> Option<(Color, &[Range<Anchor>])> {
-        self.highlighted_ranges
+    pub fn background_highlights_for_type<T: 'static>(&self) -> Option<(Color, &[Range<Anchor>])> {
+        self.background_highlights
             .get(&TypeId::of::<T>())
             .map(|(color, ranges)| (*color, ranges.as_slice()))
     }
 
-    pub fn highlighted_ranges_in_range(
+    pub fn background_highlights_in_range(
         &self,
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,
     ) -> Vec<(Range<DisplayPoint>, Color)> {
         let mut results = Vec::new();
         let buffer = &display_snapshot.buffer_snapshot;
-        for (color, ranges) in self.highlighted_ranges.values() {
+        for (color, ranges) in self.background_highlights.values() {
             let start_ix = match ranges.binary_search_by(|probe| {
                 let cmp = probe.end.cmp(&search_range.start, &buffer).unwrap();
                 if cmp.is_gt() {
@@ -5344,6 +5344,24 @@ impl Editor {
             }
         }
         results
+    }
+
+    pub fn highlight_text<T: 'static>(
+        &mut self,
+        ranges: Vec<Range<Anchor>>,
+        style: HighlightStyle,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.display_map.update(cx, |map, _| {
+            map.highlight_text(TypeId::of::<T>(), ranges, style)
+        });
+        cx.notify();
+    }
+
+    pub fn clear_text_highlights<T: 'static>(&mut self, cx: &mut ViewContext<Self>) {
+        self.display_map
+            .update(cx, |map, _| map.clear_text_highlights(TypeId::of::<T>()));
+        cx.notify();
     }
 
     fn next_blink_epoch(&mut self) -> usize {
@@ -8868,7 +8886,7 @@ mod tests {
                 buffer.anchor_after(range.start)..buffer.anchor_after(range.end)
             };
 
-            editor.highlight_ranges::<Type1>(
+            editor.highlight_background::<Type1>(
                 vec![
                     anchor_range(Point::new(2, 1)..Point::new(2, 3)),
                     anchor_range(Point::new(4, 2)..Point::new(4, 4)),
@@ -8878,7 +8896,7 @@ mod tests {
                 Color::red(),
                 cx,
             );
-            editor.highlight_ranges::<Type2>(
+            editor.highlight_background::<Type2>(
                 vec![
                     anchor_range(Point::new(3, 2)..Point::new(3, 5)),
                     anchor_range(Point::new(5, 3)..Point::new(5, 6)),
@@ -8890,7 +8908,7 @@ mod tests {
             );
 
             let snapshot = editor.snapshot(cx);
-            let mut highlighted_ranges = editor.highlighted_ranges_in_range(
+            let mut highlighted_ranges = editor.background_highlights_in_range(
                 anchor_range(Point::new(3, 4)..Point::new(7, 4)),
                 &snapshot,
             );
@@ -8919,7 +8937,7 @@ mod tests {
                 ]
             );
             assert_eq!(
-                editor.highlighted_ranges_in_range(
+                editor.background_highlights_in_range(
                     anchor_range(Point::new(5, 6)..Point::new(6, 4)),
                     &snapshot,
                 ),

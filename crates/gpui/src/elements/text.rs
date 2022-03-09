@@ -67,17 +67,20 @@ impl Element for Text {
         let mut highlight_ranges = self.highlights.iter().peekable();
         let chunks = std::iter::from_fn(|| {
             let result;
-            if let Some((range, highlight)) = highlight_ranges.peek() {
+            if let Some((range, highlight_style)) = highlight_ranges.peek() {
                 if offset < range.start {
-                    result = Some((&self.text[offset..range.start], None));
+                    result = Some((
+                        &self.text[offset..range.start],
+                        HighlightStyle::from(&self.style),
+                    ));
                     offset = range.start;
                 } else {
-                    result = Some((&self.text[range.clone()], Some(*highlight)));
+                    result = Some((&self.text[range.clone()], *highlight_style));
                     highlight_ranges.next();
                     offset = range.end;
                 }
             } else if offset < self.text.len() {
-                result = Some((&self.text[offset..], None));
+                result = Some((&self.text[offset..], HighlightStyle::from(&self.style)));
                 offset = self.text.len();
             } else {
                 result = None;
@@ -197,24 +200,24 @@ impl Element for Text {
 
 /// Perform text layout on a series of highlighted chunks of text.
 pub fn layout_highlighted_chunks<'a>(
-    chunks: impl Iterator<Item = (&'a str, Option<HighlightStyle>)>,
-    style: &'a TextStyle,
+    chunks: impl Iterator<Item = (&'a str, HighlightStyle)>,
+    text_style: &'a TextStyle,
     text_layout_cache: &'a TextLayoutCache,
     font_cache: &'a Arc<FontCache>,
     max_line_len: usize,
     max_line_count: usize,
 ) -> Vec<Line> {
     let mut layouts = Vec::with_capacity(max_line_count);
-    let mut prev_font_properties = style.font_properties.clone();
-    let mut prev_font_id = style.font_id;
+    let mut prev_font_properties = text_style.font_properties.clone();
+    let mut prev_font_id = text_style.font_id;
     let mut line = String::new();
     let mut styles = Vec::new();
     let mut row = 0;
     let mut line_exceeded_max_len = false;
-    for (chunk, highlight_style) in chunks.chain([("\n", None)]) {
+    for (chunk, highlight_style) in chunks.chain([("\n", Default::default())]) {
         for (ix, mut line_chunk) in chunk.split('\n').enumerate() {
             if ix > 0 {
-                layouts.push(text_layout_cache.layout_str(&line, style.font_size, &styles));
+                layouts.push(text_layout_cache.layout_str(&line, text_style.font_size, &styles));
                 line.clear();
                 styles.clear();
                 row += 1;
@@ -225,15 +228,13 @@ pub fn layout_highlighted_chunks<'a>(
             }
 
             if !line_chunk.is_empty() && !line_exceeded_max_len {
-                let highlight_style = highlight_style.unwrap_or(style.clone().into());
-
                 // Avoid a lookup if the font properties match the previous ones.
                 let font_id = if highlight_style.font_properties == prev_font_properties {
                     prev_font_id
                 } else {
                     font_cache
-                        .select_font(style.font_family_id, &highlight_style.font_properties)
-                        .unwrap_or(style.font_id)
+                        .select_font(text_style.font_family_id, &highlight_style.font_properties)
+                        .unwrap_or(text_style.font_id)
                 };
 
                 if line.len() + line_chunk.len() > max_line_len {

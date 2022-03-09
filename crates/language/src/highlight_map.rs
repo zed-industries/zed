@@ -8,7 +8,7 @@ pub struct HighlightMap(Arc<[HighlightId]>);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HighlightId(pub u32);
 
-const DEFAULT_HIGHLIGHT_ID: HighlightId = HighlightId(u32::MAX);
+const DEFAULT_SYNTAX_HIGHLIGHT_ID: HighlightId = HighlightId(u32::MAX);
 
 impl HighlightMap {
     pub fn new(capture_names: &[String], theme: &SyntaxTheme) -> Self {
@@ -36,7 +36,7 @@ impl HighlightMap {
                             Some((i, len))
                         })
                         .max_by_key(|(_, len)| *len)
-                        .map_or(DEFAULT_HIGHLIGHT_ID, |(i, _)| HighlightId(i as u32))
+                        .map_or(DEFAULT_SYNTAX_HIGHLIGHT_ID, |(i, _)| HighlightId(i as u32))
                 })
                 .collect(),
         )
@@ -46,7 +46,7 @@ impl HighlightMap {
         self.0
             .get(capture_id as usize)
             .copied()
-            .unwrap_or(DEFAULT_HIGHLIGHT_ID)
+            .unwrap_or(DEFAULT_SYNTAX_HIGHLIGHT_ID)
     }
 }
 
@@ -72,7 +72,7 @@ impl Default for HighlightMap {
 
 impl Default for HighlightId {
     fn default() -> Self {
-        DEFAULT_HIGHLIGHT_ID
+        DEFAULT_SYNTAX_HIGHLIGHT_ID
     }
 }
 

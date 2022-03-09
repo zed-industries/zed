@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::json::ToJson;
-use pathfinder_color::ColorU;
+use pathfinder_color::{ColorF, ColorU};
 use serde::{
     de::{self, Unexpected},
     Deserialize, Deserializer,
@@ -47,6 +47,29 @@ impl Color {
 
     pub fn from_u32(rgba: u32) -> Self {
         Self(ColorU::from_u32(rgba))
+    }
+
+    pub fn blend(source: Color, dest: Color) -> Color {
+        if dest.a == 255 {
+            return dest;
+        }
+
+        let source = source.0.to_f32();
+        let dest = dest.0.to_f32();
+
+        let a = source.a() + (dest.a() * (1. - source.a()));
+        let r = ((source.r() * source.a()) + (dest.r() * dest.a() * (1. - source.a()))) / a;
+        let g = ((source.g() * source.a()) + (dest.g() * dest.a() * (1. - source.a()))) / a;
+        let b = ((source.b() * source.a()) + (dest.b() * dest.a() * (1. - source.a()))) / a;
+
+        Self(ColorF::new(r, g, b, a).to_u8())
+    }
+
+    pub fn fade_out(&mut self, factor: f32) {
+        let source_alpha = 1. - factor.clamp(0., 1.);
+        let dest_alpha = self.0.a as f32 / 255.;
+        let dest_alpha = source_alpha + (dest_alpha * (1. - source_alpha));
+        self.0.a = (dest_alpha * (1. / 255.)) as u8;
     }
 }
 

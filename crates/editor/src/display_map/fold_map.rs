@@ -984,7 +984,8 @@ impl<'a> Iterator for FoldChunks<'a> {
             self.output_offset += output_text.len();
             return Some(Chunk {
                 text: output_text,
-                highlight_id: None,
+                syntax_highlight_id: None,
+                highlight_style: None,
                 diagnostic: None,
             });
         }

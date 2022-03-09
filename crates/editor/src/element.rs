@@ -606,30 +606,33 @@ impl EditorElement {
         } else {
             let style = &self.style;
             let chunks = snapshot.chunks(rows.clone(), true).map(|chunk| {
-                let highlight_style = chunk
-                    .highlight_id
-                    .and_then(|highlight_id| highlight_id.style(&style.syntax));
-                let highlight = if let Some(severity) = chunk.diagnostic {
+                let mut highlight_style = HighlightStyle {
+                    color: style.text.color,
+                    font_properties: style.text.font_properties,
+                    ..Default::default()
+                };
+
+                if let Some(syntax_highlight_style) = chunk
+                    .syntax_highlight_id
+                    .and_then(|id| id.style(&style.syntax))
+                {
+                    highlight_style.highlight(syntax_highlight_style);
+                }
+
+                if let Some(style) = chunk.highlight_style {
+                    highlight_style.highlight(style);
+                }
+
+                if let Some(severity) = chunk.diagnostic {
                     let diagnostic_style = super::diagnostic_style(severity, true, style);
-                    let underline = Some(Underline {
+                    highlight_style.underline = Some(Underline {
                         color: diagnostic_style.message.text.color,
                         thickness: 1.0.into(),
                         squiggly: true,
                     });
-                    if let Some(mut highlight) = highlight_style {
-                        highlight.underline = underline;
-                        Some(highlight)
-                    } else {
-                        Some(HighlightStyle {
-                            underline,
-                            color: style.text.color,
-                            font_properties: style.text.font_properties,
-                        })
-                    }
-                } else {
-                    highlight_style
-                };
-                (chunk.text, highlight)
+                }
+
+                (chunk.text, highlight_style)
             });
             layout_highlighted_chunks(
                 chunks,
@@ -852,7 +855,7 @@ impl Element for EditorElement {
             let display_map = view.display_map.update(cx, |map, cx| map.snapshot(cx));
 
             highlighted_rows = view.highlighted_rows();
-            highlighted_ranges = view.highlighted_ranges_in_range(
+            highlighted_ranges = view.background_highlights_in_range(
                 start_anchor.clone()..end_anchor.clone(),
                 &display_map,
             );

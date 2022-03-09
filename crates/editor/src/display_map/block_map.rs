@@ -807,7 +807,8 @@ impl<'a> Iterator for BlockChunks<'a> {
 
             return Some(Chunk {
                 text: unsafe { std::str::from_utf8_unchecked(&NEWLINES[..line_count as usize]) },
-                highlight_id: None,
+                syntax_highlight_id: None,
+                highlight_style: None,
                 diagnostic: None,
             });
         }
