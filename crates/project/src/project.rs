@@ -889,7 +889,7 @@ impl Project {
                 .await?;
             this.update(&mut cx, |this, cx| {
                 this.assign_language_to_buffer(&buffer, cx);
-                this.register_buffer_with_language_servers(&buffer, cx);
+                this.register_buffer_with_language_server(&buffer, cx);
             });
             Ok(())
         })
@@ -948,35 +948,23 @@ impl Project {
         .detach();
 
         self.assign_language_to_buffer(buffer, cx);
-        self.register_buffer_with_language_servers(buffer, cx);
+        self.register_buffer_with_language_server(buffer, cx);
 
         Ok(())
     }
 
-    fn register_buffer_with_language_servers(
+    fn register_buffer_with_language_server(
         &mut self,
         buffer_handle: &ModelHandle<Buffer>,
         cx: &mut ModelContext<Self>,
     ) {
         let buffer = buffer_handle.read(cx);
-        let buffer_language_name = buffer.language().map(|l| l.name().clone());
+        let buffer_id = buffer.remote_id();
         if let Some(file) = File::from_dyn(buffer.file()) {
-            let worktree_id = file.worktree_id(cx);
             if file.is_local() {
                 let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
-                let initial_snapshot = buffer.as_text_snapshot();
-                self.buffer_snapshots
-                    .insert(buffer.remote_id(), vec![(0, initial_snapshot.clone())]);
-
-                let mut notifications = Vec::new();
-                let did_open_text_document = lsp::DidOpenTextDocumentParams {
-                    text_document: lsp::TextDocumentItem::new(
-                        uri,
-                        Default::default(),
-                        0,
-                        initial_snapshot.text(),
-                    ),
-                };
+                let initial_snapshot = buffer.text_snapshot();
+                let language_server = self.language_server_for_buffer(buffer, cx).cloned();
 
                 if let Some(local_worktree) = file.worktree.read(cx).as_local() {
                     if let Some(diagnostics) = local_worktree.diagnostics_for_path(file.path()) {
@@ -985,32 +973,40 @@ impl Project {
                     }
                 }
 
-                for (language_name, server) in self.language_servers_for_worktree(worktree_id) {
-                    notifications.push(server.notify::<lsp::notification::DidOpenTextDocument>(
-                        did_open_text_document.clone(),
-                    ));
-
-                    if Some(language_name) == buffer_language_name.as_deref() {
-                        buffer_handle.update(cx, |buffer, cx| {
-                            buffer.set_completion_triggers(
-                                server
-                                    .capabilities()
-                                    .completion_provider
-                                    .as_ref()
-                                    .and_then(|provider| provider.trigger_characters.clone())
-                                    .unwrap_or(Vec::new()),
-                                cx,
-                            )
-                        });
-                    }
+                if let Some(server) = language_server {
+                    server
+                        .notify::<lsp::notification::DidOpenTextDocument>(
+                            lsp::DidOpenTextDocumentParams {
+                                text_document: lsp::TextDocumentItem::new(
+                                    uri,
+                                    Default::default(),
+                                    0,
+                                    initial_snapshot.text(),
+                                ),
+                            }
+                            .clone(),
+                        )
+                        .log_err();
+                    buffer_handle.update(cx, |buffer, cx| {
+                        buffer.set_completion_triggers(
+                            server
+                                .capabilities()
+                                .completion_provider
+                                .as_ref()
+                                .and_then(|provider| provider.trigger_characters.clone())
+                                .unwrap_or(Vec::new()),
+                            cx,
+                        )
+                    });
+                    self.buffer_snapshots
+                        .insert(buffer_id, vec![(0, initial_snapshot)]);
                 }
 
                 cx.observe_release(buffer_handle, |this, buffer, cx| {
                     if let Some(file) = File::from_dyn(buffer.file()) {
-                        let worktree_id = file.worktree_id(cx);
                         if file.is_local() {
                             let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
-                            for (_, server) in this.language_servers_for_worktree(worktree_id) {
+                            if let Some(server) = this.language_server_for_buffer(buffer, cx) {
                                 server
                                     .notify::<lsp::notification::DidCloseTextDocument>(
                                         lsp::DidCloseTextDocumentParams {
@@ -1046,9 +1042,11 @@ impl Project {
                 cx.background().spawn(request).detach_and_log_err(cx);
             }
             BufferEvent::Edited => {
+                let language_server = self
+                    .language_server_for_buffer(buffer.read(cx), cx)?
+                    .clone();
                 let buffer = buffer.read(cx);
                 let file = File::from_dyn(buffer.file())?;
-                let worktree_id = file.worktree_id(cx);
                 let abs_path = file.as_local()?.abs_path(cx);
                 let uri = lsp::Url::from_file_path(abs_path).unwrap();
                 let buffer_snapshots = self.buffer_snapshots.entry(buffer.remote_id()).or_default();
@@ -1075,18 +1073,19 @@ impl Project {
                     })
                     .collect();
 
-                let changes = lsp::DidChangeTextDocumentParams {
-                    text_document: lsp::VersionedTextDocumentIdentifier::new(uri, next_version),
-                    content_changes,
-                };
-
                 buffer_snapshots.push((next_version, next_snapshot));
 
-                for (_, server) in self.language_servers_for_worktree(worktree_id) {
-                    server
-                        .notify::<lsp::notification::DidChangeTextDocument>(changes.clone())
-                        .log_err();
-                }
+                language_server
+                    .notify::<lsp::notification::DidChangeTextDocument>(
+                        lsp::DidChangeTextDocumentParams {
+                            text_document: lsp::VersionedTextDocumentIdentifier::new(
+                                uri,
+                                next_version,
+                            ),
+                            content_changes,
+                        },
+                    )
+                    .log_err();
             }
             BufferEvent::Saved => {
                 let file = File::from_dyn(buffer.read(cx).file())?;
@@ -1177,17 +1176,27 @@ impl Project {
                     let language_server = language_server?.await.log_err()?;
                     let this = this.upgrade(&cx)?;
                     this.update(&mut cx, |this, cx| {
-                        this.language_servers.insert(key, language_server.clone());
+                        this.language_servers
+                            .insert(key.clone(), language_server.clone());
 
+                        // Tell the language server about every open buffer in the worktree that matches the language.
                         for buffer in this.opened_buffers.values() {
                             if let Some(buffer_handle) = buffer.upgrade(cx) {
                                 let buffer = buffer_handle.read(cx);
-                                let file = File::from_dyn(buffer.file())?;
-                                if file.worktree.read(cx).id() != worktree_id {
+                                let file = if let Some(file) = File::from_dyn(buffer.file()) {
+                                    file
+                                } else {
+                                    continue;
+                                };
+                                let language = if let Some(language) = buffer.language() {
+                                    language
+                                } else {
+                                    continue;
+                                };
+                                if (file.worktree.read(cx).id(), language.name()) != key {
                                     continue;
                                 }
 
-                                // Tell the language server about every open buffer in the worktree.
                                 let file = file.as_local()?;
                                 let versions = this
                                     .buffer_snapshots
@@ -1207,26 +1216,19 @@ impl Project {
                                         },
                                     )
                                     .log_err()?;
-
-                                // Update the language buffers
-                                if buffer
-                                    .language()
-                                    .map_or(false, |l| l.name() == language.name())
-                                {
-                                    buffer_handle.update(cx, |buffer, cx| {
-                                        buffer.set_completion_triggers(
-                                            language_server
-                                                .capabilities()
-                                                .completion_provider
-                                                .as_ref()
-                                                .and_then(|provider| {
-                                                    provider.trigger_characters.clone()
-                                                })
-                                                .unwrap_or(Vec::new()),
-                                            cx,
-                                        )
-                                    });
-                                }
+                                buffer_handle.update(cx, |buffer, cx| {
+                                    buffer.set_completion_triggers(
+                                        language_server
+                                            .capabilities()
+                                            .completion_provider
+                                            .as_ref()
+                                            .and_then(|provider| {
+                                                provider.trigger_characters.clone()
+                                            })
+                                            .unwrap_or(Vec::new()),
+                                        cx,
+                                    )
+                                });
                             }
                         }
 
@@ -1584,25 +1586,11 @@ impl Project {
         let mut remote_buffers = None;
         for buffer_handle in buffers {
             let buffer = buffer_handle.read(cx);
-            let worktree;
             if let Some(file) = File::from_dyn(buffer.file()) {
-                worktree = file.worktree.clone();
                 if let Some(buffer_abs_path) = file.as_local().map(|f| f.abs_path(cx)) {
-                    let lang_server;
-                    if let Some(lang) = buffer.language() {
-                        if let Some(server) = self
-                            .language_servers
-                            .get(&(worktree.read(cx).id(), lang.name()))
-                        {
-                            lang_server = server.clone();
-                        } else {
-                            return Task::ready(Ok(Default::default()));
-                        };
-                    } else {
-                        return Task::ready(Ok(Default::default()));
+                    if let Some(server) = self.language_server_for_buffer(buffer, cx) {
+                        local_buffers.push((buffer_handle, buffer_abs_path, server.clone()));
                     }
-
-                    local_buffers.push((buffer_handle, buffer_abs_path, lang_server));
                 } else {
                     remote_buffers.get_or_insert(Vec::new()).push(buffer_handle);
                 }
@@ -1918,7 +1906,7 @@ impl Project {
         if worktree.read(cx).as_local().is_some() {
             let buffer_abs_path = buffer_abs_path.unwrap();
             let lang_server =
-                if let Some(server) = self.language_server_for_buffer(&source_buffer_handle, cx) {
+                if let Some(server) = self.language_server_for_buffer(source_buffer, cx) {
                     server.clone()
                 } else {
                     return Task::ready(Ok(Default::default()));
@@ -2029,12 +2017,11 @@ impl Project {
         let buffer_id = buffer.remote_id();
 
         if self.is_local() {
-            let lang_server =
-                if let Some(server) = self.language_server_for_buffer(&buffer_handle, cx) {
-                    server.clone()
-                } else {
-                    return Task::ready(Ok(Default::default()));
-                };
+            let lang_server = if let Some(server) = self.language_server_for_buffer(buffer, cx) {
+                server.clone()
+            } else {
+                return Task::ready(Ok(Default::default()));
+            };
 
             cx.spawn(|this, mut cx| async move {
                 let resolved_completion = lang_server
@@ -2121,21 +2108,11 @@ impl Project {
 
         if worktree.read(cx).as_local().is_some() {
             let buffer_abs_path = buffer_abs_path.unwrap();
-            let lang_name;
-            let lang_server;
-            if let Some(lang) = buffer.language() {
-                lang_name = lang.name();
-                if let Some(server) = self
-                    .language_servers
-                    .get(&(worktree.read(cx).id(), lang_name.clone()))
-                {
-                    lang_server = server.clone();
-                } else {
-                    return Task::ready(Ok(Default::default()));
-                };
+            let lang_server = if let Some(server) = self.language_server_for_buffer(buffer, cx) {
+                server.clone()
             } else {
                 return Task::ready(Ok(Default::default()));
-            }
+            };
 
             let lsp_range = lsp::Range::new(
                 range.start.to_point_utf16(buffer).to_lsp_position(),
@@ -2223,12 +2200,11 @@ impl Project {
             } else {
                 return Task::ready(Ok(Default::default()));
             };
-            let lang_server =
-                if let Some(server) = self.language_server_for_buffer(&buffer_handle, cx) {
-                    server.clone()
-                } else {
-                    return Task::ready(Ok(Default::default()));
-                };
+            let lang_server = if let Some(server) = self.language_server_for_buffer(buffer, cx) {
+                server.clone()
+            } else {
+                return Task::ready(Ok(Default::default()));
+            };
             let range = action.range.to_point_utf16(buffer);
 
             cx.spawn(|this, mut cx| async move {
@@ -2674,7 +2650,7 @@ impl Project {
         if self.is_local() {
             let file = File::from_dyn(buffer.file()).and_then(File::as_local);
             if let Some((file, language_server)) =
-                file.zip(self.language_server_for_buffer(&buffer_handle, cx).cloned())
+                file.zip(self.language_server_for_buffer(buffer, cx).cloned())
             {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), cx);
                 return cx.spawn(|this, cx| async move {
@@ -3934,16 +3910,15 @@ impl Project {
                 )
             })
         } else {
-            Ok((**buffer.read(cx)).clone())
+            Ok((buffer.read(cx)).text_snapshot())
         }
     }
 
     fn language_server_for_buffer(
         &self,
-        buffer: &ModelHandle<Buffer>,
+        buffer: &Buffer,
         cx: &AppContext,
     ) -> Option<&Arc<LanguageServer>> {
-        let buffer = buffer.read(cx);
         if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
             let worktree_id = file.worktree_id(cx);
             self.language_servers.get(&(worktree_id, language.name()))
@@ -4339,20 +4314,8 @@ mod tests {
             .await
             .unwrap();
 
-        // A server is started up, and it is notified about both open buffers.
+        // A server is started up, and it is notified about Rust files.
         let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
-        assert_eq!(
-            fake_rust_server
-                .receive_notification::<lsp::notification::DidOpenTextDocument>()
-                .await
-                .text_document,
-            lsp::TextDocumentItem {
-                uri: lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap(),
-                version: 0,
-                text: "a = 1".to_string(),
-                language_id: Default::default()
-            }
-        );
         assert_eq!(
             fake_rust_server
                 .receive_notification::<lsp::notification::DidOpenTextDocument>()
@@ -4407,33 +4370,9 @@ mod tests {
                 .await
                 .text_document,
             lsp::TextDocumentItem {
-                uri: lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap(),
-                version: 0,
-                text: "a = 1".to_string(),
-                language_id: Default::default()
-            }
-        );
-        assert_eq!(
-            fake_json_server
-                .receive_notification::<lsp::notification::DidOpenTextDocument>()
-                .await
-                .text_document,
-            lsp::TextDocumentItem {
                 uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
                 version: 0,
                 text: "{\"a\": 1}".to_string(),
-                language_id: Default::default()
-            }
-        );
-        assert_eq!(
-            fake_json_server
-                .receive_notification::<lsp::notification::DidOpenTextDocument>()
-                .await
-                .text_document,
-            lsp::TextDocumentItem {
-                uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
-                version: 1,
-                text: "const A: i32 = 12;".to_string(),
                 language_id: Default::default()
             }
         );
@@ -4443,20 +4382,6 @@ mod tests {
         json_buffer.read_with(cx, |buffer, _| {
             assert_eq!(buffer.completion_triggers(), &[":".to_string()]);
         });
-
-        // The first language server is also notified about the new open buffer.
-        assert_eq!(
-            fake_rust_server
-                .receive_notification::<lsp::notification::DidOpenTextDocument>()
-                .await
-                .text_document,
-            lsp::TextDocumentItem {
-                uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
-                version: 0,
-                text: "{\"a\": 1}".to_string(),
-                language_id: Default::default()
-            }
-        );
 
         // When opening another buffer whose language server is already running,
         // it is also configured based on the existing language server's capabilities.
@@ -4473,39 +4398,45 @@ mod tests {
             );
         });
 
-        // Edit a buffer. The changes are reported to both the language servers.
+        // Changes are reported only to servers matching the buffer's language.
         toml_buffer.update(cx, |buffer, cx| buffer.edit([5..5], "23", cx));
+        rust_buffer2.update(cx, |buffer, cx| buffer.edit([0..0], "let x = 1;", cx));
         assert_eq!(
             fake_rust_server
                 .receive_notification::<lsp::notification::DidChangeTextDocument>()
                 .await
                 .text_document,
             lsp::VersionedTextDocumentIdentifier::new(
-                lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap(),
+                lsp::Url::from_file_path("/the-root/test2.rs").unwrap(),
                 1
+            )
+        );
+
+        // Save notifications are reported to all servers.
+        toml_buffer
+            .update(cx, |buffer, cx| buffer.save(cx))
+            .await
+            .unwrap();
+        assert_eq!(
+            fake_rust_server
+                .receive_notification::<lsp::notification::DidSaveTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentIdentifier::new(
+                lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap()
             )
         );
         assert_eq!(
             fake_json_server
-                .receive_notification::<lsp::notification::DidChangeTextDocument>()
-                .await,
-            lsp::DidChangeTextDocumentParams {
-                text_document: lsp::VersionedTextDocumentIdentifier::new(
-                    lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap(),
-                    1
-                ),
-                content_changes: vec![lsp::TextDocumentContentChangeEvent {
-                    range: Some(lsp::Range::new(
-                        lsp::Position::new(0, 5),
-                        lsp::Position::new(0, 5)
-                    )),
-                    range_length: None,
-                    text: "23".to_string(),
-                }],
-            },
+                .receive_notification::<lsp::notification::DidSaveTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentIdentifier::new(
+                lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap()
+            )
         );
 
-        // Close a buffer. Both language servers are notified.
+        // Close notifications are reported only to servers matching the buffer's language.
         cx.update(|_| drop(json_buffer));
         let close_message = lsp::DidCloseTextDocumentParams {
             text_document: lsp::TextDocumentIdentifier::new(
@@ -4514,12 +4445,6 @@ mod tests {
         };
         assert_eq!(
             fake_json_server
-                .receive_notification::<lsp::notification::DidCloseTextDocument>()
-                .await,
-            close_message,
-        );
-        assert_eq!(
-            fake_rust_server
                 .receive_notification::<lsp::notification::DidCloseTextDocument>()
                 .await,
             close_message,

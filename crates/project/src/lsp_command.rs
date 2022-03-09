@@ -225,7 +225,9 @@ impl LspCommand for PerformRename {
         if let Some(edit) = message {
             let language_server = project
                 .read_with(&cx, |project, cx| {
-                    project.language_server_for_buffer(&buffer, cx).cloned()
+                    project
+                        .language_server_for_buffer(buffer.read(cx), cx)
+                        .cloned()
                 })
                 .ok_or_else(|| anyhow!("no language server found for buffer"))?;
             let language = buffer
@@ -343,7 +345,9 @@ impl LspCommand for GetDefinition {
         let mut definitions = Vec::new();
         let language_server = project
             .read_with(&cx, |project, cx| {
-                project.language_server_for_buffer(&buffer, cx).cloned()
+                project
+                    .language_server_for_buffer(buffer.read(cx), cx)
+                    .cloned()
             })
             .ok_or_else(|| anyhow!("no language server found for buffer"))?;
         let language = buffer
@@ -519,7 +523,9 @@ impl LspCommand for GetReferences {
         let mut references = Vec::new();
         let language_server = project
             .read_with(&cx, |project, cx| {
-                project.language_server_for_buffer(&buffer, cx).cloned()
+                project
+                    .language_server_for_buffer(buffer.read(cx), cx)
+                    .cloned()
             })
             .ok_or_else(|| anyhow!("no language server found for buffer"))?;
         let language = buffer
