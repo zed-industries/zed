@@ -340,7 +340,11 @@ impl View for ThemeSelector {
             ConstrainedBox::new(
                 Container::new(
                     Flex::new(Axis::Vertical)
-                        .with_child(ChildView::new(&self.query_editor).boxed())
+                        .with_child(
+                            ChildView::new(&self.query_editor).contained()
+                                .with_style(settings.theme.selector.input_editor.container)
+                                .boxed(),
+                        )
                         .with_child(Flexible::new(1.0, false, self.render_matches(cx)).boxed())
                         .boxed(),
                 )
