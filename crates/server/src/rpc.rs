@@ -1948,8 +1948,8 @@ mod tests {
         fake_language_server
             .receive_notification::<lsp::notification::DidOpenTextDocument>()
             .await;
-        fake_language_server
-            .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
+            lsp::PublishDiagnosticsParams {
                 uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
                 version: None,
                 diagnostics: vec![lsp::Diagnostic {
@@ -1958,8 +1958,8 @@ mod tests {
                     message: "message 1".to_string(),
                     ..Default::default()
                 }],
-            })
-            .await;
+            },
+        );
 
         // Wait for server to see the diagnostics update.
         server
@@ -2008,8 +2008,8 @@ mod tests {
         });
 
         // Simulate a language server reporting more errors for a file.
-        fake_language_server
-            .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
+            lsp::PublishDiagnosticsParams {
                 uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
                 version: None,
                 diagnostics: vec![
@@ -2029,8 +2029,8 @@ mod tests {
                         ..Default::default()
                     },
                 ],
-            })
-            .await;
+            },
+        );
 
         // Client b gets the updated summaries
         project_b
@@ -2374,10 +2374,6 @@ mod tests {
             .await
             .unwrap();
 
-        let format = project_b.update(cx_b, |project, cx| {
-            project.format(HashSet::from_iter([buffer_b.clone()]), true, cx)
-        });
-
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::Formatting, _>(|_, _| {
             Some(vec![
@@ -2392,7 +2388,12 @@ mod tests {
             ])
         });
 
-        format.await.unwrap();
+        project_b
+            .update(cx_b, |project, cx| {
+                project.format(HashSet::from_iter([buffer_b.clone()]), true, cx)
+            })
+            .await
+            .unwrap();
         assert_eq!(
             buffer_b.read_with(cx_b, |buffer, _| buffer.text()),
             "let honey = two"
@@ -2482,8 +2483,6 @@ mod tests {
             .unwrap();
 
         // Request the definition of a symbol as the guest.
-        let definitions_1 = project_b.update(cx_b, |p, cx| p.definition(&buffer_b, 23, cx));
-
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_, _| {
             Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
@@ -2492,7 +2491,10 @@ mod tests {
             )))
         });
 
-        let definitions_1 = definitions_1.await.unwrap();
+        let definitions_1 = project_b
+            .update(cx_b, |p, cx| p.definition(&buffer_b, 23, cx))
+            .await
+            .unwrap();
         cx_b.read(|cx| {
             assert_eq!(definitions_1.len(), 1);
             assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
@@ -2509,7 +2511,6 @@ mod tests {
 
         // Try getting more definitions for the same buffer, ensuring the buffer gets reused from
         // the previous call to `definition`.
-        let definitions_2 = project_b.update(cx_b, |p, cx| p.definition(&buffer_b, 33, cx));
         fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_, _| {
             Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
                 lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
@@ -2517,7 +2518,10 @@ mod tests {
             )))
         });
 
-        let definitions_2 = definitions_2.await.unwrap();
+        let definitions_2 = project_b
+            .update(cx_b, |p, cx| p.definition(&buffer_b, 33, cx))
+            .await
+            .unwrap();
         cx_b.read(|cx| {
             assert_eq!(definitions_2.len(), 1);
             assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
@@ -2618,8 +2622,6 @@ mod tests {
             .unwrap();
 
         // Request references to a symbol as the guest.
-        let references = project_b.update(cx_b, |p, cx| p.references(&buffer_b, 7, cx));
-
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::References, _>(|params, _| {
             assert_eq!(
@@ -2642,7 +2644,10 @@ mod tests {
             ])
         });
 
-        let references = references.await.unwrap();
+        let references = project_b
+            .update(cx_b, |p, cx| p.references(&buffer_b, 7, cx))
+            .await
+            .unwrap();
         cx_b.read(|cx| {
             assert_eq!(references.len(), 3);
             assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
@@ -2846,8 +2851,6 @@ mod tests {
             .unwrap();
 
         // Request document highlights as the guest.
-        let highlights = project_b.update(cx_b, |p, cx| p.document_highlights(&buffer_b, 34, cx));
-
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::DocumentHighlightRequest, _>(
             |params, _| {
@@ -2889,7 +2892,10 @@ mod tests {
             },
         );
 
-        let highlights = highlights.await.unwrap();
+        let highlights = project_b
+            .update(cx_b, |p, cx| p.document_highlights(&buffer_b, 34, cx))
+            .await
+            .unwrap();
         buffer_b.read_with(cx_b, |buffer, _| {
             let snapshot = buffer.snapshot();
 
@@ -2991,8 +2997,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Request the definition of a symbol as the guest.
-        let symbols = project_b.update(cx_b, |p, cx| p.symbols("two", cx));
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::WorkspaceSymbol, _>(|_, _| {
             #[allow(deprecated)]
@@ -3009,7 +3013,11 @@ mod tests {
             }])
         });
 
-        let symbols = symbols.await.unwrap();
+        // Request the definition of a symbol as the guest.
+        let symbols = project_b
+            .update(cx_b, |p, cx| p.symbols("two", cx))
+            .await
+            .unwrap();
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].name, "TWO");
 
@@ -3120,6 +3128,14 @@ mod tests {
             .await
             .unwrap();
 
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
+        fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_, _| {
+            Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
+                lsp::Url::from_file_path("/root/b.rs").unwrap(),
+                lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+            )))
+        });
+
         let definitions;
         let buffer_b2;
         if rng.gen() {
@@ -3129,14 +3145,6 @@ mod tests {
             buffer_b2 = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "b.rs"), cx));
             definitions = project_b.update(cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
         }
-
-        let mut fake_language_server = fake_language_servers.next().await.unwrap();
-        fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_, _| {
-            Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
-                lsp::Url::from_file_path("/root/b.rs").unwrap(),
-                lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
-            )))
-        });
 
         let buffer_b2 = buffer_b2.await.unwrap();
         let definitions = definitions.await.unwrap();

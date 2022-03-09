@@ -1173,67 +1173,8 @@ impl Project {
                 );
                 let rpc = self.client.clone();
                 cx.spawn_weak(|this, mut cx| async move {
-                    let language_server = language_server?.await.log_err()?;
+                    let mut language_server = language_server?.await.log_err()?;
                     let this = this.upgrade(&cx)?;
-                    this.update(&mut cx, |this, cx| {
-                        this.language_servers
-                            .insert(key.clone(), language_server.clone());
-
-                        // Tell the language server about every open buffer in the worktree that matches the language.
-                        for buffer in this.opened_buffers.values() {
-                            if let Some(buffer_handle) = buffer.upgrade(cx) {
-                                let buffer = buffer_handle.read(cx);
-                                let file = if let Some(file) = File::from_dyn(buffer.file()) {
-                                    file
-                                } else {
-                                    continue;
-                                };
-                                let language = if let Some(language) = buffer.language() {
-                                    language
-                                } else {
-                                    continue;
-                                };
-                                if (file.worktree.read(cx).id(), language.name()) != key {
-                                    continue;
-                                }
-
-                                let file = file.as_local()?;
-                                let versions = this
-                                    .buffer_snapshots
-                                    .entry(buffer.remote_id())
-                                    .or_insert_with(|| vec![(0, buffer.text_snapshot())]);
-                                let (version, initial_snapshot) = versions.last().unwrap();
-                                let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
-                                language_server
-                                    .notify::<lsp::notification::DidOpenTextDocument>(
-                                        lsp::DidOpenTextDocumentParams {
-                                            text_document: lsp::TextDocumentItem::new(
-                                                uri,
-                                                Default::default(),
-                                                *version,
-                                                initial_snapshot.text(),
-                                            ),
-                                        },
-                                    )
-                                    .log_err()?;
-                                buffer_handle.update(cx, |buffer, cx| {
-                                    buffer.set_completion_triggers(
-                                        language_server
-                                            .capabilities()
-                                            .completion_provider
-                                            .as_ref()
-                                            .and_then(|provider| {
-                                                provider.trigger_characters.clone()
-                                            })
-                                            .unwrap_or(Vec::new()),
-                                        cx,
-                                    )
-                                });
-                            }
-                        }
-
-                        Some(())
-                    });
 
                     let disk_based_sources = language
                         .disk_based_diagnostic_sources()
@@ -1305,45 +1246,112 @@ impl Project {
                         .detach();
 
                     // Process all the LSP events.
-                    let this = this.downgrade();
-                    cx.spawn(|mut cx| async move {
-                        while let Ok(message) = diagnostics_rx.recv().await {
-                            let this = this.upgrade(&cx)?;
-                            match message {
-                                LspEvent::DiagnosticsStart => {
-                                    this.update(&mut cx, |this, cx| {
-                                        this.disk_based_diagnostics_started(cx);
-                                        if let Some(project_id) = this.remote_id() {
-                                            rpc.send(proto::DiskBasedDiagnosticsUpdating {
-                                                project_id,
-                                            })
+                    cx.spawn(|mut cx| {
+                        let this = this.downgrade();
+                        async move {
+                            while let Ok(message) = diagnostics_rx.recv().await {
+                                let this = this.upgrade(&cx)?;
+                                match message {
+                                    LspEvent::DiagnosticsStart => {
+                                        this.update(&mut cx, |this, cx| {
+                                            this.disk_based_diagnostics_started(cx);
+                                            if let Some(project_id) = this.remote_id() {
+                                                rpc.send(proto::DiskBasedDiagnosticsUpdating {
+                                                    project_id,
+                                                })
+                                                .log_err();
+                                            }
+                                        });
+                                    }
+                                    LspEvent::DiagnosticsUpdate(mut params) => {
+                                        language.process_diagnostics(&mut params);
+                                        this.update(&mut cx, |this, cx| {
+                                            this.update_diagnostics(
+                                                params,
+                                                &disk_based_sources,
+                                                cx,
+                                            )
                                             .log_err();
-                                        }
-                                    });
-                                }
-                                LspEvent::DiagnosticsUpdate(mut params) => {
-                                    language.process_diagnostics(&mut params);
-                                    this.update(&mut cx, |this, cx| {
-                                        this.update_diagnostics(params, &disk_based_sources, cx)
-                                            .log_err();
-                                    });
-                                }
-                                LspEvent::DiagnosticsFinish => {
-                                    this.update(&mut cx, |this, cx| {
-                                        this.disk_based_diagnostics_finished(cx);
-                                        if let Some(project_id) = this.remote_id() {
-                                            rpc.send(proto::DiskBasedDiagnosticsUpdated {
-                                                project_id,
-                                            })
-                                            .log_err();
-                                        }
-                                    });
+                                        });
+                                    }
+                                    LspEvent::DiagnosticsFinish => {
+                                        this.update(&mut cx, |this, cx| {
+                                            this.disk_based_diagnostics_finished(cx);
+                                            if let Some(project_id) = this.remote_id() {
+                                                rpc.send(proto::DiskBasedDiagnosticsUpdated {
+                                                    project_id,
+                                                })
+                                                .log_err();
+                                            }
+                                        });
+                                    }
                                 }
                             }
+                            Some(())
                         }
-                        Some(())
                     })
                     .detach();
+
+                    let language_server = language_server.initialize().await.log_err()?;
+                    this.update(&mut cx, |this, cx| {
+                        this.language_servers
+                            .insert(key.clone(), language_server.clone());
+
+                        // Tell the language server about every open buffer in the worktree that matches the language.
+                        for buffer in this.opened_buffers.values() {
+                            if let Some(buffer_handle) = buffer.upgrade(cx) {
+                                let buffer = buffer_handle.read(cx);
+                                let file = if let Some(file) = File::from_dyn(buffer.file()) {
+                                    file
+                                } else {
+                                    continue;
+                                };
+                                let language = if let Some(language) = buffer.language() {
+                                    language
+                                } else {
+                                    continue;
+                                };
+                                if (file.worktree.read(cx).id(), language.name()) != key {
+                                    continue;
+                                }
+
+                                let file = file.as_local()?;
+                                let versions = this
+                                    .buffer_snapshots
+                                    .entry(buffer.remote_id())
+                                    .or_insert_with(|| vec![(0, buffer.text_snapshot())]);
+                                let (version, initial_snapshot) = versions.last().unwrap();
+                                let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+                                language_server
+                                    .notify::<lsp::notification::DidOpenTextDocument>(
+                                        lsp::DidOpenTextDocumentParams {
+                                            text_document: lsp::TextDocumentItem::new(
+                                                uri,
+                                                Default::default(),
+                                                *version,
+                                                initial_snapshot.text(),
+                                            ),
+                                        },
+                                    )
+                                    .log_err()?;
+                                buffer_handle.update(cx, |buffer, cx| {
+                                    buffer.set_completion_triggers(
+                                        language_server
+                                            .capabilities()
+                                            .completion_provider
+                                            .as_ref()
+                                            .and_then(|provider| {
+                                                provider.trigger_characters.clone()
+                                            })
+                                            .unwrap_or(Vec::new()),
+                                        cx,
+                                    )
+                                });
+                            }
+                        }
+
+                        Some(())
+                    });
 
                     Some(language_server)
                 })
@@ -2654,7 +2662,7 @@ impl Project {
             {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), cx);
                 return cx.spawn(|this, cx| async move {
-                    if !request.check_capabilities(language_server.capabilities()) {
+                    if !request.check_capabilities(&language_server.capabilities()) {
                         return Ok(Default::default());
                     }
 
@@ -4516,8 +4524,8 @@ mod tests {
         fake_server.end_progress(&progress_token).await;
         fake_server.start_progress(&progress_token).await;
 
-        fake_server
-            .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        fake_server.notify::<lsp::notification::PublishDiagnostics>(
+            lsp::PublishDiagnosticsParams {
                 uri: Url::from_file_path("/dir/a.rs").unwrap(),
                 version: None,
                 diagnostics: vec![lsp::Diagnostic {
@@ -4526,8 +4534,8 @@ mod tests {
                     message: "undefined variable 'A'".to_string(),
                     ..Default::default()
                 }],
-            })
-            .await;
+            },
+        );
         assert_eq!(
             events.next().await.unwrap(),
             Event::DiagnosticsUpdated((worktree_id, Path::new("a.rs")).into())
@@ -4632,8 +4640,8 @@ mod tests {
         );
 
         // Report some diagnostics for the initial version of the buffer
-        fake_server
-            .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        fake_server.notify::<lsp::notification::PublishDiagnostics>(
+            lsp::PublishDiagnosticsParams {
                 uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
                 version: Some(open_notification.text_document.version),
                 diagnostics: vec![
@@ -4659,8 +4667,8 @@ mod tests {
                         ..Default::default()
                     },
                 ],
-            })
-            .await;
+            },
+        );
 
         // The diagnostics have moved down since they were created.
         buffer.next_notification(cx).await;
@@ -4718,8 +4726,8 @@ mod tests {
         });
 
         // Ensure overlapping diagnostics are highlighted correctly.
-        fake_server
-            .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        fake_server.notify::<lsp::notification::PublishDiagnostics>(
+            lsp::PublishDiagnosticsParams {
                 uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
                 version: Some(open_notification.text_document.version),
                 diagnostics: vec![
@@ -4738,8 +4746,8 @@ mod tests {
                         ..Default::default()
                     },
                 ],
-            })
-            .await;
+            },
+        );
 
         buffer.next_notification(cx).await;
         buffer.read_with(cx, |buffer, _| {
@@ -4805,8 +4813,8 @@ mod tests {
         );
 
         // Handle out-of-order diagnostics
-        fake_server
-            .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        fake_server.notify::<lsp::notification::PublishDiagnostics>(
+            lsp::PublishDiagnosticsParams {
                 uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
                 version: Some(open_notification.text_document.version),
                 diagnostics: vec![
@@ -4825,8 +4833,8 @@ mod tests {
                         ..Default::default()
                     },
                 ],
-            })
-            .await;
+            },
+        );
 
         buffer.next_notification(cx).await;
         buffer.read_with(cx, |buffer, _| {
