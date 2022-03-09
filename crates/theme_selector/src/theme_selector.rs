@@ -218,7 +218,8 @@ impl ThemeSelector {
             ))
         };
 
-        self.selected_index = self.selected_index
+        self.selected_index = self
+            .selected_index
             .min(self.matches.len().saturating_sub(1));
 
         cx.notify();
@@ -341,7 +342,8 @@ impl View for ThemeSelector {
                 Container::new(
                     Flex::new(Axis::Vertical)
                         .with_child(
-                            ChildView::new(&self.query_editor).contained()
+                            ChildView::new(&self.query_editor)
+                                .contained()
                                 .with_style(settings.theme.selector.input_editor.container)
                                 .boxed(),
                         )

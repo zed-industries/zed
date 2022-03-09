@@ -755,7 +755,11 @@ impl Workspace {
     }
 
     // Returns the model that was toggled closed if it was open
-    pub fn toggle_modal<V, F>(&mut self, cx: &mut ViewContext<Self>, add_view: F) -> Option<ViewHandle<V>>
+    pub fn toggle_modal<V, F>(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        add_view: F,
+    ) -> Option<ViewHandle<V>>
     where
         V: 'static + View,
         F: FnOnce(&mut ViewContext<Self>, &mut Self) -> ViewHandle<V>,
@@ -763,8 +767,7 @@ impl Workspace {
         cx.notify();
         // Whatever modal was visible is getting clobbered. If its the same type as V, then return
         // it. Otherwise, create a new modal and set it as active.
-        let already_open_modal = self.modal.take()
-            .and_then(|modal| modal.downcast::<V>());
+        let already_open_modal = self.modal.take().and_then(|modal| modal.downcast::<V>());
         if let Some(already_open_modal) = already_open_modal {
             cx.focus_self();
             Some(already_open_modal)
