@@ -5912,9 +5912,9 @@ pub fn styled_runs_for_code_label<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use language::LanguageConfig;
+    use language::{LanguageConfig, LanguageServerConfig};
     use lsp::FakeLanguageServer;
-    use project::{FakeFs, ProjectPath};
+    use project::FakeFs;
     use smol::stream::StreamExt;
     use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
@@ -8196,18 +8196,24 @@ mod tests {
     #[gpui::test]
     async fn test_completion(cx: &mut gpui::TestAppContext) {
         let settings = cx.read(Settings::test);
-        let (language_server, mut fake) = cx.update(|cx| {
-            lsp::LanguageServer::fake_with_capabilities(
-                lsp::ServerCapabilities {
-                    completion_provider: Some(lsp::CompletionOptions {
-                        trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-                cx,
-            )
+
+        let (mut language_server_config, mut fake_servers) = LanguageServerConfig::fake();
+        language_server_config.set_fake_capabilities(lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
         });
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".to_string()],
+                language_server: Some(language_server_config),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        ));
 
         let text = "
             one
@@ -8217,28 +8223,26 @@ mod tests {
         .unindent();
 
         let fs = FakeFs::new(cx.background().clone());
-        fs.insert_file("/file", text).await;
+        fs.insert_file("/file.rs", text).await;
 
         let project = Project::test(fs, cx);
+        project.update(cx, |project, _| project.languages().add(language));
 
-        let (worktree, relative_path) = project
+        let worktree_id = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/file", true, cx)
+                project.find_or_create_local_worktree("/file.rs", true, cx)
             })
             .await
-            .unwrap();
-        let project_path = ProjectPath {
-            worktree_id: worktree.read_with(cx, |worktree, _| worktree.id()),
-            path: relative_path.into(),
-        };
+            .unwrap()
+            .0
+            .read_with(cx, |tree, _| tree.id());
         let buffer = project
-            .update(cx, |project, cx| project.open_buffer(project_path, cx))
+            .update(cx, |project, cx| project.open_buffer((worktree_id, ""), cx))
             .await
             .unwrap();
+        let mut fake_server = fake_servers.next().await.unwrap();
 
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-        buffer.next_notification(&cx).await;
-
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, settings, cx));
 
         editor.update(cx, |editor, cx| {
@@ -8248,8 +8252,8 @@ mod tests {
         });
 
         handle_completion_request(
-            &mut fake,
-            "/file",
+            &mut fake_server,
+            "/file.rs",
             Point::new(0, 4),
             vec![
                 (Point::new(0, 4)..Point::new(0, 4), "first_completion"),
@@ -8279,7 +8283,7 @@ mod tests {
         });
 
         handle_resolve_completion_request(
-            &mut fake,
+            &mut fake_server,
             Some((Point::new(2, 5)..Point::new(2, 5), "\nadditional edit")),
         )
         .await;
@@ -8312,8 +8316,8 @@ mod tests {
         });
 
         handle_completion_request(
-            &mut fake,
-            "/file",
+            &mut fake_server,
+            "/file.rs",
             Point::new(2, 7),
             vec![
                 (Point::new(2, 6)..Point::new(2, 7), "fourth_completion"),
@@ -8331,8 +8335,8 @@ mod tests {
         });
 
         handle_completion_request(
-            &mut fake,
-            "/file",
+            &mut fake_server,
+            "/file.rs",
             Point::new(2, 8),
             vec![
                 (Point::new(2, 6)..Point::new(2, 8), "fourth_completion"),
@@ -8361,7 +8365,7 @@ mod tests {
             );
             apply_additional_edits
         });
-        handle_resolve_completion_request(&mut fake, None).await;
+        handle_resolve_completion_request(&mut fake_server, None).await;
         apply_additional_edits.await.unwrap();
 
         async fn handle_completion_request(

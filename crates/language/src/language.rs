@@ -247,29 +247,41 @@ impl LanguageRegistry {
         cx: &mut MutableAppContext,
     ) -> Option<Task<Result<Arc<lsp::LanguageServer>>>> {
         #[cfg(any(test, feature = "test-support"))]
-        if let Some(config) = &language.config.language_server {
-            if let Some(fake_config) = &config.fake_config {
-                let (server, mut fake_server) = lsp::LanguageServer::fake_with_capabilities(
-                    fake_config.capabilities.clone(),
-                    cx,
-                );
-
+        if language
+            .config
+            .language_server
+            .as_ref()
+            .and_then(|config| config.fake_config.as_ref())
+            .is_some()
+        {
+            let language = language.clone();
+            return Some(cx.spawn(|mut cx| async move {
+                let fake_config = language
+                    .config
+                    .language_server
+                    .as_ref()
+                    .unwrap()
+                    .fake_config
+                    .as_ref()
+                    .unwrap();
+                let (server, mut fake_server) = cx
+                    .update(|cx| {
+                        lsp::LanguageServer::fake_with_capabilities(
+                            fake_config.capabilities.clone(),
+                            cx,
+                        )
+                    })
+                    .await;
                 if let Some(initalizer) = &fake_config.initializer {
                     initalizer(&mut fake_server);
                 }
-
-                let servers_tx = fake_config.servers_tx.clone();
-                let initialized = server.capabilities();
-                cx.background()
-                    .spawn(async move {
-                        if initialized.await.is_some() {
-                            servers_tx.unbounded_send(fake_server).ok();
-                        }
-                    })
-                    .detach();
-
-                return Some(Task::ready(Ok(server.clone())));
-            }
+                fake_config
+                    .servers_tx
+                    .clone()
+                    .unbounded_send(fake_server)
+                    .ok();
+                Ok(server.clone())
+            }));
         }
 
         let download_dir = self
@@ -310,7 +322,8 @@ impl LanguageRegistry {
                 adapter.initialization_options(),
                 &root_path,
                 background,
-            )?;
+            )
+            .await?;
             Ok(server)
         }))
     }

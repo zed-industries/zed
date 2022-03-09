@@ -186,7 +186,7 @@ impl UserStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Arc<User>>> {
         if let Some(user) = self.users.get(&user_id).cloned() {
-            return cx.spawn_weak(|_, _| async move { Ok(user) });
+            return cx.foreground().spawn(async move { Ok(user) });
         }
 
         let load_users = self.load_users(vec![user_id], cx);

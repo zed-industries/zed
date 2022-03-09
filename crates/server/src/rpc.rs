@@ -1833,13 +1833,13 @@ mod tests {
 
         // Client A sees that a guest has joined.
         project_a
-            .condition(&cx_a, |p, _| p.collaborators().len() == 1)
+            .condition(cx_a, |p, _| p.collaborators().len() == 1)
             .await;
 
         // Drop client B's connection and ensure client A observes client B leaving the project.
         client_b.disconnect(&cx_b.to_async()).unwrap();
         project_a
-            .condition(&cx_a, |p, _| p.collaborators().len() == 0)
+            .condition(cx_a, |p, _| p.collaborators().len() == 0)
             .await;
 
         // Rejoin the project as client B
@@ -1856,14 +1856,15 @@ mod tests {
 
         // Client A sees that a guest has re-joined.
         project_a
-            .condition(&cx_a, |p, _| p.collaborators().len() == 1)
+            .condition(cx_a, |p, _| p.collaborators().len() == 1)
             .await;
 
         // Simulate connection loss for client B and ensure client A observes client B leaving the project.
+        client_b.wait_for_current_user(cx_b).await;
         server.disconnect_client(client_b.current_user_id(cx_b));
         cx_a.foreground().advance_clock(Duration::from_secs(3));
         project_a
-            .condition(&cx_a, |p, _| p.collaborators().len() == 0)
+            .condition(cx_a, |p, _| p.collaborators().len() == 0)
             .await;
     }
 
@@ -1944,6 +1945,9 @@ mod tests {
 
         // Simulate a language server reporting errors for a file.
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
+        fake_language_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await;
         fake_language_server
             .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
                 uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
@@ -4467,17 +4471,16 @@ mod tests {
 
             let peer_id = PeerId(connection_id_rx.next().await.unwrap().0);
             let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
-            let mut authed_user =
-                user_store.read_with(cx, |user_store, _| user_store.watch_current_user());
-            while authed_user.next().await.unwrap().is_none() {}
 
-            TestClient {
+            let client = TestClient {
                 client,
                 peer_id,
                 user_store,
                 project: Default::default(),
                 buffers: Default::default(),
-            }
+            };
+            client.wait_for_current_user(cx).await;
+            client
         }
 
         fn disconnect_client(&self, user_id: UserId) {
@@ -4555,6 +4558,13 @@ mod tests {
                 self.user_store
                     .read_with(cx, |user_store, _| user_store.current_user().unwrap().id),
             )
+        }
+
+        async fn wait_for_current_user(&self, cx: &TestAppContext) {
+            let mut authed_user = self
+                .user_store
+                .read_with(cx, |user_store, _| user_store.watch_current_user());
+            while authed_user.next().await.unwrap().is_none() {}
         }
 
         fn simulate_host(

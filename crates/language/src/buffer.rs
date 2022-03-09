@@ -203,79 +203,6 @@ pub trait LocalFile: File {
     );
 }
 
-#[cfg(any(test, feature = "test-support"))]
-pub struct FakeFile {
-    pub path: Arc<Path>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl FakeFile {
-    pub fn new(path: impl AsRef<Path>) -> Self {
-        Self {
-            path: path.as_ref().into(),
-        }
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl File for FakeFile {
-    fn as_local(&self) -> Option<&dyn LocalFile> {
-        Some(self)
-    }
-
-    fn mtime(&self) -> SystemTime {
-        SystemTime::UNIX_EPOCH
-    }
-
-    fn path(&self) -> &Arc<Path> {
-        &self.path
-    }
-
-    fn full_path(&self, _: &AppContext) -> PathBuf {
-        self.path.to_path_buf()
-    }
-
-    fn file_name(&self, _: &AppContext) -> OsString {
-        self.path.file_name().unwrap().to_os_string()
-    }
-
-    fn is_deleted(&self) -> bool {
-        false
-    }
-
-    fn save(
-        &self,
-        _: u64,
-        _: Rope,
-        _: clock::Global,
-        cx: &mut MutableAppContext,
-    ) -> Task<Result<(clock::Global, SystemTime)>> {
-        cx.spawn(|_| async move { Ok((Default::default(), SystemTime::UNIX_EPOCH)) })
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn to_proto(&self) -> rpc::proto::File {
-        unimplemented!()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl LocalFile for FakeFile {
-    fn abs_path(&self, _: &AppContext) -> PathBuf {
-        self.path.to_path_buf()
-    }
-
-    fn load(&self, cx: &AppContext) -> Task<Result<String>> {
-        cx.background().spawn(async move { Ok(Default::default()) })
-    }
-
-    fn buffer_reloaded(&self, _: u64, _: &clock::Global, _: SystemTime, _: &mut MutableAppContext) {
-    }
-}
-
 pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
 
 #[derive(Clone)]
@@ -1435,8 +1362,21 @@ impl Buffer {
         redone
     }
 
+    pub fn set_completion_triggers(&mut self, triggers: Vec<String>, cx: &mut ModelContext<Self>) {
+        self.completion_triggers = triggers.clone();
+        let lamport_timestamp = self.text.lamport_clock.tick();
+        self.send_operation(
+            Operation::UpdateCompletionTriggers {
+                triggers,
+                lamport_timestamp,
+            },
+            cx,
+        );
+        cx.notify();
+    }
+
     pub fn completion_triggers(&self) -> &[String] {
-        todo!()
+        &self.completion_triggers
     }
 }
 

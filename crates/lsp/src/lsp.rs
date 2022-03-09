@@ -3,7 +3,7 @@ use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite};
 use gpui::{executor, Task};
 use parking_lot::{Mutex, RwLock};
-use postage::{barrier, prelude::Stream, watch};
+use postage::{barrier, prelude::Stream};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, value::RawValue, Value};
 use smol::{
@@ -34,12 +34,11 @@ type ResponseHandler = Box<dyn Send + FnOnce(Result<&str, Error>)>;
 pub struct LanguageServer {
     next_id: AtomicUsize,
     outbound_tx: channel::Sender<Vec<u8>>,
-    capabilities: watch::Receiver<Option<ServerCapabilities>>,
+    capabilities: ServerCapabilities,
     notification_handlers: Arc<RwLock<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<HashMap<usize, ResponseHandler>>>,
     executor: Arc<executor::Background>,
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
-    initialized: barrier::Receiver,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
 }
 
@@ -100,7 +99,7 @@ struct Error {
 }
 
 impl LanguageServer {
-    pub fn new(
+    pub async fn new(
         binary_path: &Path,
         args: &[&str],
         options: Option<Value>,
@@ -116,10 +115,10 @@ impl LanguageServer {
             .spawn()?;
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
-        Self::new_internal(stdin, stdout, root_path, options, background)
+        Self::new_internal(stdin, stdout, root_path, options, background).await
     }
 
-    fn new_internal<Stdin, Stdout>(
+    async fn new_internal<Stdin, Stdout>(
         stdin: Stdin,
         stdout: Stdout,
         root_path: &Path,
@@ -215,109 +214,89 @@ impl LanguageServer {
             .log_err()
         });
 
-        let (initialized_tx, initialized_rx) = barrier::channel();
-        let (mut capabilities_tx, capabilities_rx) = watch::channel();
-        let this = Arc::new(Self {
+        let mut this = Arc::new(Self {
             notification_handlers,
             response_handlers,
-            capabilities: capabilities_rx,
+            capabilities: Default::default(),
             next_id: Default::default(),
             outbound_tx,
             executor: executor.clone(),
             io_tasks: Mutex::new(Some((input_task, output_task))),
-            initialized: initialized_rx,
             output_done_rx: Mutex::new(Some(output_done_rx)),
         });
 
         let root_uri = Url::from_file_path(root_path).map_err(|_| anyhow!("invalid root path"))?;
+
         executor
-            .spawn({
-                let this = this.clone();
-                async move {
-                    if let Some(capabilities) = this.init(root_uri, options).log_err().await {
-                        *capabilities_tx.borrow_mut() = Some(capabilities);
-                    }
-
-                    drop(initialized_tx);
-                }
-            })
-            .detach();
-
-        Ok(this)
-    }
-
-    async fn init(
-        self: Arc<Self>,
-        root_uri: Url,
-        options: Option<Value>,
-    ) -> Result<ServerCapabilities> {
-        #[allow(deprecated)]
-        let params = InitializeParams {
-            process_id: Default::default(),
-            root_path: Default::default(),
-            root_uri: Some(root_uri),
-            initialization_options: options,
-            capabilities: ClientCapabilities {
-                text_document: Some(TextDocumentClientCapabilities {
-                    definition: Some(GotoCapability {
-                        link_support: Some(true),
-                        ..Default::default()
-                    }),
-                    code_action: Some(CodeActionClientCapabilities {
-                        code_action_literal_support: Some(CodeActionLiteralSupport {
-                            code_action_kind: CodeActionKindLiteralSupport {
-                                value_set: vec![
-                                    CodeActionKind::REFACTOR.as_str().into(),
-                                    CodeActionKind::QUICKFIX.as_str().into(),
-                                ],
-                            },
-                        }),
-                        data_support: Some(true),
-                        resolve_support: Some(CodeActionCapabilityResolveSupport {
-                            properties: vec!["edit".to_string()],
-                        }),
-                        ..Default::default()
-                    }),
-                    completion: Some(CompletionClientCapabilities {
-                        completion_item: Some(CompletionItemCapability {
-                            snippet_support: Some(true),
-                            resolve_support: Some(CompletionItemCapabilityResolveSupport {
-                                properties: vec!["additionalTextEdits".to_string()],
+            .spawn(async move {
+                #[allow(deprecated)]
+                let params = InitializeParams {
+                    process_id: Default::default(),
+                    root_path: Default::default(),
+                    root_uri: Some(root_uri),
+                    initialization_options: options,
+                    capabilities: ClientCapabilities {
+                        text_document: Some(TextDocumentClientCapabilities {
+                            definition: Some(GotoCapability {
+                                link_support: Some(true),
+                                ..Default::default()
+                            }),
+                            code_action: Some(CodeActionClientCapabilities {
+                                code_action_literal_support: Some(CodeActionLiteralSupport {
+                                    code_action_kind: CodeActionKindLiteralSupport {
+                                        value_set: vec![
+                                            CodeActionKind::REFACTOR.as_str().into(),
+                                            CodeActionKind::QUICKFIX.as_str().into(),
+                                        ],
+                                    },
+                                }),
+                                data_support: Some(true),
+                                resolve_support: Some(CodeActionCapabilityResolveSupport {
+                                    properties: vec!["edit".to_string()],
+                                }),
+                                ..Default::default()
+                            }),
+                            completion: Some(CompletionClientCapabilities {
+                                completion_item: Some(CompletionItemCapability {
+                                    snippet_support: Some(true),
+                                    resolve_support: Some(CompletionItemCapabilityResolveSupport {
+                                        properties: vec!["additionalTextEdits".to_string()],
+                                    }),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
                             }),
                             ..Default::default()
                         }),
+                        experimental: Some(json!({
+                            "serverStatusNotification": true,
+                        })),
+                        window: Some(WindowClientCapabilities {
+                            work_done_progress: Some(true),
+                            ..Default::default()
+                        }),
                         ..Default::default()
-                    }),
-                    ..Default::default()
-                }),
-                experimental: Some(json!({
-                    "serverStatusNotification": true,
-                })),
-                window: Some(WindowClientCapabilities {
-                    work_done_progress: Some(true),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            trace: Default::default(),
-            workspace_folders: Default::default(),
-            client_info: Default::default(),
-            locale: Default::default(),
-        };
+                    },
+                    trace: Default::default(),
+                    workspace_folders: Default::default(),
+                    client_info: Default::default(),
+                    locale: Default::default(),
+                };
 
-        let this = self.clone();
-        let request = Self::request_internal::<request::Initialize>(
-            &this.next_id,
-            &this.response_handlers,
-            &this.outbound_tx,
-            params,
-        );
-        let response = request.await?;
-        Self::notify_internal::<notification::Initialized>(
-            &this.outbound_tx,
-            InitializedParams {},
-        )?;
-        Ok(response.capabilities)
+                let request = Self::request_internal::<request::Initialize>(
+                    &this.next_id,
+                    &this.response_handlers,
+                    &this.outbound_tx,
+                    params,
+                );
+                Arc::get_mut(&mut this).unwrap().capabilities = request.await?.capabilities;
+                Self::notify_internal::<notification::Initialized>(
+                    &this.outbound_tx,
+                    InitializedParams {},
+                )?;
+                Ok(this)
+            })
+            .await
     }
 
     pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>>> {
@@ -378,16 +357,8 @@ impl LanguageServer {
         }
     }
 
-    pub fn capabilities(&self) -> impl 'static + Future<Output = Option<ServerCapabilities>> {
-        let mut rx = self.capabilities.clone();
-        async move {
-            loop {
-                let value = rx.recv().await?;
-                if value.is_some() {
-                    return value;
-                }
-            }
-        }
+    pub fn capabilities(&self) -> &ServerCapabilities {
+        &self.capabilities
     }
 
     pub fn request<T: request::Request>(
@@ -399,7 +370,6 @@ impl LanguageServer {
     {
         let this = self.clone();
         async move {
-            this.initialized.clone().recv().await;
             Self::request_internal::<T>(
                 &this.next_id,
                 &this.response_handlers,
@@ -452,16 +422,8 @@ impl LanguageServer {
         }
     }
 
-    pub fn notify<T: notification::Notification>(
-        self: &Arc<Self>,
-        params: T::Params,
-    ) -> impl Future<Output = Result<()>> {
-        let this = self.clone();
-        async move {
-            this.initialized.clone().recv().await;
-            Self::notify_internal::<T>(&this.outbound_tx, params)?;
-            Ok(())
-        }
+    pub fn notify<T: notification::Notification>(&self, params: T::Params) -> Result<()> {
+        Self::notify_internal::<T>(&self.outbound_tx, params)
     }
 
     fn notify_internal<T: notification::Notification>(
@@ -530,14 +492,16 @@ impl LanguageServer {
         }
     }
 
-    pub fn fake(cx: &mut gpui::MutableAppContext) -> (Arc<Self>, FakeLanguageServer) {
+    pub fn fake(
+        cx: &mut gpui::MutableAppContext,
+    ) -> impl Future<Output = (Arc<Self>, FakeLanguageServer)> {
         Self::fake_with_capabilities(Self::full_capabilities(), cx)
     }
 
     pub fn fake_with_capabilities(
         capabilities: ServerCapabilities,
         cx: &mut gpui::MutableAppContext,
-    ) -> (Arc<Self>, FakeLanguageServer) {
+    ) -> impl Future<Output = (Arc<Self>, FakeLanguageServer)> {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
 
@@ -550,16 +514,15 @@ impl LanguageServer {
             }
         });
 
-        let server = Self::new_internal(
-            stdin_writer,
-            stdout_reader,
-            Path::new("/"),
-            None,
-            cx.background().clone(),
-        )
-        .unwrap();
+        let executor = cx.background().clone();
+        async move {
+            let server =
+                Self::new_internal(stdin_writer, stdout_reader, Path::new("/"), None, executor)
+                    .await
+                    .unwrap();
 
-        (server, fake)
+            (server, fake)
+        }
     }
 }
 
@@ -758,7 +721,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_fake(cx: &mut TestAppContext) {
-        let (server, mut fake) = cx.update(LanguageServer::fake);
+        let (server, mut fake) = cx.update(LanguageServer::fake).await;
 
         let (message_tx, message_rx) = channel::unbounded();
         let (diagnostics_tx, diagnostics_rx) = channel::unbounded();
@@ -782,7 +745,6 @@ mod tests {
                     "".to_string(),
                 ),
             })
-            .await
             .unwrap();
         assert_eq!(
             fake.receive_notification::<notification::DidOpenTextDocument>()
