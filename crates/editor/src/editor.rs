@@ -1850,11 +1850,24 @@ impl Editor {
                     )
                 });
                 pair.and_then(|pair| {
-                    let should_autoclose = selections[1..].iter().all(|selection| {
-                        snapshot.contains_str_at(
+                    let should_autoclose = selections.iter().all(|selection| {
+                        // Ensure all selections are parked at the end of a pair start.
+                        if snapshot.contains_str_at(
                             selection.start.saturating_sub(pair.start.len()),
                             &pair.start,
-                        )
+                        ) {
+                            // Autoclose only if the next character is a whitespace or a pair end
+                            // (possibly a different one from the pair we are inserting).
+                            snapshot
+                                .chars_at(selection.start)
+                                .next()
+                                .map_or(true, |ch| ch.is_whitespace())
+                                || language.brackets().iter().any(|pair| {
+                                    snapshot.contains_str_at(selection.start, &pair.end)
+                                })
+                        } else {
+                            false
+                        }
                     });
 
                     if should_autoclose {
@@ -3199,6 +3212,11 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
         }
+    }
+
+    pub fn finalize_last_transaction(&mut self, cx: &mut ViewContext<Self>) {
+        self.buffer
+            .update(cx, |buffer, cx| buffer.finalize_last_transaction(cx));
     }
 
     pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
@@ -8077,6 +8095,20 @@ mod tests {
                 view.text(cx),
                 "
                 a
+
+                /*
+                *
+                "
+                .unindent()
+            );
+
+            view.finalize_last_transaction(cx);
+            view.select_display_ranges(&[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)], cx);
+            view.handle_input(&Input("{".to_string()), cx);
+            assert_eq!(
+                view.text(cx),
+                "
+                {a
 
                 /*
                 *
