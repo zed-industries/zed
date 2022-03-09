@@ -10,7 +10,7 @@ use gpui::{
 use parking_lot::Mutex;
 use postage::watch;
 use std::{cmp, sync::Arc};
-use theme::ThemeRegistry;
+use theme::{ThemeRegistry, Theme};
 use workspace::{
     menu::{Confirm, SelectNext, SelectPrev},
     AppState, Settings, Workspace,
@@ -31,6 +31,7 @@ pub struct ThemeSelector {
     query_editor: ViewHandle<Editor>,
     list_state: UniformListState,
     selected_index: usize,
+    original_theme: Arc<Theme>,
 }
 
 action!(Toggle, ThemeSelectorParams);
@@ -72,6 +73,8 @@ impl ThemeSelector {
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
 
+        let original_theme = settings.borrow().theme.clone();
+
         let mut this = Self {
             settings,
             settings_tx,
@@ -79,14 +82,19 @@ impl ThemeSelector {
             query_editor,
             matches: Vec::new(),
             list_state: Default::default(),
-            selected_index: 0,
+            selected_index: 0, // Default index for now
+            original_theme,
         };
         this.update_matches(cx);
+
+        // Set selected index to current theme
+        this.select_if_matching(this.original_theme.name.clone());
+
         this
     }
 
     fn toggle(workspace: &mut Workspace, action: &Toggle, cx: &mut ViewContext<Workspace>) {
-        workspace.toggle_modal(cx, |cx, _| {
+        let possible_closed_theme_selector = workspace.toggle_modal(cx, |cx, _| {
             let selector = cx.add_view(|cx| {
                 Self::new(
                     action.0.settings_tx.clone(),
@@ -98,6 +106,14 @@ impl ThemeSelector {
             cx.subscribe(&selector, Self::on_event).detach();
             selector
         });
+
+        if let Some(closed_theme_selector) = possible_closed_theme_selector {
+            let theme_selector = closed_theme_selector.read(cx);
+
+            theme_selector.settings_tx.lock().borrow_mut().theme = 
+                theme_selector.original_theme.clone();
+            cx.refresh_windows();
+        }
     }
 
     fn reload(_: &mut Workspace, action: &Reload, cx: &mut ViewContext<Workspace>) {
@@ -116,15 +132,8 @@ impl ThemeSelector {
     }
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
-        if let Some(mat) = self.matches.get(self.selected_index) {
-            match self.themes.get(&mat.string) {
-                Ok(theme) => {
-                    self.settings_tx.lock().borrow_mut().theme = theme;
-                    cx.refresh_windows();
-                    cx.emit(Event::Dismissed);
-                }
-                Err(error) => log::error!("error loading theme {}: {}", mat.string, error),
-            }
+        if self.show_selected_theme(cx) {
+            cx.emit(Event::Dismissed);
         }
     }
 
@@ -134,6 +143,8 @@ impl ThemeSelector {
         }
         self.list_state
             .scroll_to(ScrollTarget::Show(self.selected_index));
+
+        self.show_selected_theme(cx);
         cx.notify();
     }
 
@@ -143,7 +154,36 @@ impl ThemeSelector {
         }
         self.list_state
             .scroll_to(ScrollTarget::Show(self.selected_index));
+
+        self.show_selected_theme(cx);
         cx.notify();
+    }
+
+    fn show_selected_theme(&mut self, cx: &mut MutableAppContext) -> bool {
+        if let Some(mat) = self.matches.get(self.selected_index) {
+            match self.themes.get(&mat.string) {
+                Ok(theme) => {
+                    self.settings_tx.lock().borrow_mut().theme = theme;
+                    cx.refresh_windows();
+                    return true;
+                }
+                Err(error) => {
+                    log::error!("error loading theme {}: {}", mat.string, error)
+                },
+            }
+        }
+
+        return false;
+    }
+
+    fn select_if_matching(&mut self, theme_name: String) {
+        self.selected_index = self.matches.iter()
+            .position(|mat| mat.string == theme_name)
+            .unwrap_or(self.selected_index);
+    }
+
+    fn selected_theme_name(&self) -> Option<String> {
+        self.matches.get(self.selected_index).map(|mat| mat.string.clone())
     }
 
     fn update_matches(&mut self, cx: &mut ViewContext<Self>) {
@@ -181,6 +221,11 @@ impl ThemeSelector {
                 background,
             ))
         };
+
+        self.selected_index = self.selected_index
+            .min(self.matches.len() - 1)
+            .max(0);
+
         cx.notify();
     }
 
@@ -204,7 +249,16 @@ impl ThemeSelector {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            editor::Event::Edited => self.update_matches(cx),
+            editor::Event::Edited => {
+                let previous_selection = self.selected_theme_name();
+                self.update_matches(cx);
+                if let Some(previous_selection) = previous_selection {
+                    self.select_if_matching(previous_selection);
+                }
+
+                self.show_selected_theme(cx);
+
+            },
             editor::Event::Blurred => cx.emit(Event::Dismissed),
             _ => {}
         }

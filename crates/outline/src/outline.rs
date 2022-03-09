@@ -144,7 +144,7 @@ impl OutlineView {
                     let view = cx.add_view(|cx| OutlineView::new(outline, editor, settings, cx));
                     cx.subscribe(&view, Self::on_event).detach();
                     view
-                })
+                });
             }
         }
     }
