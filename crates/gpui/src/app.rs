@@ -740,7 +740,6 @@ type ActionCallback =
 type GlobalActionCallback = dyn FnMut(&dyn AnyAction, &mut MutableAppContext);
 
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
-type DelegationCallback = Box<dyn FnMut(Box<dyn Any>, &mut MutableAppContext) -> bool>;
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 
@@ -758,7 +757,6 @@ pub struct MutableAppContext {
     next_subscription_id: usize,
     frame_count: usize,
     subscriptions: Arc<Mutex<HashMap<usize, BTreeMap<usize, SubscriptionCallback>>>>,
-    delegations: Arc<Mutex<HashMap<usize, (usize, DelegationCallback)>>>,
     observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ObservationCallback>>>>,
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
     presenters_and_platform_windows:
@@ -806,7 +804,6 @@ impl MutableAppContext {
             next_subscription_id: 0,
             frame_count: 0,
             subscriptions: Default::default(),
-            delegations: Default::default(),
             observations: Default::default(),
             release_observations: Default::default(),
             presenters_and_platform_windows: HashMap::new(),
@@ -1149,35 +1146,6 @@ impl MutableAppContext {
             id,
             entity_id: handle.id(),
             observations: Some(Arc::downgrade(&self.observations)),
-        }
-    }
-
-    fn become_delegate_internal<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
-    where
-        E: Entity,
-        H: Handle<E>,
-        F: 'static + FnMut(H, E::Event, &mut Self) -> bool,
-    {
-        let id = post_inc(&mut self.next_subscription_id);
-        let emitter = handle.downgrade();
-        self.delegations.lock().insert(
-            handle.id(),
-            (
-                id,
-                Box::new(move |payload, cx| {
-                    if let Some(emitter) = H::upgrade_from(&emitter, cx.as_ref()) {
-                        let payload = *payload.downcast().expect("downcast is type safe");
-                        callback(emitter, payload, cx)
-                    } else {
-                        false
-                    }
-                }),
-            ),
-        );
-        Subscription::Delegation {
-            id,
-            entity_id: handle.id(),
-            delegations: Some(Arc::downgrade(&self.delegations)),
         }
     }
 
@@ -1728,17 +1696,6 @@ impl MutableAppContext {
                         .or_default()
                         .insert(id, callback);
                 }
-            }
-        }
-
-        let delegate = self.delegations.lock().remove(&entity_id);
-        if let Some((id, mut callback)) = delegate {
-            let alive = callback(payload, self);
-            if alive {
-                self.delegations
-                    .lock()
-                    .entry(entity_id)
-                    .or_insert_with(|| (id, callback));
             }
         }
     }
@@ -2387,26 +2344,6 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         })
     }
 
-    pub fn become_delegate<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
-    where
-        E: Entity,
-        H: Handle<E>,
-        F: 'static + FnMut(&mut T, H, E::Event, &mut ModelContext<T>),
-    {
-        let delegate = self.weak_handle();
-        self.app
-            .become_delegate_internal(handle, move |emitter, event, cx| {
-                if let Some(delegate) = delegate.upgrade(cx) {
-                    delegate.update(cx, |subscriber, cx| {
-                        callback(subscriber, emitter, event, cx);
-                    });
-                    true
-                } else {
-                    false
-                }
-            })
-    }
-
     pub fn observe_release<S, F>(
         &mut self,
         handle: &ModelHandle<S>,
@@ -2670,26 +2607,6 @@ impl<'a, T: View> ViewContext<'a, T> {
                 false
             }
         })
-    }
-
-    pub fn become_delegate<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
-    where
-        E: Entity,
-        H: Handle<E>,
-        F: 'static + FnMut(&mut T, H, E::Event, &mut ViewContext<T>),
-    {
-        let delegate = self.weak_handle();
-        self.app
-            .become_delegate_internal(handle, move |emitter, event, cx| {
-                if let Some(delegate) = delegate.upgrade(cx) {
-                    delegate.update(cx, |subscriber, cx| {
-                        callback(subscriber, emitter, event, cx);
-                    });
-                    true
-                } else {
-                    false
-                }
-            })
     }
 
     pub fn observe_release<E, F, H>(&mut self, handle: &H, mut callback: F) -> Subscription
@@ -3845,11 +3762,6 @@ pub enum Subscription {
         entity_id: usize,
         subscriptions: Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, SubscriptionCallback>>>>>,
     },
-    Delegation {
-        id: usize,
-        entity_id: usize,
-        delegations: Option<Weak<Mutex<HashMap<usize, (usize, DelegationCallback)>>>>,
-    },
     Observation {
         id: usize,
         entity_id: usize,
@@ -3868,9 +3780,6 @@ impl Subscription {
         match self {
             Subscription::Subscription { subscriptions, .. } => {
                 subscriptions.take();
-            }
-            Subscription::Delegation { delegations, .. } => {
-                delegations.take();
             }
             Subscription::Observation { observations, .. } => {
                 observations.take();
@@ -3915,19 +3824,6 @@ impl Drop for Subscription {
                 if let Some(subscriptions) = subscriptions.as_ref().and_then(Weak::upgrade) {
                     if let Some(subscriptions) = subscriptions.lock().get_mut(entity_id) {
                         subscriptions.remove(id);
-                    }
-                }
-            }
-            Subscription::Delegation {
-                id,
-                entity_id,
-                delegations,
-            } => {
-                if let Some(delegations) = delegations.as_ref().and_then(Weak::upgrade) {
-                    if let Entry::Occupied(entry) = delegations.lock().entry(*entity_id) {
-                        if *id == entry.get().0 {
-                            let _ = entry.remove();
-                        }
                     }
                 }
             }
@@ -4197,11 +4093,6 @@ mod tests {
         let handle_1 = cx.add_model(|_| Model::default());
         let handle_2 = cx.add_model(|_| Model::default());
         handle_1.update(cx, |_, cx| {
-            cx.become_delegate(&handle_2, |model, _, event, _| {
-                model.events.push(event * 3);
-            })
-            .detach();
-
             cx.subscribe(&handle_2, move |model: &mut Model, emitter, event, cx| {
                 model.events.push(*event);
 
@@ -4214,10 +4105,10 @@ mod tests {
         });
 
         handle_2.update(cx, |_, c| c.emit(7));
-        assert_eq!(handle_1.read(cx).events, vec![7, 21]);
+        assert_eq!(handle_1.read(cx).events, vec![7]);
 
         handle_2.update(cx, |_, c| c.emit(5));
-        assert_eq!(handle_1.read(cx).events, vec![7, 21, 5, 10, 15]);
+        assert_eq!(handle_1.read(cx).events, vec![7, 5, 10]);
     }
 
     #[crate::test(self)]
@@ -4475,11 +4366,6 @@ mod tests {
         let handle_3 = cx.add_model(|_| Model);
 
         handle_1.update(cx, |_, cx| {
-            cx.become_delegate(&handle_2, |me, _, event, _| {
-                me.events.push(event * 3);
-            })
-            .detach();
-
             cx.subscribe(&handle_2, move |me, emitter, event, cx| {
                 me.events.push(*event);
 
@@ -4497,13 +4383,13 @@ mod tests {
         });
 
         handle_2.update(cx, |_, c| c.emit(7));
-        assert_eq!(handle_1.read(cx).events, vec![7, 21]);
+        assert_eq!(handle_1.read(cx).events, vec![7]);
 
         handle_2.update(cx, |_, c| c.emit(5));
-        assert_eq!(handle_1.read(cx).events, vec![7, 21, 5, 10, 15]);
+        assert_eq!(handle_1.read(cx).events, vec![7, 5, 10]);
 
         handle_3.update(cx, |_, c| c.emit(9));
-        assert_eq!(handle_1.read(cx).events, vec![7, 21, 5, 10, 15, 9]);
+        assert_eq!(handle_1.read(cx).events, vec![7, 5, 10, 9]);
     }
 
     #[crate::test(self)]

@@ -80,7 +80,7 @@ fn test_edit_events(cx: &mut gpui::MutableAppContext) {
         let buffer1_ops = buffer1_ops.clone();
         |buffer, cx| {
             let buffer_1_events = buffer_1_events.clone();
-            cx.become_delegate(&buffer1, move |_, _, event, _| match event {
+            cx.subscribe(&buffer1, move |_, _, event, _| match event.clone() {
                 Event::Operation(op) => buffer1_ops.borrow_mut().push(op),
                 event @ _ => buffer_1_events.borrow_mut().push(event),
             })
@@ -610,7 +610,7 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
             let mut buffer = Buffer::new(i as ReplicaId, base_text.as_str(), cx);
             buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
             let network = network.clone();
-            cx.become_delegate(&cx.handle(), move |buffer, _, event, _| {
+            cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
                 if let Event::Operation(op) = event {
                     network
                         .borrow_mut()
@@ -706,7 +706,7 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
                         Buffer::from_proto(new_replica_id, old_buffer, None, cx).unwrap();
                     new_buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
                     let network = network.clone();
-                    cx.become_delegate(&cx.handle(), move |buffer, _, event, _| {
+                    cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
                         if let Event::Operation(op) = event {
                             network.borrow_mut().broadcast(
                                 buffer.replica_id(),

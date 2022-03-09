@@ -942,7 +942,7 @@ impl Project {
                 remote_id
             ))?,
         }
-        cx.become_delegate(buffer, |this, buffer, event, cx| {
+        cx.subscribe(buffer, |this, buffer, event, cx| {
             this.on_buffer_event(buffer, event, cx);
         })
         .detach();
@@ -1028,7 +1028,7 @@ impl Project {
     fn on_buffer_event(
         &mut self,
         buffer: ModelHandle<Buffer>,
-        event: BufferEvent,
+        event: &BufferEvent,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
         match event {
