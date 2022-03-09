@@ -1640,9 +1640,9 @@ impl Editor {
         let text = action.0.as_ref();
         if !self.skip_autoclose_end(text, cx) {
             self.start_transaction(cx);
-            if !self.surround_with_pair(text, cx) {
+            if !self.surround_with_bracket_pair(text, cx) {
                 self.insert(text, cx);
-                self.autoclose_pairs(cx);
+                self.autoclose_bracket_pairs(cx);
             }
             self.end_transaction(cx);
             self.trigger_completion_on_input(text, cx);
@@ -1826,7 +1826,7 @@ impl Editor {
         }
     }
 
-    fn surround_with_pair(&mut self, text: &str, cx: &mut ViewContext<Self>) -> bool {
+    fn surround_with_bracket_pair(&mut self, text: &str, cx: &mut ViewContext<Self>) -> bool {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         if let Some(pair) = snapshot
             .language()
@@ -1873,7 +1873,7 @@ impl Editor {
         }
     }
 
-    fn autoclose_pairs(&mut self, cx: &mut ViewContext<Self>) {
+    fn autoclose_bracket_pairs(&mut self, cx: &mut ViewContext<Self>) {
         let selections = self.local_selections::<usize>(cx);
         let mut bracket_pair_state = None;
         let mut new_selections = None;
