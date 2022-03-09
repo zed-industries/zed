@@ -6,7 +6,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     keymap::Binding,
-    platform::CursorStyle,
+    platform::{CursorStyle, NavigationDirection},
     AnyViewHandle, Entity, MutableAppContext, Quad, RenderContext, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
@@ -57,16 +57,24 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|workspace: &mut Workspace, action: &GoBack, cx| {
         Pane::go_back(
             workspace,
-            action.0.as_ref().and_then(|weak_handle| weak_handle.upgrade(cx)),
-            cx
-        ).detach();
+            action
+                .0
+                .as_ref()
+                .and_then(|weak_handle| weak_handle.upgrade(cx)),
+            cx,
+        )
+        .detach();
     });
     cx.add_action(|workspace: &mut Workspace, action: &GoForward, cx| {
         Pane::go_forward(
             workspace,
-            action.0.as_ref().and_then(|weak_handle| weak_handle.upgrade(cx)),
-            cx
-        ).detach();
+            action
+                .0
+                .as_ref()
+                .and_then(|weak_handle| weak_handle.upgrade(cx)),
+            cx,
+        )
+        .detach();
     });
 
     cx.add_bindings(vec![
@@ -171,7 +179,11 @@ impl Pane {
         cx.emit(Event::Activate);
     }
 
-    pub fn go_back(workspace: &mut Workspace, pane: Option<ViewHandle<Pane>>, cx: &mut ViewContext<Workspace>) -> Task<()> {
+    pub fn go_back(
+        workspace: &mut Workspace,
+        pane: Option<ViewHandle<Pane>>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<()> {
         Self::navigate_history(
             workspace,
             pane.unwrap_or_else(|| workspace.active_pane().clone()),
@@ -180,7 +192,11 @@ impl Pane {
         )
     }
 
-    pub fn go_forward(workspace: &mut Workspace, pane: Option<ViewHandle<Pane>>, cx: &mut ViewContext<Workspace>) -> Task<()> {
+    pub fn go_forward(
+        workspace: &mut Workspace,
+        pane: Option<ViewHandle<Pane>>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<()> {
         Self::navigate_history(
             workspace,
             pane.unwrap_or_else(|| workspace.active_pane().clone()),
@@ -646,31 +662,29 @@ impl View for Pane {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let this = cx.handle();
 
-        EventHandler::new(
-            if let Some(active_item) = self.active_item() {
-                Flex::column()
-                    .with_child(self.render_tabs(cx))
-                    .with_children(
-                        self.active_toolbar()
-                            .as_ref()
-                            .map(|view| ChildView::new(view).boxed()),
-                    )
-                    .with_child(ChildView::new(active_item).flexible(1., true).boxed())
-                    .boxed()
-            } else {
-                Empty::new().boxed()
+        EventHandler::new(if let Some(active_item) = self.active_item() {
+            Flex::column()
+                .with_child(self.render_tabs(cx))
+                .with_children(
+                    self.active_toolbar()
+                        .as_ref()
+                        .map(|view| ChildView::new(view).boxed()),
+                )
+                .with_child(ChildView::new(active_item).flexible(1., true).boxed())
+                .boxed()
+        } else {
+            Empty::new().boxed()
+        })
+        .on_navigate_mouse_down(move |direction, cx| {
+            let this = this.clone();
+            match direction {
+                NavigationDirection::Back => cx.dispatch_action(GoBack(Some(this))),
+                NavigationDirection::Forward => cx.dispatch_action(GoForward(Some(this))),
             }
-        )
-        .on_other_mouse_down(move |button, cx| {
-            match button {
-                3 => cx.dispatch_action(GoBack(Some(this.clone()))),
-                4 => cx.dispatch_action(GoForward(Some(this.clone()))),
-                _ => return false,
-            };
+
             true
         })
         .named("pane")
-
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {

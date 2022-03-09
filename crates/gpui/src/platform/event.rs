@@ -1,5 +1,11 @@
 use crate::{geometry::vector::Vector2F, keymap::Keystroke};
 
+#[derive(Copy, Clone, Debug)]
+pub enum NavigationDirection {
+    Back,
+    Forward,
+}
+
 #[derive(Clone, Debug)]
 pub enum Event {
     KeyDown {
@@ -37,18 +43,18 @@ pub enum Event {
     RightMouseUp {
         position: Vector2F,
     },
-    OtherMouseDown {
+    NavigateMouseDown {
         position: Vector2F,
-        button: u16,
+        direction: NavigationDirection,
         ctrl: bool,
         alt: bool,
         shift: bool,
         cmd: bool,
         click_count: usize,
     },
-    OtherMouseUp {
+    NavigateMouseUp {
         position: Vector2F,
-        button: u16,
+        direction: NavigationDirection,
     },
     MouseMoved {
         position: Vector2F,

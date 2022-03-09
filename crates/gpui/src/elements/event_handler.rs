@@ -3,7 +3,7 @@ use serde_json::json;
 
 use crate::{
     geometry::vector::Vector2F, DebugContext, Element, ElementBox, Event, EventContext,
-    LayoutContext, PaintContext, SizeConstraint,
+    LayoutContext, NavigationDirection, PaintContext, SizeConstraint,
 };
 
 pub struct EventHandler {
@@ -11,7 +11,7 @@ pub struct EventHandler {
     capture: Option<Box<dyn FnMut(&Event, RectF, &mut EventContext) -> bool>>,
     mouse_down: Option<Box<dyn FnMut(&mut EventContext) -> bool>>,
     right_mouse_down: Option<Box<dyn FnMut(&mut EventContext) -> bool>>,
-    other_mouse_down: Option<Box<dyn FnMut(u16, &mut EventContext) -> bool>>,
+    navigate_mouse_down: Option<Box<dyn FnMut(NavigationDirection, &mut EventContext) -> bool>>,
 }
 
 impl EventHandler {
@@ -21,7 +21,7 @@ impl EventHandler {
             capture: None,
             mouse_down: None,
             right_mouse_down: None,
-            other_mouse_down: None,
+            navigate_mouse_down: None,
         }
     }
 
@@ -41,11 +41,11 @@ impl EventHandler {
         self
     }
 
-    pub fn on_other_mouse_down<F>(mut self, callback: F) -> Self
+    pub fn on_navigate_mouse_down<F>(mut self, callback: F) -> Self
     where
-        F: 'static + FnMut(u16, &mut EventContext) -> bool,
+        F: 'static + FnMut(NavigationDirection, &mut EventContext) -> bool,
     {
-        self.other_mouse_down = Some(Box::new(callback));
+        self.navigate_mouse_down = Some(Box::new(callback));
         self
     }
 
@@ -106,7 +106,7 @@ impl Element for EventHandler {
                         }
                     }
                     false
-                },
+                }
                 Event::RightMouseDown { position, .. } => {
                     if let Some(callback) = self.right_mouse_down.as_mut() {
                         if bounds.contains_point(*position) {
@@ -114,15 +114,19 @@ impl Element for EventHandler {
                         }
                     }
                     false
-                },
-                Event::OtherMouseDown { position, button, .. } => {
-                    if let Some(callback) = self.other_mouse_down.as_mut() {
+                }
+                Event::NavigateMouseDown {
+                    position,
+                    direction,
+                    ..
+                } => {
+                    if let Some(callback) = self.navigate_mouse_down.as_mut() {
                         if bounds.contains_point(*position) {
-                            return callback(*button, cx);
+                            return callback(*direction, cx);
                         }
                     }
                     false
-                },
+                }
                 _ => false,
             }
         }

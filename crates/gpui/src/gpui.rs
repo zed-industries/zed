@@ -29,7 +29,7 @@ pub mod keymap;
 pub mod platform;
 pub use gpui_macros::test;
 pub use platform::FontSystem;
-pub use platform::{Event, PathPromptOptions, Platform, PromptLevel};
+pub use platform::{Event, NavigationDirection, PathPromptOptions, Platform, PromptLevel};
 pub use presenter::{
     Axis, DebugContext, EventContext, LayoutContext, PaintContext, SizeConstraint, Vector2FExt,
 };
