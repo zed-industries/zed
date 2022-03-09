@@ -1,5 +1,5 @@
 use super::{Point, ToOffset};
-use crate::{rope::TextDimension, BufferSnapshot, PointUtf16, ToPointUtf16};
+use crate::{rope::TextDimension, BufferSnapshot, PointUtf16, ToPoint, ToPointUtf16};
 use anyhow::Result;
 use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::Bias;
@@ -74,11 +74,33 @@ impl Anchor {
     }
 }
 
+pub trait OffsetRangeExt {
+    fn to_offset(&self, snapshot: &BufferSnapshot) -> Range<usize>;
+    fn to_point(&self, snapshot: &BufferSnapshot) -> Range<Point>;
+    fn to_point_utf16(&self, snapshot: &BufferSnapshot) -> Range<PointUtf16>;
+}
+
+impl<T> OffsetRangeExt for Range<T>
+where
+    T: ToOffset,
+{
+    fn to_offset(&self, snapshot: &BufferSnapshot) -> Range<usize> {
+        self.start.to_offset(snapshot)..self.end.to_offset(&snapshot)
+    }
+
+    fn to_point(&self, snapshot: &BufferSnapshot) -> Range<Point> {
+        self.start.to_offset(snapshot).to_point(snapshot)
+            ..self.end.to_offset(snapshot).to_point(snapshot)
+    }
+
+    fn to_point_utf16(&self, snapshot: &BufferSnapshot) -> Range<PointUtf16> {
+        self.start.to_offset(snapshot).to_point_utf16(snapshot)
+            ..self.end.to_offset(snapshot).to_point_utf16(snapshot)
+    }
+}
+
 pub trait AnchorRangeExt {
     fn cmp(&self, b: &Range<Anchor>, buffer: &BufferSnapshot) -> Result<Ordering>;
-    fn to_offset(&self, content: &BufferSnapshot) -> Range<usize>;
-    fn to_point(&self, content: &BufferSnapshot) -> Range<Point>;
-    fn to_point_utf16(&self, content: &BufferSnapshot) -> Range<PointUtf16>;
 }
 
 impl AnchorRangeExt for Range<Anchor> {
@@ -87,17 +109,5 @@ impl AnchorRangeExt for Range<Anchor> {
             Ordering::Equal => other.end.cmp(&self.end, buffer)?,
             ord @ _ => ord,
         })
-    }
-
-    fn to_offset(&self, content: &BufferSnapshot) -> Range<usize> {
-        self.start.to_offset(&content)..self.end.to_offset(&content)
-    }
-
-    fn to_point(&self, content: &BufferSnapshot) -> Range<Point> {
-        self.start.summary::<Point>(&content)..self.end.summary::<Point>(&content)
-    }
-
-    fn to_point_utf16(&self, content: &BufferSnapshot) -> Range<PointUtf16> {
-        self.start.to_point_utf16(content)..self.end.to_point_utf16(content)
     }
 }

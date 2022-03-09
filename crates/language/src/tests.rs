@@ -6,7 +6,6 @@ use rand::prelude::*;
 use std::{
     cell::RefCell,
     env,
-    iter::FromIterator,
     ops::Range,
     rc::Rc,
     time::{Duration, Instant},
@@ -76,43 +75,48 @@ fn test_edit_events(cx: &mut gpui::MutableAppContext) {
 
     let buffer1 = cx.add_model(|cx| Buffer::new(0, "abcdef", cx));
     let buffer2 = cx.add_model(|cx| Buffer::new(1, "abcdef", cx));
-    let buffer_ops = buffer1.update(cx, |buffer, cx| {
-        let buffer_1_events = buffer_1_events.clone();
-        cx.subscribe(&buffer1, move |_, _, event, _| {
-            buffer_1_events.borrow_mut().push(event.clone())
-        })
-        .detach();
-        let buffer_2_events = buffer_2_events.clone();
-        cx.subscribe(&buffer2, move |_, _, event, _| {
-            buffer_2_events.borrow_mut().push(event.clone())
-        })
-        .detach();
+    let buffer1_ops = Rc::new(RefCell::new(Vec::new()));
+    buffer1.update(cx, {
+        let buffer1_ops = buffer1_ops.clone();
+        |buffer, cx| {
+            let buffer_1_events = buffer_1_events.clone();
+            cx.subscribe(&buffer1, move |_, _, event, _| match event.clone() {
+                Event::Operation(op) => buffer1_ops.borrow_mut().push(op),
+                event @ _ => buffer_1_events.borrow_mut().push(event),
+            })
+            .detach();
+            let buffer_2_events = buffer_2_events.clone();
+            cx.subscribe(&buffer2, move |_, _, event, _| {
+                buffer_2_events.borrow_mut().push(event.clone())
+            })
+            .detach();
 
-        // An edit emits an edited event, followed by a dirtied event,
-        // since the buffer was previously in a clean state.
-        buffer.edit(Some(2..4), "XYZ", cx);
+            // An edit emits an edited event, followed by a dirtied event,
+            // since the buffer was previously in a clean state.
+            buffer.edit(Some(2..4), "XYZ", cx);
 
-        // An empty transaction does not emit any events.
-        buffer.start_transaction();
-        buffer.end_transaction(cx);
+            // An empty transaction does not emit any events.
+            buffer.start_transaction();
+            buffer.end_transaction(cx);
 
-        // A transaction containing two edits emits one edited event.
-        now += Duration::from_secs(1);
-        buffer.start_transaction_at(now);
-        buffer.edit(Some(5..5), "u", cx);
-        buffer.edit(Some(6..6), "w", cx);
-        buffer.end_transaction_at(now, cx);
+            // A transaction containing two edits emits one edited event.
+            now += Duration::from_secs(1);
+            buffer.start_transaction_at(now);
+            buffer.edit(Some(5..5), "u", cx);
+            buffer.edit(Some(6..6), "w", cx);
+            buffer.end_transaction_at(now, cx);
 
-        // Undoing a transaction emits one edited event.
-        buffer.undo(cx);
-
-        buffer.operations.clone()
+            // Undoing a transaction emits one edited event.
+            buffer.undo(cx);
+        }
     });
 
     // Incorporating a set of remote ops emits a single edited event,
     // followed by a dirtied event.
     buffer2.update(cx, |buffer, cx| {
-        buffer.apply_ops(buffer_ops, cx).unwrap();
+        buffer
+            .apply_ops(buffer1_ops.borrow_mut().drain(..), cx)
+            .unwrap();
     });
 
     let buffer_1_events = buffer_1_events.borrow();
@@ -554,584 +558,6 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
 }
 
 #[gpui::test]
-async fn test_diagnostics(cx: &mut gpui::TestAppContext) {
-    let (language_server, mut fake) = cx.update(lsp::LanguageServer::fake);
-    let mut rust_lang = rust_lang();
-    rust_lang.config.language_server = Some(LanguageServerConfig {
-        disk_based_diagnostic_sources: HashSet::from_iter(["disk".to_string()]),
-        ..Default::default()
-    });
-
-    let text = "
-        fn a() { A }
-        fn b() { BB }
-        fn c() { CCC }
-    "
-    .unindent();
-
-    let buffer = cx.add_model(|cx| {
-        Buffer::from_file(0, text, Box::new(FakeFile::new("/some/path")), cx)
-            .with_language(Arc::new(rust_lang), cx)
-            .with_language_server(language_server, cx)
-    });
-
-    let open_notification = fake
-        .receive_notification::<lsp::notification::DidOpenTextDocument>()
-        .await;
-
-    // Edit the buffer, moving the content down
-    buffer.update(cx, |buffer, cx| buffer.edit([0..0], "\n\n", cx));
-    let change_notification_1 = fake
-        .receive_notification::<lsp::notification::DidChangeTextDocument>()
-        .await;
-    assert!(change_notification_1.text_document.version > open_notification.text_document.version);
-
-    buffer.update(cx, |buffer, cx| {
-        // Receive diagnostics for an earlier version of the buffer.
-        buffer
-            .update_diagnostics(
-                vec![
-                    DiagnosticEntry {
-                        range: PointUtf16::new(0, 9)..PointUtf16::new(0, 10),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "undefined variable 'A'".to_string(),
-                            is_disk_based: true,
-                            group_id: 0,
-                            is_primary: true,
-                            ..Default::default()
-                        },
-                    },
-                    DiagnosticEntry {
-                        range: PointUtf16::new(1, 9)..PointUtf16::new(1, 11),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "undefined variable 'BB'".to_string(),
-                            is_disk_based: true,
-                            group_id: 1,
-                            is_primary: true,
-                            ..Default::default()
-                        },
-                    },
-                    DiagnosticEntry {
-                        range: PointUtf16::new(2, 9)..PointUtf16::new(2, 12),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            is_disk_based: true,
-                            message: "undefined variable 'CCC'".to_string(),
-                            group_id: 2,
-                            is_primary: true,
-                            ..Default::default()
-                        },
-                    },
-                ],
-                Some(open_notification.text_document.version),
-                cx,
-            )
-            .unwrap();
-
-        // The diagnostics have moved down since they were created.
-        assert_eq!(
-            buffer
-                .snapshot()
-                .diagnostics_in_range::<_, Point>(Point::new(3, 0)..Point::new(5, 0))
-                .collect::<Vec<_>>(),
-            &[
-                DiagnosticEntry {
-                    range: Point::new(3, 9)..Point::new(3, 11),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::ERROR,
-                        message: "undefined variable 'BB'".to_string(),
-                        is_disk_based: true,
-                        group_id: 1,
-                        is_primary: true,
-                        ..Default::default()
-                    },
-                },
-                DiagnosticEntry {
-                    range: Point::new(4, 9)..Point::new(4, 12),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::ERROR,
-                        message: "undefined variable 'CCC'".to_string(),
-                        is_disk_based: true,
-                        group_id: 2,
-                        is_primary: true,
-                        ..Default::default()
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            chunks_with_diagnostics(buffer, 0..buffer.len()),
-            [
-                ("\n\nfn a() { ".to_string(), None),
-                ("A".to_string(), Some(DiagnosticSeverity::ERROR)),
-                (" }\nfn b() { ".to_string(), None),
-                ("BB".to_string(), Some(DiagnosticSeverity::ERROR)),
-                (" }\nfn c() { ".to_string(), None),
-                ("CCC".to_string(), Some(DiagnosticSeverity::ERROR)),
-                (" }\n".to_string(), None),
-            ]
-        );
-        assert_eq!(
-            chunks_with_diagnostics(buffer, Point::new(3, 10)..Point::new(4, 11)),
-            [
-                ("B".to_string(), Some(DiagnosticSeverity::ERROR)),
-                (" }\nfn c() { ".to_string(), None),
-                ("CC".to_string(), Some(DiagnosticSeverity::ERROR)),
-            ]
-        );
-
-        // Ensure overlapping diagnostics are highlighted correctly.
-        buffer
-            .update_diagnostics(
-                vec![
-                    DiagnosticEntry {
-                        range: PointUtf16::new(0, 9)..PointUtf16::new(0, 10),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "undefined variable 'A'".to_string(),
-                            is_disk_based: true,
-                            group_id: 0,
-                            is_primary: true,
-                            ..Default::default()
-                        },
-                    },
-                    DiagnosticEntry {
-                        range: PointUtf16::new(0, 9)..PointUtf16::new(0, 12),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::WARNING,
-                            message: "unreachable statement".to_string(),
-                            group_id: 1,
-                            is_primary: true,
-                            ..Default::default()
-                        },
-                    },
-                ],
-                Some(open_notification.text_document.version),
-                cx,
-            )
-            .unwrap();
-        assert_eq!(
-            buffer
-                .snapshot()
-                .diagnostics_in_range::<_, Point>(Point::new(2, 0)..Point::new(3, 0))
-                .collect::<Vec<_>>(),
-            &[
-                DiagnosticEntry {
-                    range: Point::new(2, 9)..Point::new(2, 12),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::WARNING,
-                        message: "unreachable statement".to_string(),
-                        group_id: 1,
-                        is_primary: true,
-                        ..Default::default()
-                    }
-                },
-                DiagnosticEntry {
-                    range: Point::new(2, 9)..Point::new(2, 10),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::ERROR,
-                        message: "undefined variable 'A'".to_string(),
-                        is_disk_based: true,
-                        group_id: 0,
-                        is_primary: true,
-                        ..Default::default()
-                    },
-                }
-            ]
-        );
-        assert_eq!(
-            chunks_with_diagnostics(buffer, Point::new(2, 0)..Point::new(3, 0)),
-            [
-                ("fn a() { ".to_string(), None),
-                ("A".to_string(), Some(DiagnosticSeverity::ERROR)),
-                (" }".to_string(), Some(DiagnosticSeverity::WARNING)),
-                ("\n".to_string(), None),
-            ]
-        );
-        assert_eq!(
-            chunks_with_diagnostics(buffer, Point::new(2, 10)..Point::new(3, 0)),
-            [
-                (" }".to_string(), Some(DiagnosticSeverity::WARNING)),
-                ("\n".to_string(), None),
-            ]
-        );
-    });
-
-    // Keep editing the buffer and ensure disk-based diagnostics get translated according to the
-    // changes since the last save.
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit(Some(Point::new(2, 0)..Point::new(2, 0)), "    ", cx);
-        buffer.edit(Some(Point::new(2, 8)..Point::new(2, 10)), "(x: usize)", cx);
-    });
-    let change_notification_2 = fake
-        .receive_notification::<lsp::notification::DidChangeTextDocument>()
-        .await;
-    assert!(
-        change_notification_2.text_document.version > change_notification_1.text_document.version
-    );
-
-    buffer.update(cx, |buffer, cx| {
-        buffer
-            .update_diagnostics(
-                vec![
-                    DiagnosticEntry {
-                        range: PointUtf16::new(1, 9)..PointUtf16::new(1, 11),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "undefined variable 'BB'".to_string(),
-                            is_disk_based: true,
-                            group_id: 1,
-                            is_primary: true,
-                            ..Default::default()
-                        },
-                    },
-                    DiagnosticEntry {
-                        range: PointUtf16::new(0, 9)..PointUtf16::new(0, 10),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "undefined variable 'A'".to_string(),
-                            is_disk_based: true,
-                            group_id: 0,
-                            is_primary: true,
-                            ..Default::default()
-                        },
-                    },
-                ],
-                Some(change_notification_2.text_document.version),
-                cx,
-            )
-            .unwrap();
-        assert_eq!(
-            buffer
-                .snapshot()
-                .diagnostics_in_range::<_, Point>(0..buffer.len())
-                .collect::<Vec<_>>(),
-            &[
-                DiagnosticEntry {
-                    range: Point::new(2, 21)..Point::new(2, 22),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::ERROR,
-                        message: "undefined variable 'A'".to_string(),
-                        is_disk_based: true,
-                        group_id: 0,
-                        is_primary: true,
-                        ..Default::default()
-                    }
-                },
-                DiagnosticEntry {
-                    range: Point::new(3, 9)..Point::new(3, 11),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::ERROR,
-                        message: "undefined variable 'BB'".to_string(),
-                        is_disk_based: true,
-                        group_id: 1,
-                        is_primary: true,
-                        ..Default::default()
-                    },
-                }
-            ]
-        );
-    });
-}
-
-#[gpui::test]
-async fn test_language_server_has_exited(cx: &mut gpui::TestAppContext) {
-    let (language_server, fake) = cx.update(lsp::LanguageServer::fake);
-
-    // Simulate the language server failing to start up.
-    drop(fake);
-
-    let buffer = cx.add_model(|cx| {
-        Buffer::from_file(0, "", Box::new(FakeFile::new("/some/path")), cx)
-            .with_language(Arc::new(rust_lang()), cx)
-            .with_language_server(language_server, cx)
-    });
-
-    // Run the buffer's task that retrieves the server's capabilities.
-    cx.foreground().advance_clock(Duration::from_millis(1));
-
-    buffer.read_with(cx, |buffer, _| {
-        assert!(buffer.language_server().is_none());
-    });
-}
-
-#[gpui::test]
-async fn test_edits_from_lsp_with_past_version(cx: &mut gpui::TestAppContext) {
-    let (language_server, mut fake) = cx.update(lsp::LanguageServer::fake);
-
-    let text = "
-        fn a() {
-            f1();
-        }
-        fn b() {
-            f2();
-        }
-        fn c() {
-            f3();
-        }
-    "
-    .unindent();
-
-    let buffer = cx.add_model(|cx| {
-        Buffer::from_file(0, text, Box::new(FakeFile::new("/some/path")), cx)
-            .with_language(Arc::new(rust_lang()), cx)
-            .with_language_server(language_server, cx)
-    });
-
-    let lsp_document_version = fake
-        .receive_notification::<lsp::notification::DidOpenTextDocument>()
-        .await
-        .text_document
-        .version;
-
-    // Simulate editing the buffer after the language server computes some edits.
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit(
-            [Point::new(0, 0)..Point::new(0, 0)],
-            "// above first function\n",
-            cx,
-        );
-        buffer.edit(
-            [Point::new(2, 0)..Point::new(2, 0)],
-            "    // inside first function\n",
-            cx,
-        );
-        buffer.edit(
-            [Point::new(6, 4)..Point::new(6, 4)],
-            "// inside second function ",
-            cx,
-        );
-
-        assert_eq!(
-            buffer.text(),
-            "
-                // above first function
-                fn a() {
-                    // inside first function
-                    f1();
-                }
-                fn b() {
-                    // inside second function f2();
-                }
-                fn c() {
-                    f3();
-                }
-            "
-            .unindent()
-        );
-    });
-
-    let edits = buffer
-        .update(cx, |buffer, cx| {
-            buffer.edits_from_lsp(
-                vec![
-                    // replace body of first function
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(3, 0)),
-                        new_text: "
-                            fn a() {
-                                f10();
-                            }
-                        "
-                        .unindent(),
-                    },
-                    // edit inside second function
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(4, 6), lsp::Position::new(4, 6)),
-                        new_text: "00".into(),
-                    },
-                    // edit inside third function via two distinct edits
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(7, 5), lsp::Position::new(7, 5)),
-                        new_text: "4000".into(),
-                    },
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(7, 5), lsp::Position::new(7, 6)),
-                        new_text: "".into(),
-                    },
-                ],
-                Some(lsp_document_version),
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-
-    buffer.update(cx, |buffer, cx| {
-        for (range, new_text) in edits {
-            buffer.edit([range], new_text, cx);
-        }
-        assert_eq!(
-            buffer.text(),
-            "
-                // above first function
-                fn a() {
-                    // inside first function
-                    f10();
-                }
-                fn b() {
-                    // inside second function f200();
-                }
-                fn c() {
-                    f4000();
-                }
-            "
-            .unindent()
-        );
-    });
-}
-
-#[gpui::test]
-async fn test_edits_from_lsp_with_edits_on_adjacent_lines(cx: &mut gpui::TestAppContext) {
-    let text = "
-        use a::b;
-        use a::c;
-
-        fn f() {
-            b();
-            c();
-        }
-    "
-    .unindent();
-
-    let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-
-    // Simulate the language server sending us a small edit in the form of a very large diff.
-    // Rust-analyzer does this when performing a merge-imports code action.
-    let edits = buffer
-        .update(cx, |buffer, cx| {
-            buffer.edits_from_lsp(
-                [
-                    // Replace the first use statement without editing the semicolon.
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 8)),
-                        new_text: "a::{b, c}".into(),
-                    },
-                    // Reinsert the remainder of the file between the semicolon and the final
-                    // newline of the file.
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 9)),
-                        new_text: "\n\n".into(),
-                    },
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 9)),
-                        new_text: "
-                            fn f() {
-                                b();
-                                c();
-                            }"
-                        .unindent(),
-                    },
-                    // Delete everything after the first newline of the file.
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(7, 0)),
-                        new_text: "".into(),
-                    },
-                ],
-                None,
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-
-    buffer.update(cx, |buffer, cx| {
-        let edits = edits
-            .into_iter()
-            .map(|(range, text)| {
-                (
-                    range.start.to_point(&buffer)..range.end.to_point(&buffer),
-                    text,
-                )
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            edits,
-            [
-                (Point::new(0, 4)..Point::new(0, 8), "a::{b, c}".into()),
-                (Point::new(1, 0)..Point::new(2, 0), "".into())
-            ]
-        );
-
-        for (range, new_text) in edits {
-            buffer.edit([range], new_text, cx);
-        }
-        assert_eq!(
-            buffer.text(),
-            "
-                use a::{b, c};
-
-                fn f() {
-                    b();
-                    c();
-                }
-            "
-            .unindent()
-        );
-    });
-}
-
-#[gpui::test]
-async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
-    cx.add_model(|cx| {
-        let text = concat!(
-            "let one = ;\n", //
-            "let two = \n",
-            "let three = 3;\n",
-        );
-
-        let mut buffer = Buffer::new(0, text, cx);
-        buffer.set_language(Some(Arc::new(rust_lang())), cx);
-        buffer
-            .update_diagnostics(
-                vec![
-                    DiagnosticEntry {
-                        range: PointUtf16::new(0, 10)..PointUtf16::new(0, 10),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "syntax error 1".to_string(),
-                            ..Default::default()
-                        },
-                    },
-                    DiagnosticEntry {
-                        range: PointUtf16::new(1, 10)..PointUtf16::new(1, 10),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "syntax error 2".to_string(),
-                            ..Default::default()
-                        },
-                    },
-                ],
-                None,
-                cx,
-            )
-            .unwrap();
-
-        // An empty range is extended forward to include the following character.
-        // At the end of a line, an empty range is extended backward to include
-        // the preceding character.
-        let chunks = chunks_with_diagnostics(&buffer, 0..buffer.len());
-        assert_eq!(
-            chunks
-                .iter()
-                .map(|(s, d)| (s.as_str(), *d))
-                .collect::<Vec<_>>(),
-            &[
-                ("let one = ", None),
-                (";", Some(DiagnosticSeverity::ERROR)),
-                ("\nlet two =", None),
-                (" ", Some(DiagnosticSeverity::ERROR)),
-                ("\nlet three = 3;\n", None)
-            ]
-        );
-        buffer
-    });
-}
-
-#[gpui::test]
 fn test_serialization(cx: &mut gpui::MutableAppContext) {
     let mut now = Instant::now();
 
@@ -1177,17 +603,26 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
         .collect::<String>();
     let mut replica_ids = Vec::new();
     let mut buffers = Vec::new();
-    let mut network = Network::new(rng.clone());
+    let network = Rc::new(RefCell::new(Network::new(rng.clone())));
 
     for i in 0..rng.gen_range(min_peers..=max_peers) {
         let buffer = cx.add_model(|cx| {
             let mut buffer = Buffer::new(i as ReplicaId, base_text.as_str(), cx);
             buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
+            let network = network.clone();
+            cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
+                if let Event::Operation(op) = event {
+                    network
+                        .borrow_mut()
+                        .broadcast(buffer.replica_id(), vec![proto::serialize_operation(&op)]);
+                }
+            })
+            .detach();
             buffer
         });
         buffers.push(buffer);
         replica_ids.push(i as ReplicaId);
-        network.add_peer(i as ReplicaId);
+        network.borrow_mut().add_peer(i as ReplicaId);
         log::info!("Adding initial peer with replica id {}", i);
     }
 
@@ -1239,9 +674,10 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
             40..=49 if mutation_count != 0 && replica_id == 0 => {
                 let entry_count = rng.gen_range(1..=5);
                 buffer.update(cx, |buffer, cx| {
-                    let diagnostics = (0..entry_count)
-                        .map(|_| {
+                    let diagnostics = DiagnosticSet::new(
+                        (0..entry_count).map(|_| {
                             let range = buffer.random_byte_range(0, &mut rng);
+                            let range = range.to_point_utf16(buffer);
                             DiagnosticEntry {
                                 range,
                                 diagnostic: Diagnostic {
@@ -1249,10 +685,11 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
                                     ..Default::default()
                                 },
                             }
-                        })
-                        .collect();
+                        }),
+                        buffer,
+                    );
                     log::info!("peer {} setting diagnostics: {:?}", replica_id, diagnostics);
-                    buffer.update_diagnostics(diagnostics, None, cx).unwrap();
+                    buffer.update_diagnostics(diagnostics, cx);
                 });
                 mutation_count -= 1;
             }
@@ -1268,10 +705,20 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
                     let mut new_buffer =
                         Buffer::from_proto(new_replica_id, old_buffer, None, cx).unwrap();
                     new_buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
+                    let network = network.clone();
+                    cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
+                        if let Event::Operation(op) = event {
+                            network.borrow_mut().broadcast(
+                                buffer.replica_id(),
+                                vec![proto::serialize_operation(&op)],
+                            );
+                        }
+                    })
+                    .detach();
                     new_buffer
                 }));
                 replica_ids.push(new_replica_id);
-                network.replicate(replica_id, new_replica_id);
+                network.borrow_mut().replicate(replica_id, new_replica_id);
             }
             60..=69 if mutation_count != 0 => {
                 buffer.update(cx, |buffer, cx| {
@@ -1280,8 +727,9 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
                 });
                 mutation_count -= 1;
             }
-            _ if network.has_unreceived(replica_id) => {
+            _ if network.borrow().has_unreceived(replica_id) => {
                 let ops = network
+                    .borrow_mut()
                     .receive(replica_id)
                     .into_iter()
                     .map(|op| proto::deserialize_operation(op).unwrap());
@@ -1297,14 +745,6 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
             _ => {}
         }
 
-        buffer.update(cx, |buffer, _| {
-            let ops = buffer
-                .operations
-                .drain(..)
-                .map(|op| proto::serialize_operation(&op))
-                .collect();
-            network.broadcast(buffer.replica_id(), ops);
-        });
         now += Duration::from_millis(rng.gen_range(0..=200));
         buffers.extend(new_buffer);
 
@@ -1312,7 +752,7 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
             buffer.read(cx).check_invariants();
         }
 
-        if mutation_count == 0 && network.is_idle() {
+        if mutation_count == 0 && network.borrow().is_idle() {
             break;
         }
     }
@@ -1351,24 +791,6 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
             .collect::<Vec<_>>();
         assert_eq!(actual_remote_selections, expected_remote_selections);
     }
-}
-
-fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
-    buffer: &Buffer,
-    range: Range<T>,
-) -> Vec<(String, Option<DiagnosticSeverity>)> {
-    let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
-    for chunk in buffer.snapshot().chunks(range, true) {
-        if chunks
-            .last()
-            .map_or(false, |prev_chunk| prev_chunk.1 == chunk.diagnostic)
-        {
-            chunks.last_mut().unwrap().0.push_str(chunk.text);
-        } else {
-            chunks.push((chunk.text.to_string(), chunk.diagnostic));
-        }
-    }
-    chunks
 }
 
 #[test]

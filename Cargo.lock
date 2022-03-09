@@ -3591,6 +3591,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.2",
+ "similar",
  "smol",
  "sum_tree",
  "tempdir",

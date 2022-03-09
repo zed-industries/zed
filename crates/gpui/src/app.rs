@@ -741,7 +741,7 @@ type GlobalActionCallback = dyn FnMut(&dyn AnyAction, &mut MutableAppContext);
 
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
-type ReleaseObservationCallback = Box<dyn FnMut(&mut MutableAppContext)>;
+type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
@@ -1154,14 +1154,20 @@ impl MutableAppContext {
         E: Entity,
         E::Event: 'static,
         H: Handle<E>,
-        F: 'static + FnMut(&mut Self),
+        F: 'static + FnMut(&E, &mut Self),
     {
         let id = post_inc(&mut self.next_subscription_id);
         self.release_observations
             .lock()
             .entry(handle.id())
             .or_default()
-            .insert(id, Box::new(move |cx| callback(cx)));
+            .insert(
+                id,
+                Box::new(move |released, cx| {
+                    let released = released.downcast_ref().unwrap();
+                    callback(released, cx)
+                }),
+            );
         Subscription::ReleaseObservation {
             id,
             entity_id: handle.id(),
@@ -1520,9 +1526,8 @@ impl MutableAppContext {
                 self.observations.lock().remove(&model_id);
                 let mut model = self.cx.models.remove(&model_id).unwrap();
                 model.release(self);
-                self.pending_effects.push_back(Effect::Release {
-                    entity_id: model_id,
-                });
+                self.pending_effects
+                    .push_back(Effect::ModelRelease { model_id, model });
             }
 
             for (window_id, view_id) in dropped_views {
@@ -1548,7 +1553,7 @@ impl MutableAppContext {
                 }
 
                 self.pending_effects
-                    .push_back(Effect::Release { entity_id: view_id });
+                    .push_back(Effect::ViewRelease { view_id, view });
             }
 
             for key in dropped_element_states {
@@ -1575,7 +1580,12 @@ impl MutableAppContext {
                             self.notify_view_observers(window_id, view_id)
                         }
                         Effect::Deferred(callback) => callback(self),
-                        Effect::Release { entity_id } => self.notify_release_observers(entity_id),
+                        Effect::ModelRelease { model_id, model } => {
+                            self.notify_release_observers(model_id, model.as_any())
+                        }
+                        Effect::ViewRelease { view_id, view } => {
+                            self.notify_release_observers(view_id, view.as_any())
+                        }
                         Effect::Focus { window_id, view_id } => {
                             self.focus(window_id, view_id);
                         }
@@ -1738,11 +1748,11 @@ impl MutableAppContext {
         }
     }
 
-    fn notify_release_observers(&mut self, entity_id: usize) {
+    fn notify_release_observers(&mut self, entity_id: usize, entity: &dyn Any) {
         let callbacks = self.release_observations.lock().remove(&entity_id);
         if let Some(callbacks) = callbacks {
             for (_, mut callback) in callbacks {
-                callback(self);
+                callback(entity, self);
             }
         }
     }
@@ -2069,8 +2079,13 @@ pub enum Effect {
         view_id: usize,
     },
     Deferred(Box<dyn FnOnce(&mut MutableAppContext)>),
-    Release {
-        entity_id: usize,
+    ModelRelease {
+        model_id: usize,
+        model: Box<dyn AnyModel>,
+    },
+    ViewRelease {
+        view_id: usize,
+        view: Box<dyn AnyView>,
     },
     Focus {
         window_id: usize,
@@ -2099,9 +2114,13 @@ impl Debug for Effect {
                 .field("view_id", view_id)
                 .finish(),
             Effect::Deferred(_) => f.debug_struct("Effect::Deferred").finish(),
-            Effect::Release { entity_id } => f
-                .debug_struct("Effect::Release")
-                .field("entity_id", entity_id)
+            Effect::ModelRelease { model_id, .. } => f
+                .debug_struct("Effect::ModelRelease")
+                .field("model_id", model_id)
+                .finish(),
+            Effect::ViewRelease { view_id, .. } => f
+                .debug_struct("Effect::ViewRelease")
+                .field("view_id", view_id)
                 .finish(),
             Effect::Focus { window_id, view_id } => f
                 .debug_struct("Effect::Focus")
@@ -2332,13 +2351,13 @@ impl<'a, T: Entity> ModelContext<'a, T> {
     ) -> Subscription
     where
         S: Entity,
-        F: 'static + FnMut(&mut T, &mut ModelContext<T>),
+        F: 'static + FnMut(&mut T, &S, &mut ModelContext<T>),
     {
         let observer = self.weak_handle();
-        self.app.observe_release(handle, move |cx| {
+        self.app.observe_release(handle, move |released, cx| {
             if let Some(observer) = observer.upgrade(cx) {
                 observer.update(cx, |observer, cx| {
-                    callback(observer, cx);
+                    callback(observer, released, cx);
                 });
             }
         })
@@ -2594,13 +2613,13 @@ impl<'a, T: View> ViewContext<'a, T> {
     where
         E: Entity,
         H: Handle<E>,
-        F: 'static + FnMut(&mut T, &mut ViewContext<T>),
+        F: 'static + FnMut(&mut T, &E, &mut ViewContext<T>),
     {
         let observer = self.weak_handle();
-        self.app.observe_release(handle, move |cx| {
+        self.app.observe_release(handle, move |released, cx| {
             if let Some(observer) = observer.upgrade(cx) {
                 observer.update(cx, |observer, cx| {
-                    callback(observer, cx);
+                    callback(observer, released, cx);
                 });
             }
         })
@@ -4061,7 +4080,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_subscribe_and_emit_from_model(cx: &mut MutableAppContext) {
+    fn test_model_events(cx: &mut MutableAppContext) {
         #[derive(Default)]
         struct Model {
             events: Vec<usize>,
@@ -4073,11 +4092,11 @@ mod tests {
 
         let handle_1 = cx.add_model(|_| Model::default());
         let handle_2 = cx.add_model(|_| Model::default());
-        handle_1.update(cx, |_, c| {
-            c.subscribe(&handle_2, move |model: &mut Model, emitter, event, c| {
+        handle_1.update(cx, |_, cx| {
+            cx.subscribe(&handle_2, move |model: &mut Model, emitter, event, cx| {
                 model.events.push(*event);
 
-                c.subscribe(&emitter, |model, _, event, _| {
+                cx.subscribe(&emitter, |model, _, event, _| {
                     model.events.push(*event * 2);
                 })
                 .detach();
@@ -4294,12 +4313,12 @@ mod tests {
 
         cx.observe_release(&model, {
             let model_release_observed = model_release_observed.clone();
-            move |_| model_release_observed.set(true)
+            move |_, _| model_release_observed.set(true)
         })
         .detach();
         cx.observe_release(&view, {
             let view_release_observed = view_release_observed.clone();
-            move |_| view_release_observed.set(true)
+            move |_, _| view_release_observed.set(true)
         })
         .detach();
 
@@ -4316,7 +4335,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_subscribe_and_emit_from_view(cx: &mut MutableAppContext) {
+    fn test_view_events(cx: &mut MutableAppContext) {
         #[derive(Default)]
         struct View {
             events: Vec<usize>,
@@ -4346,18 +4365,18 @@ mod tests {
         let handle_2 = cx.add_view(window_id, |_| View::default());
         let handle_3 = cx.add_model(|_| Model);
 
-        handle_1.update(cx, |_, c| {
-            c.subscribe(&handle_2, move |me, emitter, event, c| {
+        handle_1.update(cx, |_, cx| {
+            cx.subscribe(&handle_2, move |me, emitter, event, cx| {
                 me.events.push(*event);
 
-                c.subscribe(&emitter, |me, _, event, _| {
+                cx.subscribe(&emitter, |me, _, event, _| {
                     me.events.push(*event * 2);
                 })
                 .detach();
             })
             .detach();
 
-            c.subscribe(&handle_3, |me, _, event, _| {
+            cx.subscribe(&handle_3, |me, _, event, _| {
                 me.events.push(*event);
             })
             .detach();

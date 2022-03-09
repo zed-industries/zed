@@ -16,9 +16,10 @@ use gpui::{
 };
 use language::{
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
-    range_from_lsp, Anchor, AnchorRangeExt, Bias, Buffer, CodeAction, CodeLabel, Completion,
-    Diagnostic, DiagnosticEntry, File as _, Language, LanguageRegistry, Operation, PointUtf16,
-    ToLspPosition, ToOffset, ToPointUtf16, Transaction,
+    range_from_lsp, Anchor, Bias, Buffer, CodeAction, CodeLabel, Completion, Diagnostic,
+    DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _, Language, LanguageRegistry,
+    LocalFile, OffsetRangeExt, Operation, PointUtf16, TextBufferSnapshot, ToLspPosition, ToOffset,
+    ToPointUtf16, Transaction,
 };
 use lsp::{DiagnosticSeverity, DocumentHighlightKind, LanguageServer};
 use lsp_command::*;
@@ -26,10 +27,11 @@ use postage::watch;
 use rand::prelude::*;
 use search::SearchQuery;
 use sha2::{Digest, Sha256};
+use similar::{ChangeTag, TextDiff};
 use smol::block_on;
 use std::{
     cell::RefCell,
-    cmp,
+    cmp::{self, Ordering},
     convert::TryInto,
     hash::Hash,
     mem,
@@ -48,9 +50,8 @@ pub struct Project {
     worktrees: Vec<WorktreeHandle>,
     active_entry: Option<ProjectEntry>,
     languages: Arc<LanguageRegistry>,
-    language_servers: HashMap<(WorktreeId, String), Arc<LanguageServer>>,
-    started_language_servers:
-        HashMap<(WorktreeId, String), Shared<Task<Option<Arc<LanguageServer>>>>>,
+    language_servers: HashMap<(WorktreeId, Arc<str>), Arc<LanguageServer>>,
+    started_language_servers: HashMap<(WorktreeId, Arc<str>), Task<Option<Arc<LanguageServer>>>>,
     client: Arc<client::Client>,
     user_store: ModelHandle<UserStore>,
     fs: Arc<dyn Fs>,
@@ -67,6 +68,7 @@ pub struct Project {
     loading_local_worktrees:
         HashMap<Arc<Path>, Shared<Task<Result<ModelHandle<Worktree>, Arc<anyhow::Error>>>>>,
     opened_buffers: HashMap<u64, OpenBuffer>,
+    buffer_snapshots: HashMap<u64, Vec<(i32, TextBufferSnapshot)>>,
     nonce: u128,
 }
 
@@ -201,7 +203,6 @@ impl Project {
         client.add_entity_message_handler(Self::handle_add_collaborator);
         client.add_entity_message_handler(Self::handle_buffer_reloaded);
         client.add_entity_message_handler(Self::handle_buffer_saved);
-        client.add_entity_message_handler(Self::handle_close_buffer);
         client.add_entity_message_handler(Self::handle_disk_based_diagnostics_updated);
         client.add_entity_message_handler(Self::handle_disk_based_diagnostics_updating);
         client.add_entity_message_handler(Self::handle_remove_collaborator);
@@ -286,6 +287,7 @@ impl Project {
                 shared_buffers: Default::default(),
                 loading_buffers: Default::default(),
                 loading_local_worktrees: Default::default(),
+                buffer_snapshots: Default::default(),
                 client_state: ProjectClientState::Local {
                     is_shared: false,
                     remote_id_tx,
@@ -372,6 +374,7 @@ impl Project {
                 language_servers: Default::default(),
                 started_language_servers: Default::default(),
                 opened_buffers: Default::default(),
+                buffer_snapshots: Default::default(),
                 nonce: StdRng::from_entropy().gen(),
             };
             for worktree in worktrees {
@@ -723,7 +726,7 @@ impl Project {
         let buffer = cx.add_model(|cx| {
             Buffer::new(self.replica_id(), "", cx).with_language(language::PLAIN_TEXT.clone(), cx)
         });
-        self.register_buffer(&buffer, None, cx)?;
+        self.register_buffer(&buffer, cx)?;
         Ok(buffer)
     }
 
@@ -798,15 +801,9 @@ impl Project {
             let worktree = worktree.as_local_mut().unwrap();
             worktree.load_buffer(path, cx)
         });
-        let worktree = worktree.downgrade();
         cx.spawn(|this, mut cx| async move {
             let buffer = load_buffer.await?;
-            let worktree = worktree
-                .upgrade(&cx)
-                .ok_or_else(|| anyhow!("worktree was removed"))?;
-            this.update(&mut cx, |this, cx| {
-                this.register_buffer(&buffer, Some(&worktree), cx)
-            })?;
+            this.update(&mut cx, |this, cx| this.register_buffer(&buffer, cx))?;
             Ok(buffer)
         })
     }
@@ -839,7 +836,7 @@ impl Project {
     fn open_local_buffer_via_lsp(
         &mut self,
         abs_path: lsp::Url,
-        lang_name: String,
+        lang_name: Arc<str>,
         lang_server: Arc<LanguageServer>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
@@ -891,7 +888,8 @@ impl Project {
                 })
                 .await?;
             this.update(&mut cx, |this, cx| {
-                this.assign_language_to_buffer(&buffer, Some(&worktree), cx);
+                this.assign_language_to_buffer(&buffer, cx);
+                this.register_buffer_with_language_server(&buffer, cx);
             });
             Ok(())
         })
@@ -917,7 +915,6 @@ impl Project {
     fn register_buffer(
         &mut self,
         buffer: &ModelHandle<Buffer>,
-        worktree: Option<&ModelHandle<Worktree>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let remote_id = buffer.read(cx).remote_id();
@@ -945,56 +942,208 @@ impl Project {
                 remote_id
             ))?,
         }
-        self.assign_language_to_buffer(&buffer, worktree, cx);
+        cx.subscribe(buffer, |this, buffer, event, cx| {
+            this.on_buffer_event(buffer, event, cx);
+        })
+        .detach();
+
+        self.assign_language_to_buffer(buffer, cx);
+        self.register_buffer_with_language_server(buffer, cx);
+
         Ok(())
     }
 
-    fn assign_language_to_buffer(
+    fn register_buffer_with_language_server(
         &mut self,
-        buffer: &ModelHandle<Buffer>,
-        worktree: Option<&ModelHandle<Worktree>>,
+        buffer_handle: &ModelHandle<Buffer>,
         cx: &mut ModelContext<Self>,
-    ) -> Option<()> {
-        let (path, full_path) = {
-            let file = buffer.read(cx).file()?;
-            (file.path().clone(), file.full_path(cx))
-        };
+    ) {
+        let buffer = buffer_handle.read(cx);
+        let buffer_id = buffer.remote_id();
+        if let Some(file) = File::from_dyn(buffer.file()) {
+            if file.is_local() {
+                let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+                let initial_snapshot = buffer.text_snapshot();
+                let language_server = self.language_server_for_buffer(buffer, cx).cloned();
 
-        // If the buffer has a language, set it and start/assign the language server
-        if let Some(language) = self.languages.select_language(&full_path) {
-            buffer.update(cx, |buffer, cx| {
-                buffer.set_language(Some(language.clone()), cx);
-            });
+                if let Some(local_worktree) = file.worktree.read(cx).as_local() {
+                    if let Some(diagnostics) = local_worktree.diagnostics_for_path(file.path()) {
+                        self.update_buffer_diagnostics(&buffer_handle, diagnostics, None, cx)
+                            .log_err();
+                    }
+                }
 
-            // For local worktrees, start a language server if needed.
-            // Also assign the language server and any previously stored diagnostics to the buffer.
-            if let Some(local_worktree) = worktree.and_then(|w| w.read(cx).as_local()) {
-                let worktree_id = local_worktree.id();
-                let worktree_abs_path = local_worktree.abs_path().clone();
-                let buffer = buffer.downgrade();
-                let language_server =
-                    self.start_language_server(worktree_id, worktree_abs_path, language, cx);
+                if let Some(server) = language_server {
+                    server
+                        .notify::<lsp::notification::DidOpenTextDocument>(
+                            lsp::DidOpenTextDocumentParams {
+                                text_document: lsp::TextDocumentItem::new(
+                                    uri,
+                                    Default::default(),
+                                    0,
+                                    initial_snapshot.text(),
+                                ),
+                            }
+                            .clone(),
+                        )
+                        .log_err();
+                    buffer_handle.update(cx, |buffer, cx| {
+                        buffer.set_completion_triggers(
+                            server
+                                .capabilities()
+                                .completion_provider
+                                .as_ref()
+                                .and_then(|provider| provider.trigger_characters.clone())
+                                .unwrap_or(Vec::new()),
+                            cx,
+                        )
+                    });
+                    self.buffer_snapshots
+                        .insert(buffer_id, vec![(0, initial_snapshot)]);
+                }
 
-                cx.spawn_weak(|_, mut cx| async move {
-                    if let Some(language_server) = language_server.await {
-                        if let Some(buffer) = buffer.upgrade(&cx) {
-                            buffer.update(&mut cx, |buffer, cx| {
-                                buffer.set_language_server(Some(language_server), cx);
-                            });
+                cx.observe_release(buffer_handle, |this, buffer, cx| {
+                    if let Some(file) = File::from_dyn(buffer.file()) {
+                        if file.is_local() {
+                            let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+                            if let Some(server) = this.language_server_for_buffer(buffer, cx) {
+                                server
+                                    .notify::<lsp::notification::DidCloseTextDocument>(
+                                        lsp::DidCloseTextDocumentParams {
+                                            text_document: lsp::TextDocumentIdentifier::new(
+                                                uri.clone(),
+                                            ),
+                                        },
+                                    )
+                                    .log_err();
+                            }
                         }
                     }
                 })
                 .detach();
             }
         }
+    }
 
-        if let Some(local_worktree) = worktree.and_then(|w| w.read(cx).as_local()) {
-            if let Some(diagnostics) = local_worktree.diagnostics_for_path(&path) {
-                buffer.update(cx, |buffer, cx| {
-                    buffer.update_diagnostics(diagnostics, None, cx).log_err();
+    fn on_buffer_event(
+        &mut self,
+        buffer: ModelHandle<Buffer>,
+        event: &BufferEvent,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<()> {
+        match event {
+            BufferEvent::Operation(operation) => {
+                let project_id = self.remote_id()?;
+                let request = self.client.request(proto::UpdateBuffer {
+                    project_id,
+                    buffer_id: buffer.read(cx).remote_id(),
+                    operations: vec![language::proto::serialize_operation(&operation)],
                 });
+                cx.background().spawn(request).detach_and_log_err(cx);
             }
+            BufferEvent::Edited => {
+                let language_server = self
+                    .language_server_for_buffer(buffer.read(cx), cx)?
+                    .clone();
+                let buffer = buffer.read(cx);
+                let file = File::from_dyn(buffer.file())?;
+                let abs_path = file.as_local()?.abs_path(cx);
+                let uri = lsp::Url::from_file_path(abs_path).unwrap();
+                let buffer_snapshots = self.buffer_snapshots.entry(buffer.remote_id()).or_default();
+                let (version, prev_snapshot) = buffer_snapshots.last()?;
+                let next_snapshot = buffer.text_snapshot();
+                let next_version = version + 1;
+
+                let content_changes = buffer
+                    .edits_since::<(PointUtf16, usize)>(prev_snapshot.version())
+                    .map(|edit| {
+                        let edit_start = edit.new.start.0;
+                        let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
+                        let new_text = next_snapshot
+                            .text_for_range(edit.new.start.1..edit.new.end.1)
+                            .collect();
+                        lsp::TextDocumentContentChangeEvent {
+                            range: Some(lsp::Range::new(
+                                edit_start.to_lsp_position(),
+                                edit_end.to_lsp_position(),
+                            )),
+                            range_length: None,
+                            text: new_text,
+                        }
+                    })
+                    .collect();
+
+                buffer_snapshots.push((next_version, next_snapshot));
+
+                language_server
+                    .notify::<lsp::notification::DidChangeTextDocument>(
+                        lsp::DidChangeTextDocumentParams {
+                            text_document: lsp::VersionedTextDocumentIdentifier::new(
+                                uri,
+                                next_version,
+                            ),
+                            content_changes,
+                        },
+                    )
+                    .log_err();
+            }
+            BufferEvent::Saved => {
+                let file = File::from_dyn(buffer.read(cx).file())?;
+                let worktree_id = file.worktree_id(cx);
+                let abs_path = file.as_local()?.abs_path(cx);
+                let text_document = lsp::TextDocumentIdentifier {
+                    uri: lsp::Url::from_file_path(abs_path).unwrap(),
+                };
+
+                for (_, server) in self.language_servers_for_worktree(worktree_id) {
+                    server
+                        .notify::<lsp::notification::DidSaveTextDocument>(
+                            lsp::DidSaveTextDocumentParams {
+                                text_document: text_document.clone(),
+                                text: None,
+                            },
+                        )
+                        .log_err();
+                }
+            }
+            _ => {}
         }
+
+        None
+    }
+
+    fn language_servers_for_worktree(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> impl Iterator<Item = (&str, &Arc<LanguageServer>)> {
+        self.language_servers.iter().filter_map(
+            move |((language_server_worktree_id, language_name), server)| {
+                if *language_server_worktree_id == worktree_id {
+                    Some((language_name.as_ref(), server))
+                } else {
+                    None
+                }
+            },
+        )
+    }
+
+    fn assign_language_to_buffer(
+        &mut self,
+        buffer: &ModelHandle<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<()> {
+        // If the buffer has a language, set it and start the language server if we haven't already.
+        let full_path = buffer.read(cx).file()?.full_path(cx);
+        let language = self.languages.select_language(&full_path)?;
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_language(Some(language.clone()), cx);
+        });
+
+        let file = File::from_dyn(buffer.read(cx).file())?;
+        let worktree = file.worktree.read(cx).as_local()?;
+        let worktree_id = worktree.id();
+        let worktree_abs_path = worktree.abs_path().clone();
+        self.start_language_server(worktree_id, worktree_abs_path, language, cx);
 
         None
     }
@@ -1005,14 +1154,14 @@ impl Project {
         worktree_path: Arc<Path>,
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
-    ) -> Shared<Task<Option<Arc<LanguageServer>>>> {
+    ) {
         enum LspEvent {
             DiagnosticsStart,
             DiagnosticsUpdate(lsp::PublishDiagnosticsParams),
             DiagnosticsFinish,
         }
 
-        let key = (worktree_id, language.name().to_string());
+        let key = (worktree_id, language.name());
         self.started_language_servers
             .entry(key.clone())
             .or_insert_with(|| {
@@ -1024,12 +1173,8 @@ impl Project {
                 );
                 let rpc = self.client.clone();
                 cx.spawn_weak(|this, mut cx| async move {
-                    let language_server = language_server?.await.log_err()?;
-                    if let Some(this) = this.upgrade(&cx) {
-                        this.update(&mut cx, |this, _| {
-                            this.language_servers.insert(key, language_server.clone());
-                        });
-                    }
+                    let mut language_server = language_server?.await.log_err()?;
+                    let this = this.upgrade(&cx)?;
 
                     let disk_based_sources = language
                         .disk_based_diagnostic_sources()
@@ -1101,50 +1246,116 @@ impl Project {
                         .detach();
 
                     // Process all the LSP events.
-                    cx.spawn(|mut cx| async move {
-                        while let Ok(message) = diagnostics_rx.recv().await {
-                            let this = this.upgrade(&cx)?;
-                            match message {
-                                LspEvent::DiagnosticsStart => {
-                                    this.update(&mut cx, |this, cx| {
-                                        this.disk_based_diagnostics_started(cx);
-                                        if let Some(project_id) = this.remote_id() {
-                                            rpc.send(proto::DiskBasedDiagnosticsUpdating {
-                                                project_id,
-                                            })
+                    cx.spawn(|mut cx| {
+                        let this = this.downgrade();
+                        async move {
+                            while let Ok(message) = diagnostics_rx.recv().await {
+                                let this = this.upgrade(&cx)?;
+                                match message {
+                                    LspEvent::DiagnosticsStart => {
+                                        this.update(&mut cx, |this, cx| {
+                                            this.disk_based_diagnostics_started(cx);
+                                            if let Some(project_id) = this.remote_id() {
+                                                rpc.send(proto::DiskBasedDiagnosticsUpdating {
+                                                    project_id,
+                                                })
+                                                .log_err();
+                                            }
+                                        });
+                                    }
+                                    LspEvent::DiagnosticsUpdate(mut params) => {
+                                        language.process_diagnostics(&mut params);
+                                        this.update(&mut cx, |this, cx| {
+                                            this.update_diagnostics(
+                                                params,
+                                                &disk_based_sources,
+                                                cx,
+                                            )
                                             .log_err();
-                                        }
-                                    });
-                                }
-                                LspEvent::DiagnosticsUpdate(mut params) => {
-                                    language.process_diagnostics(&mut params);
-                                    this.update(&mut cx, |this, cx| {
-                                        this.update_diagnostics(params, &disk_based_sources, cx)
-                                            .log_err();
-                                    });
-                                }
-                                LspEvent::DiagnosticsFinish => {
-                                    this.update(&mut cx, |this, cx| {
-                                        this.disk_based_diagnostics_finished(cx);
-                                        if let Some(project_id) = this.remote_id() {
-                                            rpc.send(proto::DiskBasedDiagnosticsUpdated {
-                                                project_id,
-                                            })
-                                            .log_err();
-                                        }
-                                    });
+                                        });
+                                    }
+                                    LspEvent::DiagnosticsFinish => {
+                                        this.update(&mut cx, |this, cx| {
+                                            this.disk_based_diagnostics_finished(cx);
+                                            if let Some(project_id) = this.remote_id() {
+                                                rpc.send(proto::DiskBasedDiagnosticsUpdated {
+                                                    project_id,
+                                                })
+                                                .log_err();
+                                            }
+                                        });
+                                    }
                                 }
                             }
+                            Some(())
                         }
-                        Some(())
                     })
                     .detach();
 
+                    let language_server = language_server.initialize().await.log_err()?;
+                    this.update(&mut cx, |this, cx| {
+                        this.language_servers
+                            .insert(key.clone(), language_server.clone());
+
+                        // Tell the language server about every open buffer in the worktree that matches the language.
+                        for buffer in this.opened_buffers.values() {
+                            if let Some(buffer_handle) = buffer.upgrade(cx) {
+                                let buffer = buffer_handle.read(cx);
+                                let file = if let Some(file) = File::from_dyn(buffer.file()) {
+                                    file
+                                } else {
+                                    continue;
+                                };
+                                let language = if let Some(language) = buffer.language() {
+                                    language
+                                } else {
+                                    continue;
+                                };
+                                if (file.worktree.read(cx).id(), language.name()) != key {
+                                    continue;
+                                }
+
+                                let file = file.as_local()?;
+                                let versions = this
+                                    .buffer_snapshots
+                                    .entry(buffer.remote_id())
+                                    .or_insert_with(|| vec![(0, buffer.text_snapshot())]);
+                                let (version, initial_snapshot) = versions.last().unwrap();
+                                let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+                                language_server
+                                    .notify::<lsp::notification::DidOpenTextDocument>(
+                                        lsp::DidOpenTextDocumentParams {
+                                            text_document: lsp::TextDocumentItem::new(
+                                                uri,
+                                                Default::default(),
+                                                *version,
+                                                initial_snapshot.text(),
+                                            ),
+                                        },
+                                    )
+                                    .log_err()?;
+                                buffer_handle.update(cx, |buffer, cx| {
+                                    buffer.set_completion_triggers(
+                                        language_server
+                                            .capabilities()
+                                            .completion_provider
+                                            .as_ref()
+                                            .and_then(|provider| {
+                                                provider.trigger_characters.clone()
+                                            })
+                                            .unwrap_or(Vec::new()),
+                                        cx,
+                                    )
+                                });
+                            }
+                        }
+
+                        Some(())
+                    });
+
                     Some(language_server)
                 })
-                .shared()
-            })
-            .clone()
+            });
     }
 
     pub fn update_diagnostics(
@@ -1274,9 +1485,7 @@ impl Project {
                     .file()
                     .map_or(false, |file| *file.path() == project_path.path)
                 {
-                    buffer.update(cx, |buffer, cx| {
-                        buffer.update_diagnostics(diagnostics.clone(), version, cx)
-                    })?;
+                    self.update_buffer_diagnostics(&buffer, diagnostics.clone(), version, cx)?;
                     break;
                 }
             }
@@ -1291,6 +1500,90 @@ impl Project {
         Ok(())
     }
 
+    fn update_buffer_diagnostics(
+        &mut self,
+        buffer: &ModelHandle<Buffer>,
+        mut diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
+        version: Option<i32>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        fn compare_diagnostics(a: &Diagnostic, b: &Diagnostic) -> Ordering {
+            Ordering::Equal
+                .then_with(|| b.is_primary.cmp(&a.is_primary))
+                .then_with(|| a.is_disk_based.cmp(&b.is_disk_based))
+                .then_with(|| a.severity.cmp(&b.severity))
+                .then_with(|| a.message.cmp(&b.message))
+        }
+
+        let snapshot = self.buffer_snapshot_for_lsp_version(buffer, version, cx)?;
+
+        diagnostics.sort_unstable_by(|a, b| {
+            Ordering::Equal
+                .then_with(|| a.range.start.cmp(&b.range.start))
+                .then_with(|| b.range.end.cmp(&a.range.end))
+                .then_with(|| compare_diagnostics(&a.diagnostic, &b.diagnostic))
+        });
+
+        let mut sanitized_diagnostics = Vec::new();
+        let mut edits_since_save = snapshot
+            .edits_since::<PointUtf16>(buffer.read(cx).saved_version())
+            .peekable();
+        let mut last_edit_old_end = PointUtf16::zero();
+        let mut last_edit_new_end = PointUtf16::zero();
+        'outer: for entry in diagnostics {
+            let mut start = entry.range.start;
+            let mut end = entry.range.end;
+
+            // Some diagnostics are based on files on disk instead of buffers'
+            // current contents. Adjust these diagnostics' ranges to reflect
+            // any unsaved edits.
+            if entry.diagnostic.is_disk_based {
+                while let Some(edit) = edits_since_save.peek() {
+                    if edit.old.end <= start {
+                        last_edit_old_end = edit.old.end;
+                        last_edit_new_end = edit.new.end;
+                        edits_since_save.next();
+                    } else if edit.old.start <= end && edit.old.end >= start {
+                        continue 'outer;
+                    } else {
+                        break;
+                    }
+                }
+
+                let start_overshoot = start - last_edit_old_end;
+                start = last_edit_new_end;
+                start += start_overshoot;
+
+                let end_overshoot = end - last_edit_old_end;
+                end = last_edit_new_end;
+                end += end_overshoot;
+            }
+
+            let mut range = snapshot.clip_point_utf16(start, Bias::Left)
+                ..snapshot.clip_point_utf16(end, Bias::Right);
+
+            // Expand empty ranges by one character
+            if range.start == range.end {
+                range.end.column += 1;
+                range.end = snapshot.clip_point_utf16(range.end, Bias::Right);
+                if range.start == range.end && range.end.column > 0 {
+                    range.start.column -= 1;
+                    range.start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                }
+            }
+
+            sanitized_diagnostics.push(DiagnosticEntry {
+                range,
+                diagnostic: entry.diagnostic,
+            });
+        }
+        drop(edits_since_save);
+
+        let set = DiagnosticSet::new(sanitized_diagnostics, &snapshot);
+        buffer.update(cx, |buffer, cx| buffer.update_diagnostics(set, cx));
+        Ok(())
+    }
+
     pub fn format(
         &self,
         buffers: HashSet<ModelHandle<Buffer>>,
@@ -1301,25 +1594,11 @@ impl Project {
         let mut remote_buffers = None;
         for buffer_handle in buffers {
             let buffer = buffer_handle.read(cx);
-            let worktree;
             if let Some(file) = File::from_dyn(buffer.file()) {
-                worktree = file.worktree.clone();
                 if let Some(buffer_abs_path) = file.as_local().map(|f| f.abs_path(cx)) {
-                    let lang_server;
-                    if let Some(lang) = buffer.language() {
-                        if let Some(server) = self
-                            .language_servers
-                            .get(&(worktree.read(cx).id(), lang.name().to_string()))
-                        {
-                            lang_server = server.clone();
-                        } else {
-                            return Task::ready(Ok(Default::default()));
-                        };
-                    } else {
-                        return Task::ready(Ok(Default::default()));
+                    if let Some(server) = self.language_server_for_buffer(buffer, cx) {
+                        local_buffers.push((buffer_handle, buffer_abs_path, server.clone()));
                     }
-
-                    local_buffers.push((buffer_handle, buffer_abs_path, lang_server));
                 } else {
                     remote_buffers.get_or_insert(Vec::new()).push(buffer_handle);
                 }
@@ -1353,21 +1632,17 @@ impl Project {
                     .await?;
             }
 
-            for (buffer, buffer_abs_path, lang_server) in local_buffers {
-                let capabilities = if let Some(capabilities) = lang_server.capabilities().await {
-                    capabilities
-                } else {
-                    continue;
-                };
-
+            for (buffer, buffer_abs_path, language_server) in local_buffers {
                 let text_document = lsp::TextDocumentIdentifier::new(
                     lsp::Url::from_file_path(&buffer_abs_path).unwrap(),
                 );
+                let capabilities = &language_server.capabilities();
                 let lsp_edits = if capabilities
                     .document_formatting_provider
-                    .map_or(false, |provider| provider != lsp::OneOf::Left(false))
+                    .as_ref()
+                    .map_or(false, |provider| *provider != lsp::OneOf::Left(false))
                 {
-                    lang_server
+                    language_server
                         .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
                             text_document,
                             options: Default::default(),
@@ -1376,13 +1651,14 @@ impl Project {
                         .await?
                 } else if capabilities
                     .document_range_formatting_provider
-                    .map_or(false, |provider| provider != lsp::OneOf::Left(false))
+                    .as_ref()
+                    .map_or(false, |provider| *provider != lsp::OneOf::Left(false))
                 {
                     let buffer_start = lsp::Position::new(0, 0);
                     let buffer_end = buffer
                         .read_with(&cx, |buffer, _| buffer.max_point_utf16())
                         .to_lsp_position();
-                    lang_server
+                    language_server
                         .request::<lsp::request::RangeFormatting>(
                             lsp::DocumentRangeFormattingParams {
                                 text_document,
@@ -1397,9 +1673,9 @@ impl Project {
                 };
 
                 if let Some(lsp_edits) = lsp_edits {
-                    let edits = buffer
-                        .update(&mut cx, |buffer, cx| {
-                            buffer.edits_from_lsp(lsp_edits, None, cx)
+                    let edits = this
+                        .update(&mut cx, |this, cx| {
+                            this.edits_from_lsp(&buffer, lsp_edits, None, cx)
                         })
                         .await?;
                     buffer.update(&mut cx, |buffer, cx| {
@@ -1564,10 +1840,10 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
         if self.is_local() {
-            let language_server = if let Some(server) = self
-                .language_servers
-                .get(&(symbol.source_worktree_id, symbol.language_name.clone()))
-            {
+            let language_server = if let Some(server) = self.language_servers.get(&(
+                symbol.source_worktree_id,
+                Arc::from(symbol.language_name.as_str()),
+            )) {
                 server.clone()
             } else {
                 return Task::ready(Err(anyhow!(
@@ -1593,7 +1869,7 @@ impl Project {
 
             self.open_local_buffer_via_lsp(
                 symbol_uri,
-                symbol.language_name.clone(),
+                Arc::from(symbol.language_name.as_str()),
                 language_server,
                 cx,
             )
@@ -1637,11 +1913,12 @@ impl Project {
 
         if worktree.read(cx).as_local().is_some() {
             let buffer_abs_path = buffer_abs_path.unwrap();
-            let lang_server = if let Some(server) = source_buffer.language_server().cloned() {
-                server
-            } else {
-                return Task::ready(Ok(Default::default()));
-            };
+            let lang_server =
+                if let Some(server) = self.language_server_for_buffer(source_buffer, cx) {
+                    server.clone()
+                } else {
+                    return Task::ready(Ok(Default::default()));
+                };
 
             cx.spawn(|_, cx| async move {
                 let completions = lang_server
@@ -1748,19 +2025,21 @@ impl Project {
         let buffer_id = buffer.remote_id();
 
         if self.is_local() {
-            let lang_server = if let Some(language_server) = buffer.language_server() {
-                language_server.clone()
+            let lang_server = if let Some(server) = self.language_server_for_buffer(buffer, cx) {
+                server.clone()
             } else {
-                return Task::ready(Err(anyhow!("buffer does not have a language server")));
+                return Task::ready(Ok(Default::default()));
             };
 
-            cx.spawn(|_, mut cx| async move {
+            cx.spawn(|this, mut cx| async move {
                 let resolved_completion = lang_server
                     .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
                     .await?;
                 if let Some(edits) = resolved_completion.additional_text_edits {
-                    let edits = buffer_handle
-                        .update(&mut cx, |buffer, cx| buffer.edits_from_lsp(edits, None, cx))
+                    let edits = this
+                        .update(&mut cx, |this, cx| {
+                            this.edits_from_lsp(&buffer_handle, edits, None, cx)
+                        })
                         .await?;
                     buffer_handle.update(&mut cx, |buffer, cx| {
                         buffer.finalize_last_transaction();
@@ -1837,34 +2116,18 @@ impl Project {
 
         if worktree.read(cx).as_local().is_some() {
             let buffer_abs_path = buffer_abs_path.unwrap();
-            let lang_name;
-            let lang_server;
-            if let Some(lang) = buffer.language() {
-                lang_name = lang.name().to_string();
-                if let Some(server) = self
-                    .language_servers
-                    .get(&(worktree.read(cx).id(), lang_name.clone()))
-                {
-                    lang_server = server.clone();
-                } else {
-                    return Task::ready(Ok(Default::default()));
-                };
+            let lang_server = if let Some(server) = self.language_server_for_buffer(buffer, cx) {
+                server.clone()
             } else {
                 return Task::ready(Ok(Default::default()));
-            }
+            };
 
             let lsp_range = lsp::Range::new(
                 range.start.to_point_utf16(buffer).to_lsp_position(),
                 range.end.to_point_utf16(buffer).to_lsp_position(),
             );
             cx.foreground().spawn(async move {
-                if !lang_server
-                    .capabilities()
-                    .await
-                    .map_or(false, |capabilities| {
-                        capabilities.code_action_provider.is_some()
-                    })
-                {
+                if !lang_server.capabilities().code_action_provider.is_some() {
                     return Ok(Default::default());
                 }
 
@@ -1941,14 +2204,14 @@ impl Project {
         if self.is_local() {
             let buffer = buffer_handle.read(cx);
             let lang_name = if let Some(lang) = buffer.language() {
-                lang.name().to_string()
+                lang.name()
             } else {
                 return Task::ready(Ok(Default::default()));
             };
-            let lang_server = if let Some(language_server) = buffer.language_server() {
-                language_server.clone()
+            let lang_server = if let Some(server) = self.language_server_for_buffer(buffer, cx) {
+                server.clone()
             } else {
-                return Task::ready(Err(anyhow!("buffer does not have a language server")));
+                return Task::ready(Ok(Default::default()));
             };
             let range = action.range.to_point_utf16(buffer);
 
@@ -2022,7 +2285,7 @@ impl Project {
         this: ModelHandle<Self>,
         edit: lsp::WorkspaceEdit,
         push_to_history: bool,
-        language_name: String,
+        language_name: Arc<str>,
         language_server: Arc<LanguageServer>,
         cx: &mut AsyncAppContext,
     ) -> Result<ProjectTransaction> {
@@ -2106,13 +2369,18 @@ impl Project {
                         })
                         .await?;
 
-                    let edits = buffer_to_edit
-                        .update(cx, |buffer, cx| {
+                    let edits = this
+                        .update(cx, |this, cx| {
                             let edits = op.edits.into_iter().map(|edit| match edit {
                                 lsp::OneOf::Left(edit) => edit,
                                 lsp::OneOf::Right(edit) => edit.text_edit,
                             });
-                            buffer.edits_from_lsp(edits, op.text_document.version, cx)
+                            this.edits_from_lsp(
+                                &buffer_to_edit,
+                                edits,
+                                op.text_document.version,
+                                cx,
+                            )
                         })
                         .await?;
 
@@ -2389,16 +2657,12 @@ impl Project {
         let buffer = buffer_handle.read(cx);
         if self.is_local() {
             let file = File::from_dyn(buffer.file()).and_then(File::as_local);
-            if let Some((file, language_server)) = file.zip(buffer.language_server().cloned()) {
+            if let Some((file, language_server)) =
+                file.zip(self.language_server_for_buffer(buffer, cx).cloned())
+            {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), cx);
                 return cx.spawn(|this, cx| async move {
-                    if !language_server
-                        .capabilities()
-                        .await
-                        .map_or(false, |capabilities| {
-                            request.check_capabilities(&capabilities)
-                        })
-                    {
+                    if !request.check_capabilities(&language_server.capabilities()) {
                         return Ok(Default::default());
                     }
 
@@ -2550,7 +2814,7 @@ impl Project {
             self.worktrees
                 .push(WorktreeHandle::Strong(worktree.clone()));
         } else {
-            cx.observe_release(&worktree, |this, cx| {
+            cx.observe_release(&worktree, |this, _, cx| {
                 this.worktrees
                     .retain(|worktree| worktree.upgrade(cx).is_some());
                 cx.notify();
@@ -3389,9 +3653,7 @@ impl Project {
                         Buffer::from_proto(replica_id, buffer, buffer_file, cx).unwrap()
                     });
 
-                    this.update(&mut cx, |this, cx| {
-                        this.register_buffer(&buffer, buffer_worktree.as_ref(), cx)
-                    })?;
+                    this.update(&mut cx, |this, cx| this.register_buffer(&buffer, cx))?;
 
                     *opened_buffer_tx.borrow_mut().borrow_mut() = ();
                     Ok(buffer)
@@ -3427,16 +3689,6 @@ impl Project {
                 .try_into()
                 .map_err(|_| anyhow!("invalid signature"))?,
         })
-    }
-
-    async fn handle_close_buffer(
-        _: ModelHandle<Self>,
-        _: TypedEnvelope<proto::CloseBuffer>,
-        _: Arc<Client>,
-        _: AsyncAppContext,
-    ) -> Result<()> {
-        // TODO: use this for following
-        Ok(())
     }
 
     async fn handle_buffer_saved(
@@ -3526,6 +3778,160 @@ impl Project {
                 background,
             )
             .await
+        }
+    }
+
+    fn edits_from_lsp(
+        &mut self,
+        buffer: &ModelHandle<Buffer>,
+        lsp_edits: impl 'static + Send + IntoIterator<Item = lsp::TextEdit>,
+        version: Option<i32>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<(Range<Anchor>, String)>>> {
+        let snapshot = self.buffer_snapshot_for_lsp_version(buffer, version, cx);
+        cx.background().spawn(async move {
+            let snapshot = snapshot?;
+            let mut lsp_edits = lsp_edits
+                .into_iter()
+                .map(|edit| (range_from_lsp(edit.range), edit.new_text))
+                .peekable();
+
+            let mut edits = Vec::new();
+            while let Some((mut range, mut new_text)) = lsp_edits.next() {
+                // Combine any LSP edits that are adjacent.
+                //
+                // Also, combine LSP edits that are separated from each other by only
+                // a newline. This is important because for some code actions,
+                // Rust-analyzer rewrites the entire buffer via a series of edits that
+                // are separated by unchanged newline characters.
+                //
+                // In order for the diffing logic below to work properly, any edits that
+                // cancel each other out must be combined into one.
+                while let Some((next_range, next_text)) = lsp_edits.peek() {
+                    if next_range.start > range.end {
+                        if next_range.start.row > range.end.row + 1
+                            || next_range.start.column > 0
+                            || snapshot.clip_point_utf16(
+                                PointUtf16::new(range.end.row, u32::MAX),
+                                Bias::Left,
+                            ) > range.end
+                        {
+                            break;
+                        }
+                        new_text.push('\n');
+                    }
+                    range.end = next_range.end;
+                    new_text.push_str(&next_text);
+                    lsp_edits.next();
+                }
+
+                if snapshot.clip_point_utf16(range.start, Bias::Left) != range.start
+                    || snapshot.clip_point_utf16(range.end, Bias::Left) != range.end
+                {
+                    return Err(anyhow!("invalid edits received from language server"));
+                }
+
+                // For multiline edits, perform a diff of the old and new text so that
+                // we can identify the changes more precisely, preserving the locations
+                // of any anchors positioned in the unchanged regions.
+                if range.end.row > range.start.row {
+                    let mut offset = range.start.to_offset(&snapshot);
+                    let old_text = snapshot.text_for_range(range).collect::<String>();
+
+                    let diff = TextDiff::from_lines(old_text.as_str(), &new_text);
+                    let mut moved_since_edit = true;
+                    for change in diff.iter_all_changes() {
+                        let tag = change.tag();
+                        let value = change.value();
+                        match tag {
+                            ChangeTag::Equal => {
+                                offset += value.len();
+                                moved_since_edit = true;
+                            }
+                            ChangeTag::Delete => {
+                                let start = snapshot.anchor_after(offset);
+                                let end = snapshot.anchor_before(offset + value.len());
+                                if moved_since_edit {
+                                    edits.push((start..end, String::new()));
+                                } else {
+                                    edits.last_mut().unwrap().0.end = end;
+                                }
+                                offset += value.len();
+                                moved_since_edit = false;
+                            }
+                            ChangeTag::Insert => {
+                                if moved_since_edit {
+                                    let anchor = snapshot.anchor_after(offset);
+                                    edits.push((anchor.clone()..anchor, value.to_string()));
+                                } else {
+                                    edits.last_mut().unwrap().1.push_str(value);
+                                }
+                                moved_since_edit = false;
+                            }
+                        }
+                    }
+                } else if range.end == range.start {
+                    let anchor = snapshot.anchor_after(range.start);
+                    edits.push((anchor.clone()..anchor, new_text));
+                } else {
+                    let edit_start = snapshot.anchor_after(range.start);
+                    let edit_end = snapshot.anchor_before(range.end);
+                    edits.push((edit_start..edit_end, new_text));
+                }
+            }
+
+            Ok(edits)
+        })
+    }
+
+    fn buffer_snapshot_for_lsp_version(
+        &mut self,
+        buffer: &ModelHandle<Buffer>,
+        version: Option<i32>,
+        cx: &AppContext,
+    ) -> Result<TextBufferSnapshot> {
+        const OLD_VERSIONS_TO_RETAIN: i32 = 10;
+
+        if let Some(version) = version {
+            let buffer_id = buffer.read(cx).remote_id();
+            let snapshots = self
+                .buffer_snapshots
+                .get_mut(&buffer_id)
+                .ok_or_else(|| anyhow!("no snapshot found for buffer {}", buffer_id))?;
+            let mut found_snapshot = None;
+            snapshots.retain(|(snapshot_version, snapshot)| {
+                if snapshot_version + OLD_VERSIONS_TO_RETAIN < version {
+                    false
+                } else {
+                    if *snapshot_version == version {
+                        found_snapshot = Some(snapshot.clone());
+                    }
+                    true
+                }
+            });
+
+            found_snapshot.ok_or_else(|| {
+                anyhow!(
+                    "snapshot not found for buffer {} at version {}",
+                    buffer_id,
+                    version
+                )
+            })
+        } else {
+            Ok((buffer.read(cx)).text_snapshot())
+        }
+    }
+
+    fn language_server_for_buffer(
+        &self,
+        buffer: &Buffer,
+        cx: &AppContext,
+    ) -> Option<&Arc<LanguageServer>> {
+        if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
+            let worktree_id = file.worktree_id(cx);
+            self.language_servers.get(&(worktree_id, language.name()))
+        } else {
+            None
         }
     }
 }
@@ -3760,7 +4166,8 @@ mod tests {
     use futures::StreamExt;
     use gpui::test::subscribe;
     use language::{
-        tree_sitter_rust, AnchorRangeExt, Diagnostic, LanguageConfig, LanguageServerConfig, Point,
+        tree_sitter_rust, Diagnostic, LanguageConfig, LanguageServerConfig, OffsetRangeExt, Point,
+        ToPoint,
     };
     use lsp::Url;
     use serde_json::json;
@@ -3833,7 +4240,229 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_language_server_diagnostics(cx: &mut gpui::TestAppContext) {
+    async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let (mut rust_lsp_config, mut fake_rust_servers) = LanguageServerConfig::fake();
+        let (mut json_lsp_config, mut fake_json_servers) = LanguageServerConfig::fake();
+        rust_lsp_config.set_fake_capabilities(lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string(), "::".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        json_lsp_config.set_fake_capabilities(lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![":".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        let rust_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".to_string()],
+                language_server: Some(rust_lsp_config),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        ));
+        let json_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "JSON".into(),
+                path_suffixes: vec!["json".to_string()],
+                language_server: Some(json_lsp_config),
+                ..Default::default()
+            },
+            None,
+        ));
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/the-root",
+            json!({
+                "test.rs": "const A: i32 = 1;",
+                "test2.rs": "",
+                "Cargo.toml": "a = 1",
+                "package.json": "{\"a\": 1}",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, cx);
+        project.update(cx, |project, _| {
+            project.languages.add(rust_language);
+            project.languages.add(json_language);
+        });
+
+        let worktree_id = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/the-root", true, cx)
+            })
+            .await
+            .unwrap()
+            .0
+            .read_with(cx, |tree, _| tree.id());
+
+        // Open a buffer without an associated language server.
+        let toml_buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, "Cargo.toml"), cx)
+            })
+            .await
+            .unwrap();
+
+        // Open a buffer with an associated language server.
+        let rust_buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, "test.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        // A server is started up, and it is notified about Rust files.
+        let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
+        assert_eq!(
+            fake_rust_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentItem {
+                uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+                version: 0,
+                text: "const A: i32 = 1;".to_string(),
+                language_id: Default::default()
+            }
+        );
+
+        // The buffer is configured based on the language server's capabilities.
+        rust_buffer.read_with(cx, |buffer, _| {
+            assert_eq!(
+                buffer.completion_triggers(),
+                &[".".to_string(), "::".to_string()]
+            );
+        });
+        toml_buffer.read_with(cx, |buffer, _| {
+            assert!(buffer.completion_triggers().is_empty());
+        });
+
+        // Edit a buffer. The changes are reported to the language server.
+        rust_buffer.update(cx, |buffer, cx| buffer.edit([16..16], "2", cx));
+        assert_eq!(
+            fake_rust_server
+                .receive_notification::<lsp::notification::DidChangeTextDocument>()
+                .await
+                .text_document,
+            lsp::VersionedTextDocumentIdentifier::new(
+                lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+                1
+            )
+        );
+
+        // Open a third buffer with a different associated language server.
+        let json_buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, "package.json"), cx)
+            })
+            .await
+            .unwrap();
+
+        // Another language server is started up, and it is notified about
+        // all three open buffers.
+        let mut fake_json_server = fake_json_servers.next().await.unwrap();
+        assert_eq!(
+            fake_json_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentItem {
+                uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+                version: 0,
+                text: "{\"a\": 1}".to_string(),
+                language_id: Default::default()
+            }
+        );
+
+        // This buffer is configured based on the second language server's
+        // capabilities.
+        json_buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.completion_triggers(), &[":".to_string()]);
+        });
+
+        // When opening another buffer whose language server is already running,
+        // it is also configured based on the existing language server's capabilities.
+        let rust_buffer2 = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, "test2.rs"), cx)
+            })
+            .await
+            .unwrap();
+        rust_buffer2.read_with(cx, |buffer, _| {
+            assert_eq!(
+                buffer.completion_triggers(),
+                &[".".to_string(), "::".to_string()]
+            );
+        });
+
+        // Changes are reported only to servers matching the buffer's language.
+        toml_buffer.update(cx, |buffer, cx| buffer.edit([5..5], "23", cx));
+        rust_buffer2.update(cx, |buffer, cx| buffer.edit([0..0], "let x = 1;", cx));
+        assert_eq!(
+            fake_rust_server
+                .receive_notification::<lsp::notification::DidChangeTextDocument>()
+                .await
+                .text_document,
+            lsp::VersionedTextDocumentIdentifier::new(
+                lsp::Url::from_file_path("/the-root/test2.rs").unwrap(),
+                1
+            )
+        );
+
+        // Save notifications are reported to all servers.
+        toml_buffer
+            .update(cx, |buffer, cx| buffer.save(cx))
+            .await
+            .unwrap();
+        assert_eq!(
+            fake_rust_server
+                .receive_notification::<lsp::notification::DidSaveTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentIdentifier::new(
+                lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap()
+            )
+        );
+        assert_eq!(
+            fake_json_server
+                .receive_notification::<lsp::notification::DidSaveTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentIdentifier::new(
+                lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap()
+            )
+        );
+
+        // Close notifications are reported only to servers matching the buffer's language.
+        cx.update(|_| drop(json_buffer));
+        let close_message = lsp::DidCloseTextDocumentParams {
+            text_document: lsp::TextDocumentIdentifier::new(
+                lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+            ),
+        };
+        assert_eq!(
+            fake_json_server
+                .receive_notification::<lsp::notification::DidCloseTextDocument>()
+                .await,
+            close_message,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+
         let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
         let progress_token = language_server_config
             .disk_based_diagnostics_progress_token
@@ -3861,9 +4490,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs, cx);
-        project.update(cx, |project, _| {
-            Arc::get_mut(&mut project.languages).unwrap().add(language);
-        });
+        project.update(cx, |project, _| project.languages.add(language));
 
         let (tree, _) = project
             .update(cx, |project, cx| {
@@ -3897,8 +4524,8 @@ mod tests {
         fake_server.end_progress(&progress_token).await;
         fake_server.start_progress(&progress_token).await;
 
-        fake_server
-            .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        fake_server.notify::<lsp::notification::PublishDiagnostics>(
+            lsp::PublishDiagnosticsParams {
                 uri: Url::from_file_path("/dir/a.rs").unwrap(),
                 version: None,
                 diagnostics: vec![lsp::Diagnostic {
@@ -3907,8 +4534,8 @@ mod tests {
                     message: "undefined variable 'A'".to_string(),
                     ..Default::default()
                 }],
-            })
-            .await;
+            },
+        );
         assert_eq!(
             events.next().await.unwrap(),
             Event::DiagnosticsUpdated((worktree_id, Path::new("a.rs")).into())
@@ -3949,6 +4576,699 @@ mod tests {
                 }]
             )
         });
+    }
+
+    #[gpui::test]
+    async fn test_transforming_disk_based_diagnostics(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let (mut lsp_config, mut fake_servers) = LanguageServerConfig::fake();
+        lsp_config
+            .disk_based_diagnostic_sources
+            .insert("disk".to_string());
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".to_string()],
+                language_server: Some(lsp_config),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        ));
+
+        let text = "
+            fn a() { A }
+            fn b() { BB }
+            fn c() { CCC }
+        "
+        .unindent();
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree("/dir", json!({ "a.rs": text })).await;
+
+        let project = Project::test(fs, cx);
+        project.update(cx, |project, _| project.languages.add(language));
+
+        let worktree_id = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/dir", true, cx)
+            })
+            .await
+            .unwrap()
+            .0
+            .read_with(cx, |tree, _| tree.id());
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, "a.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let mut fake_server = fake_servers.next().await.unwrap();
+        let open_notification = fake_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await;
+
+        // Edit the buffer, moving the content down
+        buffer.update(cx, |buffer, cx| buffer.edit([0..0], "\n\n", cx));
+        let change_notification_1 = fake_server
+            .receive_notification::<lsp::notification::DidChangeTextDocument>()
+            .await;
+        assert!(
+            change_notification_1.text_document.version > open_notification.text_document.version
+        );
+
+        // Report some diagnostics for the initial version of the buffer
+        fake_server.notify::<lsp::notification::PublishDiagnostics>(
+            lsp::PublishDiagnosticsParams {
+                uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+                version: Some(open_notification.text_document.version),
+                diagnostics: vec![
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'A'".to_string(),
+                        source: Some("disk".to_string()),
+                        ..Default::default()
+                    },
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(1, 11)),
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'BB'".to_string(),
+                        source: Some("disk".to_string()),
+                        ..Default::default()
+                    },
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(2, 9), lsp::Position::new(2, 12)),
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        source: Some("disk".to_string()),
+                        message: "undefined variable 'CCC'".to_string(),
+                        ..Default::default()
+                    },
+                ],
+            },
+        );
+
+        // The diagnostics have moved down since they were created.
+        buffer.next_notification(cx).await;
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(
+                buffer
+                    .snapshot()
+                    .diagnostics_in_range::<_, Point>(Point::new(3, 0)..Point::new(5, 0))
+                    .collect::<Vec<_>>(),
+                &[
+                    DiagnosticEntry {
+                        range: Point::new(3, 9)..Point::new(3, 11),
+                        diagnostic: Diagnostic {
+                            severity: DiagnosticSeverity::ERROR,
+                            message: "undefined variable 'BB'".to_string(),
+                            is_disk_based: true,
+                            group_id: 1,
+                            is_primary: true,
+                            ..Default::default()
+                        },
+                    },
+                    DiagnosticEntry {
+                        range: Point::new(4, 9)..Point::new(4, 12),
+                        diagnostic: Diagnostic {
+                            severity: DiagnosticSeverity::ERROR,
+                            message: "undefined variable 'CCC'".to_string(),
+                            is_disk_based: true,
+                            group_id: 2,
+                            is_primary: true,
+                            ..Default::default()
+                        }
+                    }
+                ]
+            );
+            assert_eq!(
+                chunks_with_diagnostics(buffer, 0..buffer.len()),
+                [
+                    ("\n\nfn a() { ".to_string(), None),
+                    ("A".to_string(), Some(DiagnosticSeverity::ERROR)),
+                    (" }\nfn b() { ".to_string(), None),
+                    ("BB".to_string(), Some(DiagnosticSeverity::ERROR)),
+                    (" }\nfn c() { ".to_string(), None),
+                    ("CCC".to_string(), Some(DiagnosticSeverity::ERROR)),
+                    (" }\n".to_string(), None),
+                ]
+            );
+            assert_eq!(
+                chunks_with_diagnostics(buffer, Point::new(3, 10)..Point::new(4, 11)),
+                [
+                    ("B".to_string(), Some(DiagnosticSeverity::ERROR)),
+                    (" }\nfn c() { ".to_string(), None),
+                    ("CC".to_string(), Some(DiagnosticSeverity::ERROR)),
+                ]
+            );
+        });
+
+        // Ensure overlapping diagnostics are highlighted correctly.
+        fake_server.notify::<lsp::notification::PublishDiagnostics>(
+            lsp::PublishDiagnosticsParams {
+                uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+                version: Some(open_notification.text_document.version),
+                diagnostics: vec![
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'A'".to_string(),
+                        source: Some("disk".to_string()),
+                        ..Default::default()
+                    },
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 12)),
+                        severity: Some(DiagnosticSeverity::WARNING),
+                        message: "unreachable statement".to_string(),
+                        source: Some("disk".to_string()),
+                        ..Default::default()
+                    },
+                ],
+            },
+        );
+
+        buffer.next_notification(cx).await;
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(
+                buffer
+                    .snapshot()
+                    .diagnostics_in_range::<_, Point>(Point::new(2, 0)..Point::new(3, 0))
+                    .collect::<Vec<_>>(),
+                &[
+                    DiagnosticEntry {
+                        range: Point::new(2, 9)..Point::new(2, 12),
+                        diagnostic: Diagnostic {
+                            severity: DiagnosticSeverity::WARNING,
+                            message: "unreachable statement".to_string(),
+                            is_disk_based: true,
+                            group_id: 1,
+                            is_primary: true,
+                            ..Default::default()
+                        }
+                    },
+                    DiagnosticEntry {
+                        range: Point::new(2, 9)..Point::new(2, 10),
+                        diagnostic: Diagnostic {
+                            severity: DiagnosticSeverity::ERROR,
+                            message: "undefined variable 'A'".to_string(),
+                            is_disk_based: true,
+                            group_id: 0,
+                            is_primary: true,
+                            ..Default::default()
+                        },
+                    }
+                ]
+            );
+            assert_eq!(
+                chunks_with_diagnostics(buffer, Point::new(2, 0)..Point::new(3, 0)),
+                [
+                    ("fn a() { ".to_string(), None),
+                    ("A".to_string(), Some(DiagnosticSeverity::ERROR)),
+                    (" }".to_string(), Some(DiagnosticSeverity::WARNING)),
+                    ("\n".to_string(), None),
+                ]
+            );
+            assert_eq!(
+                chunks_with_diagnostics(buffer, Point::new(2, 10)..Point::new(3, 0)),
+                [
+                    (" }".to_string(), Some(DiagnosticSeverity::WARNING)),
+                    ("\n".to_string(), None),
+                ]
+            );
+        });
+
+        // Keep editing the buffer and ensure disk-based diagnostics get translated according to the
+        // changes since the last save.
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(Some(Point::new(2, 0)..Point::new(2, 0)), "    ", cx);
+            buffer.edit(Some(Point::new(2, 8)..Point::new(2, 10)), "(x: usize)", cx);
+        });
+        let change_notification_2 =
+            fake_server.receive_notification::<lsp::notification::DidChangeTextDocument>();
+        assert!(
+            change_notification_2.await.text_document.version
+                > change_notification_1.text_document.version
+        );
+
+        // Handle out-of-order diagnostics
+        fake_server.notify::<lsp::notification::PublishDiagnostics>(
+            lsp::PublishDiagnosticsParams {
+                uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+                version: Some(open_notification.text_document.version),
+                diagnostics: vec![
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(1, 11)),
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'BB'".to_string(),
+                        source: Some("disk".to_string()),
+                        ..Default::default()
+                    },
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                        severity: Some(DiagnosticSeverity::WARNING),
+                        message: "undefined variable 'A'".to_string(),
+                        source: Some("disk".to_string()),
+                        ..Default::default()
+                    },
+                ],
+            },
+        );
+
+        buffer.next_notification(cx).await;
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(
+                buffer
+                    .snapshot()
+                    .diagnostics_in_range::<_, Point>(0..buffer.len())
+                    .collect::<Vec<_>>(),
+                &[
+                    DiagnosticEntry {
+                        range: Point::new(2, 21)..Point::new(2, 22),
+                        diagnostic: Diagnostic {
+                            severity: DiagnosticSeverity::WARNING,
+                            message: "undefined variable 'A'".to_string(),
+                            is_disk_based: true,
+                            group_id: 1,
+                            is_primary: true,
+                            ..Default::default()
+                        }
+                    },
+                    DiagnosticEntry {
+                        range: Point::new(3, 9)..Point::new(3, 11),
+                        diagnostic: Diagnostic {
+                            severity: DiagnosticSeverity::ERROR,
+                            message: "undefined variable 'BB'".to_string(),
+                            is_disk_based: true,
+                            group_id: 0,
+                            is_primary: true,
+                            ..Default::default()
+                        },
+                    }
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let text = concat!(
+            "let one = ;\n", //
+            "let two = \n",
+            "let three = 3;\n",
+        );
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree("/dir", json!({ "a.rs": text })).await;
+
+        let project = Project::test(fs, cx);
+        let worktree_id = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/dir", true, cx)
+            })
+            .await
+            .unwrap()
+            .0
+            .read_with(cx, |tree, _| tree.id());
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, "a.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        project.update(cx, |project, cx| {
+            project
+                .update_buffer_diagnostics(
+                    &buffer,
+                    vec![
+                        DiagnosticEntry {
+                            range: PointUtf16::new(0, 10)..PointUtf16::new(0, 10),
+                            diagnostic: Diagnostic {
+                                severity: DiagnosticSeverity::ERROR,
+                                message: "syntax error 1".to_string(),
+                                ..Default::default()
+                            },
+                        },
+                        DiagnosticEntry {
+                            range: PointUtf16::new(1, 10)..PointUtf16::new(1, 10),
+                            diagnostic: Diagnostic {
+                                severity: DiagnosticSeverity::ERROR,
+                                message: "syntax error 2".to_string(),
+                                ..Default::default()
+                            },
+                        },
+                    ],
+                    None,
+                    cx,
+                )
+                .unwrap();
+        });
+
+        // An empty range is extended forward to include the following character.
+        // At the end of a line, an empty range is extended backward to include
+        // the preceding character.
+        buffer.read_with(cx, |buffer, _| {
+            let chunks = chunks_with_diagnostics(&buffer, 0..buffer.len());
+            assert_eq!(
+                chunks
+                    .iter()
+                    .map(|(s, d)| (s.as_str(), *d))
+                    .collect::<Vec<_>>(),
+                &[
+                    ("let one = ", None),
+                    (";", Some(DiagnosticSeverity::ERROR)),
+                    ("\nlet two =", None),
+                    (" ", Some(DiagnosticSeverity::ERROR)),
+                    ("\nlet three = 3;\n", None)
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_edits_from_lsp_with_past_version(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let (lsp_config, mut fake_servers) = LanguageServerConfig::fake();
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".to_string()],
+                language_server: Some(lsp_config),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        ));
+
+        let text = "
+            fn a() {
+                f1();
+            }
+            fn b() {
+                f2();
+            }
+            fn c() {
+                f3();
+            }
+        "
+        .unindent();
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a.rs": text.clone(),
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, cx);
+        project.update(cx, |project, _| project.languages.add(language));
+
+        let worktree_id = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/dir", true, cx)
+            })
+            .await
+            .unwrap()
+            .0
+            .read_with(cx, |tree, _| tree.id());
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, "a.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let mut fake_server = fake_servers.next().await.unwrap();
+        let lsp_document_version = fake_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document
+            .version;
+
+        // Simulate editing the buffer after the language server computes some edits.
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [Point::new(0, 0)..Point::new(0, 0)],
+                "// above first function\n",
+                cx,
+            );
+            buffer.edit(
+                [Point::new(2, 0)..Point::new(2, 0)],
+                "    // inside first function\n",
+                cx,
+            );
+            buffer.edit(
+                [Point::new(6, 4)..Point::new(6, 4)],
+                "// inside second function ",
+                cx,
+            );
+
+            assert_eq!(
+                buffer.text(),
+                "
+                    // above first function
+                    fn a() {
+                        // inside first function
+                        f1();
+                    }
+                    fn b() {
+                        // inside second function f2();
+                    }
+                    fn c() {
+                        f3();
+                    }
+                "
+                .unindent()
+            );
+        });
+
+        let edits = project
+            .update(cx, |project, cx| {
+                project.edits_from_lsp(
+                    &buffer,
+                    vec![
+                        // replace body of first function
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 0),
+                                lsp::Position::new(3, 0),
+                            ),
+                            new_text: "
+                                fn a() {
+                                    f10();
+                                }
+                            "
+                            .unindent(),
+                        },
+                        // edit inside second function
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(4, 6),
+                                lsp::Position::new(4, 6),
+                            ),
+                            new_text: "00".into(),
+                        },
+                        // edit inside third function via two distinct edits
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(7, 5),
+                                lsp::Position::new(7, 5),
+                            ),
+                            new_text: "4000".into(),
+                        },
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(7, 5),
+                                lsp::Position::new(7, 6),
+                            ),
+                            new_text: "".into(),
+                        },
+                    ],
+                    Some(lsp_document_version),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        buffer.update(cx, |buffer, cx| {
+            for (range, new_text) in edits {
+                buffer.edit([range], new_text, cx);
+            }
+            assert_eq!(
+                buffer.text(),
+                "
+                    // above first function
+                    fn a() {
+                        // inside first function
+                        f10();
+                    }
+                    fn b() {
+                        // inside second function f200();
+                    }
+                    fn c() {
+                        f4000();
+                    }
+                "
+                .unindent()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_edits_from_lsp_with_edits_on_adjacent_lines(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let text = "
+            use a::b;
+            use a::c;
+
+            fn f() {
+                b();
+                c();
+            }
+        "
+        .unindent();
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a.rs": text.clone(),
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, cx);
+        let worktree_id = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/dir", true, cx)
+            })
+            .await
+            .unwrap()
+            .0
+            .read_with(cx, |tree, _| tree.id());
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, "a.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        // Simulate the language server sending us a small edit in the form of a very large diff.
+        // Rust-analyzer does this when performing a merge-imports code action.
+        let edits = project
+            .update(cx, |project, cx| {
+                project.edits_from_lsp(
+                    &buffer,
+                    [
+                        // Replace the first use statement without editing the semicolon.
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 4),
+                                lsp::Position::new(0, 8),
+                            ),
+                            new_text: "a::{b, c}".into(),
+                        },
+                        // Reinsert the remainder of the file between the semicolon and the final
+                        // newline of the file.
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 9),
+                                lsp::Position::new(0, 9),
+                            ),
+                            new_text: "\n\n".into(),
+                        },
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 9),
+                                lsp::Position::new(0, 9),
+                            ),
+                            new_text: "
+                                fn f() {
+                                    b();
+                                    c();
+                                }"
+                            .unindent(),
+                        },
+                        // Delete everything after the first newline of the file.
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(1, 0),
+                                lsp::Position::new(7, 0),
+                            ),
+                            new_text: "".into(),
+                        },
+                    ],
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        buffer.update(cx, |buffer, cx| {
+            let edits = edits
+                .into_iter()
+                .map(|(range, text)| {
+                    (
+                        range.start.to_point(&buffer)..range.end.to_point(&buffer),
+                        text,
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                edits,
+                [
+                    (Point::new(0, 4)..Point::new(0, 8), "a::{b, c}".into()),
+                    (Point::new(1, 0)..Point::new(2, 0), "".into())
+                ]
+            );
+
+            for (range, new_text) in edits {
+                buffer.edit([range], new_text, cx);
+            }
+            assert_eq!(
+                buffer.text(),
+                "
+                    use a::{b, c};
+
+                    fn f() {
+                        b();
+                        c();
+                    }
+                "
+                .unindent()
+            );
+        });
+    }
+
+    fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
+        buffer: &Buffer,
+        range: Range<T>,
+    ) -> Vec<(String, Option<DiagnosticSeverity>)> {
+        let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
+        for chunk in buffer.snapshot().chunks(range, true) {
+            if chunks
+                .last()
+                .map_or(false, |prev_chunk| prev_chunk.1 == chunk.diagnostic)
+            {
+                chunks.last_mut().unwrap().0.push_str(chunk.text);
+            } else {
+                chunks.push((chunk.text.to_string(), chunk.diagnostic));
+            }
+        }
+        chunks
     }
 
     #[gpui::test]
@@ -4452,7 +5772,10 @@ mod tests {
         buffer1.update(cx, |buffer, cx| {
             cx.subscribe(&buffer1, {
                 let events = events.clone();
-                move |_, _, event, _| events.borrow_mut().push(event.clone())
+                move |_, _, event, _| match event {
+                    BufferEvent::Operation(_) => {}
+                    _ => events.borrow_mut().push(event.clone()),
+                }
             })
             .detach();
 
@@ -4655,6 +5978,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/the-dir",
@@ -4914,6 +6239,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_rename(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+
         let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
         let language = Arc::new(Language::new(
             LanguageConfig {

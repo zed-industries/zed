@@ -7,16 +7,14 @@ pub use crate::{
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     outline::OutlineItem,
-    range_from_lsp, CodeLabel, Outline, ToLspPosition,
+    CodeLabel, Outline,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use futures::FutureExt as _;
 use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
-use lsp::LanguageServer;
 use parking_lot::Mutex;
-use postage::{prelude::Stream, sink::Sink, watch};
 use similar::{ChangeTag, TextDiff};
 use smol::future::yield_now;
 use std::{
@@ -26,7 +24,7 @@ use std::{
     ffi::OsString,
     future::Future,
     iter::{Iterator, Peekable},
-    ops::{Deref, DerefMut, Range, Sub},
+    ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
     sync::Arc,
@@ -34,11 +32,11 @@ use std::{
     vec,
 };
 use sum_tree::TreeMap;
-use text::{operation_queue::OperationQueue, rope::TextDimension};
-pub use text::{Buffer as TextBuffer, Operation as _, *};
+use text::operation_queue::OperationQueue;
+pub use text::{Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, Operation as _, *};
 use theme::SyntaxTheme;
 use tree_sitter::{InputEdit, QueryCursor, Tree};
-use util::{post_inc, TryFutureExt as _};
+use util::TryFutureExt as _;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use tree_sitter_rust;
@@ -70,11 +68,8 @@ pub struct Buffer {
     diagnostics_update_count: usize,
     diagnostics_timestamp: clock::Lamport,
     file_update_count: usize,
-    language_server: Option<LanguageServerState>,
     completion_triggers: Vec<String>,
     deferred_ops: OperationQueue<Operation>,
-    #[cfg(test)]
-    pub(crate) operations: Vec<Operation>,
 }
 
 pub struct BufferSnapshot {
@@ -128,22 +123,7 @@ pub struct CodeAction {
     pub lsp_action: lsp::CodeAction,
 }
 
-struct LanguageServerState {
-    server: Arc<LanguageServer>,
-    latest_snapshot: watch::Sender<LanguageServerSnapshot>,
-    pending_snapshots: BTreeMap<usize, LanguageServerSnapshot>,
-    next_version: usize,
-    _maintain_server: Task<Option<()>>,
-}
-
-#[derive(Clone)]
-struct LanguageServerSnapshot {
-    buffer_snapshot: text::BufferSnapshot,
-    version: usize,
-    path: Arc<Path>,
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Operation {
     Buffer(text::Operation),
     UpdateDiagnostics {
@@ -160,8 +140,9 @@ pub enum Operation {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
+    Operation(Operation),
     Edited,
     Dirtied,
     Saved,
@@ -202,10 +183,6 @@ pub trait File {
         cx: &mut MutableAppContext,
     ) -> Task<Result<(clock::Global, SystemTime)>>;
 
-    fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext);
-
-    fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext);
-
     fn as_any(&self) -> &dyn Any;
 
     fn to_proto(&self) -> rpc::proto::File;
@@ -224,83 +201,6 @@ pub trait LocalFile: File {
         mtime: SystemTime,
         cx: &mut MutableAppContext,
     );
-}
-
-#[cfg(any(test, feature = "test-support"))]
-pub struct FakeFile {
-    pub path: Arc<Path>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl FakeFile {
-    pub fn new(path: impl AsRef<Path>) -> Self {
-        Self {
-            path: path.as_ref().into(),
-        }
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl File for FakeFile {
-    fn as_local(&self) -> Option<&dyn LocalFile> {
-        Some(self)
-    }
-
-    fn mtime(&self) -> SystemTime {
-        SystemTime::UNIX_EPOCH
-    }
-
-    fn path(&self) -> &Arc<Path> {
-        &self.path
-    }
-
-    fn full_path(&self, _: &AppContext) -> PathBuf {
-        self.path.to_path_buf()
-    }
-
-    fn file_name(&self, _: &AppContext) -> OsString {
-        self.path.file_name().unwrap().to_os_string()
-    }
-
-    fn is_deleted(&self) -> bool {
-        false
-    }
-
-    fn save(
-        &self,
-        _: u64,
-        _: Rope,
-        _: clock::Global,
-        cx: &mut MutableAppContext,
-    ) -> Task<Result<(clock::Global, SystemTime)>> {
-        cx.spawn(|_| async move { Ok((Default::default(), SystemTime::UNIX_EPOCH)) })
-    }
-
-    fn buffer_updated(&self, _: u64, _: Operation, _: &mut MutableAppContext) {}
-
-    fn buffer_removed(&self, _: u64, _: &mut MutableAppContext) {}
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn to_proto(&self) -> rpc::proto::File {
-        unimplemented!()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl LocalFile for FakeFile {
-    fn abs_path(&self, _: &AppContext) -> PathBuf {
-        self.path.to_path_buf()
-    }
-
-    fn load(&self, cx: &AppContext) -> Task<Result<String>> {
-        cx.background().spawn(async move { Ok(Default::default()) })
-    }
-
-    fn buffer_reloaded(&self, _: u64, _: &clock::Global, _: SystemTime, _: &mut MutableAppContext) {
-    }
 }
 
 pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
@@ -488,15 +388,6 @@ impl Buffer {
         self
     }
 
-    pub fn with_language_server(
-        mut self,
-        server: Arc<LanguageServer>,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
-        self.set_language_server(Some(server), cx);
-        self
-    }
-
     fn build(buffer: TextBuffer, file: Option<Box<dyn File>>) -> Self {
         let saved_mtime;
         if let Some(file) = file.as_ref() {
@@ -523,11 +414,8 @@ impl Buffer {
             diagnostics_update_count: 0,
             diagnostics_timestamp: Default::default(),
             file_update_count: 0,
-            language_server: None,
             completion_triggers: Default::default(),
             deferred_ops: OperationQueue::new(),
-            #[cfg(test)]
-            operations: Default::default(),
         }
     }
 
@@ -545,6 +433,14 @@ impl Buffer {
             parse_count: self.parse_count,
             selections_update_count: self.selections_update_count,
         }
+    }
+
+    pub fn as_text_snapshot(&self) -> &text::BufferSnapshot {
+        &self.text
+    }
+
+    pub fn text_snapshot(&self) -> text::BufferSnapshot {
+        self.text.snapshot()
     }
 
     pub fn file(&self) -> Option<&dyn File> {
@@ -572,121 +468,13 @@ impl Buffer {
         })
     }
 
+    pub fn saved_version(&self) -> &clock::Global {
+        &self.saved_version
+    }
+
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
         self.language = language;
         self.reparse(cx);
-    }
-
-    pub fn set_language_server(
-        &mut self,
-        language_server: Option<Arc<lsp::LanguageServer>>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.language_server = if let Some((server, file)) =
-            language_server.zip(self.file.as_ref().and_then(|f| f.as_local()))
-        {
-            let initial_snapshot = LanguageServerSnapshot {
-                buffer_snapshot: self.text.snapshot(),
-                version: 0,
-                path: file.abs_path(cx).into(),
-            };
-            let (latest_snapshot_tx, mut latest_snapshot_rx) =
-                watch::channel_with::<LanguageServerSnapshot>(initial_snapshot.clone());
-
-            Some(LanguageServerState {
-                latest_snapshot: latest_snapshot_tx,
-                pending_snapshots: BTreeMap::from_iter([(0, initial_snapshot)]),
-                next_version: 1,
-                server: server.clone(),
-                _maintain_server: cx.spawn_weak(|this, mut cx| async move {
-                    let capabilities = server.capabilities().await.or_else(|| {
-                        log::info!("language server exited");
-                        if let Some(this) = this.upgrade(&cx) {
-                            this.update(&mut cx, |this, _| this.language_server = None);
-                        }
-                        None
-                    })?;
-
-                    let triggers = capabilities
-                        .completion_provider
-                        .and_then(|c| c.trigger_characters)
-                        .unwrap_or_default();
-                    this.upgrade(&cx)?.update(&mut cx, |this, cx| {
-                        let lamport_timestamp = this.text.lamport_clock.tick();
-                        this.completion_triggers = triggers.clone();
-                        this.send_operation(
-                            Operation::UpdateCompletionTriggers {
-                                triggers,
-                                lamport_timestamp,
-                            },
-                            cx,
-                        );
-                        cx.notify();
-                    });
-
-                    let maintain_changes = cx.background().spawn(async move {
-                        let initial_snapshot =
-                            latest_snapshot_rx.recv().await.ok_or_else(|| {
-                                anyhow!("buffer dropped before sending DidOpenTextDocument")
-                            })?;
-                        server
-                            .notify::<lsp::notification::DidOpenTextDocument>(
-                                lsp::DidOpenTextDocumentParams {
-                                    text_document: lsp::TextDocumentItem::new(
-                                        lsp::Url::from_file_path(initial_snapshot.path).unwrap(),
-                                        Default::default(),
-                                        initial_snapshot.version as i32,
-                                        initial_snapshot.buffer_snapshot.text(),
-                                    ),
-                                },
-                            )
-                            .await?;
-
-                        let mut prev_version = initial_snapshot.buffer_snapshot.version().clone();
-                        while let Some(snapshot) = latest_snapshot_rx.recv().await {
-                            let uri = lsp::Url::from_file_path(&snapshot.path).unwrap();
-                            let buffer_snapshot = snapshot.buffer_snapshot.clone();
-                            let content_changes = buffer_snapshot
-                                .edits_since::<(PointUtf16, usize)>(&prev_version)
-                                .map(|edit| {
-                                    let edit_start = edit.new.start.0;
-                                    let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
-                                    let new_text = buffer_snapshot
-                                        .text_for_range(edit.new.start.1..edit.new.end.1)
-                                        .collect();
-                                    lsp::TextDocumentContentChangeEvent {
-                                        range: Some(lsp::Range::new(
-                                            edit_start.to_lsp_position(),
-                                            edit_end.to_lsp_position(),
-                                        )),
-                                        range_length: None,
-                                        text: new_text,
-                                    }
-                                })
-                                .collect();
-                            let changes = lsp::DidChangeTextDocumentParams {
-                                text_document: lsp::VersionedTextDocumentIdentifier::new(
-                                    uri,
-                                    snapshot.version as i32,
-                                ),
-                                content_changes,
-                            };
-                            server
-                                .notify::<lsp::notification::DidChangeTextDocument>(changes)
-                                .await?;
-
-                            prev_version = snapshot.buffer_snapshot.version().clone();
-                        }
-
-                        Ok::<_, anyhow::Error>(())
-                    });
-
-                    maintain_changes.log_err().await
-                }),
-            })
-        } else {
-            None
-        };
     }
 
     pub fn did_save(
@@ -701,26 +489,6 @@ impl Buffer {
         if let Some(new_file) = new_file {
             self.file = Some(new_file);
             self.file_update_count += 1;
-        }
-        if let Some((state, local_file)) = &self
-            .language_server
-            .as_ref()
-            .zip(self.file.as_ref().and_then(|f| f.as_local()))
-        {
-            cx.background()
-                .spawn(
-                    state
-                        .server
-                        .notify::<lsp::notification::DidSaveTextDocument>(
-                            lsp::DidSaveTextDocumentParams {
-                                text_document: lsp::TextDocumentIdentifier {
-                                    uri: lsp::Url::from_file_path(local_file.abs_path(cx)).unwrap(),
-                                },
-                                text: None,
-                            },
-                        ),
-                )
-                .detach()
         }
         cx.emit(Event::Saved);
         cx.notify();
@@ -813,10 +581,6 @@ impl Buffer {
 
     pub fn language(&self) -> Option<&Arc<Language>> {
         self.language.as_ref()
-    }
-
-    pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {
-        self.language_server.as_ref().map(|state| &state.server)
     }
 
     pub fn parse_count(&self) -> usize {
@@ -930,100 +694,14 @@ impl Buffer {
         cx.notify();
     }
 
-    pub fn update_diagnostics<T>(
-        &mut self,
-        mut diagnostics: Vec<DiagnosticEntry<T>>,
-        version: Option<i32>,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()>
-    where
-        T: Copy + Ord + TextDimension + Sub<Output = T> + Clip + ToPoint,
-    {
-        fn compare_diagnostics(a: &Diagnostic, b: &Diagnostic) -> Ordering {
-            Ordering::Equal
-                .then_with(|| b.is_primary.cmp(&a.is_primary))
-                .then_with(|| a.is_disk_based.cmp(&b.is_disk_based))
-                .then_with(|| a.severity.cmp(&b.severity))
-                .then_with(|| a.message.cmp(&b.message))
-        }
-
-        let version = version.map(|version| version as usize);
-        let content =
-            if let Some((version, language_server)) = version.zip(self.language_server.as_mut()) {
-                language_server.snapshot_for_version(version)?
-            } else {
-                self.deref()
-            };
-
-        diagnostics.sort_unstable_by(|a, b| {
-            Ordering::Equal
-                .then_with(|| a.range.start.cmp(&b.range.start))
-                .then_with(|| b.range.end.cmp(&a.range.end))
-                .then_with(|| compare_diagnostics(&a.diagnostic, &b.diagnostic))
-        });
-
-        let mut sanitized_diagnostics = Vec::new();
-        let mut edits_since_save = content.edits_since::<T>(&self.saved_version).peekable();
-        let mut last_edit_old_end = T::default();
-        let mut last_edit_new_end = T::default();
-        'outer: for entry in diagnostics {
-            let mut start = entry.range.start;
-            let mut end = entry.range.end;
-
-            // Some diagnostics are based on files on disk instead of buffers'
-            // current contents. Adjust these diagnostics' ranges to reflect
-            // any unsaved edits.
-            if entry.diagnostic.is_disk_based {
-                while let Some(edit) = edits_since_save.peek() {
-                    if edit.old.end <= start {
-                        last_edit_old_end = edit.old.end;
-                        last_edit_new_end = edit.new.end;
-                        edits_since_save.next();
-                    } else if edit.old.start <= end && edit.old.end >= start {
-                        continue 'outer;
-                    } else {
-                        break;
-                    }
-                }
-
-                let start_overshoot = start - last_edit_old_end;
-                start = last_edit_new_end;
-                start.add_assign(&start_overshoot);
-
-                let end_overshoot = end - last_edit_old_end;
-                end = last_edit_new_end;
-                end.add_assign(&end_overshoot);
-            }
-
-            let range = start.clip(Bias::Left, content)..end.clip(Bias::Right, content);
-            let mut range = range.start.to_point(content)..range.end.to_point(content);
-            // Expand empty ranges by one character
-            if range.start == range.end {
-                range.end.column += 1;
-                range.end = content.clip_point(range.end, Bias::Right);
-                if range.start == range.end && range.end.column > 0 {
-                    range.start.column -= 1;
-                    range.start = content.clip_point(range.start, Bias::Left);
-                }
-            }
-
-            sanitized_diagnostics.push(DiagnosticEntry {
-                range,
-                diagnostic: entry.diagnostic,
-            });
-        }
-        drop(edits_since_save);
-
-        let set = DiagnosticSet::new(sanitized_diagnostics, content);
+    pub fn update_diagnostics(&mut self, diagnostics: DiagnosticSet, cx: &mut ModelContext<Self>) {
         let lamport_timestamp = self.text.lamport_clock.tick();
-        self.apply_diagnostic_update(set.clone(), lamport_timestamp, cx);
-
         let op = Operation::UpdateDiagnostics {
-            diagnostics: set.iter().cloned().collect(),
+            diagnostics: diagnostics.iter().cloned().collect(),
             lamport_timestamp,
         };
+        self.apply_diagnostic_update(diagnostics, lamport_timestamp, cx);
         self.send_operation(op, cx);
-        Ok(())
     }
 
     fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {
@@ -1336,30 +1014,6 @@ impl Buffer {
         self.set_active_selections(Arc::from([]), cx);
     }
 
-    fn update_language_server(&mut self, cx: &AppContext) {
-        let language_server = if let Some(language_server) = self.language_server.as_mut() {
-            language_server
-        } else {
-            return;
-        };
-        let file = if let Some(file) = self.file.as_ref().and_then(|f| f.as_local()) {
-            file
-        } else {
-            return;
-        };
-
-        let version = post_inc(&mut language_server.next_version);
-        let snapshot = LanguageServerSnapshot {
-            buffer_snapshot: self.text.snapshot(),
-            version,
-            path: Arc::from(file.abs_path(cx)),
-        };
-        language_server
-            .pending_snapshots
-            .insert(version, snapshot.clone());
-        let _ = language_server.latest_snapshot.blocking_send(snapshot);
-    }
-
     pub fn set_text<T>(&mut self, text: T, cx: &mut ModelContext<Self>) -> Option<clock::Local>
     where
         T: Into<String>,
@@ -1486,115 +1140,6 @@ impl Buffer {
         Some(edit_id)
     }
 
-    pub fn edits_from_lsp(
-        &mut self,
-        lsp_edits: impl 'static + Send + IntoIterator<Item = lsp::TextEdit>,
-        version: Option<i32>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<(Range<Anchor>, String)>>> {
-        let snapshot = if let Some((version, state)) = version.zip(self.language_server.as_mut()) {
-            state
-                .snapshot_for_version(version as usize)
-                .map(Clone::clone)
-        } else {
-            Ok(TextBuffer::deref(self).clone())
-        };
-
-        cx.background().spawn(async move {
-            let snapshot = snapshot?;
-            let mut lsp_edits = lsp_edits
-                .into_iter()
-                .map(|edit| (range_from_lsp(edit.range), edit.new_text))
-                .peekable();
-
-            let mut edits = Vec::new();
-            while let Some((mut range, mut new_text)) = lsp_edits.next() {
-                // Combine any LSP edits that are adjacent.
-                //
-                // Also, combine LSP edits that are separated from each other by only
-                // a newline. This is important because for some code actions,
-                // Rust-analyzer rewrites the entire buffer via a series of edits that
-                // are separated by unchanged newline characters.
-                //
-                // In order for the diffing logic below to work properly, any edits that
-                // cancel each other out must be combined into one.
-                while let Some((next_range, next_text)) = lsp_edits.peek() {
-                    if next_range.start > range.end {
-                        if next_range.start.row > range.end.row + 1
-                            || next_range.start.column > 0
-                            || snapshot.clip_point_utf16(
-                                PointUtf16::new(range.end.row, u32::MAX),
-                                Bias::Left,
-                            ) > range.end
-                        {
-                            break;
-                        }
-                        new_text.push('\n');
-                    }
-                    range.end = next_range.end;
-                    new_text.push_str(&next_text);
-                    lsp_edits.next();
-                }
-
-                if snapshot.clip_point_utf16(range.start, Bias::Left) != range.start
-                    || snapshot.clip_point_utf16(range.end, Bias::Left) != range.end
-                {
-                    return Err(anyhow!("invalid edits received from language server"));
-                }
-
-                // For multiline edits, perform a diff of the old and new text so that
-                // we can identify the changes more precisely, preserving the locations
-                // of any anchors positioned in the unchanged regions.
-                if range.end.row > range.start.row {
-                    let mut offset = range.start.to_offset(&snapshot);
-                    let old_text = snapshot.text_for_range(range).collect::<String>();
-
-                    let diff = TextDiff::from_lines(old_text.as_str(), &new_text);
-                    let mut moved_since_edit = true;
-                    for change in diff.iter_all_changes() {
-                        let tag = change.tag();
-                        let value = change.value();
-                        match tag {
-                            ChangeTag::Equal => {
-                                offset += value.len();
-                                moved_since_edit = true;
-                            }
-                            ChangeTag::Delete => {
-                                let start = snapshot.anchor_after(offset);
-                                let end = snapshot.anchor_before(offset + value.len());
-                                if moved_since_edit {
-                                    edits.push((start..end, String::new()));
-                                } else {
-                                    edits.last_mut().unwrap().0.end = end;
-                                }
-                                offset += value.len();
-                                moved_since_edit = false;
-                            }
-                            ChangeTag::Insert => {
-                                if moved_since_edit {
-                                    let anchor = snapshot.anchor_after(offset);
-                                    edits.push((anchor.clone()..anchor, value.to_string()));
-                                } else {
-                                    edits.last_mut().unwrap().1.push_str(value);
-                                }
-                                moved_since_edit = false;
-                            }
-                        }
-                    }
-                } else if range.end == range.start {
-                    let anchor = snapshot.anchor_after(range.start);
-                    edits.push((anchor.clone()..anchor, new_text));
-                } else {
-                    let edit_start = snapshot.anchor_after(range.start);
-                    let edit_end = snapshot.anchor_before(range.end);
-                    edits.push((edit_start..edit_end, new_text));
-                }
-            }
-
-            Ok(edits)
-        })
-    }
-
     fn did_edit(
         &mut self,
         old_version: &clock::Global,
@@ -1606,7 +1151,6 @@ impl Buffer {
         }
 
         self.reparse(cx);
-        self.update_language_server(cx);
 
         cx.emit(Event::Edited);
         if !was_dirty {
@@ -1745,16 +1289,8 @@ impl Buffer {
         }
     }
 
-    #[cfg(not(test))]
-    pub fn send_operation(&mut self, operation: Operation, cx: &mut ModelContext<Self>) {
-        if let Some(file) = &self.file {
-            file.buffer_updated(self.remote_id(), operation, cx.as_mut());
-        }
-    }
-
-    #[cfg(test)]
-    pub fn send_operation(&mut self, operation: Operation, _: &mut ModelContext<Self>) {
-        self.operations.push(operation);
+    fn send_operation(&mut self, operation: Operation, cx: &mut ModelContext<Self>) {
+        cx.emit(Event::Operation(operation));
     }
 
     pub fn remove_peer(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Self>) {
@@ -1826,6 +1362,19 @@ impl Buffer {
         redone
     }
 
+    pub fn set_completion_triggers(&mut self, triggers: Vec<String>, cx: &mut ModelContext<Self>) {
+        self.completion_triggers = triggers.clone();
+        let lamport_timestamp = self.text.lamport_clock.tick();
+        self.send_operation(
+            Operation::UpdateCompletionTriggers {
+                triggers,
+                lamport_timestamp,
+            },
+            cx,
+        );
+        cx.notify();
+    }
+
     pub fn completion_triggers(&self) -> &[String] {
         &self.completion_triggers
     }
@@ -1882,24 +1431,6 @@ impl Buffer {
 
 impl Entity for Buffer {
     type Event = Event;
-
-    fn release(&mut self, cx: &mut gpui::MutableAppContext) {
-        if let Some(file) = self.file.as_ref() {
-            file.buffer_removed(self.remote_id(), cx);
-            if let Some((lang_server, file)) = self.language_server.as_ref().zip(file.as_local()) {
-                let request = lang_server
-                    .server
-                    .notify::<lsp::notification::DidCloseTextDocument>(
-                        lsp::DidCloseTextDocumentParams {
-                            text_document: lsp::TextDocumentIdentifier::new(
-                                lsp::Url::from_file_path(file.abs_path(cx)).unwrap(),
-                            ),
-                        },
-                    );
-                cx.foreground().spawn(request).detach_and_log_err(cx);
-            }
-        }
-    }
 }
 
 impl Deref for Buffer {
@@ -2629,20 +2160,6 @@ impl operation_queue::Operation for Operation {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
         }
-    }
-}
-
-impl LanguageServerState {
-    fn snapshot_for_version(&mut self, version: usize) -> Result<&text::BufferSnapshot> {
-        const OLD_VERSIONS_TO_RETAIN: usize = 10;
-
-        self.pending_snapshots
-            .retain(|&v, _| v + OLD_VERSIONS_TO_RETAIN >= version);
-        let snapshot = self
-            .pending_snapshots
-            .get(&version)
-            .ok_or_else(|| anyhow!("missing snapshot"))?;
-        Ok(&snapshot.buffer_snapshot)
     }
 }
 

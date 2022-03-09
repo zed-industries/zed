@@ -3,7 +3,7 @@ use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite};
 use gpui::{executor, Task};
 use parking_lot::{Mutex, RwLock};
-use postage::{barrier, prelude::Stream, watch};
+use postage::{barrier, prelude::Stream};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, value::RawValue, Value};
 use smol::{
@@ -14,6 +14,7 @@ use smol::{
 use std::{
     future::Future,
     io::Write,
+    path::PathBuf,
     str::FromStr,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -34,13 +35,14 @@ type ResponseHandler = Box<dyn Send + FnOnce(Result<&str, Error>)>;
 pub struct LanguageServer {
     next_id: AtomicUsize,
     outbound_tx: channel::Sender<Vec<u8>>,
-    capabilities: watch::Receiver<Option<ServerCapabilities>>,
+    capabilities: ServerCapabilities,
     notification_handlers: Arc<RwLock<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<HashMap<usize, ResponseHandler>>>,
     executor: Arc<executor::Background>,
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
-    initialized: barrier::Receiver,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
+    root_path: PathBuf,
+    options: Option<Value>,
 }
 
 pub struct Subscription {
@@ -103,10 +105,10 @@ impl LanguageServer {
     pub fn new(
         binary_path: &Path,
         args: &[&str],
-        options: Option<Value>,
         root_path: &Path,
+        options: Option<Value>,
         background: Arc<executor::Background>,
-    ) -> Result<Arc<Self>> {
+    ) -> Result<Self> {
         let mut server = Command::new(binary_path)
             .current_dir(root_path)
             .args(args)
@@ -116,7 +118,9 @@ impl LanguageServer {
             .spawn()?;
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
-        Self::new_internal(stdin, stdout, root_path, options, background)
+        Ok(Self::new_internal(
+            stdin, stdout, root_path, options, background,
+        ))
     }
 
     fn new_internal<Stdin, Stdout>(
@@ -125,7 +129,7 @@ impl LanguageServer {
         root_path: &Path,
         options: Option<Value>,
         executor: Arc<executor::Background>,
-    ) -> Result<Arc<Self>>
+    ) -> Self
     where
         Stdin: AsyncWrite + Unpin + Send + 'static,
         Stdout: AsyncRead + Unpin + Send + 'static,
@@ -215,42 +219,24 @@ impl LanguageServer {
             .log_err()
         });
 
-        let (initialized_tx, initialized_rx) = barrier::channel();
-        let (mut capabilities_tx, capabilities_rx) = watch::channel();
-        let this = Arc::new(Self {
+        Self {
             notification_handlers,
             response_handlers,
-            capabilities: capabilities_rx,
+            capabilities: Default::default(),
             next_id: Default::default(),
             outbound_tx,
             executor: executor.clone(),
             io_tasks: Mutex::new(Some((input_task, output_task))),
-            initialized: initialized_rx,
             output_done_rx: Mutex::new(Some(output_done_rx)),
-        });
-
-        let root_uri = Url::from_file_path(root_path).map_err(|_| anyhow!("invalid root path"))?;
-        executor
-            .spawn({
-                let this = this.clone();
-                async move {
-                    if let Some(capabilities) = this.init(root_uri, options).log_err().await {
-                        *capabilities_tx.borrow_mut() = Some(capabilities);
-                    }
-
-                    drop(initialized_tx);
-                }
-            })
-            .detach();
-
-        Ok(this)
+            root_path: root_path.to_path_buf(),
+            options,
+        }
     }
 
-    async fn init(
-        self: Arc<Self>,
-        root_uri: Url,
-        options: Option<Value>,
-    ) -> Result<ServerCapabilities> {
+    pub async fn initialize(mut self) -> Result<Arc<Self>> {
+        let options = self.options.take();
+        let mut this = Arc::new(self);
+        let root_uri = Url::from_file_path(&this.root_path).unwrap();
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: Default::default(),
@@ -305,19 +291,10 @@ impl LanguageServer {
             locale: Default::default(),
         };
 
-        let this = self.clone();
-        let request = Self::request_internal::<request::Initialize>(
-            &this.next_id,
-            &this.response_handlers,
-            &this.outbound_tx,
-            params,
-        );
-        let response = request.await?;
-        Self::notify_internal::<notification::Initialized>(
-            &this.outbound_tx,
-            InitializedParams {},
-        )?;
-        Ok(response.capabilities)
+        let response = this.request::<request::Initialize>(params).await?;
+        Arc::get_mut(&mut this).unwrap().capabilities = response.capabilities;
+        this.notify::<notification::Initialized>(InitializedParams {})?;
+        Ok(this)
     }
 
     pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>>> {
@@ -352,7 +329,7 @@ impl LanguageServer {
         }
     }
 
-    pub fn on_notification<T, F>(&self, mut f: F) -> Subscription
+    pub fn on_notification<T, F>(&mut self, mut f: F) -> Subscription
     where
         T: notification::Notification,
         F: 'static + Send + Sync + FnMut(T::Params),
@@ -378,16 +355,8 @@ impl LanguageServer {
         }
     }
 
-    pub fn capabilities(&self) -> impl 'static + Future<Output = Option<ServerCapabilities>> {
-        let mut rx = self.capabilities.clone();
-        async move {
-            loop {
-                let value = rx.recv().await?;
-                if value.is_some() {
-                    return value;
-                }
-            }
-        }
+    pub fn capabilities<'a>(self: &'a Arc<Self>) -> &'a ServerCapabilities {
+        &self.capabilities
     }
 
     pub fn request<T: request::Request>(
@@ -397,17 +366,12 @@ impl LanguageServer {
     where
         T::Result: 'static + Send,
     {
-        let this = self.clone();
-        async move {
-            this.initialized.clone().recv().await;
-            Self::request_internal::<T>(
-                &this.next_id,
-                &this.response_handlers,
-                &this.outbound_tx,
-                params,
-            )
-            .await
-        }
+        Self::request_internal::<T>(
+            &self.next_id,
+            &self.response_handlers,
+            &self.outbound_tx,
+            params,
+        )
     }
 
     fn request_internal<T: request::Request>(
@@ -452,16 +416,8 @@ impl LanguageServer {
         }
     }
 
-    pub fn notify<T: notification::Notification>(
-        self: &Arc<Self>,
-        params: T::Params,
-    ) -> impl Future<Output = Result<()>> {
-        let this = self.clone();
-        async move {
-            this.initialized.clone().recv().await;
-            Self::notify_internal::<T>(&this.outbound_tx, params)?;
-            Ok(())
-        }
+    pub fn notify<T: notification::Notification>(&self, params: T::Params) -> Result<()> {
+        Self::notify_internal::<T>(&self.outbound_tx, params)
     }
 
     fn notify_internal<T: notification::Notification>(
@@ -530,14 +486,14 @@ impl LanguageServer {
         }
     }
 
-    pub fn fake(cx: &mut gpui::MutableAppContext) -> (Arc<Self>, FakeLanguageServer) {
+    pub fn fake(cx: &mut gpui::MutableAppContext) -> (Self, FakeLanguageServer) {
         Self::fake_with_capabilities(Self::full_capabilities(), cx)
     }
 
     pub fn fake_with_capabilities(
         capabilities: ServerCapabilities,
         cx: &mut gpui::MutableAppContext,
-    ) -> (Arc<Self>, FakeLanguageServer) {
+    ) -> (Self, FakeLanguageServer) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
 
@@ -550,15 +506,9 @@ impl LanguageServer {
             }
         });
 
-        let server = Self::new_internal(
-            stdin_writer,
-            stdout_reader,
-            Path::new("/"),
-            None,
-            cx.background().clone(),
-        )
-        .unwrap();
-
+        let executor = cx.background().clone();
+        let server =
+            Self::new_internal(stdin_writer, stdout_reader, Path::new("/"), None, executor);
         (server, fake)
     }
 }
@@ -584,6 +534,7 @@ impl FakeLanguageServer {
                 let mut stdin = smol::io::BufReader::new(stdin);
                 while Self::receive(&mut stdin, &mut buffer).await.is_ok() {
                     cx.background().simulate_random_delay().await;
+
                     if let Ok(request) = serde_json::from_slice::<AnyRequest>(&buffer) {
                         assert_eq!(request.jsonrpc, JSON_RPC_VERSION);
 
@@ -639,7 +590,7 @@ impl FakeLanguageServer {
         }
     }
 
-    pub async fn notify<T: notification::Notification>(&mut self, params: T::Params) {
+    pub fn notify<T: notification::Notification>(&mut self, params: T::Params) {
         let message = serde_json::to_vec(&Notification {
             jsonrpc: JSON_RPC_VERSION,
             method: T::METHOD,
@@ -704,16 +655,14 @@ impl FakeLanguageServer {
         self.notify::<notification::Progress>(ProgressParams {
             token: NumberOrString::String(token.into()),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(Default::default())),
-        })
-        .await;
+        });
     }
 
     pub async fn end_progress(&mut self, token: impl Into<String>) {
         self.notify::<notification::Progress>(ProgressParams {
             token: NumberOrString::String(token.into()),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(Default::default())),
-        })
-        .await;
+        });
     }
 
     async fn receive(
@@ -758,7 +707,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_fake(cx: &mut TestAppContext) {
-        let (server, mut fake) = cx.update(LanguageServer::fake);
+        let (mut server, mut fake) = cx.update(LanguageServer::fake);
 
         let (message_tx, message_rx) = channel::unbounded();
         let (diagnostics_tx, diagnostics_rx) = channel::unbounded();
@@ -773,6 +722,7 @@ mod tests {
             })
             .detach();
 
+        let server = server.initialize().await.unwrap();
         server
             .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
@@ -782,7 +732,6 @@ mod tests {
                     "".to_string(),
                 ),
             })
-            .await
             .unwrap();
         assert_eq!(
             fake.receive_notification::<notification::DidOpenTextDocument>()
@@ -796,14 +745,12 @@ mod tests {
         fake.notify::<notification::ShowMessage>(ShowMessageParams {
             typ: MessageType::ERROR,
             message: "ok".to_string(),
-        })
-        .await;
+        });
         fake.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
             uri: Url::from_str("file://b/c").unwrap(),
             version: Some(5),
             diagnostics: vec![],
-        })
-        .await;
+        });
         assert_eq!(message_rx.recv().await.unwrap().message, "ok");
         assert_eq!(
             diagnostics_rx.recv().await.unwrap().uri.as_str(),
@@ -814,17 +761,5 @@ mod tests {
 
         drop(server);
         fake.receive_notification::<notification::Exit>().await;
-    }
-
-    pub enum ServerStatusNotification {}
-
-    impl notification::Notification for ServerStatusNotification {
-        type Params = ServerStatusParams;
-        const METHOD: &'static str = "experimental/serverStatus";
-    }
-
-    #[derive(Deserialize, Serialize, PartialEq, Eq, Clone)]
-    pub struct ServerStatusParams {
-        pub quiescent: bool,
     }
 }
