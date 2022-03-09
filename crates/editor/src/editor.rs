@@ -1640,8 +1640,10 @@ impl Editor {
         let text = action.0.as_ref();
         if !self.skip_autoclose_end(text, cx) {
             self.start_transaction(cx);
-            self.insert(text, cx);
-            self.autoclose_pairs(cx);
+            if !self.surround_with_bracket_pair(text, cx) {
+                self.insert(text, cx);
+                self.autoclose_bracket_pairs(cx);
+            }
             self.end_transaction(cx);
             self.trigger_completion_on_input(text, cx);
         }
@@ -1824,7 +1826,54 @@ impl Editor {
         }
     }
 
-    fn autoclose_pairs(&mut self, cx: &mut ViewContext<Self>) {
+    fn surround_with_bracket_pair(&mut self, text: &str, cx: &mut ViewContext<Self>) -> bool {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        if let Some(pair) = snapshot
+            .language()
+            .and_then(|language| language.brackets().iter().find(|b| b.start == text))
+            .cloned()
+        {
+            if self
+                .local_selections::<usize>(cx)
+                .iter()
+                .any(|selection| selection.is_empty())
+            {
+                false
+            } else {
+                let mut selections = self.selections.to_vec();
+                for selection in &mut selections {
+                    selection.end = selection.end.bias_left(&snapshot);
+                }
+                drop(snapshot);
+
+                self.buffer.update(cx, |buffer, cx| {
+                    buffer.edit(
+                        selections.iter().map(|s| s.start.clone()..s.start.clone()),
+                        &pair.start,
+                        cx,
+                    );
+                    buffer.edit(
+                        selections.iter().map(|s| s.end.clone()..s.end.clone()),
+                        &pair.end,
+                        cx,
+                    );
+                });
+
+                let snapshot = self.buffer.read(cx).read(cx);
+                for selection in &mut selections {
+                    selection.end = selection.end.bias_right(&snapshot);
+                }
+                drop(snapshot);
+
+                self.set_selections(selections.into(), None, cx);
+                true
+            }
+        } else {
+            false
+        }
+    }
+
+    fn autoclose_bracket_pairs(&mut self, cx: &mut ViewContext<Self>) {
         let selections = self.local_selections::<usize>(cx);
         let mut bracket_pair_state = None;
         let mut new_selections = None;
@@ -1850,11 +1899,24 @@ impl Editor {
                     )
                 });
                 pair.and_then(|pair| {
-                    let should_autoclose = selections[1..].iter().all(|selection| {
-                        snapshot.contains_str_at(
+                    let should_autoclose = selections.iter().all(|selection| {
+                        // Ensure all selections are parked at the end of a pair start.
+                        if snapshot.contains_str_at(
                             selection.start.saturating_sub(pair.start.len()),
                             &pair.start,
-                        )
+                        ) {
+                            // Autoclose only if the next character is a whitespace or a pair end
+                            // (possibly a different one from the pair we are inserting).
+                            snapshot
+                                .chars_at(selection.start)
+                                .next()
+                                .map_or(true, |ch| ch.is_whitespace())
+                                || language.brackets().iter().any(|pair| {
+                                    snapshot.contains_str_at(selection.start, &pair.end)
+                                })
+                        } else {
+                            false
+                        }
                     });
 
                     if should_autoclose {
@@ -3199,6 +3261,11 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
         }
+    }
+
+    pub fn finalize_last_transaction(&mut self, cx: &mut ViewContext<Self>) {
+        self.buffer
+            .update(cx, |buffer, cx| buffer.finalize_last_transaction(cx));
     }
 
     pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
@@ -8082,6 +8149,38 @@ mod tests {
                 *
                 "
                 .unindent()
+            );
+
+            view.finalize_last_transaction(cx);
+            view.select_display_ranges(&[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)], cx);
+            view.handle_input(&Input("{".to_string()), cx);
+            assert_eq!(
+                view.text(cx),
+                "
+                {a
+
+                /*
+                *
+                "
+                .unindent()
+            );
+
+            view.undo(&Undo, cx);
+            view.select_display_ranges(&[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1)], cx);
+            view.handle_input(&Input("{".to_string()), cx);
+            assert_eq!(
+                view.text(cx),
+                "
+                {a}
+
+                /*
+                *
+                "
+                .unindent()
+            );
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                [DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2)]
             );
         });
     }
