@@ -267,8 +267,16 @@ impl HighlightStyle {
 
     pub fn highlight(&mut self, other: HighlightStyle) {
         self.color = Color::blend(other.color, self.color);
-        if let Some(factor) = other.fade_out {
-            self.color.fade_out(factor);
+        match (other.fade_out, self.fade_out) {
+            (Some(source_fade), None) => self.fade_out = Some(source_fade),
+            (Some(source_fade), Some(dest_fade)) => {
+                let source_alpha = 1. - source_fade;
+                let dest_alpha = 1. - dest_fade;
+                let blended_alpha = source_alpha + (dest_alpha * source_fade);
+                let blended_fade = 1. - blended_alpha;
+                self.fade_out = Some(blended_fade);
+            }
+            _ => {}
         }
         self.font_properties = other.font_properties;
         if other.underline.is_some() {

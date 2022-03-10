@@ -282,6 +282,7 @@ pub struct Editor {
     pub gutter_padding_factor: f32,
     pub active_line_background: Color,
     pub highlighted_line_background: Color,
+    pub rename_fade: f32,
     pub document_highlight_read_background: Color,
     pub document_highlight_write_background: Color,
     pub diff_background_deleted: Color,

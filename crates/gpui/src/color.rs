@@ -50,9 +50,11 @@ impl Color {
     }
 
     pub fn blend(source: Color, dest: Color) -> Color {
-        // If source is fully opaque, don't blend.
+        // Skip blending if we don't need it.
         if source.a == 255 {
             return source;
+        } else if source.a == 0 {
+            return dest;
         }
 
         let source = source.0.to_f32();
@@ -66,11 +68,9 @@ impl Color {
         Self(ColorF::new(r, g, b, a).to_u8())
     }
 
-    pub fn fade_out(&mut self, factor: f32) {
-        let source_alpha = 1. - factor.clamp(0., 1.);
-        let dest_alpha = self.0.a as f32 / 255.;
-        let dest_alpha = source_alpha + (dest_alpha * (1. - source_alpha));
-        self.0.a = (dest_alpha * (1. / 255.)) as u8;
+    pub fn fade_out(&mut self, fade: f32) {
+        let fade = fade.clamp(0., 1.);
+        self.0.a = (self.0.a as f32 * (1. - fade)) as u8;
     }
 }
 

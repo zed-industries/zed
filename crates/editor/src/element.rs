@@ -606,30 +606,34 @@ impl EditorElement {
         } else {
             let style = &self.style;
             let chunks = snapshot.chunks(rows.clone(), true).map(|chunk| {
-                let mut highlight_style = HighlightStyle {
-                    color: style.text.color,
-                    font_properties: style.text.font_properties,
-                    ..Default::default()
-                };
-
-                if let Some(syntax_highlight_style) = chunk
+                let mut highlight_style = chunk
                     .syntax_highlight_id
-                    .and_then(|id| id.style(&style.syntax))
-                {
-                    highlight_style.highlight(syntax_highlight_style);
-                }
+                    .and_then(|id| id.style(&style.syntax));
 
-                if let Some(style) = chunk.highlight_style {
-                    highlight_style.highlight(style);
+                if let Some(chunk_highlight) = chunk.highlight_style {
+                    if let Some(highlight_style) = highlight_style.as_mut() {
+                        highlight_style.highlight(chunk_highlight);
+                    } else {
+                        highlight_style = Some(chunk_highlight);
+                    }
                 }
 
                 if let Some(severity) = chunk.diagnostic {
                     let diagnostic_style = super::diagnostic_style(severity, true, style);
-                    highlight_style.underline = Some(Underline {
-                        color: diagnostic_style.message.text.color,
-                        thickness: 1.0.into(),
-                        squiggly: true,
-                    });
+                    let diagnostic_highlight = HighlightStyle {
+                        underline: Some(Underline {
+                            color: diagnostic_style.message.text.color,
+                            thickness: 1.0.into(),
+                            squiggly: true,
+                        }),
+                        ..Default::default()
+                    };
+
+                    if let Some(highlight_style) = highlight_style.as_mut() {
+                        highlight_style.highlight(diagnostic_highlight);
+                    } else {
+                        highlight_style = Some(diagnostic_highlight);
+                    }
                 }
 
                 (chunk.text, highlight_style)

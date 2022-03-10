@@ -69,18 +69,15 @@ impl Element for Text {
             let result;
             if let Some((range, highlight_style)) = highlight_ranges.peek() {
                 if offset < range.start {
-                    result = Some((
-                        &self.text[offset..range.start],
-                        HighlightStyle::from(&self.style),
-                    ));
+                    result = Some((&self.text[offset..range.start], None));
                     offset = range.start;
                 } else {
-                    result = Some((&self.text[range.clone()], *highlight_style));
+                    result = Some((&self.text[range.clone()], Some(*highlight_style)));
                     highlight_ranges.next();
                     offset = range.end;
                 }
             } else if offset < self.text.len() {
-                result = Some((&self.text[offset..], HighlightStyle::from(&self.style)));
+                result = Some((&self.text[offset..], None));
                 offset = self.text.len();
             } else {
                 result = None;
@@ -200,7 +197,7 @@ impl Element for Text {
 
 /// Perform text layout on a series of highlighted chunks of text.
 pub fn layout_highlighted_chunks<'a>(
-    chunks: impl Iterator<Item = (&'a str, HighlightStyle)>,
+    chunks: impl Iterator<Item = (&'a str, Option<HighlightStyle>)>,
     text_style: &'a TextStyle,
     text_layout_cache: &'a TextLayoutCache,
     font_cache: &'a Arc<FontCache>,
@@ -228,12 +225,29 @@ pub fn layout_highlighted_chunks<'a>(
             }
 
             if !line_chunk.is_empty() && !line_exceeded_max_len {
+                let font_properties;
+                let mut color;
+                let underline;
+
+                if let Some(highlight_style) = highlight_style {
+                    font_properties = highlight_style.font_properties;
+                    color = Color::blend(highlight_style.color, text_style.color);
+                    if let Some(fade) = highlight_style.fade_out {
+                        color.fade_out(fade);
+                    }
+                    underline = highlight_style.underline;
+                } else {
+                    font_properties = text_style.font_properties;
+                    color = text_style.color;
+                    underline = None;
+                }
+
                 // Avoid a lookup if the font properties match the previous ones.
-                let font_id = if highlight_style.font_properties == prev_font_properties {
+                let font_id = if font_properties == prev_font_properties {
                     prev_font_id
                 } else {
                     font_cache
-                        .select_font(text_style.font_family_id, &highlight_style.font_properties)
+                        .select_font(text_style.font_family_id, &font_properties)
                         .unwrap_or(text_style.font_id)
                 };
 
@@ -251,12 +265,12 @@ pub fn layout_highlighted_chunks<'a>(
                     line_chunk.len(),
                     RunStyle {
                         font_id,
-                        color: highlight_style.color,
-                        underline: highlight_style.underline,
+                        color,
+                        underline,
                     },
                 ));
                 prev_font_id = font_id;
-                prev_font_properties = highlight_style.font_properties;
+                prev_font_properties = font_properties;
             }
         }
     }

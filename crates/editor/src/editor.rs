@@ -4393,20 +4393,14 @@ impl Editor {
                         editor
                             .buffer
                             .update(cx, |buffer, cx| buffer.edit([0..0], &old_name, cx));
-                        editor.select_ranges(
-                            [tail_offset_in_rename_range..cursor_offset_in_rename_range],
-                            None,
-                            cx,
-                        );
+                        editor.select_all(&SelectAll, cx);
                         editor
                     });
                     this.highlight_text::<Rename>(
                         vec![range.clone()],
                         HighlightStyle {
-                            color: Color::transparent_black(),
-                            font_properties: todo!(),
-                            underline: todo!(),
-                            fade_out: todo!(),
+                            fade_out: Some(style.rename_fade),
+                            ..Default::default()
                         },
                         cx,
                     );
@@ -4500,7 +4494,7 @@ impl Editor {
     fn take_rename(&mut self, cx: &mut ViewContext<Self>) -> Option<RenameState> {
         let rename = self.pending_rename.take()?;
         self.remove_blocks([rename.block_id].into_iter().collect(), cx);
-        self.clear_background_highlights::<Rename>(cx);
+        self.clear_text_highlights::<Rename>(cx);
 
         let editor = rename.editor.read(cx);
         let snapshot = self.buffer.read(cx).snapshot(cx);
