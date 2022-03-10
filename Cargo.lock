@@ -5851,6 +5851,7 @@ dependencies = [
  "parking_lot",
  "postage",
  "project",
+ "serde",
  "serde_json",
  "theme",
  "util",

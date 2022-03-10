@@ -29,14 +29,14 @@ fn main() {
         .unwrap()
         .with_overrides(
             language::PLAIN_TEXT.name(),
-            settings::Override {
+            settings::LanguageOverride {
                 soft_wrap: Some(settings::SoftWrap::PreferredLineLength),
                 ..Default::default()
             },
         )
         .with_overrides(
             "Markdown",
-            settings::Override {
+            settings::LanguageOverride {
                 soft_wrap: Some(settings::SoftWrap::PreferredLineLength),
                 ..Default::default()
             },
