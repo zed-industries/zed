@@ -51,8 +51,7 @@ pub struct Project {
     languages: Arc<LanguageRegistry>,
     language_servers: HashMap<(WorktreeId, Arc<str>), Arc<LanguageServer>>,
     started_language_servers: HashMap<(WorktreeId, Arc<str>), Task<Option<Arc<LanguageServer>>>>,
-    pending_language_server_work: BTreeMap<(usize, String), LanguageServerProgress>,
-    language_server_names: HashMap<usize, String>,
+    language_server_statuses: BTreeMap<usize, LanguageServerStatus>,
     next_language_server_id: usize,
     client: Arc<client::Client>,
     user_store: ModelHandle<UserStore>,
@@ -129,6 +128,12 @@ enum LanguageServerEvent {
         token: String,
     },
     DiagnosticsUpdate(lsp::PublishDiagnosticsParams),
+}
+
+pub struct LanguageServerStatus {
+    pub name: String,
+    pub pending_work: BTreeMap<String, LanguageServerProgress>,
+    pending_diagnostic_updates: isize,
 }
 
 #[derive(Clone, Default)]
@@ -326,8 +331,7 @@ impl Project {
                 language_servers_with_diagnostics_running: 0,
                 language_servers: Default::default(),
                 started_language_servers: Default::default(),
-                pending_language_server_work: Default::default(),
-                language_server_names: Default::default(),
+                language_server_statuses: Default::default(),
                 next_language_server_id: 0,
                 nonce: StdRng::from_entropy().gen(),
             }
@@ -398,11 +402,19 @@ impl Project {
                 language_servers_with_diagnostics_running: 0,
                 language_servers: Default::default(),
                 started_language_servers: Default::default(),
-                pending_language_server_work: Default::default(),
-                language_server_names: response
+                language_server_statuses: response
                     .language_servers
                     .into_iter()
-                    .map(|s| (s.id as usize, s.name))
+                    .map(|server| {
+                        (
+                            server.id as usize,
+                            LanguageServerStatus {
+                                name: server.name,
+                                pending_work: Default::default(),
+                                pending_diagnostic_updates: 0,
+                            },
+                        )
+                    })
                     .collect(),
                 next_language_server_id: 0,
                 opened_buffers: Default::default(),
@@ -1274,8 +1286,14 @@ impl Project {
                     this.update(&mut cx, |this, cx| {
                         this.language_servers
                             .insert(key.clone(), language_server.clone());
-                        this.language_server_names
-                            .insert(server_id, language_server.name().to_string());
+                        this.language_server_statuses.insert(
+                            server_id,
+                            LanguageServerStatus {
+                                name: language_server.name().to_string(),
+                                pending_work: Default::default(),
+                                pending_diagnostic_updates: 0,
+                            },
+                        );
 
                         if let Some(project_id) = this.remote_id() {
                             this.client
@@ -1359,16 +1377,26 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         let disk_diagnostics_token = language.disk_based_diagnostics_progress_token();
+        let language_server_status =
+            if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
+                status
+            } else {
+                return;
+            };
+
         match event {
             LanguageServerEvent::WorkStart { token } => {
                 if Some(&token) == disk_diagnostics_token {
-                    self.disk_based_diagnostics_started(cx);
-                    self.broadcast_language_server_update(
-                        language_server_id,
-                        proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(
-                            proto::LspDiskBasedDiagnosticsUpdating {},
-                        ),
-                    );
+                    language_server_status.pending_diagnostic_updates += 1;
+                    if language_server_status.pending_diagnostic_updates == 1 {
+                        self.disk_based_diagnostics_started(cx);
+                        self.broadcast_language_server_update(
+                            language_server_id,
+                            proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(
+                                proto::LspDiskBasedDiagnosticsUpdating {},
+                            ),
+                        );
+                    }
                 } else {
                     self.on_lsp_work_start(language_server_id, token.clone(), cx);
                     self.broadcast_language_server_update(
@@ -1401,13 +1429,16 @@ impl Project {
             }
             LanguageServerEvent::WorkEnd { token } => {
                 if Some(&token) == disk_diagnostics_token {
-                    self.disk_based_diagnostics_finished(cx);
-                    self.broadcast_language_server_update(
-                        language_server_id,
-                        proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
-                            proto::LspDiskBasedDiagnosticsUpdated {},
-                        ),
-                    );
+                    language_server_status.pending_diagnostic_updates -= 1;
+                    if language_server_status.pending_diagnostic_updates == 0 {
+                        self.disk_based_diagnostics_finished(cx);
+                        self.broadcast_language_server_update(
+                            language_server_id,
+                            proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
+                                proto::LspDiskBasedDiagnosticsUpdated {},
+                            ),
+                        );
+                    }
                 } else {
                     self.on_lsp_work_end(language_server_id, token.clone(), cx);
                     self.broadcast_language_server_update(
@@ -1457,14 +1488,16 @@ impl Project {
         token: String,
         cx: &mut ModelContext<Self>,
     ) {
-        self.pending_language_server_work.insert(
-            (language_server_id, token),
-            LanguageServerProgress {
-                message: None,
-                percentage: None,
-            },
-        );
-        cx.notify();
+        if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
+            status.pending_work.insert(
+                token,
+                LanguageServerProgress {
+                    message: None,
+                    percentage: None,
+                },
+            );
+            cx.notify();
+        }
     }
 
     fn on_lsp_work_progress(
@@ -1474,9 +1507,10 @@ impl Project {
         progress: LanguageServerProgress,
         cx: &mut ModelContext<Self>,
     ) {
-        self.pending_language_server_work
-            .insert((language_server_id, token), progress);
-        cx.notify();
+        if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
+            status.pending_work.insert(token, progress);
+            cx.notify();
+        }
     }
 
     fn on_lsp_work_end(
@@ -1485,9 +1519,10 @@ impl Project {
         token: String,
         cx: &mut ModelContext<Self>,
     ) {
-        self.pending_language_server_work
-            .remove(&(language_server_id, token));
-        cx.notify();
+        if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
+            status.pending_work.remove(&token);
+            cx.notify();
+        }
     }
 
     fn broadcast_language_server_update(
@@ -1506,15 +1541,8 @@ impl Project {
         }
     }
 
-    pub fn pending_language_server_work(
-        &self,
-    ) -> impl Iterator<Item = (&str, &str, &LanguageServerProgress)> {
-        self.pending_language_server_work.iter().filter_map(
-            |((language_server_id, token), progress)| {
-                let name = self.language_server_names.get(language_server_id)?;
-                Some((name.as_str(), token.as_str(), progress))
-            },
-        )
+    pub fn language_server_statuses(&self) -> impl Iterator<Item = &LanguageServerStatus> {
+        self.language_server_statuses.values()
     }
 
     pub fn update_diagnostics(
@@ -3266,8 +3294,14 @@ impl Project {
             .server
             .ok_or_else(|| anyhow!("invalid server"))?;
         this.update(&mut cx, |this, cx| {
-            this.language_server_names
-                .insert(server.id as usize, server.name);
+            this.language_server_statuses.insert(
+                server.id as usize,
+                LanguageServerStatus {
+                    name: server.name,
+                    pending_work: Default::default(),
+                    pending_diagnostic_updates: 0,
+                },
+            );
             cx.notify();
         });
         Ok(())

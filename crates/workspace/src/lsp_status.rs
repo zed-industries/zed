@@ -1,12 +1,13 @@
 use crate::{ItemViewHandle, Settings, StatusItemView};
 use futures::StreamExt;
+use gpui::AppContext;
 use gpui::{
     action, elements::*, platform::CursorStyle, Entity, ModelHandle, MutableAppContext,
     RenderContext, View, ViewContext,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
 use postage::watch;
-use project::Project;
+use project::{LanguageServerProgress, Project};
 use std::fmt::Write;
 use std::sync::Arc;
 
@@ -81,6 +82,27 @@ impl LspStatus {
         self.failed.clear();
         cx.notify();
     }
+
+    fn pending_language_server_work<'a>(
+        &self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = (&'a str, &'a str, &'a LanguageServerProgress)> {
+        self.project
+            .read(cx)
+            .language_server_statuses()
+            .filter_map(|status| {
+                if status.pending_work.is_empty() {
+                    None
+                } else {
+                    Some(
+                        status.pending_work.iter().map(|(token, progress)| {
+                            (status.name.as_str(), token.as_str(), progress)
+                        }),
+                    )
+                }
+            })
+            .flatten()
+    }
 }
 
 impl Entity for LspStatus {
@@ -95,7 +117,7 @@ impl View for LspStatus {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings_rx.borrow().theme;
 
-        let mut pending_work = self.project.read(cx).pending_language_server_work();
+        let mut pending_work = self.pending_language_server_work(cx);
         if let Some((lang_server_name, progress_token, progress)) = pending_work.next() {
             let mut message = lang_server_name.to_string();
 
