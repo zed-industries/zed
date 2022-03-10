@@ -136,7 +136,7 @@ impl TextStyle {
         if self.font_properties != style.font_properties {
             self.font_id = font_cache.select_font(self.font_family_id, &style.font_properties)?;
         }
-        self.color = Color::blend(self.color, style.color);
+        self.color = Color::blend(style.color, self.color);
         if let Some(factor) = style.fade_out {
             self.color.fade_out(factor);
         }

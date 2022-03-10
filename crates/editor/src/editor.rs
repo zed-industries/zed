@@ -409,6 +409,8 @@ type CompletionId = usize;
 
 pub type GetFieldEditorTheme = fn(&theme::Theme) -> theme::FieldEditor;
 
+type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
+
 pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<MultiBuffer>,
@@ -431,6 +433,7 @@ pub struct Editor {
     settings: watch::Receiver<Settings>,
     soft_wrap_mode_override: Option<settings::SoftWrap>,
     get_field_editor_theme: Option<GetFieldEditorTheme>,
+    override_text_style: Option<Box<OverrideTextStyle>>,
     project: Option<ModelHandle<Project>>,
     focused: bool,
     show_local_cursors: bool,
@@ -864,7 +867,7 @@ impl Editor {
     ) -> Self {
         let display_map = cx.add_model(|cx| {
             let settings = settings.borrow();
-            let style = build_style(&*settings, get_field_editor_theme, cx);
+            let style = build_style(&*settings, get_field_editor_theme, None, cx);
             DisplayMap::new(
                 buffer.clone(),
                 settings.tab_size,
@@ -930,6 +933,7 @@ impl Editor {
             document_highlights_task: Default::default(),
             pending_rename: Default::default(),
             searchable: true,
+            override_text_style: None,
         };
         this.end_selection(cx);
         this
@@ -982,7 +986,12 @@ impl Editor {
     }
 
     fn style(&self, cx: &AppContext) -> EditorStyle {
-        build_style(&*self.settings.borrow(), self.get_field_editor_theme, cx)
+        build_style(
+            &*self.settings.borrow(),
+            self.get_field_editor_theme,
+            self.override_text_style.as_deref(),
+            cx,
+        )
     }
 
     pub fn set_placeholder_text(
@@ -4379,14 +4388,26 @@ impl Editor {
                     let rename_start = cursor_offset.saturating_sub(cursor_offset_in_rename_range);
                     let rename_end = rename_start + rename_buffer_range.len();
                     let range = buffer.anchor_before(rename_start)..buffer.anchor_after(rename_end);
+                    let mut old_highlight_id = None;
                     let old_name = buffer
-                        .text_for_range(rename_start..rename_end)
-                        .collect::<String>();
+                        .chunks(rename_start..rename_end, true)
+                        .map(|chunk| {
+                            if old_highlight_id.is_none() {
+                                old_highlight_id = chunk.syntax_highlight_id;
+                            }
+                            chunk.text
+                        })
+                        .collect();
+
                     drop(buffer);
 
                     // Position the selection in the rename editor so that it matches the current selection.
                     let rename_editor = cx.add_view(|cx| {
                         let mut editor = Editor::single_line(this.settings.clone(), None, cx);
+                        if let Some(old_highlight_id) = old_highlight_id {
+                            editor.override_text_style =
+                                Some(Box::new(move |style| old_highlight_id.style(&style.syntax)));
+                        }
                         editor
                             .buffer
                             .update(cx, |buffer, cx| buffer.edit([0..0], &old_name, cx));
@@ -5631,14 +5652,14 @@ impl View for Editor {
 fn build_style(
     settings: &Settings,
     get_field_editor_theme: Option<GetFieldEditorTheme>,
+    override_text_style: Option<&OverrideTextStyle>,
     cx: &AppContext,
 ) -> EditorStyle {
+    let font_cache = cx.font_cache();
+
     let mut theme = settings.theme.editor.clone();
-    if let Some(get_field_editor_theme) = get_field_editor_theme {
+    let mut style = if let Some(get_field_editor_theme) = get_field_editor_theme {
         let field_editor_theme = get_field_editor_theme(&settings.theme);
-        if let Some(background) = field_editor_theme.container.background_color {
-            theme.background = background;
-        }
         theme.text_color = field_editor_theme.text.color;
         theme.selection = field_editor_theme.selection;
         EditorStyle {
@@ -5647,7 +5668,6 @@ fn build_style(
             theme,
         }
     } else {
-        let font_cache = cx.font_cache();
         let font_family_id = settings.buffer_font_family;
         let font_family_name = cx.font_cache().family_name(font_family_id).unwrap();
         let font_properties = Default::default();
@@ -5668,7 +5688,23 @@ fn build_style(
             placeholder_text: None,
             theme,
         }
+    };
+
+    if let Some(highlight_style) =
+        override_text_style.and_then(|build_style| dbg!(build_style(&style)))
+    {
+        if let Some(highlighted) = style
+            .text
+            .clone()
+            .highlight(highlight_style, font_cache)
+            .log_err()
+        {
+            style.text = highlighted;
+            dbg!(&style.text);
+        }
     }
+
+    style
 }
 
 impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
