@@ -36,8 +36,16 @@ pub struct EditorElement {
 }
 
 impl EditorElement {
-    pub fn new(view: WeakViewHandle<Editor>, style: EditorStyle, cursor_shape: CursorShape) -> Self {
-        Self { view, style, cursor_shape }
+    pub fn new(
+        view: WeakViewHandle<Editor>,
+        style: EditorStyle,
+        cursor_shape: CursorShape,
+    ) -> Self {
+        Self {
+            view,
+            style,
+            cursor_shape,
+        }
     }
 
     fn view<'a>(&self, cx: &'a AppContext) -> &'a Editor {
@@ -365,7 +373,8 @@ impl EditorElement {
                             &layout.line_layouts[(cursor_position.row() - start_row) as usize];
                         let cursor_column = cursor_position.column() as usize;
                         let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
-                        let mut character_width = cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
+                        let mut character_width =
+                            cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
                         // TODO: Is there a better option here for the character size
                         // at the end of the line?
                         // Default to 1/3 the line height
@@ -1228,7 +1237,7 @@ impl PaintState {
 pub enum CursorShape {
     Bar,
     Block,
-    Underscore
+    Underscore,
 }
 
 impl Default for CursorShape {
@@ -1242,17 +1251,20 @@ struct Cursor {
     character_width: f32,
     line_height: f32,
     color: Color,
-    shape: CursorShape
+    shape: CursorShape,
 }
 
 impl Cursor {
     fn paint(&self, cx: &mut PaintContext) {
         let bounds = match self.shape {
             CursorShape::Bar => RectF::new(self.origin, vec2f(2.0, self.line_height)),
-            CursorShape::Block => RectF::new(self.origin, vec2f(self.character_width, self.line_height)),
+            CursorShape::Block => {
+                RectF::new(self.origin, vec2f(self.character_width, self.line_height))
+            }
             CursorShape::Underscore => RectF::new(
                 self.origin + Vector2F::new(0.0, self.line_height - 2.0),
-                vec2f(self.character_width, 2.0)),
+                vec2f(self.character_width, 2.0),
+            ),
         };
 
         cx.scene.push_quad(Quad {
