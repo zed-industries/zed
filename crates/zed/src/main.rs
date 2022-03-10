@@ -30,9 +30,6 @@ fn main() {
     let app = gpui::App::new(Assets).unwrap();
     load_embedded_fonts(&app);
 
-    let zed_dir = dirs::home_dir()
-        .expect("failed to determine home directory")
-        .join(".zed");
     let fs = Arc::new(RealFs);
     let themes = ThemeRegistry::new(Assets, app.font_cache());
     let theme = themes.get(DEFAULT_THEME_NAME).unwrap();
@@ -52,7 +49,7 @@ fn main() {
                 ..Default::default()
             },
         );
-    let settings_file = load_settings_file(&app, fs.clone(), zed_dir.join("settings.json"));
+    let settings_file = load_settings_file(&app, fs.clone());
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
         Task::ready(())
@@ -106,7 +103,7 @@ fn main() {
 
         refresh_window_on_settings_change(settings.clone(), cx);
 
-        languages.set_language_server_download_dir(zed_dir);
+        languages.set_language_server_download_dir(zed::ROOT_PATH.clone());
         languages.set_theme(&settings.borrow().theme.editor.syntax);
 
         let app_state = Arc::new(AppState {
@@ -233,17 +230,13 @@ fn load_embedded_fonts(app: &App) {
         .unwrap();
 }
 
-fn load_settings_file(
-    app: &App,
-    fs: Arc<dyn Fs>,
-    settings_path: PathBuf,
-) -> oneshot::Receiver<SettingsFile> {
+fn load_settings_file(app: &App, fs: Arc<dyn Fs>) -> oneshot::Receiver<SettingsFile> {
     let executor = app.background();
     let (tx, rx) = oneshot::channel();
     executor
         .clone()
         .spawn(async move {
-            let file = SettingsFile::new(fs, &executor, settings_path).await;
+            let file = SettingsFile::new(fs, &executor, zed::SETTINGS_PATH.clone()).await;
             tx.send(file).ok()
         })
         .detach();

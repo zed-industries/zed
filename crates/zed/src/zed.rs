@@ -16,19 +16,28 @@ use gpui::{
     platform::{WindowBounds, WindowOptions},
     ModelHandle, ViewContext,
 };
+use lazy_static::lazy_static;
 pub use lsp;
 use project::Project;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 pub use workspace;
 use workspace::{AppState, Workspace, WorkspaceParams};
 
 action!(About);
 action!(Quit);
+action!(OpenSettings);
 action!(AdjustBufferFontSize, f32);
 
 const MIN_FONT_SIZE: f32 = 6.0;
+
+lazy_static! {
+    pub static ref ROOT_PATH: PathBuf = dirs::home_dir()
+        .expect("failed to determine home directory")
+        .join(".zed");
+    pub static ref SETTINGS_PATH: PathBuf = ROOT_PATH.join("settings.json");
+}
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_global_action(quit);
@@ -40,13 +49,19 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             settings_tx.borrow_mut().buffer_font_size = new_size;
         }
     });
+    cx.add_action(open_settings);
 
     workspace::lsp_status::init(cx);
 
     cx.add_bindings(vec![
         Binding::new("cmd-=", AdjustBufferFontSize(1.), None),
         Binding::new("cmd--", AdjustBufferFontSize(-1.), None),
+        Binding::new("cmd-,", OpenSettings, None),
     ])
+}
+
+fn open_settings(workspace: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>) {
+    workspace.open_paths(&[SETTINGS_PATH.clone()], cx).detach();
 }
 
 pub fn build_workspace(
