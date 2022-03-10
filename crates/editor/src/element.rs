@@ -1268,7 +1268,7 @@ pub enum CursorShape {
 
 impl Default for CursorShape {
     fn default() -> Self {
-        CursorShape::Block
+        CursorShape::Bar
     }
 }
 
