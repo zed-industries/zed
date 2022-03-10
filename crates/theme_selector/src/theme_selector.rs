@@ -110,13 +110,12 @@ impl ThemeSelector {
         });
     }
 
-    fn reload(_: &mut Workspace, action: &Reload, cx: &mut ViewContext<Workspace>) {
+    fn reload(_: &mut Workspace, action: &Reload, _: &mut ViewContext<Workspace>) {
         let current_theme_name = action.0.settings.borrow().theme.name.clone();
         action.0.themes.clear();
         match action.0.themes.get(&current_theme_name) {
             Ok(theme) => {
                 action.0.settings_tx.lock().borrow_mut().theme = theme;
-                cx.refresh_windows();
                 log::info!("reloaded theme {}", current_theme_name);
             }
             Err(error) => {
@@ -137,7 +136,7 @@ impl ThemeSelector {
         self.list_state
             .scroll_to(ScrollTarget::Show(self.selected_index));
 
-        self.show_selected_theme(cx);
+        self.show_selected_theme();
         cx.notify();
     }
 
@@ -148,16 +147,14 @@ impl ThemeSelector {
         self.list_state
             .scroll_to(ScrollTarget::Show(self.selected_index));
 
-        self.show_selected_theme(cx);
+        self.show_selected_theme();
         cx.notify();
     }
 
-    fn show_selected_theme(&mut self, cx: &mut MutableAppContext) {
+    fn show_selected_theme(&mut self) {
         if let Some(mat) = self.matches.get(self.selected_index) {
             match self.themes.get(&mat.string) {
-                Ok(theme) => {
-                    self.set_theme(theme, cx);
-                }
+                Ok(theme) => self.set_theme(theme),
                 Err(error) => {
                     log::error!("error loading theme {}: {}", mat.string, error)
                 }
@@ -177,9 +174,8 @@ impl ThemeSelector {
         self.settings_tx.lock().borrow().theme.clone()
     }
 
-    fn set_theme(&self, theme: Arc<Theme>, cx: &mut MutableAppContext) {
+    fn set_theme(&self, theme: Arc<Theme>) {
         self.settings_tx.lock().borrow_mut().theme = theme;
-        cx.refresh_windows();
     }
 
     fn update_matches(&mut self, cx: &mut ViewContext<Self>) {
@@ -248,7 +244,7 @@ impl ThemeSelector {
             editor::Event::Edited => {
                 self.update_matches(cx);
                 self.select_if_matching(&self.current_theme().name);
-                self.show_selected_theme(cx);
+                self.show_selected_theme();
             }
             editor::Event::Blurred => cx.emit(Event::Dismissed),
             _ => {}
@@ -322,9 +318,9 @@ impl ThemeSelector {
 impl Entity for ThemeSelector {
     type Event = Event;
 
-    fn release(&mut self, cx: &mut MutableAppContext) {
+    fn release(&mut self, _: &mut MutableAppContext) {
         if !self.selection_completed {
-            self.set_theme(self.original_theme.clone(), cx);
+            self.set_theme(self.original_theme.clone());
         }
     }
 }

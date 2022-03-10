@@ -34,12 +34,10 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_global_action(quit);
     cx.add_global_action({
         let settings_tx = app_state.settings_tx.clone();
-
-        move |action: &AdjustBufferFontSize, cx| {
+        move |action: &AdjustBufferFontSize, _| {
             let mut settings_tx = settings_tx.lock();
             let new_size = (settings_tx.borrow().buffer_font_size + action.0).max(MIN_FONT_SIZE);
             settings_tx.borrow_mut().buffer_font_size = new_size;
-            cx.refresh_windows();
         }
     });
 

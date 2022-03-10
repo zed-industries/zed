@@ -4,10 +4,11 @@
 use anyhow::{anyhow, Context, Result};
 use client::{self, http, ChannelList, UserStore};
 use fs::OpenOptions;
-use futures::channel::oneshot;
+use futures::{channel::oneshot, StreamExt};
 use gpui::{App, AssetSource, Task};
 use log::LevelFilter;
 use parking_lot::Mutex;
+use postage::{prelude::Stream, watch};
 use project::Fs;
 use simplelog::SimpleLogger;
 use smol::process::Command;
@@ -102,6 +103,8 @@ fn main() {
             themes.clone(),
             cx.font_cache().clone(),
         );
+
+        refresh_window_on_settings_change(settings.clone(), cx);
 
         languages.set_language_server_download_dir(zed_dir);
         languages.set_theme(&settings.borrow().theme.editor.syntax);
@@ -245,4 +248,17 @@ fn load_settings_file(
         })
         .detach();
     rx
+}
+
+fn refresh_window_on_settings_change(
+    mut settings_rx: watch::Receiver<Settings>,
+    cx: &mut gpui::MutableAppContext,
+) {
+    settings_rx.try_recv().ok();
+    cx.spawn(|mut cx| async move {
+        while settings_rx.next().await.is_some() {
+            cx.update(|cx| cx.refresh_windows());
+        }
+    })
+    .detach();
 }
