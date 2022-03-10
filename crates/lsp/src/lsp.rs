@@ -35,6 +35,7 @@ type ResponseHandler = Box<dyn Send + FnOnce(Result<&str, Error>)>;
 pub struct LanguageServer {
     next_id: AtomicUsize,
     outbound_tx: channel::Sender<Vec<u8>>,
+    name: String,
     capabilities: ServerCapabilities,
     notification_handlers: Arc<RwLock<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<HashMap<usize, ResponseHandler>>>,
@@ -118,9 +119,11 @@ impl LanguageServer {
             .spawn()?;
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
-        Ok(Self::new_internal(
-            stdin, stdout, root_path, options, background,
-        ))
+        let mut server = Self::new_internal(stdin, stdout, root_path, options, background);
+        if let Some(name) = binary_path.file_name() {
+            server.name = name.to_string_lossy().to_string();
+        }
+        Ok(server)
     }
 
     fn new_internal<Stdin, Stdout>(
@@ -222,6 +225,7 @@ impl LanguageServer {
         Self {
             notification_handlers,
             response_handlers,
+            name: Default::default(),
             capabilities: Default::default(),
             next_id: Default::default(),
             outbound_tx,
@@ -292,7 +296,13 @@ impl LanguageServer {
         };
 
         let response = this.request::<request::Initialize>(params).await?;
-        Arc::get_mut(&mut this).unwrap().capabilities = response.capabilities;
+        {
+            let this = Arc::get_mut(&mut this).unwrap();
+            if let Some(info) = response.server_info {
+                this.name = info.name;
+            }
+            this.capabilities = response.capabilities;
+        }
         this.notify::<notification::Initialized>(InitializedParams {})?;
         Ok(this)
     }
@@ -353,6 +363,10 @@ impl LanguageServer {
             method: T::METHOD,
             notification_handlers: self.notification_handlers.clone(),
         }
+    }
+
+    pub fn name<'a>(self: &'a Arc<Self>) -> &'a str {
+        &self.name
     }
 
     pub fn capabilities<'a>(self: &'a Arc<Self>) -> &'a ServerCapabilities {

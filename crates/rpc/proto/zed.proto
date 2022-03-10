@@ -37,7 +37,8 @@ message Envelope {
         UnregisterWorktree unregister_worktree = 29;
         UpdateWorktree update_worktree = 31;
         UpdateDiagnosticSummary update_diagnostic_summary = 32;
-        LspEvent lsp_event = 33;
+        StartLanguageServer start_language_server = 33;
+        UpdateLanguageServer update_language_server = 34;
 
         OpenBuffer open_buffer = 35;
         OpenBufferResponse open_buffer_response = 36;
@@ -121,6 +122,7 @@ message JoinProjectResponse {
     uint32 replica_id = 1;
     repeated Worktree worktrees = 2;
     repeated Collaborator collaborators = 3;
+    repeated LanguageServer language_servers = 4;
 }
 
 message LeaveProject {
@@ -409,6 +411,16 @@ message LocalTimestamp {
     uint32 value = 2;
 }
 
+message LanguageServer {
+    uint64 id = 1;
+    string name = 2;
+}
+
+message StartLanguageServer {
+    uint64 project_id = 1;
+    LanguageServer server = 2;
+}
+
 message UpdateDiagnosticSummary {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
@@ -423,7 +435,7 @@ message DiagnosticSummary {
     uint32 hint_count = 5;
 }
 
-message LspEvent {
+message UpdateLanguageServer {
     uint64 project_id = 1;
     uint64 language_server_id = 2;
     oneof variant {

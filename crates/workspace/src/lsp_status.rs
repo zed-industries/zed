@@ -96,11 +96,16 @@ impl View for LspStatus {
         let theme = &self.settings_rx.borrow().theme;
 
         let mut pending_work = self.project.read(cx).pending_language_server_work();
-        if let Some((progress_token, progress)) = pending_work.next() {
-            let mut message = progress
-                .message
-                .clone()
-                .unwrap_or_else(|| progress_token.to_string());
+        if let Some((lang_server_name, progress_token, progress)) = pending_work.next() {
+            let mut message = lang_server_name.to_string();
+
+            message.push_str(": ");
+            if let Some(progress_message) = progress.message.as_ref() {
+                message.push_str(progress_message);
+            } else {
+                message.push_str(progress_token);
+            }
+
             if let Some(percentage) = progress.percentage {
                 write!(&mut message, " ({}%)", percentage).unwrap();
             }
