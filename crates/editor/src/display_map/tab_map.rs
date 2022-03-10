@@ -1,4 +1,4 @@
-use super::fold_map::{self, FoldEdit, FoldPoint, FoldSnapshot, ToFoldPoint};
+use super::fold_map::{self, FoldEdit, FoldPoint, FoldSnapshot};
 use crate::MultiBufferSnapshot;
 use language::{rope, Chunk};
 use parking_lot::Mutex;
@@ -201,10 +201,6 @@ impl TabSnapshot {
         TabPoint::new(input.row(), expanded as u32)
     }
 
-    pub fn from_point(&self, point: Point, bias: Bias) -> TabPoint {
-        self.to_tab_point(point.to_fold_point(&self.fold_snapshot, bias))
-    }
-
     pub fn to_fold_point(&self, output: TabPoint, bias: Bias) -> (FoldPoint, usize, usize) {
         let chars = self.fold_snapshot.chars_at(FoldPoint::new(output.row(), 0));
         let expanded = output.column() as usize;
@@ -215,6 +211,10 @@ impl TabSnapshot {
             expanded_char_column,
             to_next_stop,
         )
+    }
+
+    pub fn from_point(&self, point: Point, bias: Bias) -> TabPoint {
+        self.to_tab_point(self.fold_snapshot.to_fold_point(point, bias))
     }
 
     pub fn to_point(&self, point: TabPoint, bias: Bias) -> Point {
