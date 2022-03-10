@@ -4,9 +4,11 @@
 use anyhow::{anyhow, Context, Result};
 use client::{self, http, ChannelList, UserStore};
 use fs::OpenOptions;
+use futures::channel::oneshot;
 use gpui::{App, AssetSource, Task};
 use log::LevelFilter;
 use parking_lot::Mutex;
+use project::Fs;
 use simplelog::SimpleLogger;
 use smol::process::Command;
 use std::{env, fs, path::PathBuf, sync::Arc};
@@ -30,7 +32,7 @@ fn main() {
     let zed_dir = dirs::home_dir()
         .expect("failed to determine home directory")
         .join(".zed");
-
+    let fs = Arc::new(RealFs);
     let themes = ThemeRegistry::new(Assets, app.font_cache());
     let theme = themes.get(DEFAULT_THEME_NAME).unwrap();
     let default_settings = Settings::new("Zed Mono", &app.font_cache(), theme)
@@ -49,6 +51,7 @@ fn main() {
                 ..Default::default()
             },
         );
+    let settings_file = load_settings_file(&app, fs.clone(), zed_dir.join("settings.json"));
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
         Task::ready(())
@@ -59,30 +62,13 @@ fn main() {
     };
 
     app.run(move |cx| {
-        let fs = Arc::new(RealFs);
-        let user_settings_file = cx.background().block(SettingsFile::new(
-            fs.clone(),
-            cx.background(),
-            zed_dir.join("settings.json"),
-        ));
-
-        let (settings_tx, settings) = Settings::from_files(
-            default_settings,
-            vec![user_settings_file],
-            cx.background().clone(),
-            themes.clone(),
-            cx.font_cache().clone(),
-        );
-
-        let mut languages = language::build_language_registry(login_shell_env_loaded);
-        languages.set_language_server_download_dir(zed_dir);
-        languages.set_theme(&settings.borrow().theme.editor.syntax);
-        let languages = Arc::new(languages);
-
         let http = http::client();
         let client = client::Client::new(http.clone());
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
         let mut path_openers = Vec::new();
+        let mut languages = language::build_language_registry(login_shell_env_loaded);
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
+        let channel_list =
+            cx.add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx));
 
         project::Project::init(&client);
         client::Channel::init(&client);
@@ -108,13 +94,24 @@ fn main() {
         })
         .detach_and_log_err(cx);
 
+        let settings_file = cx.background().block(settings_file).unwrap();
+        let (settings_tx, settings) = Settings::from_files(
+            default_settings,
+            vec![settings_file],
+            cx.background().clone(),
+            themes.clone(),
+            cx.font_cache().clone(),
+        );
+
+        languages.set_language_server_download_dir(zed_dir);
+        languages.set_theme(&settings.borrow().theme.editor.syntax);
+
         let app_state = Arc::new(AppState {
-            languages,
+            languages: Arc::new(languages),
             settings_tx,
             settings,
             themes,
-            channel_list: cx
-                .add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx)),
+            channel_list,
             client,
             user_store,
             fs,
@@ -231,4 +228,21 @@ fn load_embedded_fonts(app: &App) {
         .fonts()
         .add_fonts(&embedded_fonts.into_inner())
         .unwrap();
+}
+
+fn load_settings_file(
+    app: &App,
+    fs: Arc<dyn Fs>,
+    settings_path: PathBuf,
+) -> oneshot::Receiver<SettingsFile> {
+    let executor = app.background();
+    let (tx, rx) = oneshot::channel();
+    executor
+        .clone()
+        .spawn(async move {
+            let file = SettingsFile::new(fs, &executor, settings_path).await;
+            tx.send(file).ok()
+        })
+        .detach();
+    rx
 }
