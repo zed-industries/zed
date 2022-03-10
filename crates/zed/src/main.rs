@@ -12,7 +12,11 @@ use smol::process::Command;
 use std::{env, fs, path::PathBuf, sync::Arc};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
 use util::ResultExt;
-use workspace::{self, settings, AppState, OpenNew, OpenParams, OpenPaths, Settings};
+use workspace::{
+    self,
+    settings::{self, SettingsFile},
+    AppState, OpenNew, OpenParams, OpenPaths, Settings,
+};
 use zed::{
     self, assets::Assets, build_window_options, build_workspace, fs::RealFs, language, menus,
 };
@@ -23,9 +27,13 @@ fn main() {
     let app = gpui::App::new(Assets).unwrap();
     load_embedded_fonts(&app);
 
+    let zed_dir = dirs::home_dir()
+        .expect("failed to determine home directory")
+        .join(".zed");
+
     let themes = ThemeRegistry::new(Assets, app.font_cache());
     let theme = themes.get(DEFAULT_THEME_NAME).unwrap();
-    let settings = Settings::new("Zed Mono", &app.font_cache(), theme)
+    let default_settings = Settings::new("Zed Mono", &app.font_cache(), theme)
         .unwrap()
         .with_overrides(
             language::PLAIN_TEXT.name(),
@@ -41,7 +49,6 @@ fn main() {
                 ..Default::default()
             },
         );
-    let (settings_tx, settings) = postage::watch::channel_with(settings);
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
         Task::ready(())
@@ -51,10 +58,27 @@ fn main() {
         })
     };
 
-    let languages = Arc::new(language::build_language_registry(login_shell_env_loaded));
-    languages.set_theme(&settings.borrow().theme.editor.syntax);
-
     app.run(move |cx| {
+        let fs = Arc::new(RealFs);
+        let user_settings_file = cx.background().block(SettingsFile::new(
+            fs.clone(),
+            cx.background(),
+            zed_dir.join("settings.json"),
+        ));
+
+        let (settings_tx, settings) = Settings::from_files(
+            default_settings,
+            vec![user_settings_file],
+            cx.background().clone(),
+            themes.clone(),
+            cx.font_cache().clone(),
+        );
+
+        let mut languages = language::build_language_registry(login_shell_env_loaded);
+        languages.set_language_server_download_dir(zed_dir);
+        languages.set_theme(&settings.borrow().theme.editor.syntax);
+        let languages = Arc::new(languages);
+
         let http = http::client();
         let client = client::Client::new(http.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
@@ -85,15 +109,15 @@ fn main() {
         .detach_and_log_err(cx);
 
         let app_state = Arc::new(AppState {
-            languages: languages.clone(),
-            settings_tx: Arc::new(Mutex::new(settings_tx)),
+            languages,
+            settings_tx,
             settings,
             themes,
             channel_list: cx
                 .add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx)),
             client,
             user_store,
-            fs: Arc::new(RealFs),
+            fs,
             path_openers: Arc::from(path_openers),
             build_window_options: &build_window_options,
             build_workspace: &build_workspace,
