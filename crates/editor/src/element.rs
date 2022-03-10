@@ -32,11 +32,12 @@ use std::{
 pub struct EditorElement {
     view: WeakViewHandle<Editor>,
     style: EditorStyle,
+    cursor_shape: CursorShape,
 }
 
 impl EditorElement {
-    pub fn new(view: WeakViewHandle<Editor>, style: EditorStyle) -> Self {
-        Self { view, style }
+    pub fn new(view: WeakViewHandle<Editor>, style: EditorStyle, cursor_shape: CursorShape) -> Self {
+        Self { view, style, cursor_shape }
     }
 
     fn view<'a>(&self, cx: &'a AppContext) -> &'a Editor {
@@ -362,13 +363,24 @@ impl EditorElement {
                     if (start_row..end_row).contains(&cursor_position.row()) {
                         let cursor_row_layout =
                             &layout.line_layouts[(cursor_position.row() - start_row) as usize];
-                        let x = cursor_row_layout.x_for_index(cursor_position.column() as usize)
-                            - scroll_left;
+                        let cursor_column = cursor_position.column() as usize;
+                        let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
+                        let mut character_width = cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
+                        // TODO: Is there a better option here for the character size
+                        // at the end of the line?
+                        // Default to 1/3 the line height
+                        if character_width == 0.0 {
+                            character_width = layout.line_height / 3.0;
+                        }
+
+                        let x = cursor_character_x - scroll_left;
                         let y = cursor_position.row() as f32 * layout.line_height - scroll_top;
                         cursors.push(Cursor {
                             color: style.cursor,
+                            character_width,
                             origin: content_origin + vec2f(x, y),
                             line_height: layout.line_height,
+                            shape: self.cursor_shape,
                         });
                     }
                 }
@@ -1212,16 +1224,39 @@ impl PaintState {
     }
 }
 
+#[derive(Copy, Clone)]
+pub enum CursorShape {
+    Bar,
+    Block,
+    Underscore
+}
+
+impl Default for CursorShape {
+    fn default() -> Self {
+        CursorShape::Bar
+    }
+}
+
 struct Cursor {
     origin: Vector2F,
+    character_width: f32,
     line_height: f32,
     color: Color,
+    shape: CursorShape
 }
 
 impl Cursor {
     fn paint(&self, cx: &mut PaintContext) {
+        let bounds = match self.shape {
+            CursorShape::Bar => RectF::new(self.origin, vec2f(2.0, self.line_height)),
+            CursorShape::Block => RectF::new(self.origin, vec2f(self.character_width, self.line_height)),
+            CursorShape::Underscore => RectF::new(
+                self.origin + Vector2F::new(0.0, self.line_height - 2.0),
+                vec2f(self.character_width, 2.0)),
+        };
+
         cx.scene.push_quad(Quad {
-            bounds: RectF::new(self.origin, vec2f(2.0, self.line_height)),
+            bounds,
             background: Some(self.color),
             border: Border::new(0., Color::black()),
             corner_radius: 0.,

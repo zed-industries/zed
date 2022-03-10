@@ -450,6 +450,7 @@ pub struct Editor {
     document_highlights_task: Option<Task<()>>,
     pending_rename: Option<RenameState>,
     searchable: bool,
+    cursor_shape: CursorShape,
 }
 
 pub struct EditorSnapshot {
@@ -930,6 +931,7 @@ impl Editor {
             document_highlights_task: Default::default(),
             pending_rename: Default::default(),
             searchable: true,
+            cursor_shape: Default::default(),
         };
         this.end_selection(cx);
         this
@@ -1019,6 +1021,14 @@ impl Editor {
         }
 
         cx.notify();
+    }
+
+    pub fn set_cursor_shape(
+        &mut self,
+        cursor_shape: CursorShape
+    ) {
+        self.cursor_shape = cursor_shape;
+        // TODO: Do we need to notify?
     }
 
     pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> Vector2F {
@@ -5569,7 +5579,7 @@ impl View for Editor {
         self.display_map.update(cx, |map, cx| {
             map.set_font(style.text.font_id, style.text.font_size, cx)
         });
-        EditorElement::new(self.handle.clone(), style.clone()).boxed()
+        EditorElement::new(self.handle.clone(), style.clone(), self.cursor_shape).boxed()
     }
 
     fn ui_name() -> &'static str {
