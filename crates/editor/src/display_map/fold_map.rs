@@ -2,15 +2,21 @@ use crate::{
     multi_buffer::MultiBufferRows, Anchor, AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot,
     ToOffset,
 };
+use collections::BTreeMap;
+use gpui::fonts::HighlightStyle;
 use language::{Chunk, Edit, Point, PointUtf16, TextSummary};
 use parking_lot::Mutex;
 use std::{
+    any::TypeId,
     cmp::{self, Ordering},
-    iter,
+    iter::{self, Peekable},
     ops::{Range, Sub},
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
+    vec,
 };
 use sum_tree::{Bias, Cursor, FilterCursor, SumTree};
+
+use super::TextHighlights;
 
 pub trait ToFoldPoint {
     fn to_fold_point(&self, snapshot: &FoldSnapshot, bias: Bias) -> FoldPoint;
@@ -92,6 +98,12 @@ impl ToFoldPoint for Point {
                 cursor.end(&()).1 .0,
             ))
         }
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldPoint {
+    fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
+        self.0 += &summary.output.lines;
     }
 }
 
@@ -500,7 +512,7 @@ impl FoldSnapshot {
 
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(FoldOffset(0)..self.len(), false)
+        self.chunks(FoldOffset(0)..self.len(), false, None)
             .map(|c| c.text)
             .collect()
     }
@@ -640,20 +652,96 @@ impl FoldSnapshot {
 
     pub fn chars_at(&self, start: FoldPoint) -> impl '_ + Iterator<Item = char> {
         let start = start.to_offset(self);
-        self.chunks(start..self.len(), false)
+        self.chunks(start..self.len(), false, None)
             .flat_map(|chunk| chunk.text.chars())
     }
 
-    pub fn chunks<'a>(&'a self, range: Range<FoldOffset>, language_aware: bool) -> FoldChunks<'a> {
+    pub fn chunks<'a>(
+        &'a self,
+        range: Range<FoldOffset>,
+        language_aware: bool,
+        text_highlights: Option<&'a TextHighlights>,
+    ) -> FoldChunks<'a> {
+        let mut highlight_endpoints = Vec::new();
         let mut transform_cursor = self.transforms.cursor::<(FoldOffset, usize)>();
 
-        transform_cursor.seek(&range.end, Bias::Right, &());
-        let overshoot = range.end.0 - transform_cursor.start().0 .0;
-        let buffer_end = transform_cursor.start().1 + overshoot;
+        let buffer_end = {
+            transform_cursor.seek(&range.end, Bias::Right, &());
+            let overshoot = range.end.0 - transform_cursor.start().0 .0;
+            transform_cursor.start().1 + overshoot
+        };
 
-        transform_cursor.seek(&range.start, Bias::Right, &());
-        let overshoot = range.start.0 - transform_cursor.start().0 .0;
-        let buffer_start = transform_cursor.start().1 + overshoot;
+        let buffer_start = {
+            transform_cursor.seek(&range.start, Bias::Right, &());
+            let overshoot = range.start.0 - transform_cursor.start().0 .0;
+            transform_cursor.start().1 + overshoot
+        };
+
+        if let Some(text_highlights) = text_highlights {
+            if !text_highlights.is_empty() {
+                while transform_cursor.start().0 < range.end {
+                    if !transform_cursor.item().unwrap().is_fold() {
+                        let transform_start = self
+                            .buffer_snapshot
+                            .anchor_after(cmp::max(buffer_start, transform_cursor.start().1));
+
+                        let transform_end = {
+                            let overshoot = range.end.0 - transform_cursor.start().0 .0;
+                            self.buffer_snapshot.anchor_before(cmp::min(
+                                transform_cursor.end(&()).1,
+                                transform_cursor.start().1 + overshoot,
+                            ))
+                        };
+
+                        for (tag, highlights) in text_highlights.iter() {
+                            let style = highlights.0;
+                            let ranges = &highlights.1;
+
+                            let start_ix = match ranges.binary_search_by(|probe| {
+                                let cmp = probe
+                                    .end
+                                    .cmp(&transform_start, &self.buffer_snapshot())
+                                    .unwrap();
+                                if cmp.is_gt() {
+                                    Ordering::Greater
+                                } else {
+                                    Ordering::Less
+                                }
+                            }) {
+                                Ok(i) | Err(i) => i,
+                            };
+                            for range in &ranges[start_ix..] {
+                                if range
+                                    .start
+                                    .cmp(&transform_end, &self.buffer_snapshot)
+                                    .unwrap()
+                                    .is_ge()
+                                {
+                                    break;
+                                }
+
+                                highlight_endpoints.push(HighlightEndpoint {
+                                    offset: range.start.to_offset(&self.buffer_snapshot),
+                                    is_start: true,
+                                    tag: *tag,
+                                    style,
+                                });
+                                highlight_endpoints.push(HighlightEndpoint {
+                                    offset: range.end.to_offset(&self.buffer_snapshot),
+                                    is_start: false,
+                                    tag: *tag,
+                                    style,
+                                });
+                            }
+                        }
+                    }
+
+                    transform_cursor.next(&());
+                }
+                highlight_endpoints.sort();
+                transform_cursor.seek(&range.start, Bias::Right, &());
+            }
+        }
 
         FoldChunks {
             transform_cursor,
@@ -664,6 +752,8 @@ impl FoldSnapshot {
             buffer_offset: buffer_start,
             output_offset: range.start.0,
             max_output_offset: range.end.0,
+            highlight_endpoints: highlight_endpoints.into_iter().peekable(),
+            active_highlights: Default::default(),
         }
     }
 
@@ -952,6 +1042,8 @@ pub struct FoldChunks<'a> {
     buffer_offset: usize,
     output_offset: usize,
     max_output_offset: usize,
+    highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
+    active_highlights: BTreeMap<Option<TypeId>, HighlightStyle>,
 }
 
 impl<'a> Iterator for FoldChunks<'a> {
@@ -990,6 +1082,21 @@ impl<'a> Iterator for FoldChunks<'a> {
             });
         }
 
+        let mut next_highlight_endpoint = usize::MAX;
+        while let Some(endpoint) = self.highlight_endpoints.peek().copied() {
+            if endpoint.offset <= self.buffer_offset {
+                if endpoint.is_start {
+                    self.active_highlights.insert(endpoint.tag, endpoint.style);
+                } else {
+                    self.active_highlights.remove(&endpoint.tag);
+                }
+                self.highlight_endpoints.next();
+            } else {
+                next_highlight_endpoint = endpoint.offset;
+                break;
+            }
+        }
+
         // Retrieve a chunk from the current location in the buffer.
         if self.buffer_chunk.is_none() {
             let chunk_offset = self.buffer_chunks.offset();
@@ -997,20 +1104,31 @@ impl<'a> Iterator for FoldChunks<'a> {
         }
 
         // Otherwise, take a chunk from the buffer's text.
-        if let Some((chunk_offset, mut chunk)) = self.buffer_chunk {
-            let offset_in_chunk = self.buffer_offset - chunk_offset;
-            chunk.text = &chunk.text[offset_in_chunk..];
+        if let Some((buffer_chunk_start, mut chunk)) = self.buffer_chunk {
+            let buffer_chunk_end = buffer_chunk_start + chunk.text.len();
+            let transform_end = self.transform_cursor.end(&()).1;
+            let chunk_end = buffer_chunk_end
+                .min(transform_end)
+                .min(next_highlight_endpoint);
 
-            // Truncate the chunk so that it ends at the next fold.
-            let region_end = self.transform_cursor.end(&()).1 - self.buffer_offset;
-            if chunk.text.len() >= region_end {
-                chunk.text = &chunk.text[0..region_end];
+            chunk.text = &chunk.text
+                [self.buffer_offset - buffer_chunk_start..chunk_end - buffer_chunk_start];
+
+            if !self.active_highlights.is_empty() {
+                let mut highlight_style = HighlightStyle::default();
+                for active_highlight in self.active_highlights.values() {
+                    highlight_style.highlight(*active_highlight);
+                }
+                chunk.highlight_style = Some(highlight_style);
+            }
+
+            if chunk_end == transform_end {
                 self.transform_cursor.next(&());
-            } else {
+            } else if chunk_end == buffer_chunk_end {
                 self.buffer_chunk.take();
             }
 
-            self.buffer_offset += chunk.text.len();
+            self.buffer_offset = chunk_end;
             self.output_offset += chunk.text.len();
             return Some(chunk);
         }
@@ -1019,9 +1137,25 @@ impl<'a> Iterator for FoldChunks<'a> {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldPoint {
-    fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
-        self.0 += &summary.output.lines;
+#[derive(Copy, Clone, Eq, PartialEq)]
+struct HighlightEndpoint {
+    offset: usize,
+    is_start: bool,
+    tag: Option<TypeId>,
+    style: HighlightStyle,
+}
+
+impl PartialOrd for HighlightEndpoint {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for HighlightEndpoint {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.offset
+            .cmp(&other.offset)
+            .then_with(|| self.is_start.cmp(&other.is_start))
     }
 }
 
@@ -1078,7 +1212,8 @@ mod tests {
     use super::*;
     use crate::{MultiBuffer, ToPoint};
     use rand::prelude::*;
-    use std::{env, mem};
+    use std::{cmp::Reverse, env, mem, sync::Arc};
+    use sum_tree::TreeMap;
     use text::RandomCharIter;
     use util::test::sample_text;
     use Bias::{Left, Right};
@@ -1283,6 +1418,25 @@ mod tests {
         let (mut initial_snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
         let mut snapshot_edits = Vec::new();
 
+        let mut highlights = TreeMap::default();
+        let highlight_count = rng.gen_range(0_usize..10);
+        let mut highlight_ranges = (0..highlight_count)
+            .map(|_| buffer_snapshot.random_byte_range(0, &mut rng))
+            .collect::<Vec<_>>();
+        highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+        log::info!("highlighting ranges {:?}", highlight_ranges);
+        let highlight_ranges = highlight_ranges
+            .into_iter()
+            .map(|range| {
+                buffer_snapshot.anchor_before(range.start)..buffer_snapshot.anchor_after(range.end)
+            })
+            .collect::<Vec<_>>();
+
+        highlights.insert(
+            Some(TypeId::of::<()>()),
+            Arc::new((HighlightStyle::default(), highlight_ranges)),
+        );
+
         for _ in 0..operations {
             log::info!("text: {:?}", buffer_snapshot.text());
             let mut buffer_edits = Vec::new();
@@ -1407,7 +1561,7 @@ mod tests {
                 let text = &expected_text[start.0..end.0];
                 assert_eq!(
                     snapshot
-                        .chunks(start..end, false)
+                        .chunks(start..end, false, Some(&highlights))
                         .map(|c| c.text)
                         .collect::<String>(),
                     text,

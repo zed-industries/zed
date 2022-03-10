@@ -4398,16 +4398,16 @@ impl Editor {
                             None,
                             cx,
                         );
-                        editor.highlight_background::<Rename>(
-                            vec![Anchor::min()..Anchor::max()],
-                            style.diff_background_inserted,
-                            cx,
-                        );
                         editor
                     });
-                    this.highlight_background::<Rename>(
+                    this.highlight_text::<Rename>(
                         vec![range.clone()],
-                        style.diff_background_deleted,
+                        HighlightStyle {
+                            color: Color::transparent_black(),
+                            font_properties: todo!(),
+                            underline: todo!(),
+                            fade_out: todo!(),
+                        },
                         cx,
                     );
                     this.update_selections(

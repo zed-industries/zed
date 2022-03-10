@@ -31,6 +31,10 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         Self(tree)
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     pub fn get<'a>(&self, key: &'a K) -> Option<&V> {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
         cursor.seek(&MapKeyRef(Some(key)), Bias::Left, &());

@@ -1,4 +1,7 @@
-use super::wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot};
+use super::{
+    wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot},
+    TextHighlights,
+};
 use crate::{Anchor, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
 use gpui::{AppContext, ElementBox};
@@ -555,12 +558,17 @@ impl<'a> BlockMapWriter<'a> {
 impl BlockSnapshot {
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(0..self.transforms.summary().output_rows, false)
+        self.chunks(0..self.transforms.summary().output_rows, false, None)
             .map(|chunk| chunk.text)
             .collect()
     }
 
-    pub fn chunks<'a>(&'a self, rows: Range<u32>, language_aware: bool) -> BlockChunks<'a> {
+    pub fn chunks<'a>(
+        &'a self,
+        rows: Range<u32>,
+        language_aware: bool,
+        text_highlights: Option<&'a TextHighlights>,
+    ) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
         let input_end = {
@@ -588,9 +596,11 @@ impl BlockSnapshot {
             cursor.start().1 .0 + overshoot
         };
         BlockChunks {
-            input_chunks: self
-                .wrap_snapshot
-                .chunks(input_start..input_end, language_aware),
+            input_chunks: self.wrap_snapshot.chunks(
+                input_start..input_end,
+                language_aware,
+                text_highlights,
+            ),
             input_chunk: Default::default(),
             transforms: cursor,
             output_row: rows.start,
@@ -1436,7 +1446,11 @@ mod tests {
             for start_row in 0..expected_row_count {
                 let expected_text = expected_lines[start_row..].join("\n");
                 let actual_text = blocks_snapshot
-                    .chunks(start_row as u32..blocks_snapshot.max_point().row + 1, false)
+                    .chunks(
+                        start_row as u32..blocks_snapshot.max_point().row + 1,
+                        false,
+                        None,
+                    )
                     .map(|chunk| chunk.text)
                     .collect::<String>();
                 assert_eq!(

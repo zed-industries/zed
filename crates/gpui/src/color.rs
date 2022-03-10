@@ -50,8 +50,9 @@ impl Color {
     }
 
     pub fn blend(source: Color, dest: Color) -> Color {
-        if dest.a == 255 {
-            return dest;
+        // If source is fully opaque, don't blend.
+        if source.a == 255 {
+            return source;
         }
 
         let source = source.0.to_f32();

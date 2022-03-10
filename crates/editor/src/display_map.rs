@@ -275,7 +275,7 @@ impl DisplaySnapshot {
 
     pub fn text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
         self.blocks_snapshot
-            .chunks(display_row..self.max_point().row() + 1, false)
+            .chunks(display_row..self.max_point().row() + 1, false, None)
             .map(|h| h.text)
     }
 
@@ -284,7 +284,8 @@ impl DisplaySnapshot {
         display_rows: Range<u32>,
         language_aware: bool,
     ) -> DisplayChunks<'a> {
-        self.blocks_snapshot.chunks(display_rows, language_aware)
+        self.blocks_snapshot
+            .chunks(display_rows, language_aware, Some(&self.text_highlights))
     }
 
     pub fn chars_at<'a>(&'a self, point: DisplayPoint) -> impl Iterator<Item = char> + 'a {
