@@ -1023,9 +1023,9 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape) {
+    pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape, cx: &mut ViewContext<Self>) {
         self.cursor_shape = cursor_shape;
-        // TODO: Do we need to notify?
+        cx.notify();
     }
 
     pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> Vector2F {
