@@ -12,10 +12,6 @@ use std::{
 };
 use sum_tree::{Bias, Cursor, FilterCursor, SumTree};
 
-pub trait ToFoldPoint {
-    fn to_fold_point(&self, snapshot: &FoldSnapshot, bias: Bias) -> FoldPoint;
-}
-
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct FoldPoint(pub super::Point);
 
@@ -72,26 +68,6 @@ impl FoldPoint {
             offset += end_buffer_offset - cursor.start().1.input.bytes;
         }
         FoldOffset(offset)
-    }
-}
-
-impl ToFoldPoint for Point {
-    fn to_fold_point(&self, snapshot: &FoldSnapshot, bias: Bias) -> FoldPoint {
-        let mut cursor = snapshot.transforms.cursor::<(Point, FoldPoint)>();
-        cursor.seek(self, Bias::Right, &());
-        if cursor.item().map_or(false, |t| t.is_fold()) {
-            if bias == Bias::Left || *self == cursor.start().0 {
-                cursor.start().1
-            } else {
-                cursor.end(&()).1
-            }
-        } else {
-            let overshoot = *self - cursor.start().0;
-            FoldPoint(cmp::min(
-                cursor.start().1 .0 + overshoot,
-                cursor.end(&()).1 .0,
-            ))
-        }
     }
 }
 
@@ -552,6 +528,24 @@ impl FoldSnapshot {
         }
 
         summary
+    }
+
+    pub fn to_fold_point(&self, point: Point, bias: Bias) -> FoldPoint {
+        let mut cursor = self.transforms.cursor::<(Point, FoldPoint)>();
+        cursor.seek(&point, Bias::Right, &());
+        if cursor.item().map_or(false, |t| t.is_fold()) {
+            if bias == Bias::Left || point == cursor.start().0 {
+                cursor.start().1
+            } else {
+                cursor.end(&()).1
+            }
+        } else {
+            let overshoot = point - cursor.start().0;
+            FoldPoint(cmp::min(
+                cursor.start().1 .0 + overshoot,
+                cursor.end(&()).1 .0,
+            ))
+        }
     }
 
     pub fn len(&self) -> FoldOffset {
@@ -1356,7 +1350,7 @@ mod tests {
                 let buffer_point = fold_point.to_buffer_point(&snapshot);
                 let buffer_offset = buffer_point.to_offset(&buffer_snapshot);
                 assert_eq!(
-                    buffer_point.to_fold_point(&snapshot, Right),
+                    snapshot.to_fold_point(buffer_point, Right),
                     fold_point,
                     "{:?} -> fold point",
                     buffer_point,
@@ -1428,10 +1422,8 @@ mod tests {
             }
 
             for fold_range in map.merged_fold_ranges() {
-                let fold_point = fold_range
-                    .start
-                    .to_point(&buffer_snapshot)
-                    .to_fold_point(&snapshot, Right);
+                let fold_point =
+                    snapshot.to_fold_point(fold_range.start.to_point(&buffer_snapshot), Right);
                 assert!(snapshot.is_line_folded(fold_point.row()));
             }
 
