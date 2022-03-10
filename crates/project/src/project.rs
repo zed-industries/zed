@@ -51,6 +51,8 @@ pub struct Project {
     languages: Arc<LanguageRegistry>,
     language_servers: HashMap<(WorktreeId, Arc<str>), Arc<LanguageServer>>,
     started_language_servers: HashMap<(WorktreeId, Arc<str>), Task<Option<Arc<LanguageServer>>>>,
+    pending_language_server_work: HashMap<(usize, String), LspWorkProgress>,
+    next_language_server_id: usize,
     client: Arc<client::Client>,
     user_store: ModelHandle<UserStore>,
     fs: Arc<dyn Fs>,
@@ -120,13 +122,18 @@ enum LspEvent {
     },
     WorkProgress {
         token: String,
-        message: Option<String>,
-        percentage: Option<usize>,
+        progress: LspWorkProgress,
     },
     WorkEnd {
         token: String,
     },
     DiagnosticsUpdate(lsp::PublishDiagnosticsParams),
+}
+
+#[derive(Clone, Default)]
+pub struct LspWorkProgress {
+    pub message: Option<String>,
+    pub percentage: Option<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -317,6 +324,8 @@ impl Project {
                 language_servers_with_diagnostics_running: 0,
                 language_servers: Default::default(),
                 started_language_servers: Default::default(),
+                pending_language_server_work: Default::default(),
+                next_language_server_id: 0,
                 nonce: StdRng::from_entropy().gen(),
             }
         })
@@ -386,6 +395,8 @@ impl Project {
                 language_servers_with_diagnostics_running: 0,
                 language_servers: Default::default(),
                 started_language_servers: Default::default(),
+                pending_language_server_work: Default::default(),
+                next_language_server_id: 0,
                 opened_buffers: Default::default(),
                 buffer_snapshots: Default::default(),
                 nonce: StdRng::from_entropy().gen(),
@@ -1172,6 +1183,7 @@ impl Project {
         self.started_language_servers
             .entry(key.clone())
             .or_insert_with(|| {
+                let server_id = post_inc(&mut self.next_language_server_id);
                 let language_server = self.languages.start_language_server(
                     language.clone(),
                     worktree_path,
@@ -1213,8 +1225,12 @@ impl Project {
                                         lsp_events_tx
                                             .try_send(LspEvent::WorkProgress {
                                                 token,
-                                                message: report.message,
-                                                percentage: report.percentage.map(|p| p as usize),
+                                                progress: LspWorkProgress {
+                                                    message: report.message,
+                                                    percentage: report
+                                                        .percentage
+                                                        .map(|p| p as usize),
+                                                },
                                             })
                                             .ok();
                                     }
@@ -1233,7 +1249,7 @@ impl Project {
                             while let Ok(event) = lsp_events_rx.recv().await {
                                 let this = this.upgrade(&cx)?;
                                 this.update(&mut cx, |this, cx| {
-                                    this.on_local_lsp_event(event, &language, cx)
+                                    this.on_local_lsp_event(server_id, event, &language, cx)
                                 });
                             }
                             Some(())
@@ -1309,6 +1325,7 @@ impl Project {
 
     fn on_local_lsp_event(
         &mut self,
+        language_server_id: usize,
         event: LspEvent,
         language: &Arc<Language>,
         cx: &mut ModelContext<Self>,
@@ -1318,43 +1335,53 @@ impl Project {
             LspEvent::WorkStart { token } => {
                 if Some(&token) == disk_diagnostics_token {
                     self.disk_based_diagnostics_started(cx);
-                    self.send_lsp_event(proto::lsp_event::Variant::DiskBasedDiagnosticsUpdating(
-                        proto::LspDiskBasedDiagnosticsUpdating {},
-                    ));
+                    self.broadcast_lsp_event(
+                        language_server_id,
+                        proto::lsp_event::Variant::DiskBasedDiagnosticsUpdating(
+                            proto::LspDiskBasedDiagnosticsUpdating {},
+                        ),
+                    );
                 } else {
-                    self.on_lsp_work_start(token.clone(), cx);
-                    self.send_lsp_event(proto::lsp_event::Variant::WorkStart(
-                        proto::LspWorkStart { token },
-                    ));
+                    self.on_lsp_work_start(language_server_id, token.clone(), cx);
+                    self.broadcast_lsp_event(
+                        language_server_id,
+                        proto::lsp_event::Variant::WorkStart(proto::LspWorkStart { token }),
+                    );
                 }
             }
-            LspEvent::WorkProgress {
-                token,
-                message,
-                percentage,
-            } => {
+            LspEvent::WorkProgress { token, progress } => {
                 if Some(&token) != disk_diagnostics_token {
-                    self.on_lsp_work_progress(token.clone(), message.clone(), percentage, cx);
-                    self.send_lsp_event(proto::lsp_event::Variant::WorkProgress(
-                        proto::LspWorkProgress {
+                    self.on_lsp_work_progress(
+                        language_server_id,
+                        token.clone(),
+                        progress.clone(),
+                        cx,
+                    );
+                    self.broadcast_lsp_event(
+                        language_server_id,
+                        proto::lsp_event::Variant::WorkProgress(proto::LspWorkProgress {
                             token,
-                            message,
-                            percentage: percentage.map(|p| p as u32),
-                        },
-                    ));
+                            message: progress.message,
+                            percentage: progress.percentage.map(|p| p as u32),
+                        }),
+                    );
                 }
             }
             LspEvent::WorkEnd { token } => {
                 if Some(&token) == disk_diagnostics_token {
                     self.disk_based_diagnostics_finished(cx);
-                    self.send_lsp_event(proto::lsp_event::Variant::DiskBasedDiagnosticsUpdated(
-                        proto::LspDiskBasedDiagnosticsUpdated {},
-                    ));
+                    self.broadcast_lsp_event(
+                        language_server_id,
+                        proto::lsp_event::Variant::DiskBasedDiagnosticsUpdated(
+                            proto::LspDiskBasedDiagnosticsUpdated {},
+                        ),
+                    );
                 } else {
-                    self.on_lsp_work_end(token.clone(), cx);
-                    self.send_lsp_event(proto::lsp_event::Variant::WorkEnd(proto::LspWorkEnd {
-                        token,
-                    }));
+                    self.on_lsp_work_end(language_server_id, token.clone(), cx);
+                    self.broadcast_lsp_event(
+                        language_server_id,
+                        proto::lsp_event::Variant::WorkEnd(proto::LspWorkEnd { token }),
+                    );
                 }
             }
             LspEvent::DiagnosticsUpdate(mut params) => {
@@ -1362,9 +1389,12 @@ impl Project {
 
                 if disk_diagnostics_token.is_none() {
                     self.disk_based_diagnostics_started(cx);
-                    self.send_lsp_event(proto::lsp_event::Variant::DiskBasedDiagnosticsUpdating(
-                        proto::LspDiskBasedDiagnosticsUpdating {},
-                    ));
+                    self.broadcast_lsp_event(
+                        language_server_id,
+                        proto::lsp_event::Variant::DiskBasedDiagnosticsUpdating(
+                            proto::LspDiskBasedDiagnosticsUpdating {},
+                        ),
+                    );
                 }
                 self.update_diagnostics(
                     params,
@@ -1376,36 +1406,72 @@ impl Project {
                 .log_err();
                 if disk_diagnostics_token.is_none() {
                     self.disk_based_diagnostics_finished(cx);
-                    self.send_lsp_event(proto::lsp_event::Variant::DiskBasedDiagnosticsUpdated(
-                        proto::LspDiskBasedDiagnosticsUpdated {},
-                    ));
+                    self.broadcast_lsp_event(
+                        language_server_id,
+                        proto::lsp_event::Variant::DiskBasedDiagnosticsUpdated(
+                            proto::LspDiskBasedDiagnosticsUpdated {},
+                        ),
+                    );
                 }
             }
         }
     }
 
-    fn on_lsp_work_start(&mut self, token: String, cx: &mut ModelContext<Self>) {}
+    fn on_lsp_work_start(
+        &mut self,
+        language_server_id: usize,
+        token: String,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.pending_language_server_work.insert(
+            (language_server_id, token),
+            LspWorkProgress {
+                message: None,
+                percentage: None,
+            },
+        );
+        cx.notify();
+    }
 
     fn on_lsp_work_progress(
         &mut self,
+        language_server_id: usize,
         token: String,
-        message: Option<String>,
-        percentage: Option<usize>,
+        progress: LspWorkProgress,
         cx: &mut ModelContext<Self>,
     ) {
+        self.pending_language_server_work
+            .insert((language_server_id, token), progress);
+        cx.notify();
     }
 
-    fn on_lsp_work_end(&mut self, token: String, cx: &mut ModelContext<Self>) {}
+    fn on_lsp_work_end(
+        &mut self,
+        language_server_id: usize,
+        token: String,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.pending_language_server_work
+            .remove(&(language_server_id, token));
+        cx.notify();
+    }
 
-    fn send_lsp_event(&self, event: proto::lsp_event::Variant) {
+    fn broadcast_lsp_event(&self, language_server_id: usize, event: proto::lsp_event::Variant) {
         if let Some(project_id) = self.remote_id() {
             self.client
                 .send(proto::LspEvent {
                     project_id,
+                    language_server_id: language_server_id as u64,
                     variant: Some(event),
                 })
                 .log_err();
         }
+    }
+
+    pub fn pending_language_server_work(&self) -> impl Iterator<Item = (&str, &LspWorkProgress)> {
+        self.pending_language_server_work
+            .iter()
+            .map(|((_, token), progress)| (token.as_str(), progress))
     }
 
     pub fn update_diagnostics(
@@ -3152,24 +3218,28 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
+        let language_server_id = envelope.payload.language_server_id as usize;
         match envelope
             .payload
             .variant
             .ok_or_else(|| anyhow!("invalid variant"))?
         {
             proto::lsp_event::Variant::WorkStart(payload) => this.update(&mut cx, |this, cx| {
-                this.on_lsp_work_start(payload.token, cx);
+                this.on_lsp_work_start(language_server_id, payload.token, cx);
             }),
             proto::lsp_event::Variant::WorkProgress(payload) => this.update(&mut cx, |this, cx| {
                 this.on_lsp_work_progress(
+                    language_server_id,
                     payload.token,
-                    payload.message,
-                    payload.percentage.map(|p| p as usize),
+                    LspWorkProgress {
+                        message: payload.message,
+                        percentage: payload.percentage.map(|p| p as usize),
+                    },
                     cx,
                 );
             }),
             proto::lsp_event::Variant::WorkEnd(payload) => this.update(&mut cx, |this, cx| {
-                this.on_lsp_work_end(payload.token, cx);
+                this.on_lsp_work_end(language_server_id, payload.token, cx);
             }),
             proto::lsp_event::Variant::DiskBasedDiagnosticsUpdating(_) => {
                 this.update(&mut cx, |this, cx| {

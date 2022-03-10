@@ -1,11 +1,13 @@
 use crate::{ItemViewHandle, Settings, StatusItemView};
 use futures::StreamExt;
 use gpui::{
-    action, elements::*, platform::CursorStyle, Entity, MutableAppContext, RenderContext, View,
-    ViewContext,
+    action, elements::*, platform::CursorStyle, Entity, ModelHandle, MutableAppContext,
+    RenderContext, View, ViewContext,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
 use postage::watch;
+use project::Project;
+use std::fmt::Write;
 use std::sync::Arc;
 
 action!(DismissErrorMessage);
@@ -15,6 +17,7 @@ pub struct LspStatus {
     checking_for_update: Vec<String>,
     downloading: Vec<String>,
     failed: Vec<String>,
+    project: ModelHandle<Project>,
 }
 
 pub fn init(cx: &mut MutableAppContext) {
@@ -23,6 +26,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
 impl LspStatus {
     pub fn new(
+        project: &ModelHandle<Project>,
         languages: Arc<LanguageRegistry>,
         settings_rx: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self>,
@@ -62,11 +66,14 @@ impl LspStatus {
             }
         })
         .detach();
+        cx.observe(project, |_, _, cx| cx.notify()).detach();
+
         Self {
             settings_rx,
             checking_for_update: Default::default(),
             downloading: Default::default(),
             failed: Default::default(),
+            project: project.clone(),
         }
     }
 
@@ -87,7 +94,24 @@ impl View for LspStatus {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings_rx.borrow().theme;
-        if !self.downloading.is_empty() {
+
+        let mut pending_work = self.project.read(cx).pending_language_server_work();
+        if let Some((progress_token, progress)) = pending_work.next() {
+            let mut message = progress
+                .message
+                .clone()
+                .unwrap_or_else(|| progress_token.to_string());
+            if let Some(percentage) = progress.percentage {
+                write!(&mut message, " ({}%)", percentage).unwrap();
+            }
+
+            let additional_work_count = pending_work.count();
+            if additional_work_count > 0 {
+                write!(&mut message, " + {} more", additional_work_count).unwrap();
+            }
+
+            Label::new(message, theme.workspace.status_bar.lsp_message.clone()).boxed()
+        } else if !self.downloading.is_empty() {
             Label::new(
                 format!(
                     "Downloading {} language server{}...",
@@ -112,6 +136,7 @@ impl View for LspStatus {
             )
             .boxed()
         } else if !self.failed.is_empty() {
+            drop(pending_work);
             MouseEventHandler::new::<Self, _, _>(0, cx, |_, _| {
                 Label::new(
                     format!(

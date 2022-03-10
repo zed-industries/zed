@@ -425,12 +425,13 @@ message DiagnosticSummary {
 
 message LspEvent {
     uint64 project_id = 1;
+    uint64 language_server_id = 2;
     oneof variant {
-        LspWorkStart work_start = 2;
-        LspWorkProgress work_progress = 3;
-        LspWorkEnd work_end = 4;
-        LspDiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 5;
-        LspDiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 6;
+        LspWorkStart work_start = 3;
+        LspWorkProgress work_progress = 4;
+        LspWorkEnd work_end = 5;
+        LspDiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 6;
+        LspDiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 7;
     }
 }
 
