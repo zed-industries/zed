@@ -5607,12 +5607,16 @@ impl View for Editor {
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        self.focused = true;
-        self.blink_cursors(self.blink_epoch, cx);
-        self.buffer.update(cx, |buffer, cx| {
-            buffer.finalize_last_transaction(cx);
-            buffer.set_active_selections(&self.selections, cx)
-        });
+        if let Some(rename) = self.pending_rename.as_ref() {
+            cx.focus(&rename.editor);
+        } else {
+            self.focused = true;
+            self.blink_cursors(self.blink_epoch, cx);
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.finalize_last_transaction(cx);
+                buffer.set_active_selections(&self.selections, cx)
+            });
+        }
     }
 
     fn on_blur(&mut self, cx: &mut ViewContext<Self>) {
