@@ -37,8 +37,7 @@ message Envelope {
         UnregisterWorktree unregister_worktree = 29;
         UpdateWorktree update_worktree = 31;
         UpdateDiagnosticSummary update_diagnostic_summary = 32;
-        DiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 33;
-        DiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 34;
+        LspEvent lsp_event = 33;
 
         OpenBuffer open_buffer = 35;
         OpenBufferResponse open_buffer_response = 36;
@@ -424,13 +423,34 @@ message DiagnosticSummary {
     uint32 hint_count = 5;
 }
 
-message DiskBasedDiagnosticsUpdating {
+message LspEvent {
     uint64 project_id = 1;
+    oneof variant {
+        LspWorkStart work_start = 2;
+        LspWorkProgress work_progress = 3;
+        LspWorkEnd work_end = 4;
+        LspDiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 5;
+        LspDiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 6;
+    }
 }
 
-message DiskBasedDiagnosticsUpdated {
-    uint64 project_id = 1;
+message LspWorkStart {
+    string token = 1;
 }
+
+message LspWorkProgress {
+    string token = 1;
+    optional string message = 2;
+    optional uint32 percentage = 3;
+}
+
+message LspWorkEnd {
+    string token = 1;
+}
+
+message LspDiskBasedDiagnosticsUpdating {}
+
+message LspDiskBasedDiagnosticsUpdated {}
 
 message GetChannels {}
 

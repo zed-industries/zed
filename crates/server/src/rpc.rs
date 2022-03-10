@@ -84,8 +84,7 @@ impl Server {
             .add_message_handler(Server::unregister_worktree)
             .add_request_handler(Server::update_worktree)
             .add_message_handler(Server::update_diagnostic_summary)
-            .add_message_handler(Server::disk_based_diagnostics_updating)
-            .add_message_handler(Server::disk_based_diagnostics_updated)
+            .add_message_handler(Server::lsp_event)
             .add_request_handler(Server::forward_project_request::<proto::GetDefinition>)
             .add_request_handler(Server::forward_project_request::<proto::GetReferences>)
             .add_request_handler(Server::forward_project_request::<proto::SearchProject>)
@@ -535,23 +534,9 @@ impl Server {
         Ok(())
     }
 
-    async fn disk_based_diagnostics_updating(
+    async fn lsp_event(
         self: Arc<Server>,
-        request: TypedEnvelope<proto::DiskBasedDiagnosticsUpdating>,
-    ) -> tide::Result<()> {
-        let receiver_ids = self
-            .state()
-            .project_connection_ids(request.payload.project_id, request.sender_id)?;
-        broadcast(request.sender_id, receiver_ids, |connection_id| {
-            self.peer
-                .forward_send(request.sender_id, connection_id, request.payload.clone())
-        })?;
-        Ok(())
-    }
-
-    async fn disk_based_diagnostics_updated(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::DiskBasedDiagnosticsUpdated>,
+        request: TypedEnvelope<proto::LspEvent>,
     ) -> tide::Result<()> {
         let receiver_ids = self
             .state()
