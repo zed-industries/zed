@@ -4351,7 +4351,7 @@ impl Editor {
             .buffer
             .read(cx)
             .text_anchor_for_position(selection.head(), cx)?;
-        let (tail_buffer, tail_buffer_position) = self
+        let (tail_buffer, _) = self
             .buffer
             .read(cx)
             .text_anchor_for_position(selection.tail(), cx)?;
@@ -4361,7 +4361,6 @@ impl Editor {
 
         let snapshot = cursor_buffer.read(cx).snapshot();
         let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
-        let tail_buffer_offset = tail_buffer_position.to_offset(&snapshot);
         let prepare_rename = project.update(cx, |project, cx| {
             project.prepare_rename(cursor_buffer, cursor_buffer_offset, cx)
         });
@@ -4371,8 +4370,6 @@ impl Editor {
                 let rename_buffer_range = rename_range.to_offset(&snapshot);
                 let cursor_offset_in_rename_range =
                     cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
-                let tail_offset_in_rename_range =
-                    tail_buffer_offset.saturating_sub(rename_buffer_range.start);
 
                 this.update(&mut cx, |this, cx| {
                     this.take_rename(cx);
