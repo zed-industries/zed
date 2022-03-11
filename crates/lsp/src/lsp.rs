@@ -356,40 +356,58 @@ impl LanguageServer {
         }
     }
 
-    pub fn on_notification<T, F>(&mut self, mut f: F) -> Subscription
+    pub fn on_notification<T, F>(&mut self, f: F) -> Subscription
     where
         T: notification::Notification,
         F: 'static + Send + Sync + FnMut(T::Params),
     {
+        self.on_custom_notification(T::METHOD, f)
+    }
+
+    pub fn on_request<T, F>(&mut self, f: F) -> Subscription
+    where
+        T: request::Request,
+        F: 'static + Send + Sync + FnMut(T::Params) -> Result<T::Result>,
+    {
+        self.on_custom_request(T::METHOD, f)
+    }
+
+    pub fn on_custom_notification<Params, F>(
+        &mut self,
+        method: &'static str,
+        mut f: F,
+    ) -> Subscription
+    where
+        F: 'static + Send + Sync + FnMut(Params),
+        Params: DeserializeOwned,
+    {
         let prev_handler = self.notification_handlers.write().insert(
-            T::METHOD,
+            method,
             Box::new(move |_, params, _| {
                 let params = serde_json::from_str(params)?;
                 f(params);
                 Ok(())
             }),
         );
-
         assert!(
             prev_handler.is_none(),
-            "registered multiple handlers for the same notification"
+            "registered multiple handlers for the same LSP method"
         );
-
         Subscription {
-            method: T::METHOD,
+            method,
             notification_handlers: self.notification_handlers.clone(),
         }
     }
 
-    pub fn on_custom_request<Params, Resp, F>(
+    pub fn on_custom_request<Params, Res, F>(
         &mut self,
         method: &'static str,
         mut f: F,
     ) -> Subscription
     where
-        F: 'static + Send + Sync + FnMut(Params) -> Result<Resp>,
+        F: 'static + Send + Sync + FnMut(Params) -> Result<Res>,
         Params: DeserializeOwned,
-        Resp: Serialize,
+        Res: Serialize,
     {
         let prev_handler = self.notification_handlers.write().insert(
             method,
@@ -403,12 +421,10 @@ impl LanguageServer {
                 Ok(())
             }),
         );
-
         assert!(
             prev_handler.is_none(),
-            "registered multiple handlers for the same notification"
+            "registered multiple handlers for the same LSP method"
         );
-
         Subscription {
             method,
             notification_handlers: self.notification_handlers.clone(),
