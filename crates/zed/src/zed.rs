@@ -49,7 +49,26 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             settings_tx.borrow_mut().buffer_font_size = new_size;
         }
     });
-    cx.add_action(open_settings);
+
+    cx.add_action({
+        let fs = app_state.fs.clone();
+        move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
+            let fs = fs.clone();
+            cx.spawn(move |workspace, mut cx| async move {
+                if !fs.is_file(&SETTINGS_PATH).await {
+                    fs.create_dir(&ROOT_PATH).await?;
+                    fs.create_file(&SETTINGS_PATH, Default::default()).await?;
+                }
+                workspace
+                    .update(&mut cx, |workspace, cx| {
+                        workspace.open_paths(&[SETTINGS_PATH.clone()], cx)
+                    })
+                    .await;
+                Ok::<_, anyhow::Error>(())
+            })
+            .detach_and_log_err(cx);
+        }
+    });
 
     workspace::lsp_status::init(cx);
 
@@ -58,10 +77,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         Binding::new("cmd--", AdjustBufferFontSize(-1.), None),
         Binding::new("cmd-,", OpenSettings, None),
     ])
-}
-
-fn open_settings(workspace: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>) {
-    workspace.open_paths(&[SETTINGS_PATH.clone()], cx).detach();
 }
 
 pub fn build_workspace(
