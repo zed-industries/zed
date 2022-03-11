@@ -174,8 +174,11 @@ impl DisplayMap {
             .insert(Some(type_id), Arc::new((style, ranges)));
     }
 
-    pub fn clear_text_highlights(&mut self, type_id: TypeId) {
-        self.text_highlights.remove(&Some(type_id));
+    pub fn clear_text_highlights(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
+        self.text_highlights.remove(&Some(type_id))
     }
 
     pub fn set_font(&self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) {

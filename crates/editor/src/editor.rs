@@ -134,6 +134,9 @@ action!(ConfirmCompletion, Option<usize>);
 action!(ConfirmCodeAction, Option<usize>);
 action!(OpenExcerpts);
 
+enum DocumentHighlightRead {}
+enum DocumentHighlightWrite {}
+
 pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpener>>) {
     path_openers.push(Box::new(items::BufferOpener));
     cx.add_bindings(vec![
@@ -2421,13 +2424,14 @@ impl Editor {
             project.document_highlights(&cursor_buffer, cursor_buffer_position, cx)
         });
 
-        enum DocumentHighlightRead {}
-        enum DocumentHighlightWrite {}
-
         self.document_highlights_task = Some(cx.spawn_weak(|this, mut cx| async move {
             let highlights = highlights.log_err().await;
             if let Some((this, highlights)) = this.upgrade(&cx).zip(highlights) {
                 this.update(&mut cx, |this, cx| {
+                    if this.pending_rename.is_some() {
+                        return;
+                    }
+
                     let buffer_id = cursor_position.buffer_id;
                     let excerpt_id = cursor_position.excerpt_id.clone();
                     let style = this.style(cx);
@@ -4436,8 +4440,19 @@ impl Editor {
                         editor.select_all(&SelectAll, cx);
                         editor
                     });
+
+                    let ranges = this
+                        .clear_background_highlights::<DocumentHighlightWrite>(cx)
+                        .into_iter()
+                        .flat_map(|(_, ranges)| ranges)
+                        .chain(
+                            this.clear_background_highlights::<DocumentHighlightRead>(cx)
+                                .into_iter()
+                                .flat_map(|(_, ranges)| ranges),
+                        )
+                        .collect();
                     this.highlight_text::<Rename>(
-                        vec![range.clone()],
+                        ranges,
                         HighlightStyle {
                             fade_out: Some(style.rename_fade),
                             ..Default::default()
@@ -5392,10 +5407,13 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn clear_text_highlights<T: 'static>(&mut self, cx: &mut ViewContext<Self>) {
-        self.display_map
-            .update(cx, |map, _| map.clear_text_highlights(TypeId::of::<T>()));
+    pub fn clear_text_highlights<T: 'static>(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
         cx.notify();
+        self.display_map
+            .update(cx, |map, _| map.clear_text_highlights(TypeId::of::<T>()))
     }
 
     fn next_blink_epoch(&mut self) -> usize {
