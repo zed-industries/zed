@@ -8,6 +8,7 @@ use language::Language;
 use parking_lot::Mutex;
 use postage::{prelude::Stream, watch};
 use project::Fs;
+use schemars::{schema_for, JsonSchema};
 use serde::Deserialize;
 use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 use theme::{Theme, ThemeRegistry};
@@ -24,14 +25,14 @@ pub struct Settings {
     pub theme: Arc<Theme>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct LanguageOverride {
     pub tab_size: Option<usize>,
     pub soft_wrap: Option<SoftWrap>,
     pub preferred_line_length: Option<u32>,
 }
 
-#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
     None,
@@ -42,7 +43,7 @@ pub enum SoftWrap {
 #[derive(Clone)]
 pub struct SettingsFile(watch::Receiver<SettingsFileContent>);
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 struct SettingsFileContent {
     #[serde(default)]
     buffer_font_family: Option<String>,
@@ -94,6 +95,11 @@ impl SettingsFile {
 }
 
 impl Settings {
+    pub fn file_json_schema() -> String {
+        let schema = schema_for!(SettingsFileContent);
+        serde_json::to_string(&schema).unwrap()
+    }
+
     pub fn from_files(
         defaults: Self,
         sources: Vec<SettingsFile>,

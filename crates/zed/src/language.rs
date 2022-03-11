@@ -530,6 +530,17 @@ impl LspAdapter for JsonLspAdapter {
             "provideFormatter": true
         }))
     }
+
+    fn register_handlers(&self, lsp: &mut lsp::LanguageServer) {
+        lsp.on_custom_request::<Vec<String>, Option<String>, _>("vscode/content", |schema| {
+            if schema.get(0).map(String::as_str) == Some("zed://settings") {
+                Ok(Some(workspace::Settings::file_json_schema()))
+            } else {
+                Ok(None)
+            }
+        })
+        .detach();
+    }
 }
 
 pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegistry {
