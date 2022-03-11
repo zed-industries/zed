@@ -24,6 +24,7 @@ futures = "0.3"
 log = "0.4"
 parking_lot = "0.11.1"
 postage = { version = "0.4.1", features = ["futures-traits"] }
+smallvec = { version = "1.6", features = ["union"] }
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }

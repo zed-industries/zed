@@ -136,10 +136,11 @@ pub struct LanguageServerStatus {
     pending_diagnostic_updates: isize,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug)]
 pub struct LanguageServerProgress {
     pub message: Option<String>,
     pub percentage: Option<usize>,
+    pub last_update_at: Instant,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -1253,6 +1254,7 @@ impl Project {
                                                     percentage: report
                                                         .percentage
                                                         .map(|p| p as usize),
+                                                    last_update_at: Instant::now(),
                                                 },
                                             })
                                             .ok();
@@ -1494,6 +1496,7 @@ impl Project {
                 LanguageServerProgress {
                     message: None,
                     percentage: None,
+                    last_update_at: Instant::now(),
                 },
             );
             cx.notify();
@@ -1541,7 +1544,9 @@ impl Project {
         }
     }
 
-    pub fn language_server_statuses(&self) -> impl Iterator<Item = &LanguageServerStatus> {
+    pub fn language_server_statuses(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = &LanguageServerStatus> {
         self.language_server_statuses.values()
     }
 
@@ -3332,6 +3337,7 @@ impl Project {
                         LanguageServerProgress {
                             message: payload.message,
                             percentage: payload.percentage.map(|p| p as usize),
+                            last_update_at: Instant::now(),
                         },
                         cx,
                     );

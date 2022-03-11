@@ -8,6 +8,8 @@ use gpui::{
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
 use postage::watch;
 use project::{LanguageServerProgress, Project};
+use smallvec::SmallVec;
+use std::cmp::Reverse;
 use std::fmt::Write;
 use std::sync::Arc;
 
@@ -90,15 +92,18 @@ impl LspStatus {
         self.project
             .read(cx)
             .language_server_statuses()
+            .rev()
             .filter_map(|status| {
                 if status.pending_work.is_empty() {
                     None
                 } else {
-                    Some(
-                        status.pending_work.iter().map(|(token, progress)| {
-                            (status.name.as_str(), token.as_str(), progress)
-                        }),
-                    )
+                    let mut pending_work = status
+                        .pending_work
+                        .iter()
+                        .map(|(token, progress)| (status.name.as_str(), token.as_str(), progress))
+                        .collect::<SmallVec<[_; 4]>>();
+                    pending_work.sort_by_key(|(_, _, progress)| Reverse(progress.last_update_at));
+                    Some(pending_work)
                 }
             })
             .flatten()
