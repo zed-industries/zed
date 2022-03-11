@@ -16,7 +16,7 @@ use gpui::{
         PathBuilder,
     },
     json::{self, ToJson},
-    text_layout::{self, RunStyle, TextLayoutCache},
+    text_layout::{self, Line, RunStyle, TextLayoutCache},
     AppContext, Axis, Border, Element, ElementBox, Event, EventContext, LayoutContext,
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
@@ -32,11 +32,20 @@ use std::{
 pub struct EditorElement {
     view: WeakViewHandle<Editor>,
     style: EditorStyle,
+    cursor_shape: CursorShape,
 }
 
 impl EditorElement {
-    pub fn new(view: WeakViewHandle<Editor>, style: EditorStyle) -> Self {
-        Self { view, style }
+    pub fn new(
+        view: WeakViewHandle<Editor>,
+        style: EditorStyle,
+        cursor_shape: CursorShape,
+    ) -> Self {
+        Self {
+            view,
+            style,
+            cursor_shape,
+        }
     }
 
     fn view<'a>(&self, cx: &'a AppContext) -> &'a Editor {
@@ -338,7 +347,7 @@ impl EditorElement {
 
         let mut cursors = SmallVec::<[Cursor; 32]>::new();
         for (replica_id, selections) in &layout.selections {
-            let style = style.replica_selection_style(*replica_id);
+            let selection_style = style.replica_selection_style(*replica_id);
             let corner_radius = 0.15 * layout.line_height;
 
             for selection in selections {
@@ -346,7 +355,7 @@ impl EditorElement {
                     selection.start..selection.end,
                     start_row,
                     end_row,
-                    style.selection,
+                    selection_style.selection,
                     corner_radius,
                     corner_radius * 2.,
                     layout,
@@ -362,13 +371,50 @@ impl EditorElement {
                     if (start_row..end_row).contains(&cursor_position.row()) {
                         let cursor_row_layout =
                             &layout.line_layouts[(cursor_position.row() - start_row) as usize];
-                        let x = cursor_row_layout.x_for_index(cursor_position.column() as usize)
-                            - scroll_left;
+                        let cursor_column = cursor_position.column() as usize;
+
+                        let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
+                        let mut block_width =
+                            cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
+                        if block_width == 0.0 {
+                            block_width = layout.em_width;
+                        }
+
+                        let block_text =
+                            if matches!(self.cursor_shape, CursorShape::Block) {
+                                layout.snapshot.chars_at(cursor_position).next().and_then(
+                                    |character| {
+                                        let font_id =
+                                            cursor_row_layout.font_for_index(cursor_column)?;
+                                        let text = character.to_string();
+
+                                        Some(cx.text_layout_cache.layout_str(
+                                            &text,
+                                            cursor_row_layout.font_size(),
+                                            &[(
+                                                text.len(),
+                                                RunStyle {
+                                                    font_id,
+                                                    color: style.background,
+                                                    underline: None,
+                                                },
+                                            )],
+                                        ))
+                                    },
+                                )
+                            } else {
+                                None
+                            };
+
+                        let x = cursor_character_x - scroll_left;
                         let y = cursor_position.row() as f32 * layout.line_height - scroll_top;
                         cursors.push(Cursor {
-                            color: style.cursor,
+                            color: selection_style.cursor,
+                            block_width,
                             origin: content_origin + vec2f(x, y),
                             line_height: layout.line_height,
+                            shape: self.cursor_shape,
+                            block_text,
                         });
                     }
                 }
@@ -1161,6 +1207,7 @@ fn layout_line(
         while !line.is_char_boundary(len) {
             len -= 1;
         }
+
         line.truncate(len);
     }
 
@@ -1212,20 +1259,51 @@ impl PaintState {
     }
 }
 
+#[derive(Copy, Clone)]
+pub enum CursorShape {
+    Bar,
+    Block,
+    Underscore,
+}
+
+impl Default for CursorShape {
+    fn default() -> Self {
+        CursorShape::Bar
+    }
+}
+
 struct Cursor {
     origin: Vector2F,
+    block_width: f32,
     line_height: f32,
     color: Color,
+    shape: CursorShape,
+    block_text: Option<Line>,
 }
 
 impl Cursor {
     fn paint(&self, cx: &mut PaintContext) {
+        let bounds = match self.shape {
+            CursorShape::Bar => RectF::new(self.origin, vec2f(2.0, self.line_height)),
+            CursorShape::Block => {
+                RectF::new(self.origin, vec2f(self.block_width, self.line_height))
+            }
+            CursorShape::Underscore => RectF::new(
+                self.origin + Vector2F::new(0.0, self.line_height - 2.0),
+                vec2f(self.block_width, 2.0),
+            ),
+        };
+
         cx.scene.push_quad(Quad {
-            bounds: RectF::new(self.origin, vec2f(2.0, self.line_height)),
+            bounds,
             background: Some(self.color),
             border: Border::new(0., Color::black()),
             corner_radius: 0.,
         });
+
+        if let Some(block_text) = &self.block_text {
+            block_text.paint(self.origin, bounds, self.line_height, cx);
+        }
     }
 }
 
@@ -1389,7 +1467,7 @@ mod tests {
         let (window_id, editor) = cx.add_window(Default::default(), |cx| {
             Editor::new(EditorMode::Full, buffer, None, settings.1, None, cx)
         });
-        let element = EditorElement::new(editor.downgrade(), editor.read(cx).style(cx));
+        let element = EditorElement::new(editor.downgrade(), editor.read(cx).style(cx), CursorShape::Bar);
 
         let layouts = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
