@@ -109,8 +109,13 @@ impl LanguageServer {
         options: Option<Value>,
         background: Arc<executor::Background>,
     ) -> Result<Self> {
+        let working_dir = if root_path.is_dir() {
+            root_path
+        } else {
+            root_path.parent().unwrap_or(Path::new("/"))
+        };
         let mut server = Command::new(binary_path)
-            .current_dir(root_path)
+            .current_dir(working_dir)
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
