@@ -631,6 +631,9 @@ impl Client {
                         } else {
                             log::info!("unhandled message {}", type_name);
                         }
+
+                        // Don't starve the main thread when receiving lots of messages at once.
+                        smol::future::yield_now().await;
                     }
                 }
             })

@@ -1278,6 +1278,9 @@ impl Project {
                                 this.update(&mut cx, |this, cx| {
                                     this.on_lsp_event(server_id, event, &language, cx)
                                 });
+
+                                // Don't starve the main thread when lots of events arrive all at once.
+                                smol::future::yield_now().await;
                             }
                             Some(())
                         }
