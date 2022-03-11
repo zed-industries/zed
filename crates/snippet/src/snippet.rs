@@ -17,13 +17,20 @@ impl Snippet {
         parse_snippet(source, false, &mut text, &mut tabstops)
             .context("failed to parse snippet")?;
 
-        let last_tabstop = tabstops
-            .remove(&0)
-            .unwrap_or_else(|| SmallVec::from_iter([text.len() as isize..text.len() as isize]));
-        Ok(Snippet {
-            text,
-            tabstops: tabstops.into_values().chain(Some(last_tabstop)).collect(),
-        })
+        let len = text.len() as isize;
+        let final_tabstop = tabstops.remove(&0);
+        let mut tabstops = tabstops.into_values().collect::<Vec<_>>();
+
+        if let Some(final_tabstop) = final_tabstop {
+            tabstops.push(final_tabstop);
+        } else {
+            let end_tabstop = [len..len].into_iter().collect();
+            if !tabstops.last().map_or(false, |t| *t == end_tabstop) {
+                tabstops.push(end_tabstop);
+            }
+        }
+
+        Ok(Snippet { text, tabstops })
     }
 }
 
@@ -39,6 +46,13 @@ fn parse_snippet<'a>(
             Some('$') => {
                 source = parse_tabstop(&source[1..], text, tabstops)?;
             }
+            Some('\\') => {
+                source = &source[1..];
+                if let Some(c) = source.chars().next() {
+                    text.push(c);
+                    source = &source[c.len_utf8()..];
+                }
+            }
             Some('}') => {
                 if nested {
                     return Ok(source);
@@ -48,7 +62,7 @@ fn parse_snippet<'a>(
                 }
             }
             Some(_) => {
-                let chunk_end = source.find(&['}', '$']).unwrap_or(source.len());
+                let chunk_end = source.find(&['}', '$', '\\']).unwrap_or(source.len());
                 let (chunk, rest) = source.split_at(chunk_end);
                 text.push_str(chunk);
                 source = rest;
@@ -126,8 +140,21 @@ mod tests {
     }
 
     #[test]
+    fn test_snippet_with_last_tabstop_at_end() {
+        let snippet = Snippet::parse(r#"foo.$1"#).unwrap();
+
+        // If the final tabstop is already at the end of the text, don't insert
+        // an additional tabstop at the end.
+        assert_eq!(snippet.text, r#"foo."#);
+        assert_eq!(tabstops(&snippet), &[vec![4..4]]);
+    }
+
+    #[test]
     fn test_snippet_with_explicit_final_tabstop() {
         let snippet = Snippet::parse(r#"<div class="$1">$0</div>"#).unwrap();
+
+        // If the final tabstop is explicitly specified via '$0', then
+        // don't insert an additional tabstop at the end.
         assert_eq!(snippet.text, r#"<div class=""></div>"#);
         assert_eq!(tabstops(&snippet), &[vec![12..12], vec![14..14]]);
     }
@@ -159,6 +186,13 @@ mod tests {
                 vec![40..40],
             ]
         );
+    }
+
+    #[test]
+    fn test_snippet_parsing_with_escaped_dollar_sign() {
+        let snippet = Snippet::parse("\"\\$schema\": $1").unwrap();
+        assert_eq!(snippet.text, "\"$schema\": ");
+        assert_eq!(tabstops(&snippet), &[vec![11..11]]);
     }
 
     fn tabstops(snippet: &Snippet) -> Vec<Vec<Range<isize>>> {
