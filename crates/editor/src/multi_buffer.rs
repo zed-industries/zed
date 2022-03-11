@@ -36,7 +36,7 @@ pub type ExcerptId = Locator;
 pub struct MultiBuffer {
     snapshot: RefCell<MultiBufferSnapshot>,
     buffers: RefCell<HashMap<usize, BufferState>>,
-    used_excerpt_ids: SumTree<Locator>,
+    used_excerpt_ids: SumTree<ExcerptId>,
     subscriptions: Topic,
     singleton: bool,
     replica_id: ReplicaId,
