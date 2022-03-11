@@ -12,7 +12,7 @@ use gpui::{
     AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View,
     ViewContext, ViewHandle,
 };
-use postage::{prelude::Stream, watch};
+use postage::prelude::Stream;
 use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
 use util::{ResultExt, TryFutureExt};
@@ -27,7 +27,6 @@ pub struct ChatPanel {
     message_list: ListState,
     input_editor: ViewHandle<Editor>,
     channel_select: ViewHandle<Select>,
-    settings: watch::Receiver<Settings>,
     local_timezone: UtcOffset,
     _observe_status: Task<()>,
 }
@@ -48,42 +47,33 @@ impl ChatPanel {
     pub fn new(
         rpc: Arc<Client>,
         channel_list: ModelHandle<ChannelList>,
-        settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let input_editor = cx.add_view(|cx| {
-            let mut editor = Editor::auto_height(
-                4,
-                settings.clone(),
-                Some(|theme| theme.chat_panel.input_editor.clone()),
-                cx,
-            );
+            let mut editor =
+                Editor::auto_height(4, Some(|theme| theme.chat_panel.input_editor.clone()), cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor
         });
         let channel_select = cx.add_view(|cx| {
             let channel_list = channel_list.clone();
             Select::new(0, cx, {
-                let settings = settings.clone();
                 move |ix, item_type, is_hovered, cx| {
                     Self::render_channel_name(
                         &channel_list,
                         ix,
                         item_type,
                         is_hovered,
-                        &settings.borrow().theme.chat_panel.channel_select,
+                        &cx.app_state::<Settings>().theme.chat_panel.channel_select,
                         cx,
                     )
                 }
             })
-            .with_style({
-                let settings = settings.clone();
-                move |_| {
-                    let theme = &settings.borrow().theme.chat_panel.channel_select;
-                    SelectStyle {
-                        header: theme.header.container.clone(),
-                        menu: theme.menu.clone(),
-                    }
+            .with_style(move |cx| {
+                let theme = &cx.app_state::<Settings>().theme.chat_panel.channel_select;
+                SelectStyle {
+                    header: theme.header.container.clone(),
+                    menu: theme.menu.clone(),
                 }
             })
         });
@@ -93,7 +83,7 @@ impl ChatPanel {
             move |ix, cx| {
                 let this = this.upgrade(cx).unwrap().read(cx);
                 let message = this.active_channel.as_ref().unwrap().0.read(cx).message(ix);
-                this.render_message(message)
+                this.render_message(message, cx)
             }
         });
         message_list.set_scroll_handler(|visible_range, cx| {
@@ -121,7 +111,6 @@ impl ChatPanel {
             message_list,
             input_editor,
             channel_select,
-            settings,
             local_timezone: cx.platform().local_timezone(),
             _observe_status,
         };
@@ -210,8 +199,8 @@ impl ChatPanel {
         cx.notify();
     }
 
-    fn render_channel(&self) -> ElementBox {
-        let theme = &self.settings.borrow().theme;
+    fn render_channel(&self, cx: &mut RenderContext<Self>) -> ElementBox {
+        let theme = &cx.app_state::<Settings>().theme;
         Flex::column()
             .with_child(
                 Container::new(ChildView::new(&self.channel_select).boxed())
@@ -219,7 +208,7 @@ impl ChatPanel {
                     .boxed(),
             )
             .with_child(self.render_active_channel_messages())
-            .with_child(self.render_input_box())
+            .with_child(self.render_input_box(cx))
             .boxed()
     }
 
@@ -233,9 +222,9 @@ impl ChatPanel {
         Flexible::new(1., true, messages).boxed()
     }
 
-    fn render_message(&self, message: &ChannelMessage) -> ElementBox {
+    fn render_message(&self, message: &ChannelMessage, cx: &AppContext) -> ElementBox {
         let now = OffsetDateTime::now_utc();
-        let settings = self.settings.borrow();
+        let settings = cx.app_state::<Settings>();
         let theme = if message.is_pending() {
             &settings.theme.chat_panel.pending_message
         } else {
@@ -277,8 +266,8 @@ impl ChatPanel {
         .boxed()
     }
 
-    fn render_input_box(&self) -> ElementBox {
-        let theme = &self.settings.borrow().theme;
+    fn render_input_box(&self, cx: &AppContext) -> ElementBox {
+        let theme = &cx.app_state::<Settings>().theme;
         Container::new(ChildView::new(&self.input_editor).boxed())
             .with_style(theme.chat_panel.input_editor.container)
             .boxed()
@@ -315,7 +304,7 @@ impl ChatPanel {
     }
 
     fn render_sign_in_prompt(&self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &self.settings.borrow().theme;
+        let theme = cx.app_state::<Settings>().theme.clone();
         let rpc = self.rpc.clone();
         let this = cx.handle();
 
@@ -391,12 +380,12 @@ impl View for ChatPanel {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &self.settings.borrow().theme;
         let element = if self.rpc.user_id().is_some() {
-            self.render_channel()
+            self.render_channel(cx)
         } else {
             self.render_sign_in_prompt(cx)
         };
+        let theme = &cx.app_state::<Settings>().theme;
         ConstrainedBox::new(
             Container::new(element)
                 .with_style(theme.chat_panel.container)

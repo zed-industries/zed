@@ -6,7 +6,6 @@ use gpui::{
     RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::OffsetRangeExt;
-use postage::watch;
 use project::search::SearchQuery;
 use std::ops::Range;
 use workspace::{ItemViewHandle, Pane, Settings, Toolbar, Workspace};
@@ -40,7 +39,6 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 struct SearchBar {
-    settings: watch::Receiver<Settings>,
     query_editor: ViewHandle<Editor>,
     active_editor: Option<ViewHandle<Editor>>,
     active_match_index: Option<usize>,
@@ -68,7 +66,7 @@ impl View for SearchBar {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &self.settings.borrow().theme;
+        let theme = cx.app_state::<Settings>().theme.clone();
         let editor_container = if self.query_contains_error {
             theme.search.invalid_editor
         } else {
@@ -158,14 +156,9 @@ impl Toolbar for SearchBar {
 }
 
 impl SearchBar {
-    fn new(settings: watch::Receiver<Settings>, cx: &mut ViewContext<Self>) -> Self {
+    fn new(cx: &mut ViewContext<Self>) -> Self {
         let query_editor = cx.add_view(|cx| {
-            Editor::auto_height(
-                2,
-                settings.clone(),
-                Some(|theme| theme.search.editor.input.clone()),
-                cx,
-            )
+            Editor::auto_height(2, Some(|theme| theme.search.editor.input.clone()), cx)
         });
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
@@ -179,7 +172,6 @@ impl SearchBar {
             case_sensitive: false,
             whole_word: false,
             regex: false,
-            settings,
             pending_search: None,
             query_contains_error: false,
             dismissed: false,
@@ -201,9 +193,9 @@ impl SearchBar {
         search_option: SearchOption,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        let theme = &self.settings.borrow().theme.search;
         let is_active = self.is_search_option_enabled(search_option);
-        MouseEventHandler::new::<Self, _, _>(search_option as usize, cx, |state, _| {
+        MouseEventHandler::new::<Self, _, _>(search_option as usize, cx, |state, cx| {
+            let theme = &cx.app_state::<Settings>().theme.search;
             let style = match (is_active, state.hovered) {
                 (false, false) => &theme.option_button,
                 (false, true) => &theme.hovered_option_button,
@@ -226,9 +218,9 @@ impl SearchBar {
         direction: Direction,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        let theme = &self.settings.borrow().theme.search;
         enum NavButton {}
-        MouseEventHandler::new::<NavButton, _, _>(direction as usize, cx, |state, _| {
+        MouseEventHandler::new::<NavButton, _, _>(direction as usize, cx, |state, cx| {
+            let theme = &cx.app_state::<Settings>().theme.search;
             let style = if state.hovered {
                 &theme.hovered_option_button
             } else {
@@ -245,9 +237,8 @@ impl SearchBar {
     }
 
     fn deploy(workspace: &mut Workspace, Deploy(focus): &Deploy, cx: &mut ViewContext<Workspace>) {
-        let settings = workspace.settings();
         workspace.active_pane().update(cx, |pane, cx| {
-            pane.show_toolbar(cx, |cx| SearchBar::new(settings, cx));
+            pane.show_toolbar(cx, |cx| SearchBar::new(cx));
 
             if let Some(search_bar) = pane
                 .active_toolbar()
@@ -468,8 +459,6 @@ impl SearchBar {
                             this.update_match_index(cx);
                             if !this.dismissed {
                                 editor.update(cx, |editor, cx| {
-                                    let theme = &this.settings.borrow().theme.search;
-
                                     if select_closest_match {
                                         if let Some(match_ix) = this.active_match_index {
                                             editor.select_ranges(
@@ -480,6 +469,7 @@ impl SearchBar {
                                         }
                                     }
 
+                                    let theme = &cx.app_state::<Settings>().theme.search;
                                     editor.highlight_ranges::<Self>(
                                         ranges,
                                         theme.match_background,
@@ -525,7 +515,7 @@ mod tests {
         let mut theme = gpui::fonts::with_font_cache(fonts.clone(), || theme::Theme::default());
         theme.search.match_background = Color::red();
         let settings = Settings::new("Courier", &fonts, Arc::new(theme)).unwrap();
-        let settings = watch::channel_with(settings).1;
+        cx.update(|cx| cx.add_app_state(settings));
 
         let buffer = cx.update(|cx| {
             MultiBuffer::build_simple(
@@ -540,11 +530,11 @@ mod tests {
             )
         });
         let editor = cx.add_view(Default::default(), |cx| {
-            Editor::for_buffer(buffer.clone(), None, settings.clone(), cx)
+            Editor::for_buffer(buffer.clone(), None, cx)
         });
 
         let search_bar = cx.add_view(Default::default(), |cx| {
-            let mut search_bar = SearchBar::new(settings, cx);
+            let mut search_bar = SearchBar::new(cx);
             search_bar.active_item_changed(Some(Box::new(editor.clone())), cx);
             search_bar
         });

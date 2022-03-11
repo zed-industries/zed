@@ -7,7 +7,6 @@ use gpui::{
     AppContext, Axis, Entity, ModelHandle, MutableAppContext, RenderContext, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
-use postage::watch;
 use project::{Project, ProjectPath, WorktreeId};
 use std::{
     cmp,
@@ -25,7 +24,6 @@ use workspace::{
 
 pub struct FileFinder {
     handle: WeakViewHandle<Self>,
-    settings: watch::Receiver<Settings>,
     project: ModelHandle<Project>,
     query_editor: ViewHandle<Editor>,
     search_count: usize,
@@ -68,9 +66,8 @@ impl View for FileFinder {
         "FileFinder"
     }
 
-    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-        let settings = self.settings.borrow();
-
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        let settings = cx.app_state::<Settings>();
         Align::new(
             ConstrainedBox::new(
                 Container::new(
@@ -81,7 +78,7 @@ impl View for FileFinder {
                                 .with_style(settings.theme.selector.input_editor.container)
                                 .boxed(),
                         )
-                        .with_child(Flexible::new(1.0, false, self.render_matches()).boxed())
+                        .with_child(Flexible::new(1.0, false, self.render_matches(cx)).boxed())
                         .boxed(),
                 )
                 .with_style(settings.theme.selector.container)
@@ -107,9 +104,9 @@ impl View for FileFinder {
 }
 
 impl FileFinder {
-    fn render_matches(&self) -> ElementBox {
+    fn render_matches(&self, cx: &AppContext) -> ElementBox {
         if self.matches.is_empty() {
-            let settings = self.settings.borrow();
+            let settings = cx.app_state::<Settings>();
             return Container::new(
                 Label::new(
                     "No matches".into(),
@@ -122,32 +119,30 @@ impl FileFinder {
         }
 
         let handle = self.handle.clone();
-        let list = UniformList::new(
-            self.list_state.clone(),
-            self.matches.len(),
-            move |mut range, items, cx| {
-                let cx = cx.as_ref();
-                let finder = handle.upgrade(cx).unwrap();
-                let finder = finder.read(cx);
-                let start = range.start;
-                range.end = cmp::min(range.end, finder.matches.len());
-                items.extend(
-                    finder.matches[range]
-                        .iter()
-                        .enumerate()
-                        .map(move |(i, path_match)| finder.render_match(path_match, start + i)),
-                );
-            },
-        );
+        let list =
+            UniformList::new(
+                self.list_state.clone(),
+                self.matches.len(),
+                move |mut range, items, cx| {
+                    let cx = cx.as_ref();
+                    let finder = handle.upgrade(cx).unwrap();
+                    let finder = finder.read(cx);
+                    let start = range.start;
+                    range.end = cmp::min(range.end, finder.matches.len());
+                    items.extend(finder.matches[range].iter().enumerate().map(
+                        move |(i, path_match)| finder.render_match(path_match, start + i, cx),
+                    ));
+                },
+            );
 
         Container::new(list.boxed())
             .with_margin_top(6.0)
             .named("matches")
     }
 
-    fn render_match(&self, path_match: &PathMatch, index: usize) -> ElementBox {
+    fn render_match(&self, path_match: &PathMatch, index: usize, cx: &AppContext) -> ElementBox {
         let selected_index = self.selected_index();
-        let settings = self.settings.borrow();
+        let settings = cx.app_state::<Settings>();
         let style = if index == selected_index {
             &settings.theme.selector.active_item
         } else {
@@ -233,7 +228,7 @@ impl FileFinder {
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
         workspace.toggle_modal(cx, |cx, workspace| {
             let project = workspace.project().clone();
-            let finder = cx.add_view(|cx| Self::new(workspace.settings.clone(), project, cx));
+            let finder = cx.add_view(|cx| Self::new(project, cx));
             cx.subscribe(&finder, Self::on_event).detach();
             finder
         });
@@ -258,26 +253,17 @@ impl FileFinder {
         }
     }
 
-    pub fn new(
-        settings: watch::Receiver<Settings>,
-        project: ModelHandle<Project>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    pub fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
         cx.observe(&project, Self::project_updated).detach();
 
         let query_editor = cx.add_view(|cx| {
-            Editor::single_line(
-                settings.clone(),
-                Some(|theme| theme.selector.input_editor.clone()),
-                cx,
-            )
+            Editor::single_line(Some(|theme| theme.selector.input_editor.clone()), cx)
         });
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
 
         Self {
             handle: cx.weak_handle(),
-            settings,
             project,
             query_editor,
             search_count: 0,
@@ -524,13 +510,8 @@ mod tests {
             .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
-        let (_, finder) = cx.add_window(|cx| {
-            FileFinder::new(
-                params.settings.clone(),
-                workspace.read(cx).project().clone(),
-                cx,
-            )
-        });
+        let (_, finder) =
+            cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
 
         let query = "hi".to_string();
         finder
@@ -590,13 +571,8 @@ mod tests {
             .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
-        let (_, finder) = cx.add_window(|cx| {
-            FileFinder::new(
-                params.settings.clone(),
-                workspace.read(cx).project().clone(),
-                cx,
-            )
-        });
+        let (_, finder) =
+            cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
 
         // Even though there is only one worktree, that worktree's filename
         // is included in the matching, because the worktree is a single file.
@@ -653,13 +629,8 @@ mod tests {
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
 
-        let (_, finder) = cx.add_window(|cx| {
-            FileFinder::new(
-                params.settings.clone(),
-                workspace.read(cx).project().clone(),
-                cx,
-            )
-        });
+        let (_, finder) =
+            cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
 
         // Run a search that matches two files with the same relative path.
         finder

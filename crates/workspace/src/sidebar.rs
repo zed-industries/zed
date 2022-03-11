@@ -1,7 +1,7 @@
 use super::Workspace;
-use crate::Settings;
 use gpui::{action, elements::*, platform::CursorStyle, AnyViewHandle, RenderContext};
 use std::{cell::RefCell, rc::Rc};
+use theme::Theme;
 
 pub struct Sidebar {
     side: Side,
@@ -62,16 +62,16 @@ impl Sidebar {
             .map(|item| &item.view)
     }
 
-    fn theme<'a>(&self, settings: &'a Settings) -> &'a theme::Sidebar {
+    fn theme<'a>(&self, theme: &'a Theme) -> &'a theme::Sidebar {
         match self.side {
-            Side::Left => &settings.theme.workspace.left_sidebar,
-            Side::Right => &settings.theme.workspace.right_sidebar,
+            Side::Left => &theme.workspace.left_sidebar,
+            Side::Right => &theme.workspace.right_sidebar,
         }
     }
 
-    pub fn render(&self, settings: &Settings, cx: &mut RenderContext<Workspace>) -> ElementBox {
+    pub fn render(&self, theme: &Theme, cx: &mut RenderContext<Workspace>) -> ElementBox {
         let side = self.side;
-        let theme = self.theme(settings);
+        let theme = self.theme(theme);
 
         ConstrainedBox::new(
             Container::new(
@@ -119,13 +119,13 @@ impl Sidebar {
 
     pub fn render_active_item(
         &self,
-        settings: &Settings,
+        theme: &Theme,
         cx: &mut RenderContext<Workspace>,
     ) -> Option<ElementBox> {
         if let Some(active_item) = self.active_item() {
             let mut container = Flex::row();
             if matches!(self.side, Side::Right) {
-                container.add_child(self.render_resize_handle(settings, cx));
+                container.add_child(self.render_resize_handle(theme, cx));
             }
 
             container.add_child(
@@ -142,7 +142,7 @@ impl Sidebar {
                 .boxed(),
             );
             if matches!(self.side, Side::Left) {
-                container.add_child(self.render_resize_handle(settings, cx));
+                container.add_child(self.render_resize_handle(theme, cx));
             }
             Some(container.boxed())
         } else {
@@ -150,16 +150,12 @@ impl Sidebar {
         }
     }
 
-    fn render_resize_handle(
-        &self,
-        settings: &Settings,
-        cx: &mut RenderContext<Workspace>,
-    ) -> ElementBox {
+    fn render_resize_handle(&self, theme: &Theme, cx: &mut RenderContext<Workspace>) -> ElementBox {
         let width = self.width.clone();
         let side = self.side;
         MouseEventHandler::new::<Self, _, _>(side as usize, cx, |_, _| {
             Container::new(Empty::new().boxed())
-                .with_style(self.theme(settings).resize_handle)
+                .with_style(self.theme(theme).resize_handle)
                 .boxed()
         })
         .with_padding(Padding {

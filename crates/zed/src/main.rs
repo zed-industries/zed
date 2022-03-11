@@ -8,7 +8,6 @@ use futures::{channel::oneshot, StreamExt};
 use gpui::{App, AssetSource, Task};
 use log::LevelFilter;
 use parking_lot::Mutex;
-use postage::{prelude::Stream, watch};
 use project::Fs;
 use simplelog::SimpleLogger;
 use smol::process::Command;
@@ -93,23 +92,29 @@ fn main() {
         .detach_and_log_err(cx);
 
         let settings_file = cx.background().block(settings_file).unwrap();
-        let (settings_tx, settings) = Settings::from_files(
+        let mut settings_rx = Settings::from_files(
             default_settings,
             vec![settings_file],
-            cx.background().clone(),
             themes.clone(),
             cx.font_cache().clone(),
         );
-
-        refresh_window_on_settings_change(settings.clone(), cx);
+        let settings = cx.background().block(settings_rx.next()).unwrap();
+        cx.spawn(|mut cx| async move {
+            while let Some(settings) = settings_rx.next().await {
+                cx.update(|cx| {
+                    cx.update_app_state(|s, _| *s = settings);
+                    cx.refresh_windows();
+                });
+            }
+        })
+        .detach();
 
         languages.set_language_server_download_dir(zed::ROOT_PATH.clone());
-        languages.set_theme(&settings.borrow().theme.editor.syntax);
+        languages.set_theme(&settings.theme.editor.syntax);
+        cx.add_app_state(settings);
 
         let app_state = Arc::new(AppState {
             languages: Arc::new(languages),
-            settings_tx,
-            settings,
             themes,
             channel_list,
             client,
@@ -121,7 +126,7 @@ fn main() {
         });
         journal::init(app_state.clone(), cx);
         zed::init(&app_state, cx);
-        theme_selector::init(app_state.as_ref().into(), cx);
+        theme_selector::init(app_state.themes.clone(), cx);
 
         cx.set_menus(menus::menus(&app_state.clone()));
 
@@ -241,17 +246,4 @@ fn load_settings_file(app: &App, fs: Arc<dyn Fs>) -> oneshot::Receiver<SettingsF
         })
         .detach();
     rx
-}
-
-fn refresh_window_on_settings_change(
-    mut settings_rx: watch::Receiver<Settings>,
-    cx: &mut gpui::MutableAppContext,
-) {
-    settings_rx.try_recv().ok();
-    cx.spawn(|mut cx| async move {
-        while settings_rx.next().await.is_some() {
-            cx.update(|cx| cx.refresh_windows());
-        }
-    })
-    .detach();
 }

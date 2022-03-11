@@ -10,7 +10,6 @@ use gpui::{
     AnyViewHandle, Entity, MutableAppContext, Quad, RenderContext, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
-use postage::watch;
 use project::ProjectPath;
 use std::{
     any::{Any, TypeId},
@@ -100,7 +99,6 @@ pub enum Event {
 pub struct Pane {
     item_views: Vec<(usize, Box<dyn ItemViewHandle>)>,
     active_item_index: usize,
-    settings: watch::Receiver<Settings>,
     nav_history: Rc<RefCell<NavHistory>>,
     toolbars: HashMap<TypeId, Box<dyn ToolbarHandle>>,
     active_toolbar_type: Option<TypeId>,
@@ -159,11 +157,10 @@ pub struct NavigationEntry {
 }
 
 impl Pane {
-    pub fn new(settings: watch::Receiver<Settings>) -> Self {
+    pub fn new() -> Self {
         Self {
             item_views: Vec::new(),
             active_item_index: 0,
-            settings,
             nav_history: Default::default(),
             toolbars: Default::default(),
             active_toolbar_type: Default::default(),
@@ -513,8 +510,7 @@ impl Pane {
     }
 
     fn render_tabs(&self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let settings = self.settings.borrow();
-        let theme = &settings.theme;
+        let theme = cx.app_state::<Settings>().theme.clone();
 
         enum Tabs {}
         let tabs = MouseEventHandler::new::<Tabs, _, _>(0, cx, |mouse_state, cx| {

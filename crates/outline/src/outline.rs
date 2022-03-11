@@ -13,7 +13,6 @@ use gpui::{
 };
 use language::Outline;
 use ordered_float::OrderedFloat;
-use postage::watch;
 use std::cmp::{self, Reverse};
 use workspace::{
     menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev},
@@ -44,7 +43,6 @@ struct OutlineView {
     matches: Vec<StringMatch>,
     query_editor: ViewHandle<Editor>,
     list_state: UniformListState,
-    settings: watch::Receiver<Settings>,
 }
 
 pub enum Event {
@@ -70,8 +68,8 @@ impl View for OutlineView {
         cx
     }
 
-    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-        let settings = self.settings.borrow();
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        let settings = cx.app_state::<Settings>();
 
         Flex::new(Axis::Vertical)
             .with_child(
@@ -79,7 +77,7 @@ impl View for OutlineView {
                     .with_style(settings.theme.selector.input_editor.container)
                     .boxed(),
             )
-            .with_child(Flexible::new(1.0, false, self.render_matches()).boxed())
+            .with_child(Flexible::new(1.0, false, self.render_matches(cx)).boxed())
             .contained()
             .with_style(settings.theme.selector.container)
             .constrained()
@@ -99,15 +97,10 @@ impl OutlineView {
     fn new(
         outline: Outline<Anchor>,
         editor: ViewHandle<Editor>,
-        settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let query_editor = cx.add_view(|cx| {
-            Editor::single_line(
-                settings.clone(),
-                Some(|theme| theme.selector.input_editor.clone()),
-                cx,
-            )
+            Editor::single_line(Some(|theme| theme.selector.input_editor.clone()), cx)
         });
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
@@ -121,7 +114,6 @@ impl OutlineView {
             outline,
             query_editor,
             list_state: Default::default(),
-            settings,
         };
         this.update_matches(cx);
         this
@@ -132,16 +124,12 @@ impl OutlineView {
             .active_item(cx)
             .and_then(|item| item.downcast::<Editor>())
         {
-            let settings = workspace.settings();
-            let buffer = editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .read(cx)
-                .outline(Some(settings.borrow().theme.editor.syntax.as_ref()));
+            let buffer = editor.read(cx).buffer().read(cx).read(cx).outline(Some(
+                cx.app_state::<Settings>().theme.editor.syntax.as_ref(),
+            ));
             if let Some(outline) = buffer {
                 workspace.toggle_modal(cx, |cx, _| {
-                    let view = cx.add_view(|cx| OutlineView::new(outline, editor, settings, cx));
+                    let view = cx.add_view(|cx| OutlineView::new(outline, editor, cx));
                     cx.subscribe(&view, Self::on_event).detach();
                     view
                 });
@@ -298,9 +286,9 @@ impl OutlineView {
         self.select(selected_index, navigate_to_selected_index, true, cx);
     }
 
-    fn render_matches(&self) -> ElementBox {
+    fn render_matches(&self, cx: &AppContext) -> ElementBox {
         if self.matches.is_empty() {
-            let settings = self.settings.borrow();
+            let settings = cx.app_state::<Settings>();
             return Container::new(
                 Label::new(
                     "No matches".into(),
@@ -326,7 +314,7 @@ impl OutlineView {
                     view.matches[range]
                         .iter()
                         .enumerate()
-                        .map(move |(ix, m)| view.render_match(m, start + ix)),
+                        .map(move |(ix, m)| view.render_match(m, start + ix, cx)),
                 );
             },
         );
@@ -336,8 +324,13 @@ impl OutlineView {
             .named("matches")
     }
 
-    fn render_match(&self, string_match: &StringMatch, index: usize) -> ElementBox {
-        let settings = self.settings.borrow();
+    fn render_match(
+        &self,
+        string_match: &StringMatch,
+        index: usize,
+        cx: &AppContext,
+    ) -> ElementBox {
+        let settings = cx.app_state::<Settings>();
         let style = if index == self.selected_match_index {
             &settings.theme.selector.active_item
         } else {

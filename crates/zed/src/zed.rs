@@ -23,7 +23,7 @@ pub use project::{self, fs};
 use project_panel::ProjectPanel;
 use std::{path::PathBuf, sync::Arc};
 pub use workspace;
-use workspace::{AppState, Workspace, WorkspaceParams};
+use workspace::{AppState, Settings, Workspace, WorkspaceParams};
 
 action!(About);
 action!(Quit);
@@ -42,11 +42,12 @@ lazy_static! {
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_global_action(quit);
     cx.add_global_action({
-        let settings_tx = app_state.settings_tx.clone();
-        move |action: &AdjustBufferFontSize, _| {
-            let mut settings_tx = settings_tx.lock();
-            let new_size = (settings_tx.borrow().buffer_font_size + action.0).max(MIN_FONT_SIZE);
-            settings_tx.borrow_mut().buffer_font_size = new_size;
+        move |action: &AdjustBufferFontSize, cx| {
+            cx.update_app_state::<Settings, _, _>(|settings, cx| {
+                settings.buffer_font_size =
+                    (settings.buffer_font_size + action.0).max(MIN_FONT_SIZE);
+                cx.refresh_windows();
+            });
         }
     });
 
@@ -89,7 +90,6 @@ pub fn build_workspace(
         client: app_state.client.clone(),
         fs: app_state.fs.clone(),
         languages: app_state.languages.clone(),
-        settings: app_state.settings.clone(),
         user_store: app_state.user_store.clone(),
         channel_list: app_state.channel_list.clone(),
         path_openers: app_state.path_openers.clone(),
@@ -98,7 +98,7 @@ pub fn build_workspace(
     let project = workspace.project().clone();
     workspace.left_sidebar_mut().add_item(
         "icons/folder-tree-16.svg",
-        ProjectPanel::new(project, app_state.settings.clone(), cx).into(),
+        ProjectPanel::new(project, cx).into(),
     );
     workspace.right_sidebar_mut().add_item(
         "icons/user-16.svg",
@@ -108,35 +108,18 @@ pub fn build_workspace(
     workspace.right_sidebar_mut().add_item(
         "icons/comment-16.svg",
         cx.add_view(|cx| {
-            ChatPanel::new(
-                app_state.client.clone(),
-                app_state.channel_list.clone(),
-                app_state.settings.clone(),
-                cx,
-            )
+            ChatPanel::new(app_state.client.clone(), app_state.channel_list.clone(), cx)
         })
         .into(),
     );
 
-    let diagnostic_message =
-        cx.add_view(|_| editor::items::DiagnosticMessage::new(app_state.settings.clone()));
-    let diagnostic_summary = cx.add_view(|cx| {
-        diagnostics::items::DiagnosticSummary::new(
-            workspace.project(),
-            app_state.settings.clone(),
-            cx,
-        )
-    });
+    let diagnostic_message = cx.add_view(|_| editor::items::DiagnosticMessage::new());
+    let diagnostic_summary =
+        cx.add_view(|cx| diagnostics::items::DiagnosticSummary::new(workspace.project(), cx));
     let lsp_status = cx.add_view(|cx| {
-        workspace::lsp_status::LspStatus::new(
-            workspace.project(),
-            app_state.languages.clone(),
-            app_state.settings.clone(),
-            cx,
-        )
+        workspace::lsp_status::LspStatus::new(workspace.project(), app_state.languages.clone(), cx)
     });
-    let cursor_position =
-        cx.add_view(|_| editor::items::CursorPosition::new(app_state.settings.clone()));
+    let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
     workspace.status_bar().update(cx, |status_bar, cx| {
         status_bar.add_left_item(diagnostic_summary, cx);
         status_bar.add_left_item(diagnostic_message, cx);

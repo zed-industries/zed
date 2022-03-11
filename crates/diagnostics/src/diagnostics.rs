@@ -15,7 +15,6 @@ use gpui::{
 use language::{
     Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
 };
-use postage::watch;
 use project::{DiagnosticSummary, Project, ProjectPath};
 use std::{
     any::{Any, TypeId},
@@ -26,7 +25,7 @@ use std::{
     sync::Arc,
 };
 use util::TryFutureExt;
-use workspace::{ItemHandle, ItemNavHistory, ItemViewHandle as _, Workspace};
+use workspace::{ItemHandle, ItemNavHistory, ItemViewHandle as _, Settings, Workspace};
 
 action!(Deploy);
 
@@ -51,7 +50,6 @@ struct ProjectDiagnosticsEditor {
     excerpts: ModelHandle<MultiBuffer>,
     path_states: Vec<PathState>,
     paths_to_update: BTreeSet<ProjectPath>,
-    settings: watch::Receiver<workspace::Settings>,
 }
 
 struct PathState {
@@ -86,9 +84,9 @@ impl View for ProjectDiagnosticsEditor {
         "ProjectDiagnosticsEditor"
     }
 
-    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         if self.path_states.is_empty() {
-            let theme = &self.settings.borrow().theme.project_diagnostics;
+            let theme = &cx.app_state::<Settings>().theme.project_diagnostics;
             Label::new(
                 "No problems in workspace".to_string(),
                 theme.empty_message.clone(),
@@ -113,7 +111,6 @@ impl ProjectDiagnosticsEditor {
     fn new(
         model: ModelHandle<ProjectDiagnostics>,
         workspace: WeakViewHandle<Workspace>,
-        settings: watch::Receiver<workspace::Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let project = model.read(cx).project.clone();
@@ -131,12 +128,7 @@ impl ProjectDiagnosticsEditor {
 
         let excerpts = cx.add_model(|cx| MultiBuffer::new(project.read(cx).replica_id()));
         let editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_buffer(
-                excerpts.clone(),
-                Some(project.clone()),
-                settings.clone(),
-                cx,
-            );
+            let mut editor = Editor::for_buffer(excerpts.clone(), Some(project.clone()), cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
@@ -151,7 +143,6 @@ impl ProjectDiagnosticsEditor {
             workspace,
             excerpts,
             editor,
-            settings,
             path_states: Default::default(),
             paths_to_update,
         };
@@ -303,10 +294,7 @@ impl ProjectDiagnosticsEditor {
                                 blocks_to_add.push(BlockProperties {
                                     position: header_position,
                                     height: 2,
-                                    render: diagnostic_header_renderer(
-                                        primary,
-                                        self.settings.clone(),
-                                    ),
+                                    render: diagnostic_header_renderer(primary),
                                     disposition: BlockDisposition::Above,
                                 });
                             }
@@ -324,11 +312,7 @@ impl ProjectDiagnosticsEditor {
                                     blocks_to_add.push(BlockProperties {
                                         position: (excerpt_id.clone(), entry.range.start.clone()),
                                         height: diagnostic.message.matches('\n').count() as u8 + 1,
-                                        render: diagnostic_block_renderer(
-                                            diagnostic,
-                                            true,
-                                            self.settings.clone(),
-                                        ),
+                                        render: diagnostic_block_renderer(diagnostic, true),
                                         disposition: BlockDisposition::Below,
                                     });
                                 }
@@ -466,12 +450,7 @@ impl workspace::Item for ProjectDiagnostics {
         nav_history: ItemNavHistory,
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View {
-        let diagnostics = ProjectDiagnosticsEditor::new(
-            handle,
-            workspace.weak_handle(),
-            workspace.settings(),
-            cx,
-        );
+        let diagnostics = ProjectDiagnosticsEditor::new(handle, workspace.weak_handle(), cx);
         diagnostics
             .editor
             .update(cx, |editor, _| editor.set_nav_history(Some(nav_history)));
@@ -488,11 +467,11 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         Box::new(self.model.clone())
     }
 
-    fn tab_content(&self, style: &theme::Tab, _: &AppContext) -> ElementBox {
+    fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox {
         render_summary(
             &self.summary,
             &style.label.text,
-            &self.settings.borrow().theme.project_diagnostics,
+            &cx.app_state::<Settings>().theme.project_diagnostics,
         )
     }
 
@@ -554,12 +533,8 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
     where
         Self: Sized,
     {
-        let diagnostics = ProjectDiagnosticsEditor::new(
-            self.model.clone(),
-            self.workspace.clone(),
-            self.settings.clone(),
-            cx,
-        );
+        let diagnostics =
+            ProjectDiagnosticsEditor::new(self.model.clone(), self.workspace.clone(), cx);
         diagnostics.editor.update(cx, |editor, _| {
             editor.set_nav_history(Some(nav_history));
         });
@@ -586,13 +561,10 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
     }
 }
 
-fn diagnostic_header_renderer(
-    diagnostic: Diagnostic,
-    settings: watch::Receiver<workspace::Settings>,
-) -> RenderBlock {
+fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, highlights) = highlight_diagnostic_message(&diagnostic.message);
     Arc::new(move |cx| {
-        let settings = settings.borrow();
+        let settings = cx.app_state::<Settings>();
         let theme = &settings.theme.editor;
         let style = &theme.diagnostic_header;
         let font_size = (style.text_scale_factor * settings.buffer_font_size).round();
@@ -852,7 +824,7 @@ mod tests {
         // Open the project diagnostics view while there are already diagnostics.
         let model = cx.add_model(|_| ProjectDiagnostics::new(project.clone()));
         let view = cx.add_view(0, |cx| {
-            ProjectDiagnosticsEditor::new(model, workspace.downgrade(), params.settings, cx)
+            ProjectDiagnosticsEditor::new(model, workspace.downgrade(), cx)
         });
 
         view.next_notification(&cx).await;

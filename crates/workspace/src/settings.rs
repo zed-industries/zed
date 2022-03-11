@@ -5,7 +5,6 @@ use gpui::{
     font_cache::{FamilyId, FontCache},
 };
 use language::Language;
-use parking_lot::Mutex;
 use postage::{prelude::Stream, watch};
 use project::Fs;
 use schemars::{schema_for, JsonSchema};
@@ -66,8 +65,7 @@ impl SettingsFile {
         let path = path.into();
         let settings = Self::load(fs.clone(), &path).await.unwrap_or_default();
         let mut events = fs.watch(&path, Duration::from_millis(500)).await;
-        let (mut tx, mut rx) = watch::channel_with(settings);
-        rx.recv().await;
+        let (mut tx, rx) = watch::channel_with(settings);
         executor
             .spawn(async move {
                 while events.next().await.is_some() {
@@ -103,30 +101,26 @@ impl Settings {
     pub fn from_files(
         defaults: Self,
         sources: Vec<SettingsFile>,
-        executor: Arc<executor::Background>,
         theme_registry: Arc<ThemeRegistry>,
         font_cache: Arc<FontCache>,
-    ) -> (Arc<Mutex<watch::Sender<Self>>>, watch::Receiver<Self>) {
-        let (tx, mut rx) = watch::channel_with(defaults.clone());
-        let tx = Arc::new(Mutex::new(tx));
-        executor
-            .spawn({
-                let tx = tx.clone();
-                async move {
-                    let mut stream =
-                        stream::select_all(sources.iter().map(|source| source.0.clone()));
-                    while stream.next().await.is_some() {
-                        let mut settings = defaults.clone();
-                        for source in &sources {
-                            settings.merge(&*source.0.borrow(), &theme_registry, &font_cache);
-                        }
-                        *tx.lock().borrow_mut() = settings;
-                    }
-                }
-            })
-            .detach();
-        rx.try_recv().ok();
-        (tx, rx)
+    ) -> impl futures::stream::Stream<Item = Self> {
+        stream::select_all(sources.iter().enumerate().map(|(i, source)| {
+            let mut rx = source.0.clone();
+            // Consume the initial item from all of the constituent file watches but one.
+            // This way, the stream will yield exactly one item for the files' initial
+            // state, and won't return any more items until the files change.
+            if i > 0 {
+                rx.try_recv().ok();
+            }
+            rx
+        }))
+        .map(move |_| {
+            let mut settings = defaults.clone();
+            for source in &sources {
+                settings.merge(&*source.0.borrow(), &theme_registry, &font_cache);
+            }
+            settings
+        })
     }
 
     pub fn new(
@@ -245,7 +239,6 @@ fn merge_option<T: Copy>(target: &mut Option<T>, value: Option<T>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use postage::prelude::Stream;
     use project::FakeFs;
 
     #[gpui::test]
@@ -276,15 +269,14 @@ mod tests {
         let source2 = SettingsFile::new(fs.clone(), &executor, "/settings2.json".as_ref()).await;
         let source3 = SettingsFile::new(fs.clone(), &executor, "/settings3.json".as_ref()).await;
 
-        let (_, mut settings_rx) = Settings::from_files(
+        let mut settings_rx = Settings::from_files(
             cx.read(Settings::test),
             vec![source1, source2, source3],
-            cx.background(),
             ThemeRegistry::new((), cx.font_cache()),
             cx.font_cache(),
         );
 
-        let settings = settings_rx.recv().await.unwrap();
+        let settings = settings_rx.next().await.unwrap();
         let md_settings = settings.language_overrides.get("Markdown").unwrap();
         assert_eq!(settings.soft_wrap, SoftWrap::EditorWidth);
         assert_eq!(settings.buffer_font_size, 24.0);
@@ -310,7 +302,7 @@ mod tests {
         .await
         .unwrap();
 
-        let settings = settings_rx.recv().await.unwrap();
+        let settings = settings_rx.next().await.unwrap();
         let md_settings = settings.language_overrides.get("Markdown").unwrap();
         assert_eq!(settings.soft_wrap, SoftWrap::None);
         assert_eq!(settings.buffer_font_size, 24.0);
@@ -322,7 +314,7 @@ mod tests {
             .await
             .unwrap();
 
-        let settings = settings_rx.recv().await.unwrap();
+        let settings = settings_rx.next().await.unwrap();
         assert_eq!(settings.tab_size, 4);
     }
 }

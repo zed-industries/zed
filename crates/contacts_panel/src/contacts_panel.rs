@@ -8,13 +8,11 @@ use gpui::{
     Element, ElementBox, Entity, LayoutContext, ModelHandle, RenderContext, Subscription, View,
     ViewContext,
 };
-use postage::watch;
 use workspace::{AppState, JoinProject, JoinProjectParams, Settings};
 
 pub struct ContactsPanel {
     contacts: ListState,
     user_store: ModelHandle<UserStore>,
-    settings: watch::Receiver<Settings>,
     _maintain_contacts: Subscription,
 }
 
@@ -42,7 +40,6 @@ impl ContactsPanel {
             ),
             _maintain_contacts: cx.observe(&app_state.user_store, Self::update_contacts),
             user_store: app_state.user_store.clone(),
-            settings: app_state.settings.clone(),
         }
     }
 
@@ -58,7 +55,8 @@ impl ContactsPanel {
         app_state: Arc<AppState>,
         cx: &mut LayoutContext,
     ) -> ElementBox {
-        let theme = &app_state.settings.borrow().theme.contacts_panel;
+        let theme = cx.app_state::<Settings>().theme.clone();
+        let theme = &theme.contacts_panel;
         let project_count = collaborator.projects.len();
         let font_cache = cx.font_cache();
         let line_height = theme.unshared_project.name.text.line_height(font_cache);
@@ -237,8 +235,8 @@ impl View for ContactsPanel {
         "ContactsPanel"
     }
 
-    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &self.settings.borrow().theme.contacts_panel;
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        let theme = &cx.app_state::<Settings>().theme.contacts_panel;
         Container::new(List::new(self.contacts.clone()).boxed())
             .with_style(theme.container)
             .boxed()

@@ -3,7 +3,6 @@ use gpui::{
     elements::*, AnyViewHandle, ElementBox, Entity, MutableAppContext, RenderContext, Subscription,
     View, ViewContext, ViewHandle,
 };
-use postage::watch;
 
 pub trait StatusItemView: View {
     fn set_active_pane_item(
@@ -27,7 +26,6 @@ pub struct StatusBar {
     right_items: Vec<Box<dyn StatusItemViewHandle>>,
     active_pane: ViewHandle<Pane>,
     _observe_active_pane: Subscription,
-    settings: watch::Receiver<Settings>,
 }
 
 impl Entity for StatusBar {
@@ -39,8 +37,8 @@ impl View for StatusBar {
         "StatusBar"
     }
 
-    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &self.settings.borrow().theme.workspace.status_bar;
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        let theme = &cx.app_state::<Settings>().theme.workspace.status_bar;
         Flex::row()
             .with_children(self.left_items.iter().map(|i| {
                 ChildView::new(i.as_ref())
@@ -66,18 +64,13 @@ impl View for StatusBar {
 }
 
 impl StatusBar {
-    pub fn new(
-        active_pane: &ViewHandle<Pane>,
-        settings: watch::Receiver<Settings>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    pub fn new(active_pane: &ViewHandle<Pane>, cx: &mut ViewContext<Self>) -> Self {
         let mut this = Self {
             left_items: Default::default(),
             right_items: Default::default(),
             active_pane: active_pane.clone(),
             _observe_active_pane: cx
                 .observe(active_pane, |this, _, cx| this.update_active_pane_item(cx)),
-            settings,
         };
         this.update_active_pane_item(cx);
         this

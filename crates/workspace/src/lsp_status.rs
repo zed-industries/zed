@@ -6,7 +6,6 @@ use gpui::{
     RenderContext, View, ViewContext,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
-use postage::watch;
 use project::{LanguageServerProgress, Project};
 use smallvec::SmallVec;
 use std::cmp::Reverse;
@@ -16,7 +15,6 @@ use std::sync::Arc;
 action!(DismissErrorMessage);
 
 pub struct LspStatus {
-    settings_rx: watch::Receiver<Settings>,
     checking_for_update: Vec<String>,
     downloading: Vec<String>,
     failed: Vec<String>,
@@ -31,7 +29,6 @@ impl LspStatus {
     pub fn new(
         project: &ModelHandle<Project>,
         languages: Arc<LanguageRegistry>,
-        settings_rx: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let mut status_events = languages.language_server_binary_statuses();
@@ -72,7 +69,6 @@ impl LspStatus {
         cx.observe(project, |_, _, cx| cx.notify()).detach();
 
         Self {
-            settings_rx,
             checking_for_update: Default::default(),
             downloading: Default::default(),
             failed: Default::default(),
@@ -120,7 +116,7 @@ impl View for LspStatus {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &self.settings_rx.borrow().theme;
+        let theme = &cx.app_state::<Settings>().theme;
 
         let mut pending_work = self.pending_language_server_work(cx);
         if let Some((lang_server_name, progress_token, progress)) = pending_work.next() {
@@ -169,7 +165,8 @@ impl View for LspStatus {
             .boxed()
         } else if !self.failed.is_empty() {
             drop(pending_work);
-            MouseEventHandler::new::<Self, _, _>(0, cx, |_, _| {
+            MouseEventHandler::new::<Self, _, _>(0, cx, |_, cx| {
+                let theme = &cx.app_state::<Settings>().theme;
                 Label::new(
                     format!(
                         "Failed to download {} language server{}. Click to dismiss.",

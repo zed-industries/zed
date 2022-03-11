@@ -1023,7 +1023,7 @@ mod tests {
     };
     use lsp;
     use parking_lot::Mutex;
-    use postage::{barrier, watch};
+    use postage::barrier;
     use project::{
         fs::{FakeFs, Fs as _},
         search::SearchQuery,
@@ -1152,14 +1152,7 @@ mod tests {
             .await
             .unwrap();
 
-        let editor_b = cx_b.add_view(window_b, |cx| {
-            Editor::for_buffer(
-                buffer_b,
-                None,
-                watch::channel_with(Settings::test(cx)).1,
-                cx,
-            )
-        });
+        let editor_b = cx_b.add_view(window_b, |cx| Editor::for_buffer(buffer_b, None, cx));
 
         // TODO
         // // Create a selection set as client B and see that selection set as client A.
@@ -2186,7 +2179,6 @@ mod tests {
             Editor::for_buffer(
                 cx.add_model(|cx| MultiBuffer::singleton(buffer_b.clone(), cx)),
                 Some(project_b.clone()),
-                watch::channel_with(Settings::test(cx)).1,
                 cx,
             )
         });
@@ -4424,6 +4416,11 @@ mod tests {
         }
 
         async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
+            cx.update(|cx| {
+                let settings = Settings::test(cx);
+                cx.add_app_state(settings);
+            });
+
             let http = FakeHttpClient::with_404_response();
             let user_id = self.app_state.db.create_user(name, false).await.unwrap();
             let client_name = name.to_string();
