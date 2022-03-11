@@ -1467,7 +1467,11 @@ mod tests {
         let (window_id, editor) = cx.add_window(Default::default(), |cx| {
             Editor::new(EditorMode::Full, buffer, None, settings.1, None, cx)
         });
-        let element = EditorElement::new(editor.downgrade(), editor.read(cx).style(cx), CursorShape::Bar);
+        let element = EditorElement::new(
+            editor.downgrade(),
+            editor.read(cx).style(cx),
+            CursorShape::Bar,
+        );
 
         let layouts = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);

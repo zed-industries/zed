@@ -758,7 +758,8 @@ pub struct MutableAppContext {
     next_subscription_id: usize,
     frame_count: usize,
     subscriptions: Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<SubscriptionCallback>>>>>,
-    global_subscriptions: Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalSubscriptionCallback>>>>>,
+    global_subscriptions:
+        Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalSubscriptionCallback>>>>>,
     observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>,
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
     presenters_and_platform_windows:
@@ -1726,7 +1727,8 @@ impl MutableAppContext {
                 if let Some(mut callback) = callback {
                     let alive = callback(payload.as_ref(), self);
                     if alive {
-                        match self.subscriptions
+                        match self
+                            .subscriptions
                             .lock()
                             .entry(entity_id)
                             .or_default()
@@ -1734,10 +1736,10 @@ impl MutableAppContext {
                         {
                             collections::btree_map::Entry::Vacant(entry) => {
                                 entry.insert(Some(callback));
-                            },
+                            }
                             collections::btree_map::Entry::Occupied(entry) => {
                                 entry.remove();
-                            },
+                            }
                         }
                     }
                 }
@@ -1752,18 +1754,19 @@ impl MutableAppContext {
             for (id, callback) in callbacks {
                 if let Some(mut callback) = callback {
                     callback(payload.as_ref(), self);
-                    match self.global_subscriptions
+                    match self
+                        .global_subscriptions
                         .lock()
                         .entry(type_id)
                         .or_default()
-                        .entry(id) 
+                        .entry(id)
                     {
                         collections::btree_map::Entry::Vacant(entry) => {
                             entry.insert(Some(callback));
-                        },
+                        }
                         collections::btree_map::Entry::Occupied(entry) => {
                             entry.remove();
-                        },
+                        }
                     }
                 }
             }
@@ -1778,18 +1781,19 @@ impl MutableAppContext {
                     if let Some(mut callback) = callback {
                         let alive = callback(self);
                         if alive {
-                            match self.observations
+                            match self
+                                .observations
                                 .lock()
                                 .entry(observed_id)
                                 .or_default()
-                                .entry(id) 
+                                .entry(id)
                             {
                                 collections::btree_map::Entry::Vacant(entry) => {
                                     entry.insert(Some(callback));
-                                },
+                                }
                                 collections::btree_map::Entry::Occupied(entry) => {
                                     entry.remove();
-                                },
+                                }
                             }
                         }
                     }
@@ -1818,18 +1822,19 @@ impl MutableAppContext {
                     if let Some(mut callback) = callback {
                         let alive = callback(self);
                         if alive {
-                            match self.observations
+                            match self
+                                .observations
                                 .lock()
                                 .entry(observed_view_id)
                                 .or_default()
-                                .entry(id) 
+                                .entry(id)
                             {
                                 collections::btree_map::Entry::Vacant(entry) => {
                                     entry.insert(Some(callback));
-                                },
+                                }
                                 collections::btree_map::Entry::Occupied(entry) => {
                                     entry.remove();
-                                },
+                                }
                             }
                         }
                     }
@@ -3857,18 +3862,21 @@ pub enum Subscription {
     Subscription {
         id: usize,
         entity_id: usize,
-        subscriptions: Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<SubscriptionCallback>>>>>>,
+        subscriptions:
+            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<SubscriptionCallback>>>>>>,
     },
     GlobalSubscription {
         id: usize,
         type_id: TypeId,
-        subscriptions:
-            Option<Weak<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalSubscriptionCallback>>>>>>,
+        subscriptions: Option<
+            Weak<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalSubscriptionCallback>>>>>,
+        >,
     },
     Observation {
         id: usize,
         entity_id: usize,
-        observations: Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>>,
+        observations:
+            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>>,
     },
     ReleaseObservation {
         id: usize,
@@ -3914,10 +3922,10 @@ impl Drop for Subscription {
                     {
                         collections::btree_map::Entry::Vacant(entry) => {
                             entry.insert(None);
-                        },
+                        }
                         collections::btree_map::Entry::Occupied(entry) => {
                             entry.remove();
-                        },
+                        }
                     }
                 }
             }
@@ -3927,18 +3935,13 @@ impl Drop for Subscription {
                 subscriptions,
             } => {
                 if let Some(subscriptions) = subscriptions.as_ref().and_then(Weak::upgrade) {
-                    match subscriptions
-                        .lock()
-                        .entry(*type_id)
-                        .or_default()
-                        .entry(*id)
-                    {
+                    match subscriptions.lock().entry(*type_id).or_default().entry(*id) {
                         collections::btree_map::Entry::Vacant(entry) => {
                             entry.insert(None);
-                        },
+                        }
                         collections::btree_map::Entry::Occupied(entry) => {
                             entry.remove();
-                        },
+                        }
                     }
                 }
             }
@@ -3956,10 +3959,10 @@ impl Drop for Subscription {
                     {
                         collections::btree_map::Entry::Vacant(entry) => {
                             entry.insert(None);
-                        },
+                        }
                         collections::btree_map::Entry::Occupied(entry) => {
                             entry.remove();
-                        },
+                        }
                     }
                 }
             }
@@ -4606,8 +4609,10 @@ mod tests {
                 let events = events.clone();
                 cx.subscribe_global(move |e: &GlobalEvent, _| {
                     events.borrow_mut().push(("Inner", e.clone()));
-                }).detach();
-            }).detach();
+                })
+                .detach();
+            })
+            .detach();
         }
 
         cx.update(|cx| {
@@ -4799,7 +4804,6 @@ mod tests {
         });
 
         assert_eq!(*events.borrow(), [1]);
-
 
         // Global Events
         #[derive(Clone, Debug, Eq, PartialEq)]
