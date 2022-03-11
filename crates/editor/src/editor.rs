@@ -2639,21 +2639,22 @@ impl Editor {
         for selection in &mut selections {
             if selection.is_empty() {
                 let old_head = selection.head();
-                let (buffer, line_buffer_range) = display_map
-                    .buffer_snapshot
-                    .buffer_line_for_row(old_head.row)
-                    .unwrap();
-                let indent_column = buffer.indent_column_for_line(line_buffer_range.start.row);
                 let mut new_head =
                     movement::left(&display_map, old_head.to_display_point(&display_map))
                         .unwrap()
                         .to_point(&display_map);
-                if old_head.column <= indent_column && old_head.column > 0 {
-                    let indent = buffer.indent_size();
-                    new_head = cmp::min(
-                        new_head,
-                        Point::new(old_head.row, ((old_head.column - 1) / indent) * indent),
-                    );
+                if let Some((buffer, line_buffer_range)) = display_map
+                    .buffer_snapshot
+                    .buffer_line_for_row(old_head.row)
+                {
+                    let indent_column = buffer.indent_column_for_line(line_buffer_range.start.row);
+                    if old_head.column <= indent_column && old_head.column > 0 {
+                        let indent = buffer.indent_size();
+                        new_head = cmp::min(
+                            new_head,
+                            Point::new(old_head.row, ((old_head.column - 1) / indent) * indent),
+                        );
+                    }
                 }
 
                 selection.set_head(new_head);
