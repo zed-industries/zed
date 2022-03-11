@@ -740,6 +740,7 @@ type ActionCallback =
 type GlobalActionCallback = dyn FnMut(&dyn AnyAction, &mut MutableAppContext);
 
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
+type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 
@@ -757,6 +758,7 @@ pub struct MutableAppContext {
     next_subscription_id: usize,
     frame_count: usize,
     subscriptions: Arc<Mutex<HashMap<usize, BTreeMap<usize, SubscriptionCallback>>>>,
+    global_subscriptions: Arc<Mutex<HashMap<TypeId, BTreeMap<usize, GlobalSubscriptionCallback>>>>,
     observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ObservationCallback>>>>,
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
     presenters_and_platform_windows:
@@ -804,6 +806,7 @@ impl MutableAppContext {
             next_subscription_id: 0,
             frame_count: 0,
             subscriptions: Default::default(),
+            global_subscriptions: Default::default(),
             observations: Default::default(),
             release_observations: Default::default(),
             presenters_and_platform_windows: HashMap::new(),
@@ -1062,6 +1065,12 @@ impl MutableAppContext {
         self.foreground_platform.prompt_for_new_path(directory)
     }
 
+    pub fn emit_global<E: Any>(&mut self, payload: E) {
+        self.pending_effects.push_back(Effect::GlobalEvent {
+            payload: Box::new(payload),
+        });
+    }
+
     pub fn subscribe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
     where
         E: Entity,
@@ -1074,6 +1083,31 @@ impl MutableAppContext {
             true
         })
     }
+
+    pub fn global_subscribe<E, F>(&mut self, mut callback: F) -> Subscription
+    where
+        E: Any + Copy,
+        F: 'static + FnMut(&E, &mut Self),
+    {
+        let id = post_inc(&mut self.next_subscription_id);
+        let type_id = TypeId::of::<E>();
+        self.global_subscriptions
+            .lock()
+            .entry(type_id)
+            .or_default()
+            .insert(
+                id, 
+                Box::new(move |payload, cx| {
+                    let payload = payload.downcast_ref().expect("downcast is type safe");
+                    callback(payload, cx)
+                }));
+        Subscription::GlobalSubscription {
+            id,
+            type_id,
+            subscriptions: Some(Arc::downgrade(&self.global_subscriptions))
+        }
+    }
+
 
     pub fn observe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
     where
@@ -1573,6 +1607,7 @@ impl MutableAppContext {
                 if let Some(effect) = self.pending_effects.pop_front() {
                     match effect {
                         Effect::Event { entity_id, payload } => self.emit_event(entity_id, payload),
+                        Effect::GlobalEvent { payload } => self.emit_global_event(payload),
                         Effect::ModelNotification { model_id } => {
                             self.notify_model_observers(model_id)
                         }
@@ -1696,6 +1731,16 @@ impl MutableAppContext {
                         .or_default()
                         .insert(id, callback);
                 }
+            }
+        }
+    }
+
+    fn emit_global_event(&mut self, payload: Box<dyn Any>) {
+        let type_id = (&*payload).type_id();
+        let callbacks = self.global_subscriptions.lock().remove(&type_id);
+        if let Some(callbacks) = callbacks {
+            for (_, mut callback) in callbacks {
+                callback(payload.as_ref(), self)
             }
         }
     }
@@ -2071,6 +2116,9 @@ pub enum Effect {
         entity_id: usize,
         payload: Box<dyn Any>,
     },
+    GlobalEvent {
+        payload: Box<dyn Any>,
+    },
     ModelNotification {
         model_id: usize,
     },
@@ -2103,6 +2151,10 @@ impl Debug for Effect {
             Effect::Event { entity_id, .. } => f
                 .debug_struct("Effect::Event")
                 .field("entity_id", entity_id)
+                .finish(),
+            Effect::GlobalEvent { payload, .. } => f
+                .debug_struct("Effect::GlobalEvent")
+                .field("type_id", &(&*payload).type_id())
                 .finish(),
             Effect::ModelNotification { model_id } => f
                 .debug_struct("Effect::ModelNotification")
@@ -3762,6 +3814,11 @@ pub enum Subscription {
         entity_id: usize,
         subscriptions: Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, SubscriptionCallback>>>>>,
     },
+    GlobalSubscription {
+        id: usize,
+        type_id: TypeId,
+        subscriptions: Option<Weak<Mutex<HashMap<TypeId, BTreeMap<usize, GlobalSubscriptionCallback>>>>>,
+    },
     Observation {
         id: usize,
         entity_id: usize,
@@ -3781,6 +3838,9 @@ impl Subscription {
             Subscription::Subscription { subscriptions, .. } => {
                 subscriptions.take();
             }
+            Subscription::GlobalSubscription { subscriptions, .. } => {
+                subscriptions.take();
+            }
             Subscription::Observation { observations, .. } => {
                 observations.take();
             }
@@ -3794,6 +3854,28 @@ impl Subscription {
 impl Drop for Subscription {
     fn drop(&mut self) {
         match self {
+            Subscription::Subscription {
+                id,
+                entity_id,
+                subscriptions,
+            } => {
+                if let Some(subscriptions) = subscriptions.as_ref().and_then(Weak::upgrade) {
+                    if let Some(subscriptions) = subscriptions.lock().get_mut(entity_id) {
+                        subscriptions.remove(id);
+                    }
+                }
+            }
+            Subscription::GlobalSubscription {
+                id,
+                type_id,
+                subscriptions,
+            } => {
+                if let Some(subscriptions) = subscriptions.as_ref().and_then(Weak::upgrade) {
+                    if let Some(subscriptions) = subscriptions.lock().get_mut(type_id) {
+                        subscriptions.remove(id);
+                    }
+                }
+            }
             Subscription::Observation {
                 id,
                 entity_id,
@@ -3813,17 +3895,6 @@ impl Drop for Subscription {
                 if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
                     if let Some(observations) = observations.lock().get_mut(entity_id) {
                         observations.remove(id);
-                    }
-                }
-            }
-            Subscription::Subscription {
-                id,
-                entity_id,
-                subscriptions,
-            } => {
-                if let Some(subscriptions) = subscriptions.as_ref().and_then(Weak::upgrade) {
-                    if let Some(subscriptions) = subscriptions.lock().get_mut(entity_id) {
-                        subscriptions.remove(id);
                     }
                 }
             }
