@@ -453,6 +453,7 @@ pub struct Editor {
     document_highlights_task: Option<Task<()>>,
     pending_rename: Option<RenameState>,
     searchable: bool,
+    cursor_shape: CursorShape,
 }
 
 pub struct EditorSnapshot {
@@ -934,6 +935,7 @@ impl Editor {
             pending_rename: Default::default(),
             searchable: true,
             override_text_style: None,
+            cursor_shape: Default::default(),
         };
         this.end_selection(cx);
         this
@@ -1027,6 +1029,11 @@ impl Editor {
             self.scroll_top_anchor = Some(anchor);
         }
 
+        cx.notify();
+    }
+
+    pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape, cx: &mut ViewContext<Self>) {
+        self.cursor_shape = cursor_shape;
         cx.notify();
     }
 
@@ -2647,11 +2654,26 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         for selection in &mut selections {
             if selection.is_empty() {
-                let head = selection.head().to_display_point(&display_map);
-                let cursor = movement::left(&display_map, head)
-                    .unwrap()
-                    .to_point(&display_map);
-                selection.set_head(cursor);
+                let old_head = selection.head();
+                let mut new_head =
+                    movement::left(&display_map, old_head.to_display_point(&display_map))
+                        .unwrap()
+                        .to_point(&display_map);
+                if let Some((buffer, line_buffer_range)) = display_map
+                    .buffer_snapshot
+                    .buffer_line_for_row(old_head.row)
+                {
+                    let indent_column = buffer.indent_column_for_line(line_buffer_range.start.row);
+                    if old_head.column <= indent_column && old_head.column > 0 {
+                        let indent = buffer.indent_size();
+                        new_head = cmp::min(
+                            new_head,
+                            Point::new(old_head.row, ((old_head.column - 1) / indent) * indent),
+                        );
+                    }
+                }
+
+                selection.set_head(new_head);
                 selection.goal = SelectionGoal::None;
             }
         }
@@ -5599,7 +5621,7 @@ impl View for Editor {
         self.display_map.update(cx, |map, cx| {
             map.set_font(style.text.font_id, style.text.font_size, cx)
         });
-        EditorElement::new(self.handle.clone(), style.clone()).boxed()
+        EditorElement::new(self.handle.clone(), style.clone(), self.cursor_shape).boxed()
     }
 
     fn ui_name() -> &'static str {
@@ -7202,14 +7224,13 @@ mod tests {
 
     #[gpui::test]
     fn test_backspace(cx: &mut gpui::MutableAppContext) {
-        let buffer =
-            MultiBuffer::build_simple("one two three\nfour five six\nseven eight nine\nten\n", cx);
         let settings = Settings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| {
-            build_editor(buffer.clone(), settings, cx)
+            build_editor(MultiBuffer::build_simple("", cx), settings, cx)
         });
 
         view.update(cx, |view, cx| {
+            view.set_text("one two three\nfour five six\nseven eight nine\nten\n", cx);
             view.select_display_ranges(
                 &[
                     // an empty selection - the preceding character is deleted
@@ -7222,12 +7243,28 @@ mod tests {
                 cx,
             );
             view.backspace(&Backspace, cx);
-        });
+            assert_eq!(view.text(cx), "oe two three\nfou five six\nseven ten\n");
 
-        assert_eq!(
-            buffer.read(cx).read(cx).text(),
-            "oe two three\nfou five six\nseven ten\n"
-        );
+            view.set_text("    one\n        two\n        three\n   four", cx);
+            view.select_display_ranges(
+                &[
+                    // cursors at the the end of leading indent - last indent is deleted
+                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
+                    DisplayPoint::new(1, 8)..DisplayPoint::new(1, 8),
+                    // cursors inside leading indent - overlapping indent deletions are coalesced
+                    DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4),
+                    DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
+                    DisplayPoint::new(2, 6)..DisplayPoint::new(2, 6),
+                    // cursor at the beginning of a line - preceding newline is deleted
+                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                    // selection inside leading indent - only the selected character is deleted
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(3, 3),
+                ],
+                cx,
+            );
+            view.backspace(&Backspace, cx);
+            assert_eq!(view.text(cx), "one\n    two\n  three  four");
+        });
     }
 
     #[gpui::test]

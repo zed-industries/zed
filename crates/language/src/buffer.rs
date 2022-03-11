@@ -47,9 +47,6 @@ lazy_static! {
     static ref QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Default::default();
 }
 
-// TODO - Make this configurable
-const INDENT_SIZE: u32 = 4;
-
 pub struct Buffer {
     text: TextBuffer,
     file: Option<Box<dyn File>>,
@@ -70,6 +67,7 @@ pub struct Buffer {
     file_update_count: usize,
     completion_triggers: Vec<String>,
     deferred_ops: OperationQueue<Operation>,
+    indent_size: u32,
 }
 
 pub struct BufferSnapshot {
@@ -81,9 +79,9 @@ pub struct BufferSnapshot {
     file_update_count: usize,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     selections_update_count: usize,
-    is_parsing: bool,
     language: Option<Arc<Language>>,
     parse_count: usize,
+    indent_size: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -417,6 +415,8 @@ impl Buffer {
             file_update_count: 0,
             completion_triggers: Default::default(),
             deferred_ops: OperationQueue::new(),
+            // TODO: make this configurable
+            indent_size: 4,
         }
     }
 
@@ -429,10 +429,10 @@ impl Buffer {
             diagnostics: self.diagnostics.clone(),
             diagnostics_update_count: self.diagnostics_update_count,
             file_update_count: self.file_update_count,
-            is_parsing: self.parsing_in_background,
             language: self.language.clone(),
             parse_count: self.parse_count,
             selections_update_count: self.selections_update_count,
+            indent_size: self.indent_size,
         }
     }
 
@@ -769,7 +769,11 @@ impl Buffer {
                                     .before_edit
                                     .indent_column_for_line(suggestion.basis_row)
                             });
-                        let delta = if suggestion.indent { INDENT_SIZE } else { 0 };
+                        let delta = if suggestion.indent {
+                            snapshot.indent_size
+                        } else {
+                            0
+                        };
                         old_suggestions.insert(
                             *old_to_new_rows.get(&old_row).unwrap(),
                             indentation_basis + delta,
@@ -788,7 +792,11 @@ impl Buffer {
                         .into_iter()
                         .flatten();
                     for (new_row, suggestion) in new_edited_row_range.zip(suggestions) {
-                        let delta = if suggestion.indent { INDENT_SIZE } else { 0 };
+                        let delta = if suggestion.indent {
+                            snapshot.indent_size
+                        } else {
+                            0
+                        };
                         let new_indentation = indent_columns
                             .get(&suggestion.basis_row)
                             .copied()
@@ -820,7 +828,11 @@ impl Buffer {
                             .into_iter()
                             .flatten();
                         for (row, suggestion) in inserted_row_range.zip(suggestions) {
-                            let delta = if suggestion.indent { INDENT_SIZE } else { 0 };
+                            let delta = if suggestion.indent {
+                                snapshot.indent_size
+                            } else {
+                                0
+                            };
                             let new_indentation = indent_columns
                                 .get(&suggestion.basis_row)
                                 .copied()
@@ -1869,6 +1881,10 @@ impl BufferSnapshot {
     pub fn file_update_count(&self) -> usize {
         self.file_update_count
     }
+
+    pub fn indent_size(&self) -> u32 {
+        self.indent_size
+    }
 }
 
 impl Clone for BufferSnapshot {
@@ -1882,9 +1898,9 @@ impl Clone for BufferSnapshot {
             selections_update_count: self.selections_update_count,
             diagnostics_update_count: self.diagnostics_update_count,
             file_update_count: self.file_update_count,
-            is_parsing: self.is_parsing,
             language: self.language.clone(),
             parse_count: self.parse_count,
+            indent_size: self.indent_size,
         }
     }
 }

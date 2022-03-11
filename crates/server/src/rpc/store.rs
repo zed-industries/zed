@@ -25,6 +25,7 @@ pub struct Project {
     pub host_user_id: UserId,
     pub share: Option<ProjectShare>,
     pub worktrees: HashMap<u64, Worktree>,
+    pub language_servers: Vec<proto::LanguageServer>,
 }
 
 pub struct Worktree {
@@ -240,6 +241,7 @@ impl Store {
                 host_user_id,
                 share: None,
                 worktrees: Default::default(),
+                language_servers: Default::default(),
             },
         );
         self.next_project_id += 1;
@@ -436,6 +438,24 @@ impl Store {
         }
 
         Err(anyhow!("no such worktree"))?
+    }
+
+    pub fn start_language_server(
+        &mut self,
+        project_id: u64,
+        connection_id: ConnectionId,
+        language_server: proto::LanguageServer,
+    ) -> tide::Result<Vec<ConnectionId>> {
+        let project = self
+            .projects
+            .get_mut(&project_id)
+            .ok_or_else(|| anyhow!("no such project"))?;
+        if project.host_connection_id == connection_id {
+            project.language_servers.push(language_server);
+            return Ok(project.connection_ids());
+        }
+
+        Err(anyhow!("no such project"))?
     }
 
     pub fn join_project(

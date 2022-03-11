@@ -6,7 +6,7 @@ mod wrap_map;
 use crate::{Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
-use fold_map::{FoldMap, ToFoldPoint as _};
+use fold_map::FoldMap;
 use gpui::{
     fonts::{FontId, HighlightStyle},
     Entity, ModelContext, ModelHandle,
@@ -223,7 +223,7 @@ impl DisplaySnapshot {
 
     pub fn prev_line_boundary(&self, mut point: Point) -> (Point, DisplayPoint) {
         loop {
-            let mut fold_point = point.to_fold_point(&self.folds_snapshot, Bias::Left);
+            let mut fold_point = self.folds_snapshot.to_fold_point(point, Bias::Left);
             *fold_point.column_mut() = 0;
             point = fold_point.to_buffer_point(&self.folds_snapshot);
 
@@ -239,7 +239,7 @@ impl DisplaySnapshot {
 
     pub fn next_line_boundary(&self, mut point: Point) -> (Point, DisplayPoint) {
         loop {
-            let mut fold_point = point.to_fold_point(&self.folds_snapshot, Bias::Right);
+            let mut fold_point = self.folds_snapshot.to_fold_point(point, Bias::Right);
             *fold_point.column_mut() = self.folds_snapshot.line_len(fold_point.row());
             point = fold_point.to_buffer_point(&self.folds_snapshot);
 
@@ -254,7 +254,7 @@ impl DisplaySnapshot {
     }
 
     fn point_to_display_point(&self, point: Point, bias: Bias) -> DisplayPoint {
-        let fold_point = point.to_fold_point(&self.folds_snapshot, bias);
+        let fold_point = self.folds_snapshot.to_fold_point(point, bias);
         let tab_point = self.tabs_snapshot.to_tab_point(fold_point);
         let wrap_point = self.wraps_snapshot.from_tab_point(tab_point);
         let block_point = self.blocks_snapshot.to_block_point(wrap_point);

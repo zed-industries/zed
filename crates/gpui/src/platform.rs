@@ -19,7 +19,7 @@ use crate::{
 };
 use anyhow::Result;
 use async_task::Runnable;
-pub use event::Event;
+pub use event::{Event, NavigationDirection};
 use postage::oneshot;
 use std::{
     any::Any,

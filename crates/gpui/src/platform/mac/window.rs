@@ -96,6 +96,22 @@ unsafe fn build_classes() {
             handle_view_event as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
+            sel!(rightMouseDown:),
+            handle_view_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(rightMouseUp:),
+            handle_view_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(otherMouseDown:),
+            handle_view_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(otherMouseUp:),
+            handle_view_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
             sel!(mouseMoved:),
             handle_view_event as extern "C" fn(&Object, Sel, id),
         );

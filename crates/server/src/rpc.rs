@@ -83,9 +83,9 @@ impl Server {
             .add_request_handler(Server::register_worktree)
             .add_message_handler(Server::unregister_worktree)
             .add_request_handler(Server::update_worktree)
+            .add_message_handler(Server::start_language_server)
+            .add_message_handler(Server::update_language_server)
             .add_message_handler(Server::update_diagnostic_summary)
-            .add_message_handler(Server::disk_based_diagnostics_updating)
-            .add_message_handler(Server::disk_based_diagnostics_updated)
             .add_request_handler(Server::forward_project_request::<proto::GetDefinition>)
             .add_request_handler(Server::forward_project_request::<proto::GetReferences>)
             .add_request_handler(Server::forward_project_request::<proto::SearchProject>)
@@ -386,6 +386,7 @@ impl Server {
                     worktrees,
                     replica_id: joined.replica_id as u32,
                     collaborators,
+                    language_servers: joined.project.language_servers.clone(),
                 };
                 let connection_ids = joined.project.connection_ids();
                 let contact_user_ids = joined.project.authorized_user_ids();
@@ -535,13 +536,19 @@ impl Server {
         Ok(())
     }
 
-    async fn disk_based_diagnostics_updating(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::DiskBasedDiagnosticsUpdating>,
+    async fn start_language_server(
+        mut self: Arc<Server>,
+        request: TypedEnvelope<proto::StartLanguageServer>,
     ) -> tide::Result<()> {
-        let receiver_ids = self
-            .state()
-            .project_connection_ids(request.payload.project_id, request.sender_id)?;
+        let receiver_ids = self.state_mut().start_language_server(
+            request.payload.project_id,
+            request.sender_id,
+            request
+                .payload
+                .server
+                .clone()
+                .ok_or_else(|| anyhow!("invalid language server"))?,
+        )?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
@@ -549,9 +556,9 @@ impl Server {
         Ok(())
     }
 
-    async fn disk_based_diagnostics_updated(
+    async fn update_language_server(
         self: Arc<Server>,
-        request: TypedEnvelope<proto::DiskBasedDiagnosticsUpdated>,
+        request: TypedEnvelope<proto::UpdateLanguageServer>,
     ) -> tide::Result<()> {
         let receiver_ids = self
             .state()
