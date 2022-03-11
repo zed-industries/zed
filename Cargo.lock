@@ -5853,6 +5853,7 @@ dependencies = [
  "project",
  "serde",
  "serde_json",
+ "smallvec",
  "theme",
  "util",
 ]
