@@ -1,4 +1,8 @@
-use crate::{geometry::vector::vec2f, keymap::Keystroke, platform::Event};
+use crate::{
+    geometry::vector::vec2f,
+    keymap::Keystroke,
+    platform::{Event, NavigationDirection},
+};
 use cocoa::{
     appkit::{NSEvent, NSEventModifierFlags, NSEventType},
     base::{id, nil, YES},
@@ -125,6 +129,64 @@ impl Event {
                     window_height - native_event.locationInWindow().y as f32,
                 ),
             }),
+            NSEventType::NSRightMouseDown => {
+                let modifiers = native_event.modifierFlags();
+                window_height.map(|window_height| Self::RightMouseDown {
+                    position: vec2f(
+                        native_event.locationInWindow().x as f32,
+                        window_height - native_event.locationInWindow().y as f32,
+                    ),
+                    ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
+                    alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
+                    shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
+                    cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
+                    click_count: native_event.clickCount() as usize,
+                })
+            }
+            NSEventType::NSRightMouseUp => window_height.map(|window_height| Self::RightMouseUp {
+                position: vec2f(
+                    native_event.locationInWindow().x as f32,
+                    window_height - native_event.locationInWindow().y as f32,
+                ),
+            }),
+            NSEventType::NSOtherMouseDown => {
+                let direction = match native_event.buttonNumber() {
+                    3 => NavigationDirection::Back,
+                    4 => NavigationDirection::Forward,
+                    // Other mouse buttons aren't tracked currently
+                    _ => return None,
+                };
+
+                let modifiers = native_event.modifierFlags();
+                window_height.map(|window_height| Self::NavigateMouseDown {
+                    position: vec2f(
+                        native_event.locationInWindow().x as f32,
+                        window_height - native_event.locationInWindow().y as f32,
+                    ),
+                    direction,
+                    ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
+                    alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
+                    shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
+                    cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
+                    click_count: native_event.clickCount() as usize,
+                })
+            }
+            NSEventType::NSOtherMouseUp => {
+                let direction = match native_event.buttonNumber() {
+                    3 => NavigationDirection::Back,
+                    4 => NavigationDirection::Forward,
+                    // Other mouse buttons aren't tracked currently
+                    _ => return None,
+                };
+
+                window_height.map(|window_height| Self::NavigateMouseUp {
+                    position: vec2f(
+                        native_event.locationInWindow().x as f32,
+                        window_height - native_event.locationInWindow().y as f32,
+                    ),
+                    direction,
+                })
+            }
             NSEventType::NSLeftMouseDragged => {
                 window_height.map(|window_height| Self::LeftMouseDragged {
                     position: vec2f(
