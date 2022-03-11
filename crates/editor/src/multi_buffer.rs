@@ -36,6 +36,7 @@ pub type ExcerptId = Locator;
 pub struct MultiBuffer {
     snapshot: RefCell<MultiBufferSnapshot>,
     buffers: RefCell<HashMap<usize, BufferState>>,
+    used_excerpt_ids: SumTree<Locator>,
     subscriptions: Topic,
     singleton: bool,
     replica_id: ReplicaId,
@@ -155,6 +156,7 @@ impl MultiBuffer {
         Self {
             snapshot: Default::default(),
             buffers: Default::default(),
+            used_excerpt_ids: Default::default(),
             subscriptions: Default::default(),
             singleton: false,
             replica_id,
@@ -192,6 +194,7 @@ impl MultiBuffer {
         Self {
             snapshot: RefCell::new(self.snapshot.borrow().clone()),
             buffers: RefCell::new(buffers),
+            used_excerpt_ids: Default::default(),
             subscriptions: Default::default(),
             singleton: self.singleton,
             replica_id: self.replica_id,
@@ -759,13 +762,18 @@ impl MultiBuffer {
         );
 
         let mut next_id = ExcerptId::max();
-        if let Some(next_excerpt) = cursor.item() {
-            next_id = next_excerpt.id.clone();
+        {
+            let mut used_cursor = self.used_excerpt_ids.cursor::<Locator>();
+            used_cursor.seek(&prev_id, Bias::Right, &());
+            if let Some(used_id) = used_cursor.item() {
+                next_id = used_id.clone();
+            }
         }
 
         let mut ids = Vec::new();
         while let Some(range) = ranges.next() {
             let id = ExcerptId::between(&prev_id, &next_id);
+            self.used_excerpt_ids.insert_or_replace(id.clone(), &());
             if let Err(ix) = buffer_state.excerpts.binary_search(&id) {
                 buffer_state.excerpts.insert(ix, id.clone());
             }
