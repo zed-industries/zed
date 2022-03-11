@@ -1,11 +1,16 @@
 use crate::{ItemViewHandle, Settings, StatusItemView};
 use futures::StreamExt;
+use gpui::AppContext;
 use gpui::{
-    action, elements::*, platform::CursorStyle, Entity, MutableAppContext, RenderContext, View,
-    ViewContext,
+    action, elements::*, platform::CursorStyle, Entity, ModelHandle, MutableAppContext,
+    RenderContext, View, ViewContext,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
 use postage::watch;
+use project::{LanguageServerProgress, Project};
+use smallvec::SmallVec;
+use std::cmp::Reverse;
+use std::fmt::Write;
 use std::sync::Arc;
 
 action!(DismissErrorMessage);
@@ -15,6 +20,7 @@ pub struct LspStatus {
     checking_for_update: Vec<String>,
     downloading: Vec<String>,
     failed: Vec<String>,
+    project: ModelHandle<Project>,
 }
 
 pub fn init(cx: &mut MutableAppContext) {
@@ -23,6 +29,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
 impl LspStatus {
     pub fn new(
+        project: &ModelHandle<Project>,
         languages: Arc<LanguageRegistry>,
         settings_rx: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self>,
@@ -62,17 +69,44 @@ impl LspStatus {
             }
         })
         .detach();
+        cx.observe(project, |_, _, cx| cx.notify()).detach();
+
         Self {
             settings_rx,
             checking_for_update: Default::default(),
             downloading: Default::default(),
             failed: Default::default(),
+            project: project.clone(),
         }
     }
 
     fn dismiss_error_message(&mut self, _: &DismissErrorMessage, cx: &mut ViewContext<Self>) {
         self.failed.clear();
         cx.notify();
+    }
+
+    fn pending_language_server_work<'a>(
+        &self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = (&'a str, &'a str, &'a LanguageServerProgress)> {
+        self.project
+            .read(cx)
+            .language_server_statuses()
+            .rev()
+            .filter_map(|status| {
+                if status.pending_work.is_empty() {
+                    None
+                } else {
+                    let mut pending_work = status
+                        .pending_work
+                        .iter()
+                        .map(|(token, progress)| (status.name.as_str(), token.as_str(), progress))
+                        .collect::<SmallVec<[_; 4]>>();
+                    pending_work.sort_by_key(|(_, _, progress)| Reverse(progress.last_update_at));
+                    Some(pending_work)
+                }
+            })
+            .flatten()
     }
 }
 
@@ -87,7 +121,29 @@ impl View for LspStatus {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings_rx.borrow().theme;
-        if !self.downloading.is_empty() {
+
+        let mut pending_work = self.pending_language_server_work(cx);
+        if let Some((lang_server_name, progress_token, progress)) = pending_work.next() {
+            let mut message = lang_server_name.to_string();
+
+            message.push_str(": ");
+            if let Some(progress_message) = progress.message.as_ref() {
+                message.push_str(progress_message);
+            } else {
+                message.push_str(progress_token);
+            }
+
+            if let Some(percentage) = progress.percentage {
+                write!(&mut message, " ({}%)", percentage).unwrap();
+            }
+
+            let additional_work_count = pending_work.count();
+            if additional_work_count > 0 {
+                write!(&mut message, " + {} more", additional_work_count).unwrap();
+            }
+
+            Label::new(message, theme.workspace.status_bar.lsp_message.clone()).boxed()
+        } else if !self.downloading.is_empty() {
             Label::new(
                 format!(
                     "Downloading {} language server{}...",
@@ -112,6 +168,7 @@ impl View for LspStatus {
             )
             .boxed()
         } else if !self.failed.is_empty() {
+            drop(pending_work);
             MouseEventHandler::new::<Self, _, _>(0, cx, |_, _| {
                 Label::new(
                     format!(

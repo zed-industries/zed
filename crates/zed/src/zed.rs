@@ -101,6 +101,7 @@ pub fn build_workspace(
     });
     let lsp_status = cx.add_view(|cx| {
         workspace::lsp_status::LspStatus::new(
+            workspace.project(),
             app_state.languages.clone(),
             app_state.settings.clone(),
             cx,
