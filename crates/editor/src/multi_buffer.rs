@@ -1998,10 +1998,9 @@ impl MultiBufferSnapshot {
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
         if anchor.excerpt_id == ExcerptId::min() || anchor.excerpt_id == ExcerptId::max() {
             true
-        } else if let Some((buffer_id, buffer_snapshot)) =
-            self.buffer_snapshot_for_excerpt(&anchor.excerpt_id)
-        {
-            anchor.buffer_id == Some(buffer_id) && buffer_snapshot.can_resolve(&anchor.text_anchor)
+        } else if let Some(excerpt) = self.excerpt(&anchor.excerpt_id) {
+            anchor.buffer_id == Some(excerpt.buffer_id)
+                && excerpt.buffer.can_resolve(&anchor.text_anchor)
         } else {
             false
         }
@@ -2231,15 +2230,12 @@ impl MultiBufferSnapshot {
         ))
     }
 
-    fn buffer_snapshot_for_excerpt<'a>(
-        &'a self,
-        excerpt_id: &'a ExcerptId,
-    ) -> Option<(usize, &'a BufferSnapshot)> {
+    fn excerpt<'a>(&'a self, excerpt_id: &'a ExcerptId) -> Option<&'a Excerpt> {
         let mut cursor = self.excerpts.cursor::<Option<&ExcerptId>>();
         cursor.seek(&Some(excerpt_id), Bias::Left, &());
         if let Some(excerpt) = cursor.item() {
             if excerpt.id == *excerpt_id {
-                return Some((excerpt.buffer_id, &excerpt.buffer));
+                return Some(excerpt);
             }
         }
         None
