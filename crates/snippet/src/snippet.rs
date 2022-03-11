@@ -189,10 +189,14 @@ mod tests {
     }
 
     #[test]
-    fn test_snippet_parsing_with_escaped_dollar_sign() {
+    fn test_snippet_parsing_with_escaped_chars() {
         let snippet = Snippet::parse("\"\\$schema\": $1").unwrap();
         assert_eq!(snippet.text, "\"$schema\": ");
         assert_eq!(tabstops(&snippet), &[vec![11..11]]);
+
+        let snippet = Snippet::parse("{a\\}").unwrap();
+        assert_eq!(snippet.text, "{a}");
+        assert_eq!(tabstops(&snippet), &[vec![3..3]]);
     }
 
     fn tabstops(snippet: &Snippet) -> Vec<Vec<Range<isize>>> {
