@@ -1084,9 +1084,9 @@ impl MutableAppContext {
         })
     }
 
-    pub fn global_subscribe<E, F>(&mut self, mut callback: F) -> Subscription
+    pub fn subscribe_global<E, F>(&mut self, mut callback: F) -> Subscription
     where
-        E: Any + Copy,
+        E: Any,
         F: 'static + FnMut(&E, &mut Self),
     {
         let id = post_inc(&mut self.next_subscription_id);
@@ -1096,18 +1096,18 @@ impl MutableAppContext {
             .entry(type_id)
             .or_default()
             .insert(
-                id, 
+                id,
                 Box::new(move |payload, cx| {
                     let payload = payload.downcast_ref().expect("downcast is type safe");
                     callback(payload, cx)
-                }));
+                }),
+            );
         Subscription::GlobalSubscription {
             id,
             type_id,
-            subscriptions: Some(Arc::downgrade(&self.global_subscriptions))
+            subscriptions: Some(Arc::downgrade(&self.global_subscriptions)),
         }
     }
-
 
     pub fn observe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
     where
@@ -3817,7 +3817,8 @@ pub enum Subscription {
     GlobalSubscription {
         id: usize,
         type_id: TypeId,
-        subscriptions: Option<Weak<Mutex<HashMap<TypeId, BTreeMap<usize, GlobalSubscriptionCallback>>>>>,
+        subscriptions:
+            Option<Weak<Mutex<HashMap<TypeId, BTreeMap<usize, GlobalSubscriptionCallback>>>>>,
     },
     Observation {
         id: usize,

@@ -1511,7 +1511,7 @@ fn open(action: &Open, cx: &mut MutableAppContext) {
     .detach();
 }
 
-pub struct WorkspaceBuilt(WeakViewHandle<Workspace>);
+pub struct WorkspaceCreated(WeakViewHandle<Workspace>);
 
 pub fn open_paths(
     abs_paths: &[PathBuf],
@@ -1549,7 +1549,7 @@ pub fn open_paths(
             );
             (app_state.build_workspace)(project, &app_state, cx)
         });
-        cx.emit_global(WorkspaceBuilt(workspace.downgrade()));
+        cx.emit_global(WorkspaceCreated(workspace.downgrade()));
         workspace
     });
 
@@ -1588,7 +1588,7 @@ pub fn join_project(
             let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
                 (app_state.build_workspace)(project, &app_state, cx)
             });
-            cx.emit_global(WorkspaceBuilt(workspace.downgrade()));
+            cx.emit_global(WorkspaceCreated(workspace.downgrade()));
             workspace
         }))
     })
@@ -1605,6 +1605,6 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
         );
         (app_state.build_workspace)(project, &app_state, cx)
     });
-    cx.emit_global(WorkspaceBuilt(workspace.downgrade()));
+    cx.emit_global(WorkspaceCreated(workspace.downgrade()));
     cx.dispatch_action(window_id, vec![workspace.id()], &OpenNew(app_state.clone()));
 }
