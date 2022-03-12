@@ -96,6 +96,20 @@ pub fn build_workspace(
     };
     let mut workspace = Workspace::new(&workspace_params, cx);
     let project = workspace.project().clone();
+
+    project.update(cx, |project, _| {
+        project.set_language_server_settings(serde_json::json!({
+            "json": {
+                "schemas": [
+                    {
+                        "fileMatch": "**/.zed/settings.json",
+                        "schema": Settings::file_json_schema(),
+                    }
+                ]
+            }
+        }));
+    });
+
     workspace.left_sidebar_mut().add_item(
         "icons/folder-tree-16.svg",
         ProjectPanel::new(project, cx).into(),

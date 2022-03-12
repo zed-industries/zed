@@ -95,8 +95,6 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn initialization_options(&self) -> Option<Value> {
         None
     }
-
-    fn register_handlers(&self, _: &mut lsp::LanguageServer) {}
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -321,14 +319,13 @@ impl LanguageRegistry {
 
             let server_binary_path = server_binary_path.await?;
             let server_args = adapter.server_args();
-            let mut server = lsp::LanguageServer::new(
+            let server = lsp::LanguageServer::new(
                 &server_binary_path,
                 server_args,
                 &root_path,
                 adapter.initialization_options(),
                 background,
             )?;
-            adapter.register_handlers(&mut server);
             Ok(server)
         }))
     }

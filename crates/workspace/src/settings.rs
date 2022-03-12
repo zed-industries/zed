@@ -93,9 +93,8 @@ impl SettingsFile {
 }
 
 impl Settings {
-    pub fn file_json_schema() -> String {
-        let schema = schema_for!(SettingsFileContent);
-        serde_json::to_string(&schema).unwrap()
+    pub fn file_json_schema() -> serde_json::Value {
+        serde_json::to_value(schema_for!(SettingsFileContent)).unwrap()
     }
 
     pub fn from_files(
