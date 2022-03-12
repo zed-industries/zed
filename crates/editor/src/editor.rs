@@ -2409,6 +2409,10 @@ impl Editor {
     }
 
     fn refresh_document_highlights(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
+        if self.pending_rename.is_some() {
+            return None;
+        }
+
         let project = self.project.as_ref()?;
         let buffer = self.buffer.read(cx);
         let newest_selection = self.newest_anchor_selection().clone();
@@ -4533,16 +4537,21 @@ impl Editor {
             )
         });
 
-        Some(cx.spawn(|workspace, cx| async move {
+        Some(cx.spawn(|workspace, mut cx| async move {
             let project_transaction = rename.await?;
             Self::open_project_transaction(
-                editor,
+                editor.clone(),
                 workspace,
                 project_transaction,
                 format!("Rename: {} → {}", old_name, new_name),
-                cx,
+                cx.clone(),
             )
-            .await
+            .await?;
+
+            editor.update(&mut cx, |editor, cx| {
+                editor.refresh_document_highlights(cx);
+            });
+            Ok(())
         }))
     }
 
