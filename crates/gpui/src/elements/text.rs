@@ -67,12 +67,12 @@ impl Element for Text {
         let mut highlight_ranges = self.highlights.iter().peekable();
         let chunks = std::iter::from_fn(|| {
             let result;
-            if let Some((range, highlight)) = highlight_ranges.peek() {
+            if let Some((range, highlight_style)) = highlight_ranges.peek() {
                 if offset < range.start {
                     result = Some((&self.text[offset..range.start], None));
                     offset = range.start;
                 } else {
-                    result = Some((&self.text[range.clone()], Some(*highlight)));
+                    result = Some((&self.text[range.clone()], Some(*highlight_style)));
                     highlight_ranges.next();
                     offset = range.end;
                 }
@@ -198,23 +198,23 @@ impl Element for Text {
 /// Perform text layout on a series of highlighted chunks of text.
 pub fn layout_highlighted_chunks<'a>(
     chunks: impl Iterator<Item = (&'a str, Option<HighlightStyle>)>,
-    style: &'a TextStyle,
+    text_style: &'a TextStyle,
     text_layout_cache: &'a TextLayoutCache,
     font_cache: &'a Arc<FontCache>,
     max_line_len: usize,
     max_line_count: usize,
 ) -> Vec<Line> {
     let mut layouts = Vec::with_capacity(max_line_count);
-    let mut prev_font_properties = style.font_properties.clone();
-    let mut prev_font_id = style.font_id;
+    let mut prev_font_properties = text_style.font_properties.clone();
+    let mut prev_font_id = text_style.font_id;
     let mut line = String::new();
     let mut styles = Vec::new();
     let mut row = 0;
     let mut line_exceeded_max_len = false;
-    for (chunk, highlight_style) in chunks.chain([("\n", None)]) {
+    for (chunk, highlight_style) in chunks.chain([("\n", Default::default())]) {
         for (ix, mut line_chunk) in chunk.split('\n').enumerate() {
             if ix > 0 {
-                layouts.push(text_layout_cache.layout_str(&line, style.font_size, &styles));
+                layouts.push(text_layout_cache.layout_str(&line, text_style.font_size, &styles));
                 line.clear();
                 styles.clear();
                 row += 1;
@@ -225,15 +225,30 @@ pub fn layout_highlighted_chunks<'a>(
             }
 
             if !line_chunk.is_empty() && !line_exceeded_max_len {
-                let highlight_style = highlight_style.unwrap_or(style.clone().into());
+                let font_properties;
+                let mut color;
+                let underline;
+
+                if let Some(highlight_style) = highlight_style {
+                    font_properties = highlight_style.font_properties;
+                    color = Color::blend(highlight_style.color, text_style.color);
+                    if let Some(fade) = highlight_style.fade_out {
+                        color.fade_out(fade);
+                    }
+                    underline = highlight_style.underline;
+                } else {
+                    font_properties = text_style.font_properties;
+                    color = text_style.color;
+                    underline = None;
+                }
 
                 // Avoid a lookup if the font properties match the previous ones.
-                let font_id = if highlight_style.font_properties == prev_font_properties {
+                let font_id = if font_properties == prev_font_properties {
                     prev_font_id
                 } else {
                     font_cache
-                        .select_font(style.font_family_id, &highlight_style.font_properties)
-                        .unwrap_or(style.font_id)
+                        .select_font(text_style.font_family_id, &font_properties)
+                        .unwrap_or(text_style.font_id)
                 };
 
                 if line.len() + line_chunk.len() > max_line_len {
@@ -250,12 +265,12 @@ pub fn layout_highlighted_chunks<'a>(
                     line_chunk.len(),
                     RunStyle {
                         font_id,
-                        color: highlight_style.color,
-                        underline: highlight_style.underline,
+                        color,
+                        underline,
                     },
                 ));
                 prev_font_id = font_id;
-                prev_font_properties = highlight_style.font_properties;
+                prev_font_properties = font_properties;
             }
         }
     }

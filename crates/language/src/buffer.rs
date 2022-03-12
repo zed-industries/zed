@@ -12,7 +12,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use futures::FutureExt as _;
-use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
+use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use similar::{ChangeTag, TextDiff};
@@ -246,7 +246,8 @@ pub struct BufferChunks<'a> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Chunk<'a> {
     pub text: &'a str,
-    pub highlight_id: Option<HighlightId>,
+    pub syntax_highlight_id: Option<HighlightId>,
+    pub highlight_style: Option<HighlightStyle>,
     pub diagnostic: Option<DiagnosticSeverity>,
 }
 
@@ -1728,7 +1729,7 @@ impl BufferSnapshot {
                             offset += chunk.text.len();
                         }
                         let style = chunk
-                            .highlight_id
+                            .syntax_highlight_id
                             .zip(theme)
                             .and_then(|(highlight, theme)| highlight.style(theme));
                         if let Some(style) = style {
@@ -2102,7 +2103,8 @@ impl<'a> Iterator for BufferChunks<'a> {
 
             Some(Chunk {
                 text: slice,
-                highlight_id,
+                syntax_highlight_id: highlight_id,
+                highlight_style: None,
                 diagnostic: self.current_diagnostic_severity(),
             })
         } else {

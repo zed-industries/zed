@@ -126,7 +126,7 @@ impl GoToLine {
                         let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
                         let display_point = point.to_display_point(&snapshot);
                         let row = display_point.row();
-                        active_editor.set_highlighted_rows(Some(row..row + 1));
+                        active_editor.highlight_rows(Some(row..row + 1));
                         active_editor.request_autoscroll(Autoscroll::Center, cx);
                     });
                     cx.notify();
@@ -143,7 +143,7 @@ impl Entity for GoToLine {
     fn release(&mut self, cx: &mut MutableAppContext) {
         let scroll_position = self.prev_scroll_position.take();
         self.active_editor.update(cx, |editor, cx| {
-            editor.set_highlighted_rows(None);
+            editor.highlight_rows(None);
             if let Some(scroll_position) = scroll_position {
                 editor.set_scroll_position(scroll_position, cx);
             }

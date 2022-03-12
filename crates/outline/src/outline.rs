@@ -186,7 +186,7 @@ impl OutlineView {
                 let end = outline_item.range.end.to_point(&buffer_snapshot);
                 let display_rows = start.to_display_point(&snapshot).row()
                     ..end.to_display_point(&snapshot).row() + 1;
-                active_editor.set_highlighted_rows(Some(display_rows));
+                active_editor.highlight_rows(Some(display_rows));
                 active_editor.request_autoscroll(Autoscroll::Center, cx);
             });
         }
@@ -207,7 +207,7 @@ impl OutlineView {
 
     fn restore_active_editor(&mut self, cx: &mut MutableAppContext) {
         self.active_editor.update(cx, |editor, cx| {
-            editor.set_highlighted_rows(None);
+            editor.highlight_rows(None);
             if let Some(scroll_position) = self.prev_scroll_position {
                 editor.set_scroll_position(scroll_position, cx);
             }

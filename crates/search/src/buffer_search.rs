@@ -151,7 +151,9 @@ impl Toolbar for SearchBar {
         self.dismissed = true;
         for (editor, _) in &self.editors_with_matches {
             if let Some(editor) = editor.upgrade(cx) {
-                editor.update(cx, |editor, cx| editor.clear_highlighted_ranges::<Self>(cx));
+                editor.update(cx, |editor, cx| {
+                    editor.clear_background_highlights::<Self>(cx)
+                });
             }
         }
     }
@@ -397,7 +399,9 @@ impl SearchBar {
                 if Some(&editor) == self.active_editor.as_ref() {
                     active_editor_matches = Some((editor.downgrade(), ranges));
                 } else {
-                    editor.update(cx, |editor, cx| editor.clear_highlighted_ranges::<Self>(cx));
+                    editor.update(cx, |editor, cx| {
+                        editor.clear_background_highlights::<Self>(cx)
+                    });
                 }
             }
         }
@@ -410,7 +414,9 @@ impl SearchBar {
         if let Some(editor) = self.active_editor.as_ref() {
             if query.is_empty() {
                 self.active_match_index.take();
-                editor.update(cx, |editor, cx| editor.clear_highlighted_ranges::<Self>(cx));
+                editor.update(cx, |editor, cx| {
+                    editor.clear_background_highlights::<Self>(cx)
+                });
             } else {
                 let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
                 let query = if self.regex {
@@ -480,7 +486,7 @@ impl SearchBar {
                                         }
                                     }
 
-                                    editor.highlight_ranges::<Self>(
+                                    editor.highlight_background::<Self>(
                                         ranges,
                                         theme.match_background,
                                         cx,
@@ -557,7 +563,7 @@ mod tests {
         editor.next_notification(&cx).await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
-                editor.all_highlighted_ranges(cx),
+                editor.all_background_highlights(cx),
                 &[
                     (
                         DisplayPoint::new(2, 17)..DisplayPoint::new(2, 19),
@@ -578,7 +584,7 @@ mod tests {
         editor.next_notification(&cx).await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
-                editor.all_highlighted_ranges(cx),
+                editor.all_background_highlights(cx),
                 &[(
                     DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),
                     Color::red(),
@@ -594,7 +600,7 @@ mod tests {
         editor.next_notification(&cx).await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
-                editor.all_highlighted_ranges(cx),
+                editor.all_background_highlights(cx),
                 &[
                     (
                         DisplayPoint::new(0, 24)..DisplayPoint::new(0, 26),
@@ -635,7 +641,7 @@ mod tests {
         editor.next_notification(&cx).await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
-                editor.all_highlighted_ranges(cx),
+                editor.all_background_highlights(cx),
                 &[
                     (
                         DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43),

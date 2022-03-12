@@ -216,25 +216,6 @@ impl MultiBuffer {
         this
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn build_simple(text: &str, cx: &mut gpui::MutableAppContext) -> ModelHandle<Self> {
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        cx.add_model(|cx| Self::singleton(buffer, cx))
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn build_random(
-        rng: &mut impl rand::Rng,
-        cx: &mut gpui::MutableAppContext,
-    ) -> ModelHandle<Self> {
-        cx.add_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0);
-            let mutation_count = rng.gen_range(1..=5);
-            multibuffer.randomly_edit_excerpts(rng, mutation_count, cx);
-            multibuffer
-        })
-    }
-
     pub fn replica_id(&self) -> ReplicaId {
         self.replica_id
     }
@@ -1192,6 +1173,23 @@ impl MultiBuffer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl MultiBuffer {
+    pub fn build_simple(text: &str, cx: &mut gpui::MutableAppContext) -> ModelHandle<Self> {
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+        cx.add_model(|cx| Self::singleton(buffer, cx))
+    }
+
+    pub fn build_random(
+        rng: &mut impl rand::Rng,
+        cx: &mut gpui::MutableAppContext,
+    ) -> ModelHandle<Self> {
+        cx.add_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(0);
+            let mutation_count = rng.gen_range(1..=5);
+            multibuffer.randomly_edit_excerpts(rng, mutation_count, cx);
+            multibuffer
+        })
+    }
+
     pub fn randomly_edit(
         &mut self,
         rng: &mut impl rand::Rng,
@@ -2313,6 +2311,15 @@ impl MultiBufferSnapshot {
                         })
                     })
             })
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl MultiBufferSnapshot {
+    pub fn random_byte_range(&self, start_offset: usize, rng: &mut impl rand::Rng) -> Range<usize> {
+        let end = self.clip_offset(rng.gen_range(start_offset..=self.len()), Bias::Right);
+        let start = self.clip_offset(rng.gen_range(start_offset..=end), Bias::Right);
+        start..end
     }
 }
 
