@@ -5737,9 +5737,7 @@ fn build_style(
         }
     };
 
-    if let Some(highlight_style) =
-        override_text_style.and_then(|build_style| dbg!(build_style(&style)))
-    {
+    if let Some(highlight_style) = override_text_style.and_then(|build_style| build_style(&style)) {
         if let Some(highlighted) = style
             .text
             .clone()
@@ -5747,7 +5745,6 @@ fn build_style(
             .log_err()
         {
             style.text = highlighted;
-            dbg!(&style.text);
         }
     }
 
