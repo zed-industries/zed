@@ -4560,25 +4560,32 @@ impl Editor {
         self.remove_blocks([rename.block_id].into_iter().collect(), cx);
         self.clear_text_highlights::<Rename>(cx);
 
-        let editor = rename.editor.read(cx);
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let selection = editor.newest_selection_with_snapshot::<usize>(&snapshot);
+        let selection_in_rename_editor = rename.editor.read(cx).newest_selection::<usize>(cx);
 
         // Update the selection to match the position of the selection inside
         // the rename editor.
+        let snapshot = self.buffer.read(cx).read(cx);
         let rename_range = rename.range.to_offset(&snapshot);
         let start = snapshot
-            .clip_offset(rename_range.start + selection.start, Bias::Left)
+            .clip_offset(
+                rename_range.start + selection_in_rename_editor.start,
+                Bias::Left,
+            )
             .min(rename_range.end);
         let end = snapshot
-            .clip_offset(rename_range.start + selection.end, Bias::Left)
+            .clip_offset(
+                rename_range.start + selection_in_rename_editor.end,
+                Bias::Left,
+            )
             .min(rename_range.end);
+        drop(snapshot);
+
         self.update_selections(
             vec![Selection {
                 id: self.newest_anchor_selection().id,
                 start,
                 end,
-                reversed: selection.reversed,
+                reversed: selection_in_rename_editor.reversed,
                 goal: SelectionGoal::None,
             }],
             None,
