@@ -910,32 +910,37 @@ impl Element for EditorElement {
                 &display_map,
             );
 
-            let local_selections = view
-                .local_selections_in_range(start_anchor.clone()..end_anchor.clone(), &display_map);
-            for selection in &local_selections {
-                let is_empty = selection.start == selection.end;
-                let selection_start = snapshot.prev_line_boundary(selection.start).1;
-                let selection_end = snapshot.next_line_boundary(selection.end).1;
-                for row in cmp::max(selection_start.row(), start_row)
-                    ..=cmp::min(selection_end.row(), end_row)
-                {
-                    let contains_non_empty_selection = active_rows.entry(row).or_insert(!is_empty);
-                    *contains_non_empty_selection |= !is_empty;
+            if view.show_local_selections {
+                let local_selections = view.local_selections_in_range(
+                    start_anchor.clone()..end_anchor.clone(),
+                    &display_map,
+                );
+                for selection in &local_selections {
+                    let is_empty = selection.start == selection.end;
+                    let selection_start = snapshot.prev_line_boundary(selection.start).1;
+                    let selection_end = snapshot.next_line_boundary(selection.end).1;
+                    for row in cmp::max(selection_start.row(), start_row)
+                        ..=cmp::min(selection_end.row(), end_row)
+                    {
+                        let contains_non_empty_selection =
+                            active_rows.entry(row).or_insert(!is_empty);
+                        *contains_non_empty_selection |= !is_empty;
+                    }
                 }
+                selections.insert(
+                    view.replica_id(cx),
+                    local_selections
+                        .into_iter()
+                        .map(|selection| crate::Selection {
+                            id: selection.id,
+                            goal: selection.goal,
+                            reversed: selection.reversed,
+                            start: selection.start.to_display_point(&display_map),
+                            end: selection.end.to_display_point(&display_map),
+                        })
+                        .collect(),
+                );
             }
-            selections.insert(
-                view.replica_id(cx),
-                local_selections
-                    .into_iter()
-                    .map(|selection| crate::Selection {
-                        id: selection.id,
-                        goal: selection.goal,
-                        reversed: selection.reversed,
-                        start: selection.start.to_display_point(&display_map),
-                        end: selection.end.to_display_point(&display_map),
-                    })
-                    .collect(),
-            );
 
             for (replica_id, selection) in display_map
                 .buffer_snapshot
@@ -1474,7 +1479,11 @@ mod tests {
         let (window_id, editor) = cx.add_window(Default::default(), |cx| {
             Editor::new(EditorMode::Full, buffer, None, settings.1, None, cx)
         });
-        let element = EditorElement::new(editor.downgrade(), editor.read(cx).style(cx), CursorShape::Bar);
+        let element = EditorElement::new(
+            editor.downgrade(),
+            editor.read(cx).style(cx),
+            CursorShape::Bar,
+        );
 
         let layouts = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);

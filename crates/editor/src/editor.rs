@@ -440,6 +440,7 @@ pub struct Editor {
     project: Option<ModelHandle<Project>>,
     focused: bool,
     show_local_cursors: bool,
+    show_local_selections: bool,
     blink_epoch: usize,
     blinking_paused: bool,
     mode: EditorMode,
@@ -921,6 +922,7 @@ impl Editor {
             autoscroll_request: None,
             focused: false,
             show_local_cursors: false,
+            show_local_selections: true,
             blink_epoch: 0,
             blinking_paused: false,
             mode,
@@ -4432,6 +4434,7 @@ impl Editor {
                     drop(buffer);
 
                     // Position the selection in the rename editor so that it matches the current selection.
+                    this.show_local_selections = false;
                     let rename_editor = cx.add_view(|cx| {
                         let mut editor = Editor::single_line(this.settings.clone(), None, cx);
                         if let Some(old_highlight_id) = old_highlight_id {
@@ -4552,6 +4555,7 @@ impl Editor {
         let rename = self.pending_rename.take()?;
         self.remove_blocks([rename.block_id].into_iter().collect(), cx);
         self.clear_text_highlights::<Rename>(cx);
+        self.show_local_selections = true;
 
         if moving_cursor {
             let cursor_in_rename_editor =
@@ -5664,7 +5668,6 @@ impl View for Editor {
 
     fn on_blur(&mut self, cx: &mut ViewContext<Self>) {
         self.focused = false;
-        self.show_local_cursors = false;
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
         self.hide_context_menu(cx);
