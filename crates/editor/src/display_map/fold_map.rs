@@ -241,6 +241,14 @@ impl FoldMap {
                 self.buffer.lock().len(),
                 "transform tree does not match buffer's length"
             );
+
+            let mut folds = self.folds.iter().peekable();
+            while let Some(fold) = folds.next() {
+                if let Some(next_fold) = folds.peek() {
+                    let comparison = fold.0.cmp(&next_fold.0, &self.buffer.lock()).unwrap();
+                    assert!(comparison.is_le());
+                }
+            }
         }
     }
 

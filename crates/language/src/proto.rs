@@ -4,7 +4,6 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
-use collections::HashSet;
 use lsp::DiagnosticSeverity;
 use rpc::proto;
 use std::{ops::Range, sync::Arc};
@@ -97,26 +96,6 @@ pub fn serialize_undo_map_entry(
                 count: *count,
             })
             .collect(),
-    }
-}
-
-pub fn serialize_buffer_fragment(fragment: &text::Fragment) -> proto::BufferFragment {
-    proto::BufferFragment {
-        replica_id: fragment.insertion_timestamp.replica_id as u32,
-        local_timestamp: fragment.insertion_timestamp.local,
-        lamport_timestamp: fragment.insertion_timestamp.lamport,
-        insertion_offset: fragment.insertion_offset as u32,
-        len: fragment.len as u32,
-        visible: fragment.visible,
-        deletions: fragment
-            .deletions
-            .iter()
-            .map(|clock| proto::VectorClockEntry {
-                replica_id: clock.replica_id as u32,
-                timestamp: clock.value,
-            })
-            .collect(),
-        max_undos: serialize_version(&fragment.max_undos),
     }
 }
 
@@ -288,29 +267,6 @@ pub fn deserialize_undo_map_entry(
             })
             .collect(),
     )
-}
-
-pub fn deserialize_buffer_fragment(
-    message: proto::BufferFragment,
-    ix: usize,
-    count: usize,
-) -> Fragment {
-    Fragment {
-        id: locator::Locator::from_index(ix, count),
-        insertion_timestamp: InsertionTimestamp {
-            replica_id: message.replica_id as ReplicaId,
-            local: message.local_timestamp,
-            lamport: message.lamport_timestamp,
-        },
-        insertion_offset: message.insertion_offset as usize,
-        len: message.len as usize,
-        visible: message.visible,
-        deletions: HashSet::from_iter(message.deletions.into_iter().map(|entry| clock::Local {
-            replica_id: entry.replica_id as ReplicaId,
-            value: entry.timestamp,
-        })),
-        max_undos: deserialize_version(message.max_undos),
-    }
 }
 
 pub fn deserialize_selections(selections: Vec<proto::Selection>) -> Arc<[Selection<Anchor>]> {
