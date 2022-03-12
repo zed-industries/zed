@@ -751,29 +751,31 @@ impl MultiBuffer {
         let mut cursor = snapshot.excerpts.cursor::<Option<&ExcerptId>>();
         let mut new_excerpts = cursor.slice(&Some(prev_excerpt_id), Bias::Right, &());
 
-        let mut prev_id = ExcerptId::min();
         let edit_start = new_excerpts.summary().text.bytes;
         new_excerpts.update_last(
             |excerpt| {
                 excerpt.has_trailing_newline = true;
-                prev_id = excerpt.id.clone();
             },
             &(),
         );
 
-        let mut next_id = ExcerptId::max();
-        {
-            let mut used_cursor = self.used_excerpt_ids.cursor::<Locator>();
-            used_cursor.seek(&prev_id, Bias::Right, &());
-            if let Some(used_id) = used_cursor.item() {
-                next_id = used_id.clone();
-            }
-        }
+        let mut used_cursor = self.used_excerpt_ids.cursor::<Locator>();
+        used_cursor.seek(prev_excerpt_id, Bias::Right, &());
+        let mut prev_id = if let Some(excerpt_id) = used_cursor.prev_item() {
+            excerpt_id.clone()
+        } else {
+            ExcerptId::min()
+        };
+        let next_id = if let Some(excerpt_id) = used_cursor.item() {
+            excerpt_id.clone()
+        } else {
+            ExcerptId::max()
+        };
+        drop(used_cursor);
 
         let mut ids = Vec::new();
         while let Some(range) = ranges.next() {
             let id = ExcerptId::between(&prev_id, &next_id);
-            self.used_excerpt_ids.insert_or_replace(id.clone(), &());
             if let Err(ix) = buffer_state.excerpts.binary_search(&id) {
                 buffer_state.excerpts.insert(ix, id.clone());
             }
@@ -790,6 +792,10 @@ impl MultiBuffer {
             prev_id = id.clone();
             ids.push(id);
         }
+        self.used_excerpt_ids.edit(
+            ids.iter().cloned().map(sum_tree::Edit::Insert).collect(),
+            &(),
+        );
 
         let edit_end = new_excerpts.summary().text.bytes;
 
@@ -3223,8 +3229,8 @@ mod tests {
         let snapshot_2 = multibuffer.read(cx).snapshot(cx);
         assert_eq!(snapshot_2.text(), "ABCD\nGHIJ\nMNOP");
 
-        // The old excerpt id has been reused.
-        assert_eq!(excerpt_id_2, excerpt_id_1);
+        // The old excerpt id doesn't get reused.
+        assert_ne!(excerpt_id_2, excerpt_id_1);
 
         // Resolve some anchors from the previous snapshot in the new snapshot.
         // Although there is still an excerpt with the same id, it is for
@@ -3276,7 +3282,7 @@ mod tests {
         ];
         assert_eq!(
             snapshot_3.summaries_for_anchors::<usize, _>(&anchors),
-            &[0, 2, 9, 13]
+            &[0, 2, 5, 13]
         );
 
         let new_anchors = snapshot_3.refresh_anchors(&anchors);
