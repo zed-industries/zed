@@ -23,6 +23,7 @@ use language::{
 };
 use lsp::{DiagnosticSeverity, DocumentHighlightKind, LanguageServer};
 use lsp_command::*;
+use parking_lot::Mutex;
 use postage::watch;
 use rand::prelude::*;
 use search::SearchQuery;
@@ -52,6 +53,7 @@ pub struct Project {
     language_servers: HashMap<(WorktreeId, Arc<str>), Arc<LanguageServer>>,
     started_language_servers: HashMap<(WorktreeId, Arc<str>), Task<Option<Arc<LanguageServer>>>>,
     language_server_statuses: BTreeMap<usize, LanguageServerStatus>,
+    language_server_settings: Arc<Mutex<serde_json::Value>>,
     next_language_server_id: usize,
     client: Arc<client::Client>,
     user_store: ModelHandle<UserStore>,
@@ -333,6 +335,7 @@ impl Project {
                 language_servers: Default::default(),
                 started_language_servers: Default::default(),
                 language_server_statuses: Default::default(),
+                language_server_settings: Default::default(),
                 next_language_server_id: 0,
                 nonce: StdRng::from_entropy().gen(),
             }
@@ -403,6 +406,7 @@ impl Project {
                 language_servers_with_diagnostics_running: 0,
                 language_servers: Default::default(),
                 started_language_servers: Default::default(),
+                language_server_settings: Default::default(),
                 language_server_statuses: response
                     .language_servers
                     .into_iter()
@@ -1229,6 +1233,30 @@ impl Project {
                         .detach();
 
                     language_server
+                        .on_request::<lsp::request::WorkspaceConfiguration, _>({
+                            let settings = this
+                                .read_with(&cx, |this, _| this.language_server_settings.clone());
+                            move |params| {
+                                let settings = settings.lock();
+                                Ok(params
+                                    .items
+                                    .into_iter()
+                                    .map(|item| {
+                                        if let Some(section) = &item.section {
+                                            settings
+                                                .get(section)
+                                                .cloned()
+                                                .unwrap_or(serde_json::Value::Null)
+                                        } else {
+                                            settings.clone()
+                                        }
+                                    })
+                                    .collect())
+                            }
+                        })
+                        .detach();
+
+                    language_server
                         .on_notification::<lsp::notification::Progress, _>(move |params| {
                             let token = match params.token {
                                 lsp::NumberOrString::String(token) => token,
@@ -1299,6 +1327,13 @@ impl Project {
                                 pending_diagnostic_updates: 0,
                             },
                         );
+                        language_server
+                            .notify::<lsp::notification::DidChangeConfiguration>(
+                                lsp::DidChangeConfigurationParams {
+                                    settings: this.language_server_settings.lock().clone(),
+                                },
+                            )
+                            .ok();
 
                         if let Some(project_id) = this.remote_id() {
                             this.client
@@ -1545,6 +1580,19 @@ impl Project {
                 })
                 .log_err();
         }
+    }
+
+    pub fn set_language_server_settings(&mut self, settings: serde_json::Value) {
+        for server in self.language_servers.values() {
+            server
+                .notify::<lsp::notification::DidChangeConfiguration>(
+                    lsp::DidChangeConfigurationParams {
+                        settings: settings.clone(),
+                    },
+                )
+                .ok();
+        }
+        *self.language_server_settings.lock() = settings;
     }
 
     pub fn language_server_statuses(

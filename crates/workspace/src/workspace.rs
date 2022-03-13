@@ -26,8 +26,7 @@ use language::LanguageRegistry;
 use log::error;
 pub use pane::*;
 pub use pane_group::*;
-use parking_lot::Mutex;
-use postage::{prelude::Stream, watch};
+use postage::prelude::Stream;
 use project::{fs, Fs, Project, ProjectPath, Worktree};
 pub use settings::Settings;
 use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus};
@@ -100,8 +99,6 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 pub struct AppState {
-    pub settings_tx: Arc<Mutex<watch::Sender<Settings>>>,
-    pub settings: watch::Receiver<Settings>,
     pub languages: Arc<LanguageRegistry>,
     pub themes: Arc<ThemeRegistry>,
     pub client: Arc<client::Client>,
@@ -495,7 +492,6 @@ pub struct WorkspaceParams {
     pub client: Arc<Client>,
     pub fs: Arc<dyn Fs>,
     pub languages: Arc<LanguageRegistry>,
-    pub settings: watch::Receiver<Settings>,
     pub user_store: ModelHandle<UserStore>,
     pub channel_list: ModelHandle<ChannelList>,
     pub path_openers: Arc<[Box<dyn PathOpener>]>,
@@ -504,15 +500,15 @@ pub struct WorkspaceParams {
 impl WorkspaceParams {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut MutableAppContext) -> Self {
+        let settings = Settings::test(cx);
+        cx.add_app_state(settings);
+
         let fs = project::FakeFs::new(cx.background().clone());
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = client::test::FakeHttpClient::new(|_| async move {
             Ok(client::http::ServerResponse::new(404))
         });
         let client = Client::new(http_client.clone());
-        let theme =
-            gpui::fonts::with_font_cache(cx.font_cache().clone(), || theme::Theme::default());
-        let settings = Settings::new("Courier", cx.font_cache(), Arc::new(theme)).unwrap();
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let project = Project::local(
             client.clone(),
@@ -528,7 +524,6 @@ impl WorkspaceParams {
             client,
             fs,
             languages,
-            settings: watch::channel_with(settings).1,
             user_store,
             path_openers: Arc::from([]),
         }
@@ -547,7 +542,6 @@ impl WorkspaceParams {
             client: app_state.client.clone(),
             fs: app_state.fs.clone(),
             languages: app_state.languages.clone(),
-            settings: app_state.settings.clone(),
             user_store: app_state.user_store.clone(),
             channel_list: app_state.channel_list.clone(),
             path_openers: app_state.path_openers.clone(),
@@ -556,7 +550,6 @@ impl WorkspaceParams {
 }
 
 pub struct Workspace {
-    pub settings: watch::Receiver<Settings>,
     weak_self: WeakViewHandle<Self>,
     client: Arc<Client>,
     user_store: ModelHandle<client::UserStore>,
@@ -584,7 +577,7 @@ impl Workspace {
         })
         .detach();
 
-        let pane = cx.add_view(|_| Pane::new(params.settings.clone()));
+        let pane = cx.add_view(|_| Pane::new());
         let pane_id = pane.id();
         cx.observe(&pane, move |me, _, cx| {
             let active_entry = me.active_project_path(cx);
@@ -598,7 +591,7 @@ impl Workspace {
         .detach();
         cx.focus(&pane);
 
-        let status_bar = cx.add_view(|cx| StatusBar::new(&pane, params.settings.clone(), cx));
+        let status_bar = cx.add_view(|cx| StatusBar::new(&pane, cx));
         let mut current_user = params.user_store.read(cx).watch_current_user().clone();
         let mut connection_status = params.client.status().clone();
         let _observe_current_user = cx.spawn_weak(|this, mut cx| async move {
@@ -623,7 +616,6 @@ impl Workspace {
             panes: vec![pane.clone()],
             active_pane: pane.clone(),
             status_bar,
-            settings: params.settings.clone(),
             client: params.client.clone(),
             user_store: params.user_store.clone(),
             fs: params.fs.clone(),
@@ -638,10 +630,6 @@ impl Workspace {
 
     pub fn weak_handle(&self) -> WeakViewHandle<Self> {
         self.weak_self.clone()
-    }
-
-    pub fn settings(&self) -> watch::Receiver<Settings> {
-        self.settings.clone()
     }
 
     pub fn left_sidebar_mut(&mut self) -> &mut Sidebar {
@@ -953,7 +941,7 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane = cx.add_view(|_| Pane::new(self.settings.clone()));
+        let pane = cx.add_view(|_| Pane::new());
         let pane_id = pane.id();
         cx.observe(&pane, move |me, _, cx| {
             let active_entry = me.active_project_path(cx);
@@ -1128,8 +1116,8 @@ impl Workspace {
         });
     }
 
-    fn render_connection_status(&self) -> Option<ElementBox> {
-        let theme = &self.settings.borrow().theme;
+    fn render_connection_status(&self, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
+        let theme = &cx.app_state::<Settings>().theme;
         match &*self.client.status().borrow() {
             client::Status::ConnectionError
             | client::Status::ConnectionLost
@@ -1187,7 +1175,7 @@ impl Workspace {
                                     theme,
                                     cx,
                                 ))
-                                .with_children(self.render_connection_status())
+                                .with_children(self.render_connection_status(cx))
                                 .boxed(),
                         )
                         .right()
@@ -1315,7 +1303,7 @@ impl Workspace {
 
     fn render_disconnected_overlay(&self, cx: &AppContext) -> Option<ElementBox> {
         if self.project.read(cx).is_read_only() {
-            let theme = &self.settings.borrow().theme;
+            let theme = &cx.app_state::<Settings>().theme;
             Some(
                 EventHandler::new(
                     Label::new(
@@ -1346,8 +1334,7 @@ impl View for Workspace {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let settings = self.settings.borrow();
-        let theme = &settings.theme;
+        let theme = cx.app_state::<Settings>().theme.clone();
         Stack::new()
             .with_child(
                 Flex::column()
@@ -1356,32 +1343,28 @@ impl View for Workspace {
                         Stack::new()
                             .with_child({
                                 let mut content = Flex::row();
-                                content.add_child(self.left_sidebar.render(&settings, cx));
+                                content.add_child(self.left_sidebar.render(&theme, cx));
                                 if let Some(element) =
-                                    self.left_sidebar.render_active_item(&settings, cx)
+                                    self.left_sidebar.render_active_item(&theme, cx)
                                 {
                                     content.add_child(Flexible::new(0.8, false, element).boxed());
                                 }
                                 content.add_child(
                                     Flex::column()
                                         .with_child(
-                                            Flexible::new(
-                                                1.,
-                                                true,
-                                                self.center.render(&settings.theme),
-                                            )
-                                            .boxed(),
+                                            Flexible::new(1., true, self.center.render(&theme))
+                                                .boxed(),
                                         )
                                         .with_child(ChildView::new(&self.status_bar).boxed())
                                         .flexible(1., true)
                                         .boxed(),
                                 );
                                 if let Some(element) =
-                                    self.right_sidebar.render_active_item(&settings, cx)
+                                    self.right_sidebar.render_active_item(&theme, cx)
                                 {
                                     content.add_child(Flexible::new(0.8, false, element).boxed());
                                 }
-                                content.add_child(self.right_sidebar.render(&settings, cx));
+                                content.add_child(self.right_sidebar.render(&theme, cx));
                                 content.boxed()
                             })
                             .with_children(self.modal.as_ref().map(|m| ChildView::new(m).boxed()))
@@ -1389,7 +1372,7 @@ impl View for Workspace {
                             .boxed(),
                     )
                     .contained()
-                    .with_background_color(settings.theme.workspace.background)
+                    .with_background_color(theme.workspace.background)
                     .boxed(),
             )
             .with_children(self.render_disconnected_overlay(cx))

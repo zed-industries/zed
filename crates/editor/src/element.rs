@@ -1468,16 +1468,15 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 mod tests {
     use super::*;
     use crate::{Editor, MultiBuffer};
-    use postage::watch;
     use util::test::sample_text;
     use workspace::Settings;
 
     #[gpui::test]
     fn test_layout_line_numbers(cx: &mut gpui::MutableAppContext) {
-        let settings = watch::channel_with(Settings::test(cx));
+        cx.add_app_state(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
         let (window_id, editor) = cx.add_window(Default::default(), |cx| {
-            Editor::new(EditorMode::Full, buffer, None, settings.1, None, cx)
+            Editor::new(EditorMode::Full, buffer, None, None, cx)
         });
         let element = EditorElement::new(
             editor.downgrade(),

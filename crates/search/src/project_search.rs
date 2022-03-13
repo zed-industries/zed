@@ -9,7 +9,6 @@ use gpui::{
     ModelContext, ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext,
     ViewHandle, WeakModelHandle,
 };
-use postage::watch;
 use project::{search::SearchQuery, Project};
 use std::{
     any::{Any, TypeId},
@@ -74,7 +73,6 @@ struct ProjectSearchView {
     regex: bool,
     query_contains_error: bool,
     active_match_index: Option<usize>,
-    settings: watch::Receiver<Settings>,
 }
 
 impl Entity for ProjectSearch {
@@ -146,11 +144,11 @@ impl Item for ProjectSearch {
 
     fn build_view(
         model: ModelHandle<Self>,
-        workspace: &Workspace,
+        _: &Workspace,
         nav_history: ItemNavHistory,
         cx: &mut gpui::ViewContext<Self::View>,
     ) -> Self::View {
-        ProjectSearchView::new(model, Some(nav_history), workspace.settings(), cx)
+        ProjectSearchView::new(model, Some(nav_history), cx)
     }
 
     fn project_path(&self) -> Option<project::ProjectPath> {
@@ -174,7 +172,7 @@ impl View for ProjectSearchView {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let model = &self.model.read(cx);
         let results = if model.match_ranges.is_empty() {
-            let theme = &self.settings.borrow().theme;
+            let theme = &cx.app_state::<Settings>().theme;
             let text = if self.query_editor.read(cx).text(cx).is_empty() {
                 ""
             } else if model.pending_search.is_some() {
@@ -242,7 +240,7 @@ impl ItemView for ProjectSearchView {
     }
 
     fn tab_content(&self, tab_theme: &theme::Tab, cx: &gpui::AppContext) -> ElementBox {
-        let settings = self.settings.borrow();
+        let settings = cx.app_state::<Settings>();
         let search_theme = &settings.theme.search;
         Flex::row()
             .with_child(
@@ -316,12 +314,7 @@ impl ItemView for ProjectSearchView {
         Self: Sized,
     {
         let model = self.model.update(cx, |model, cx| model.clone(cx));
-        Some(Self::new(
-            model,
-            Some(nav_history),
-            self.settings.clone(),
-            cx,
-        ))
+        Some(Self::new(model, Some(nav_history), cx))
     }
 
     fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) {
@@ -338,7 +331,6 @@ impl ProjectSearchView {
     fn new(
         model: ModelHandle<ProjectSearch>,
         nav_history: Option<ItemNavHistory>,
-        settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let project;
@@ -363,17 +355,14 @@ impl ProjectSearchView {
             .detach();
 
         let query_editor = cx.add_view(|cx| {
-            let mut editor = Editor::single_line(
-                settings.clone(),
-                Some(|theme| theme.search.editor.input.clone()),
-                cx,
-            );
+            let mut editor =
+                Editor::single_line(Some(|theme| theme.search.editor.input.clone()), cx);
             editor.set_text(query_text, cx);
             editor
         });
 
         let results_editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_buffer(excerpts, Some(project), settings.clone(), cx);
+            let mut editor = Editor::for_buffer(excerpts, Some(project), cx);
             editor.set_searchable(false);
             editor.set_nav_history(nav_history);
             editor
@@ -396,7 +385,6 @@ impl ProjectSearchView {
             regex,
             query_contains_error: false,
             active_match_index: None,
-            settings,
         };
         this.model_changed(false, cx);
         this
@@ -560,11 +548,11 @@ impl ProjectSearchView {
         if match_ranges.is_empty() {
             self.active_match_index = None;
         } else {
-            let theme = &self.settings.borrow().theme.search;
             self.results_editor.update(cx, |editor, cx| {
                 if reset_selections {
                     editor.select_ranges(match_ranges.first().cloned(), Some(Autoscroll::Fit), cx);
                 }
+                let theme = &cx.app_state::<Settings>().theme.search;
                 editor.highlight_background::<Self>(match_ranges, theme.match_background, cx);
             });
             if self.query_editor.is_focused(cx) {
@@ -590,7 +578,7 @@ impl ProjectSearchView {
     }
 
     fn render_query_editor(&self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &self.settings.borrow().theme;
+        let theme = cx.app_state::<Settings>().theme.clone();
         let editor_container = if self.query_contains_error {
             theme.search.invalid_editor
         } else {
@@ -652,9 +640,9 @@ impl ProjectSearchView {
         option: SearchOption,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        let theme = &self.settings.borrow().theme.search;
         let is_active = self.is_option_enabled(option);
-        MouseEventHandler::new::<Self, _, _>(option as usize, cx, |state, _| {
+        MouseEventHandler::new::<Self, _, _>(option as usize, cx, |state, cx| {
+            let theme = &cx.app_state::<Settings>().theme.search;
             let style = match (is_active, state.hovered) {
                 (false, false) => &theme.option_button,
                 (false, true) => &theme.hovered_option_button,
@@ -685,9 +673,9 @@ impl ProjectSearchView {
         direction: Direction,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        let theme = &self.settings.borrow().theme.search;
         enum NavButton {}
-        MouseEventHandler::new::<NavButton, _, _>(direction as usize, cx, |state, _| {
+        MouseEventHandler::new::<NavButton, _, _>(direction as usize, cx, |state, cx| {
+            let theme = &cx.app_state::<Settings>().theme.search;
             let style = if state.hovered {
                 &theme.hovered_option_button
             } else {
@@ -719,7 +707,7 @@ mod tests {
         let mut theme = gpui::fonts::with_font_cache(fonts.clone(), || theme::Theme::default());
         theme.search.match_background = Color::red();
         let settings = Settings::new("Courier", &fonts, Arc::new(theme)).unwrap();
-        let settings = watch::channel_with(settings).1;
+        cx.update(|cx| cx.add_app_state(settings));
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -744,7 +732,7 @@ mod tests {
 
         let search = cx.add_model(|cx| ProjectSearch::new(project, cx));
         let search_view = cx.add_view(Default::default(), |cx| {
-            ProjectSearchView::new(search.clone(), None, settings, cx)
+            ProjectSearchView::new(search.clone(), None, cx)
         });
 
         search_view.update(cx, |search_view, cx| {

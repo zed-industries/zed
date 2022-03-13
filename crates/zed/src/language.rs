@@ -533,12 +533,7 @@ impl LspAdapter for JsonLspAdapter {
 }
 
 pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegistry {
-    let mut languages = LanguageRegistry::new(login_shell_env_loaded);
-    languages.set_language_server_download_dir(
-        dirs::home_dir()
-            .expect("failed to determine home directory")
-            .join(".zed"),
-    );
+    let languages = LanguageRegistry::new(login_shell_env_loaded);
     languages.add(Arc::new(c()));
     languages.add(Arc::new(json()));
     languages.add(Arc::new(rust()));

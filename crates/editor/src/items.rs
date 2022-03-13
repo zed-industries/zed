@@ -5,7 +5,6 @@ use gpui::{
     Subscription, Task, View, ViewContext, ViewHandle, WeakModelHandle,
 };
 use language::{Bias, Buffer, Diagnostic, File as _};
-use postage::watch;
 use project::{File, Project, ProjectPath};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -57,12 +56,7 @@ impl ItemHandle for BufferItemHandle {
     ) -> Box<dyn ItemViewHandle> {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(self.0.clone(), cx));
         Box::new(cx.add_view(window_id, |cx| {
-            let mut editor = Editor::for_buffer(
-                buffer,
-                Some(workspace.project().clone()),
-                workspace.settings(),
-                cx,
-            );
+            let mut editor = Editor::for_buffer(buffer, Some(workspace.project().clone()), cx);
             editor.nav_history = Some(ItemNavHistory::new(nav_history, &cx.handle()));
             editor
         }))
@@ -101,12 +95,8 @@ impl ItemHandle for MultiBufferItemHandle {
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
         Box::new(cx.add_view(window_id, |cx| {
-            let mut editor = Editor::for_buffer(
-                self.0.clone(),
-                Some(workspace.project().clone()),
-                workspace.settings(),
-                cx,
-            );
+            let mut editor =
+                Editor::for_buffer(self.0.clone(), Some(workspace.project().clone()), cx);
             editor.nav_history = Some(ItemNavHistory::new(nav_history, &cx.handle()));
             editor
         }))
@@ -288,16 +278,14 @@ impl ItemView for Editor {
 pub struct CursorPosition {
     position: Option<Point>,
     selected_count: usize,
-    settings: watch::Receiver<Settings>,
     _observe_active_editor: Option<Subscription>,
 }
 
 impl CursorPosition {
-    pub fn new(settings: watch::Receiver<Settings>) -> Self {
+    pub fn new() -> Self {
         Self {
             position: None,
             selected_count: 0,
-            settings,
             _observe_active_editor: None,
         }
     }
@@ -332,9 +320,9 @@ impl View for CursorPosition {
         "CursorPosition"
     }
 
-    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         if let Some(position) = self.position {
-            let theme = &self.settings.borrow().theme.workspace.status_bar;
+            let theme = &cx.app_state::<Settings>().theme.workspace.status_bar;
             let mut text = format!("{},{}", position.row + 1, position.column + 1);
             if self.selected_count > 0 {
                 write!(text, " ({} selected)", self.selected_count).unwrap();
@@ -365,16 +353,14 @@ impl StatusItemView for CursorPosition {
 }
 
 pub struct DiagnosticMessage {
-    settings: watch::Receiver<Settings>,
     diagnostic: Option<Diagnostic>,
     _observe_active_editor: Option<Subscription>,
 }
 
 impl DiagnosticMessage {
-    pub fn new(settings: watch::Receiver<Settings>) -> Self {
+    pub fn new() -> Self {
         Self {
             diagnostic: None,
-            settings,
             _observe_active_editor: None,
         }
     }
@@ -407,9 +393,9 @@ impl View for DiagnosticMessage {
         "DiagnosticMessage"
     }
 
-    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         if let Some(diagnostic) = &self.diagnostic {
-            let theme = &self.settings.borrow().theme.workspace.status_bar;
+            let theme = &cx.app_state::<Settings>().theme.workspace.status_bar;
             Label::new(
                 diagnostic.message.split('\n').next().unwrap().to_string(),
                 theme.diagnostic_message.clone(),

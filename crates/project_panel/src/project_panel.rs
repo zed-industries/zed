@@ -9,7 +9,6 @@ use gpui::{
     AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
-use postage::watch;
 use project::{Project, ProjectEntry, ProjectPath, Worktree, WorktreeId};
 use std::{
     collections::{hash_map, HashMap},
@@ -27,7 +26,6 @@ pub struct ProjectPanel {
     visible_entries: Vec<(WorktreeId, Vec<usize>)>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<usize>>,
     selection: Option<Selection>,
-    settings: watch::Receiver<Settings>,
     handle: WeakViewHandle<Self>,
 }
 
@@ -73,11 +71,7 @@ pub enum Event {
 }
 
 impl ProjectPanel {
-    pub fn new(
-        project: ModelHandle<Project>,
-        settings: watch::Receiver<Settings>,
-        cx: &mut ViewContext<Workspace>,
-    ) -> ViewHandle<Self> {
+    pub fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Workspace>) -> ViewHandle<Self> {
         let project_panel = cx.add_view(|cx: &mut ViewContext<Self>| {
             cx.observe(&project, |this, _, cx| {
                 this.update_visible_entries(None, cx);
@@ -105,7 +99,6 @@ impl ProjectPanel {
 
             let mut this = Self {
                 project: project.clone(),
-                settings,
                 list: Default::default(),
                 visible_entries: Default::default(),
                 expanded_dir_ids: Default::default(),
@@ -541,9 +534,9 @@ impl View for ProjectPanel {
         "ProjectPanel"
     }
 
-    fn render(&mut self, _: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
-        let settings = self.settings.clone();
-        let mut container_style = settings.borrow().theme.project_panel.container;
+    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
+        let theme = &cx.app_state::<Settings>().theme.project_panel;
+        let mut container_style = theme.container;
         let padding = std::mem::take(&mut container_style.padding);
         let handle = self.handle.clone();
         UniformList::new(
@@ -553,11 +546,11 @@ impl View for ProjectPanel {
                 .map(|(_, worktree_entries)| worktree_entries.len())
                 .sum(),
             move |range, items, cx| {
-                let theme = &settings.borrow().theme.project_panel;
+                let theme = cx.app_state::<Settings>().theme.clone();
                 let this = handle.upgrade(cx).unwrap();
                 this.update(cx.app, |this, cx| {
                     this.for_each_visible_entry(range.clone(), cx, |entry, details, cx| {
-                        items.push(Self::render_entry(entry, details, theme, cx));
+                        items.push(Self::render_entry(entry, details, &theme.project_panel, cx));
                     });
                 })
             },
@@ -593,7 +586,6 @@ mod tests {
         cx.foreground().forbid_parking();
 
         let params = cx.update(WorkspaceParams::test);
-        let settings = params.settings.clone();
         let fs = params.fs.as_fake();
         fs.insert_tree(
             "/root1",
@@ -660,7 +652,7 @@ mod tests {
             .await;
 
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, settings, cx));
+        let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
         assert_eq!(
             visible_entry_details(&panel, 0..50, cx),
             &[

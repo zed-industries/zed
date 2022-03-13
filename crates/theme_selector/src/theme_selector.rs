@@ -7,25 +7,14 @@ use gpui::{
     AppContext, Axis, Element, ElementBox, Entity, MutableAppContext, RenderContext, View,
     ViewContext, ViewHandle,
 };
-use parking_lot::Mutex;
-use postage::watch;
 use std::{cmp, sync::Arc};
 use theme::{Theme, ThemeRegistry};
 use workspace::{
     menu::{Confirm, SelectNext, SelectPrev},
-    AppState, Settings, Workspace,
+    Settings, Workspace,
 };
 
-#[derive(Clone)]
-pub struct ThemeSelectorParams {
-    pub settings_tx: Arc<Mutex<watch::Sender<Settings>>>,
-    pub settings: watch::Receiver<Settings>,
-    pub themes: Arc<ThemeRegistry>,
-}
-
 pub struct ThemeSelector {
-    settings_tx: Arc<Mutex<watch::Sender<Settings>>>,
-    settings: watch::Receiver<Settings>,
     themes: Arc<ThemeRegistry>,
     matches: Vec<StringMatch>,
     query_editor: ViewHandle<Editor>,
@@ -35,10 +24,10 @@ pub struct ThemeSelector {
     selection_completed: bool,
 }
 
-action!(Toggle, ThemeSelectorParams);
-action!(Reload, ThemeSelectorParams);
+action!(Toggle, Arc<ThemeRegistry>);
+action!(Reload, Arc<ThemeRegistry>);
 
-pub fn init(params: ThemeSelectorParams, cx: &mut MutableAppContext) {
+pub fn init(themes: Arc<ThemeRegistry>, cx: &mut MutableAppContext) {
     cx.add_action(ThemeSelector::confirm);
     cx.add_action(ThemeSelector::select_prev);
     cx.add_action(ThemeSelector::select_next);
@@ -46,9 +35,9 @@ pub fn init(params: ThemeSelectorParams, cx: &mut MutableAppContext) {
     cx.add_action(ThemeSelector::reload);
 
     cx.add_bindings(vec![
-        Binding::new("cmd-k cmd-t", Toggle(params.clone()), None),
-        Binding::new("cmd-k t", Reload(params.clone()), None),
-        Binding::new("escape", Toggle(params.clone()), Some("ThemeSelector")),
+        Binding::new("cmd-k cmd-t", Toggle(themes.clone()), None),
+        Binding::new("cmd-k t", Reload(themes.clone()), None),
+        Binding::new("escape", Toggle(themes.clone()), Some("ThemeSelector")),
     ]);
 }
 
@@ -57,28 +46,17 @@ pub enum Event {
 }
 
 impl ThemeSelector {
-    fn new(
-        settings_tx: Arc<Mutex<watch::Sender<Settings>>>,
-        settings: watch::Receiver<Settings>,
-        registry: Arc<ThemeRegistry>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    fn new(registry: Arc<ThemeRegistry>, cx: &mut ViewContext<Self>) -> Self {
         let query_editor = cx.add_view(|cx| {
-            Editor::single_line(
-                settings.clone(),
-                Some(|theme| theme.selector.input_editor.clone()),
-                cx,
-            )
+            Editor::single_line(Some(|theme| theme.selector.input_editor.clone()), cx)
         });
 
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
 
-        let original_theme = settings.borrow().theme.clone();
+        let original_theme = cx.app_state::<Settings>().theme.clone();
 
         let mut this = Self {
-            settings,
-            settings_tx,
             themes: registry,
             query_editor,
             matches: Vec::new(),
@@ -97,26 +75,18 @@ impl ThemeSelector {
 
     fn toggle(workspace: &mut Workspace, action: &Toggle, cx: &mut ViewContext<Workspace>) {
         workspace.toggle_modal(cx, |cx, _| {
-            let selector = cx.add_view(|cx| {
-                Self::new(
-                    action.0.settings_tx.clone(),
-                    action.0.settings.clone(),
-                    action.0.themes.clone(),
-                    cx,
-                )
-            });
+            let selector = cx.add_view(|cx| Self::new(action.0.clone(), cx));
             cx.subscribe(&selector, Self::on_event).detach();
             selector
         });
     }
 
     fn reload(_: &mut Workspace, action: &Reload, cx: &mut ViewContext<Workspace>) {
-        let current_theme_name = action.0.settings.borrow().theme.name.clone();
-        action.0.themes.clear();
-        match action.0.themes.get(&current_theme_name) {
+        let current_theme_name = cx.app_state::<Settings>().theme.name.clone();
+        action.0.clear();
+        match action.0.get(&current_theme_name) {
             Ok(theme) => {
-                action.0.settings_tx.lock().borrow_mut().theme = theme;
-                cx.refresh_windows();
+                Self::set_theme(theme, cx);
                 log::info!("reloaded theme {}", current_theme_name);
             }
             Err(error) => {
@@ -152,12 +122,10 @@ impl ThemeSelector {
         cx.notify();
     }
 
-    fn show_selected_theme(&mut self, cx: &mut MutableAppContext) {
+    fn show_selected_theme(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
             match self.themes.get(&mat.string) {
-                Ok(theme) => {
-                    self.set_theme(theme, cx);
-                }
+                Ok(theme) => Self::set_theme(theme, cx),
                 Err(error) => {
                     log::error!("error loading theme {}: {}", mat.string, error)
                 }
@@ -171,15 +139,6 @@ impl ThemeSelector {
             .iter()
             .position(|mat| mat.string == theme_name)
             .unwrap_or(self.selected_index);
-    }
-
-    fn current_theme(&self) -> Arc<Theme> {
-        self.settings_tx.lock().borrow().theme.clone()
-    }
-
-    fn set_theme(&self, theme: Arc<Theme>, cx: &mut MutableAppContext) {
-        self.settings_tx.lock().borrow_mut().theme = theme;
-        cx.refresh_windows();
     }
 
     fn update_matches(&mut self, cx: &mut ViewContext<Self>) {
@@ -247,7 +206,7 @@ impl ThemeSelector {
         match event {
             editor::Event::Edited => {
                 self.update_matches(cx);
-                self.select_if_matching(&self.current_theme().name);
+                self.select_if_matching(&cx.app_state::<Settings>().theme.name);
                 self.show_selected_theme(cx);
             }
             editor::Event::Blurred => cx.emit(Event::Dismissed),
@@ -257,7 +216,7 @@ impl ThemeSelector {
 
     fn render_matches(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         if self.matches.is_empty() {
-            let settings = self.settings.borrow();
+            let settings = cx.app_state::<Settings>();
             return Container::new(
                 Label::new(
                     "No matches".into(),
@@ -270,31 +229,29 @@ impl ThemeSelector {
         }
 
         let handle = cx.handle();
-        let list = UniformList::new(
-            self.list_state.clone(),
-            self.matches.len(),
-            move |mut range, items, cx| {
-                let cx = cx.as_ref();
-                let selector = handle.upgrade(cx).unwrap();
-                let selector = selector.read(cx);
-                let start = range.start;
-                range.end = cmp::min(range.end, selector.matches.len());
-                items.extend(
-                    selector.matches[range]
-                        .iter()
-                        .enumerate()
-                        .map(move |(i, path_match)| selector.render_match(path_match, start + i)),
-                );
-            },
-        );
+        let list =
+            UniformList::new(
+                self.list_state.clone(),
+                self.matches.len(),
+                move |mut range, items, cx| {
+                    let cx = cx.as_ref();
+                    let selector = handle.upgrade(cx).unwrap();
+                    let selector = selector.read(cx);
+                    let start = range.start;
+                    range.end = cmp::min(range.end, selector.matches.len());
+                    items.extend(selector.matches[range].iter().enumerate().map(
+                        move |(i, path_match)| selector.render_match(path_match, start + i, cx),
+                    ));
+                },
+            );
 
         Container::new(list.boxed())
             .with_margin_top(6.0)
             .named("matches")
     }
 
-    fn render_match(&self, theme_match: &StringMatch, index: usize) -> ElementBox {
-        let settings = self.settings.borrow();
+    fn render_match(&self, theme_match: &StringMatch, index: usize, cx: &AppContext) -> ElementBox {
+        let settings = cx.app_state::<Settings>();
         let theme = &settings.theme;
 
         let container = Container::new(
@@ -317,6 +274,13 @@ impl ThemeSelector {
 
         container.boxed()
     }
+
+    fn set_theme(theme: Arc<Theme>, cx: &mut MutableAppContext) {
+        cx.update_app_state::<Settings, _, _>(|settings, cx| {
+            settings.theme = theme;
+            cx.refresh_windows();
+        });
+    }
 }
 
 impl Entity for ThemeSelector {
@@ -324,7 +288,7 @@ impl Entity for ThemeSelector {
 
     fn release(&mut self, cx: &mut MutableAppContext) {
         if !self.selection_completed {
-            self.set_theme(self.original_theme.clone(), cx);
+            Self::set_theme(self.original_theme.clone(), cx);
         }
     }
 }
@@ -335,8 +299,7 @@ impl View for ThemeSelector {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let settings = self.settings.borrow();
-
+        let theme = cx.app_state::<Settings>().theme.clone();
         Align::new(
             ConstrainedBox::new(
                 Container::new(
@@ -344,13 +307,13 @@ impl View for ThemeSelector {
                         .with_child(
                             ChildView::new(&self.query_editor)
                                 .contained()
-                                .with_style(settings.theme.selector.input_editor.container)
+                                .with_style(theme.selector.input_editor.container)
                                 .boxed(),
                         )
                         .with_child(Flexible::new(1.0, false, self.render_matches(cx)).boxed())
                         .boxed(),
                 )
-                .with_style(settings.theme.selector.container)
+                .with_style(theme.selector.container)
                 .boxed(),
             )
             .with_max_width(600.0)
@@ -369,15 +332,5 @@ impl View for ThemeSelector {
         let mut cx = Self::default_keymap_context();
         cx.set.insert("menu".into());
         cx
-    }
-}
-
-impl<'a> From<&'a AppState> for ThemeSelectorParams {
-    fn from(state: &'a AppState) -> Self {
-        Self {
-            settings_tx: state.settings_tx.clone(),
-            settings: state.settings.clone(),
-            themes: state.themes.clone(),
-        }
     }
 }

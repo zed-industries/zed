@@ -11,7 +11,6 @@ use gpui::{
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use ordered_float::OrderedFloat;
-use postage::watch;
 use project::{Project, Symbol};
 use std::{
     borrow::Cow,
@@ -41,7 +40,6 @@ pub fn init(cx: &mut MutableAppContext) {
 pub struct ProjectSymbolsView {
     handle: WeakViewHandle<Self>,
     project: ModelHandle<Project>,
-    settings: watch::Receiver<Settings>,
     selected_match_index: usize,
     list_state: UniformListState,
     symbols: Vec<Symbol>,
@@ -71,16 +69,15 @@ impl View for ProjectSymbolsView {
         cx
     }
 
-    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-        let settings = self.settings.borrow();
-
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        let settings = cx.app_state::<Settings>();
         Flex::new(Axis::Vertical)
             .with_child(
                 Container::new(ChildView::new(&self.query_editor).boxed())
                     .with_style(settings.theme.selector.input_editor.container)
                     .boxed(),
             )
-            .with_child(Flexible::new(1.0, false, self.render_matches()).boxed())
+            .with_child(Flexible::new(1.0, false, self.render_matches(cx)).boxed())
             .contained()
             .with_style(settings.theme.selector.container)
             .constrained()
@@ -97,24 +94,15 @@ impl View for ProjectSymbolsView {
 }
 
 impl ProjectSymbolsView {
-    fn new(
-        project: ModelHandle<Project>,
-        settings: watch::Receiver<Settings>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
         let query_editor = cx.add_view(|cx| {
-            Editor::single_line(
-                settings.clone(),
-                Some(|theme| theme.selector.input_editor.clone()),
-                cx,
-            )
+            Editor::single_line(Some(|theme| theme.selector.input_editor.clone()), cx)
         });
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
         let mut this = Self {
             handle: cx.weak_handle(),
             project,
-            settings,
             selected_match_index: 0,
             list_state: Default::default(),
             symbols: Default::default(),
@@ -130,7 +118,7 @@ impl ProjectSymbolsView {
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
         workspace.toggle_modal(cx, |cx, workspace| {
             let project = workspace.project().clone();
-            let symbols = cx.add_view(|cx| Self::new(project, workspace.settings.clone(), cx));
+            let symbols = cx.add_view(|cx| Self::new(project, cx));
             cx.subscribe(&symbols, Self::on_event).detach();
             symbols
         });
@@ -244,9 +232,9 @@ impl ProjectSymbolsView {
         cx.notify();
     }
 
-    fn render_matches(&self) -> ElementBox {
+    fn render_matches(&self, cx: &AppContext) -> ElementBox {
         if self.matches.is_empty() {
-            let settings = self.settings.borrow();
+            let settings = cx.app_state::<Settings>();
             return Container::new(
                 Label::new(
                     "No matches".into(),
@@ -289,7 +277,7 @@ impl ProjectSymbolsView {
         show_worktree_root_name: bool,
         cx: &AppContext,
     ) -> ElementBox {
-        let settings = self.settings.borrow();
+        let settings = cx.app_state::<Settings>();
         let style = if index == self.selected_match_index {
             &settings.theme.selector.active_item
         } else {

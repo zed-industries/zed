@@ -2,8 +2,6 @@ use crate::{assets::Assets, build_window_options, build_workspace, AppState};
 use client::{test::FakeHttpClient, ChannelList, Client, UserStore};
 use gpui::MutableAppContext;
 use language::LanguageRegistry;
-use parking_lot::Mutex;
-use postage::watch;
 use project::fs::FakeFs;
 use std::sync::Arc;
 use theme::ThemeRegistry;
@@ -18,9 +16,10 @@ fn init_logger() {
 }
 
 pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
+    let settings = Settings::test(cx);
     let mut path_openers = Vec::new();
     editor::init(cx, &mut path_openers);
-    let (settings_tx, settings) = watch::channel_with(Settings::test(cx));
+    cx.add_app_state(settings);
     let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
     let http = FakeHttpClient::with_404_response();
     let client = Client::new(http.clone());
@@ -35,8 +34,6 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
         Some(tree_sitter_rust::language()),
     )));
     Arc::new(AppState {
-        settings_tx: Arc::new(Mutex::new(settings_tx)),
-        settings,
         themes,
         languages: Arc::new(languages),
         channel_list: cx.add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx)),

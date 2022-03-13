@@ -4,15 +4,21 @@
 use anyhow::{anyhow, Context, Result};
 use client::{self, http, ChannelList, UserStore};
 use fs::OpenOptions;
+use futures::{channel::oneshot, StreamExt};
 use gpui::{App, AssetSource, Task};
 use log::LevelFilter;
 use parking_lot::Mutex;
+use project::Fs;
 use simplelog::SimpleLogger;
 use smol::process::Command;
 use std::{env, fs, path::PathBuf, sync::Arc};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
 use util::ResultExt;
-use workspace::{self, settings, AppState, OpenNew, OpenParams, OpenPaths, Settings};
+use workspace::{
+    self,
+    settings::{self, SettingsFile},
+    AppState, OpenNew, OpenParams, OpenPaths, Settings,
+};
 use zed::{
     self, assets::Assets, build_window_options, build_workspace, fs::RealFs, language, menus,
 };
@@ -23,25 +29,26 @@ fn main() {
     let app = gpui::App::new(Assets).unwrap();
     load_embedded_fonts(&app);
 
+    let fs = Arc::new(RealFs);
     let themes = ThemeRegistry::new(Assets, app.font_cache());
     let theme = themes.get(DEFAULT_THEME_NAME).unwrap();
-    let settings = Settings::new("Zed Mono", &app.font_cache(), theme)
+    let default_settings = Settings::new("Zed Mono", &app.font_cache(), theme)
         .unwrap()
         .with_overrides(
             language::PLAIN_TEXT.name(),
-            settings::Override {
+            settings::LanguageOverride {
                 soft_wrap: Some(settings::SoftWrap::PreferredLineLength),
                 ..Default::default()
             },
         )
         .with_overrides(
             "Markdown",
-            settings::Override {
+            settings::LanguageOverride {
                 soft_wrap: Some(settings::SoftWrap::PreferredLineLength),
                 ..Default::default()
             },
         );
-    let (settings_tx, settings) = postage::watch::channel_with(settings);
+    let settings_file = load_settings_file(&app, fs.clone());
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
         Task::ready(())
@@ -51,14 +58,14 @@ fn main() {
         })
     };
 
-    let languages = Arc::new(language::build_language_registry(login_shell_env_loaded));
-    languages.set_theme(&settings.borrow().theme.editor.syntax);
-
     app.run(move |cx| {
         let http = http::client();
         let client = client::Client::new(http.clone());
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
         let mut path_openers = Vec::new();
+        let mut languages = language::build_language_registry(login_shell_env_loaded);
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
+        let channel_list =
+            cx.add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx));
 
         project::Project::init(&client);
         client::Channel::init(&client);
@@ -84,23 +91,42 @@ fn main() {
         })
         .detach_and_log_err(cx);
 
+        let settings_file = cx.background().block(settings_file).unwrap();
+        let mut settings_rx = Settings::from_files(
+            default_settings,
+            vec![settings_file],
+            themes.clone(),
+            cx.font_cache().clone(),
+        );
+        let settings = cx.background().block(settings_rx.next()).unwrap();
+        cx.spawn(|mut cx| async move {
+            while let Some(settings) = settings_rx.next().await {
+                cx.update(|cx| {
+                    cx.update_app_state(|s, _| *s = settings);
+                    cx.refresh_windows();
+                });
+            }
+        })
+        .detach();
+
+        languages.set_language_server_download_dir(zed::ROOT_PATH.clone());
+        languages.set_theme(&settings.theme.editor.syntax);
+        cx.add_app_state(settings);
+
         let app_state = Arc::new(AppState {
-            languages: languages.clone(),
-            settings_tx: Arc::new(Mutex::new(settings_tx)),
-            settings,
+            languages: Arc::new(languages),
             themes,
-            channel_list: cx
-                .add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx)),
+            channel_list,
             client,
             user_store,
-            fs: Arc::new(RealFs),
+            fs,
             path_openers: Arc::from(path_openers),
             build_window_options: &build_window_options,
             build_workspace: &build_workspace,
         });
         journal::init(app_state.clone(), cx);
         zed::init(&app_state, cx);
-        theme_selector::init(app_state.as_ref().into(), cx);
+        theme_selector::init(app_state.themes.clone(), cx);
 
         cx.set_menus(menus::menus(&app_state.clone()));
 
@@ -207,4 +233,17 @@ fn load_embedded_fonts(app: &App) {
         .fonts()
         .add_fonts(&embedded_fonts.into_inner())
         .unwrap();
+}
+
+fn load_settings_file(app: &App, fs: Arc<dyn Fs>) -> oneshot::Receiver<SettingsFile> {
+    let executor = app.background();
+    let (tx, rx) = oneshot::channel();
+    executor
+        .clone()
+        .spawn(async move {
+            let file = SettingsFile::new(fs, &executor, zed::SETTINGS_PATH.clone()).await;
+            tx.send(file).ok()
+        })
+        .detach();
+    rx
 }

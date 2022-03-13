@@ -319,13 +319,14 @@ impl LanguageRegistry {
 
             let server_binary_path = server_binary_path.await?;
             let server_args = adapter.server_args();
-            lsp::LanguageServer::new(
+            let server = lsp::LanguageServer::new(
                 &server_binary_path,
                 server_args,
                 &root_path,
                 adapter.initialization_options(),
                 background,
-            )
+            )?;
+            Ok(server)
         }))
     }
 

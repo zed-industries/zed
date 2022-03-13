@@ -2,22 +2,16 @@ use crate::render_summary;
 use gpui::{
     elements::*, platform::CursorStyle, Entity, ModelHandle, RenderContext, View, ViewContext,
 };
-use postage::watch;
 use project::Project;
 use workspace::{Settings, StatusItemView};
 
 pub struct DiagnosticSummary {
-    settings: watch::Receiver<Settings>,
     summary: project::DiagnosticSummary,
     in_progress: bool,
 }
 
 impl DiagnosticSummary {
-    pub fn new(
-        project: &ModelHandle<Project>,
-        settings: watch::Receiver<Settings>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    pub fn new(project: &ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
         cx.subscribe(project, |this, project, event, cx| match event {
             project::Event::DiskBasedDiagnosticsUpdated => {
                 cx.notify();
@@ -35,7 +29,6 @@ impl DiagnosticSummary {
         })
         .detach();
         Self {
-            settings,
             summary: project.read(cx).diagnostic_summary(cx),
             in_progress: project.read(cx).is_running_disk_based_diagnostics(),
         }
@@ -54,10 +47,9 @@ impl View for DiagnosticSummary {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         enum Tag {}
 
-        let theme = &self.settings.borrow().theme.project_diagnostics;
-
         let in_progress = self.in_progress;
-        MouseEventHandler::new::<Tag, _, _>(0, cx, |_, _| {
+        MouseEventHandler::new::<Tag, _, _>(0, cx, |_, cx| {
+            let theme = &cx.app_state::<Settings>().theme.project_diagnostics;
             if in_progress {
                 Label::new(
                     "Checking... ".to_string(),
