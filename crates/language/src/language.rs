@@ -516,7 +516,7 @@ impl Language {
             for chunk in BufferChunks::new(text, range, Some(&tree), self.grammar.as_ref(), vec![])
             {
                 let end_offset = offset + chunk.text.len();
-                if let Some(highlight_id) = chunk.highlight_id {
+                if let Some(highlight_id) = chunk.syntax_highlight_id {
                     result.push((offset..end_offset, highlight_id));
                 }
                 offset = end_offset;

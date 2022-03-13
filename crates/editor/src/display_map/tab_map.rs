@@ -1,4 +1,7 @@
-use super::fold_map::{self, FoldEdit, FoldPoint, FoldSnapshot};
+use super::{
+    fold_map::{self, FoldEdit, FoldPoint, FoldSnapshot},
+    TextHighlights,
+};
 use crate::MultiBufferSnapshot;
 use language::{rope, Chunk};
 use parking_lot::Mutex;
@@ -32,9 +35,10 @@ impl TabMap {
         let mut tab_edits = Vec::with_capacity(fold_edits.len());
         for fold_edit in &mut fold_edits {
             let mut delta = 0;
-            for chunk in old_snapshot
-                .fold_snapshot
-                .chunks(fold_edit.old.end..max_offset, false)
+            for chunk in
+                old_snapshot
+                    .fold_snapshot
+                    .chunks(fold_edit.old.end..max_offset, false, None)
             {
                 let patterns: &[_] = &['\t', '\n'];
                 if let Some(ix) = chunk.text.find(patterns) {
@@ -109,7 +113,7 @@ impl TabSnapshot {
             self.max_point()
         };
         for c in self
-            .chunks(range.start..line_end, false)
+            .chunks(range.start..line_end, false, None)
             .flat_map(|chunk| chunk.text.chars())
         {
             if c == '\n' {
@@ -123,7 +127,7 @@ impl TabSnapshot {
             last_line_chars = first_line_chars;
         } else {
             for _ in self
-                .chunks(TabPoint::new(range.end.row(), 0)..range.end, false)
+                .chunks(TabPoint::new(range.end.row(), 0)..range.end, false, None)
                 .flat_map(|chunk| chunk.text.chars())
             {
                 last_line_chars += 1;
@@ -143,7 +147,12 @@ impl TabSnapshot {
         self.fold_snapshot.version
     }
 
-    pub fn chunks<'a>(&'a self, range: Range<TabPoint>, language_aware: bool) -> TabChunks<'a> {
+    pub fn chunks<'a>(
+        &'a self,
+        range: Range<TabPoint>,
+        language_aware: bool,
+        text_highlights: Option<&'a TextHighlights>,
+    ) -> TabChunks<'a> {
         let (input_start, expanded_char_column, to_next_stop) =
             self.to_fold_point(range.start, Bias::Left);
         let input_start = input_start.to_offset(&self.fold_snapshot);
@@ -158,9 +167,11 @@ impl TabSnapshot {
         };
 
         TabChunks {
-            fold_chunks: self
-                .fold_snapshot
-                .chunks(input_start..input_end, language_aware),
+            fold_chunks: self.fold_snapshot.chunks(
+                input_start..input_end,
+                language_aware,
+                text_highlights,
+            ),
             column: expanded_char_column,
             output_position: range.start.0,
             max_output_position: range.end.0,
@@ -179,7 +190,7 @@ impl TabSnapshot {
 
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(TabPoint::zero()..self.max_point(), false)
+        self.chunks(TabPoint::zero()..self.max_point(), false, None)
             .map(|chunk| chunk.text)
             .collect()
     }
@@ -492,7 +503,7 @@ mod tests {
             assert_eq!(
                 expected_text,
                 tabs_snapshot
-                    .chunks(start..end, false)
+                    .chunks(start..end, false, None)
                     .map(|c| c.text)
                     .collect::<String>(),
                 "chunks({:?}..{:?})",

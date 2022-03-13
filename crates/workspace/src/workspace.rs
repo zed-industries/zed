@@ -1494,6 +1494,8 @@ fn open(action: &Open, cx: &mut MutableAppContext) {
     .detach();
 }
 
+pub struct WorkspaceCreated(WeakViewHandle<Workspace>);
+
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: &Arc<AppState>,
@@ -1520,7 +1522,7 @@ pub fn open_paths(
     }
 
     let workspace = existing.unwrap_or_else(|| {
-        cx.add_window((app_state.build_window_options)(), |cx| {
+        let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
             let project = Project::local(
                 app_state.client.clone(),
                 app_state.user_store.clone(),
@@ -1529,8 +1531,9 @@ pub fn open_paths(
                 cx,
             );
             (app_state.build_workspace)(project, &app_state, cx)
-        })
-        .1
+        });
+        cx.emit_global(WorkspaceCreated(workspace.downgrade()));
+        workspace
     });
 
     let task = workspace.update(cx, |workspace, cx| workspace.open_paths(abs_paths, cx));
@@ -1564,12 +1567,13 @@ pub fn join_project(
             &mut cx,
         )
         .await?;
-        let (_, workspace) = cx.update(|cx| {
-            cx.add_window((app_state.build_window_options)(), |cx| {
+        Ok(cx.update(|cx| {
+            let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
                 (app_state.build_workspace)(project, &app_state, cx)
-            })
-        });
-        Ok(workspace)
+            });
+            cx.emit_global(WorkspaceCreated(workspace.downgrade()));
+            workspace
+        }))
     })
 }
 
@@ -1584,5 +1588,6 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
         );
         (app_state.build_workspace)(project, &app_state, cx)
     });
+    cx.emit_global(WorkspaceCreated(workspace.downgrade()));
     cx.dispatch_action(window_id, vec![workspace.id()], &OpenNew(app_state.clone()));
 }

@@ -31,12 +31,15 @@ pub struct TextStyle {
     pub underline: Option<Underline>,
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct HighlightStyle {
     pub color: Color,
     pub font_properties: Properties,
     pub underline: Option<Underline>,
+    pub fade_out: Option<f32>,
 }
+
+impl Eq for HighlightStyle {}
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Underline {
@@ -83,6 +86,8 @@ struct HighlightStyleJson {
     italic: bool,
     #[serde(default)]
     underline: UnderlineStyleJson,
+    #[serde(default)]
+    fade_out: Option<f32>,
 }
 
 #[derive(Deserialize)]
@@ -131,7 +136,10 @@ impl TextStyle {
         if self.font_properties != style.font_properties {
             self.font_id = font_cache.select_font(self.font_family_id, &style.font_properties)?;
         }
-        self.color = style.color;
+        self.color = Color::blend(style.color, self.color);
+        if let Some(factor) = style.fade_out {
+            self.color.fade_out(factor);
+        }
         self.underline = style.underline;
         Ok(self)
     }
@@ -199,10 +207,17 @@ impl TextStyle {
 
 impl From<TextStyle> for HighlightStyle {
     fn from(other: TextStyle) -> Self {
+        Self::from(&other)
+    }
+}
+
+impl From<&TextStyle> for HighlightStyle {
+    fn from(other: &TextStyle) -> Self {
         Self {
             color: other.color,
             font_properties: other.font_properties,
             underline: other.underline,
+            fade_out: None,
         }
     }
 }
@@ -246,6 +261,26 @@ impl HighlightStyle {
             color: json.color,
             font_properties,
             underline: underline_from_json(json.underline, json.color),
+            fade_out: json.fade_out,
+        }
+    }
+
+    pub fn highlight(&mut self, other: HighlightStyle) {
+        self.color = Color::blend(other.color, self.color);
+        match (other.fade_out, self.fade_out) {
+            (Some(source_fade), None) => self.fade_out = Some(source_fade),
+            (Some(source_fade), Some(dest_fade)) => {
+                let source_alpha = 1. - source_fade;
+                let dest_alpha = 1. - dest_fade;
+                let blended_alpha = source_alpha + (dest_alpha * source_fade);
+                let blended_fade = 1. - blended_alpha;
+                self.fade_out = Some(blended_fade);
+            }
+            _ => {}
+        }
+        self.font_properties = other.font_properties;
+        if other.underline.is_some() {
+            self.underline = other.underline;
         }
     }
 }
@@ -256,6 +291,7 @@ impl From<Color> for HighlightStyle {
             color,
             font_properties: Default::default(),
             underline: None,
+            fade_out: None,
         }
     }
 }
@@ -295,6 +331,7 @@ impl<'de> Deserialize<'de> for HighlightStyle {
                 color: serde_json::from_value(json).map_err(de::Error::custom)?,
                 font_properties: Properties::new(),
                 underline: None,
+                fade_out: None,
             })
         }
     }

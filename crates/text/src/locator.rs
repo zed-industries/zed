@@ -19,11 +19,6 @@ impl Locator {
         Self(smallvec![u64::MAX])
     }
 
-    pub fn from_index(ix: usize, count: usize) -> Self {
-        let id = (1 + ix as u64) * (u64::MAX / (count as u64 + 2));
-        Self(smallvec![id])
-    }
-
     pub fn assign(&mut self, other: &Self) {
         self.0.resize(other.0.len(), 0);
         self.0.copy_from_slice(&other.0);
@@ -51,6 +46,30 @@ impl Locator {
 impl Default for Locator {
     fn default() -> Self {
         Self::min()
+    }
+}
+
+impl sum_tree::Item for Locator {
+    type Summary = Locator;
+
+    fn summary(&self) -> Self::Summary {
+        self.clone()
+    }
+}
+
+impl sum_tree::KeyedItem for Locator {
+    type Key = Locator;
+
+    fn key(&self) -> Self::Key {
+        self.clone()
+    }
+}
+
+impl sum_tree::Summary for Locator {
+    type Context = ();
+
+    fn add_summary(&mut self, summary: &Self, _: &()) {
+        self.assign(summary);
     }
 }
 

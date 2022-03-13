@@ -133,6 +133,9 @@ action!(ConfirmCompletion, Option<usize>);
 action!(ConfirmCodeAction, Option<usize>);
 action!(OpenExcerpts);
 
+enum DocumentHighlightRead {}
+enum DocumentHighlightWrite {}
+
 pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpener>>) {
     path_openers.push(Box::new(items::BufferOpener));
     cx.add_bindings(vec![
@@ -408,6 +411,8 @@ type CompletionId = usize;
 
 pub type GetFieldEditorTheme = fn(&theme::Theme) -> theme::FieldEditor;
 
+type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
+
 pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<MultiBuffer>,
@@ -429,16 +434,18 @@ pub struct Editor {
     autoscroll_request: Option<Autoscroll>,
     soft_wrap_mode_override: Option<settings::SoftWrap>,
     get_field_editor_theme: Option<GetFieldEditorTheme>,
+    override_text_style: Option<Box<OverrideTextStyle>>,
     project: Option<ModelHandle<Project>>,
     focused: bool,
     show_local_cursors: bool,
+    show_local_selections: bool,
     blink_epoch: usize,
     blinking_paused: bool,
     mode: EditorMode,
     vertical_scroll_margin: f32,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
-    highlighted_ranges: BTreeMap<TypeId, (Color, Vec<Range<Anchor>>)>,
+    background_highlights: BTreeMap<TypeId, (Color, Vec<Range<Anchor>>)>,
     nav_history: Option<ItemNavHistory>,
     context_menu: Option<ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
@@ -448,6 +455,7 @@ pub struct Editor {
     document_highlights_task: Option<Task<()>>,
     pending_rename: Option<RenameState>,
     searchable: bool,
+    cursor_shape: CursorShape,
 }
 
 pub struct EditorSnapshot {
@@ -849,7 +857,7 @@ impl Editor {
     ) -> Self {
         let display_map = cx.add_model(|cx| {
             let settings = cx.app_state::<Settings>();
-            let style = build_style(settings, get_field_editor_theme, cx);
+            let style = build_style(&*settings, get_field_editor_theme, None, cx);
             DisplayMap::new(
                 buffer.clone(),
                 settings.tab_size,
@@ -898,13 +906,14 @@ impl Editor {
             autoscroll_request: None,
             focused: false,
             show_local_cursors: false,
+            show_local_selections: true,
             blink_epoch: 0,
             blinking_paused: false,
             mode,
             vertical_scroll_margin: 3.0,
             placeholder_text: None,
             highlighted_rows: None,
-            highlighted_ranges: Default::default(),
+            background_highlights: Default::default(),
             nav_history: None,
             context_menu: None,
             completion_tasks: Default::default(),
@@ -914,6 +923,8 @@ impl Editor {
             document_highlights_task: Default::default(),
             pending_rename: Default::default(),
             searchable: true,
+            override_text_style: None,
+            cursor_shape: Default::default(),
         };
         this.end_selection(cx);
         this
@@ -966,7 +977,12 @@ impl Editor {
     }
 
     fn style(&self, cx: &AppContext) -> EditorStyle {
-        build_style(cx.app_state::<Settings>(), self.get_field_editor_theme, cx)
+        build_style(
+            cx.app_state::<Settings>(),
+            self.get_field_editor_theme,
+            self.override_text_style.as_deref(),
+            cx,
+        )
     }
 
     pub fn set_placeholder_text(
@@ -1002,6 +1018,11 @@ impl Editor {
             self.scroll_top_anchor = Some(anchor);
         }
 
+        cx.notify();
+    }
+
+    pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape, cx: &mut ViewContext<Self>) {
+        self.cursor_shape = cursor_shape;
         cx.notify();
     }
 
@@ -1478,7 +1499,7 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        if self.take_rename(cx).is_some() {
+        if self.take_rename(false, cx).is_some() {
             return;
         }
 
@@ -2334,7 +2355,7 @@ impl Editor {
             if let Some(editor) = editor.act_as::<Self>(cx) {
                 editor.update(cx, |editor, cx| {
                     let color = editor.style(cx).highlighted_line_background;
-                    editor.highlight_ranges::<Self>(ranges_to_highlight, color, cx);
+                    editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
                 });
             }
         });
@@ -2374,6 +2395,10 @@ impl Editor {
     }
 
     fn refresh_document_highlights(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
+        if self.pending_rename.is_some() {
+            return None;
+        }
+
         let project = self.project.as_ref()?;
         let buffer = self.buffer.read(cx);
         let newest_selection = self.newest_anchor_selection().clone();
@@ -2389,13 +2414,14 @@ impl Editor {
             project.document_highlights(&cursor_buffer, cursor_buffer_position, cx)
         });
 
-        enum DocumentHighlightRead {}
-        enum DocumentHighlightWrite {}
-
         self.document_highlights_task = Some(cx.spawn_weak(|this, mut cx| async move {
             let highlights = highlights.log_err().await;
             if let Some((this, highlights)) = this.upgrade(&cx).zip(highlights) {
                 this.update(&mut cx, |this, cx| {
+                    if this.pending_rename.is_some() {
+                        return;
+                    }
+
                     let buffer_id = cursor_position.buffer_id;
                     let excerpt_id = cursor_position.excerpt_id.clone();
                     let style = this.style(cx);
@@ -2428,12 +2454,12 @@ impl Editor {
                         }
                     }
 
-                    this.highlight_ranges::<DocumentHighlightRead>(
+                    this.highlight_background::<DocumentHighlightRead>(
                         read_ranges,
                         read_background,
                         cx,
                     );
-                    this.highlight_ranges::<DocumentHighlightWrite>(
+                    this.highlight_background::<DocumentHighlightWrite>(
                         write_ranges,
                         write_background,
                         cx,
@@ -3340,7 +3366,7 @@ impl Editor {
     }
 
     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
-        if self.take_rename(cx).is_some() {
+        if self.take_rename(true, cx).is_some() {
             return;
         }
 
@@ -3388,7 +3414,7 @@ impl Editor {
     }
 
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
-        self.take_rename(cx);
+        self.take_rename(true, cx);
 
         if let Some(context_menu) = self.context_menu.as_mut() {
             if context_menu.select_next(cx) {
@@ -4332,7 +4358,7 @@ impl Editor {
                 if let Some(editor) = editor.act_as::<Self>(cx) {
                     editor.update(cx, |editor, cx| {
                         let color = editor.style(cx).highlighted_line_background;
-                        editor.highlight_ranges::<Self>(ranges_to_highlight, color, cx);
+                        editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
                     });
                 }
             });
@@ -4350,7 +4376,7 @@ impl Editor {
             .buffer
             .read(cx)
             .text_anchor_for_position(selection.head(), cx)?;
-        let (tail_buffer, tail_buffer_position) = self
+        let (tail_buffer, _) = self
             .buffer
             .read(cx)
             .text_anchor_for_position(selection.tail(), cx)?;
@@ -4360,7 +4386,6 @@ impl Editor {
 
         let snapshot = cursor_buffer.read(cx).snapshot();
         let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
-        let tail_buffer_offset = tail_buffer_position.to_offset(&snapshot);
         let prepare_rename = project.update(cx, |project, cx| {
             project.prepare_rename(cursor_buffer, cursor_buffer_offset, cx)
         });
@@ -4370,54 +4395,59 @@ impl Editor {
                 let rename_buffer_range = rename_range.to_offset(&snapshot);
                 let cursor_offset_in_rename_range =
                     cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
-                let tail_offset_in_rename_range =
-                    tail_buffer_offset.saturating_sub(rename_buffer_range.start);
 
                 this.update(&mut cx, |this, cx| {
-                    this.take_rename(cx);
+                    this.take_rename(false, cx);
                     let style = this.style(cx);
                     let buffer = this.buffer.read(cx).read(cx);
                     let cursor_offset = selection.head().to_offset(&buffer);
                     let rename_start = cursor_offset.saturating_sub(cursor_offset_in_rename_range);
                     let rename_end = rename_start + rename_buffer_range.len();
                     let range = buffer.anchor_before(rename_start)..buffer.anchor_after(rename_end);
+                    let mut old_highlight_id = None;
                     let old_name = buffer
-                        .text_for_range(rename_start..rename_end)
-                        .collect::<String>();
+                        .chunks(rename_start..rename_end, true)
+                        .map(|chunk| {
+                            if old_highlight_id.is_none() {
+                                old_highlight_id = chunk.syntax_highlight_id;
+                            }
+                            chunk.text
+                        })
+                        .collect();
+
                     drop(buffer);
 
                     // Position the selection in the rename editor so that it matches the current selection.
+                    this.show_local_selections = false;
                     let rename_editor = cx.add_view(|cx| {
                         let mut editor = Editor::single_line(None, cx);
+                        if let Some(old_highlight_id) = old_highlight_id {
+                            editor.override_text_style =
+                                Some(Box::new(move |style| old_highlight_id.style(&style.syntax)));
+                        }
                         editor
                             .buffer
                             .update(cx, |buffer, cx| buffer.edit([0..0], &old_name, cx));
-                        editor.select_ranges(
-                            [tail_offset_in_rename_range..cursor_offset_in_rename_range],
-                            None,
-                            cx,
-                        );
-                        editor.highlight_ranges::<Rename>(
-                            vec![Anchor::min()..Anchor::max()],
-                            style.diff_background_inserted,
-                            cx,
-                        );
+                        editor.select_all(&SelectAll, cx);
                         editor
                     });
-                    this.highlight_ranges::<Rename>(
-                        vec![range.clone()],
-                        style.diff_background_deleted,
-                        cx,
-                    );
-                    this.update_selections(
-                        vec![Selection {
-                            id: selection.id,
-                            start: rename_end,
-                            end: rename_end,
-                            reversed: false,
-                            goal: SelectionGoal::None,
-                        }],
-                        None,
+
+                    let ranges = this
+                        .clear_background_highlights::<DocumentHighlightWrite>(cx)
+                        .into_iter()
+                        .flat_map(|(_, ranges)| ranges)
+                        .chain(
+                            this.clear_background_highlights::<DocumentHighlightRead>(cx)
+                                .into_iter()
+                                .flat_map(|(_, ranges)| ranges),
+                        )
+                        .collect();
+                    this.highlight_text::<Rename>(
+                        ranges,
+                        HighlightStyle {
+                            fade_out: Some(style.rename_fade),
+                            ..Default::default()
+                        },
                         cx,
                     );
                     cx.focus(&rename_editor);
@@ -4459,7 +4489,7 @@ impl Editor {
         let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
 
         let (buffer, range, old_name, new_name) = editor.update(cx, |editor, cx| {
-            let rename = editor.take_rename(cx)?;
+            let rename = editor.take_rename(false, cx)?;
             let buffer = editor.buffer.read(cx);
             let (start_buffer, start) =
                 buffer.text_anchor_for_position(rename.range.start.clone(), cx)?;
@@ -4483,48 +4513,59 @@ impl Editor {
             )
         });
 
-        Some(cx.spawn(|workspace, cx| async move {
+        Some(cx.spawn(|workspace, mut cx| async move {
             let project_transaction = rename.await?;
             Self::open_project_transaction(
-                editor,
+                editor.clone(),
                 workspace,
                 project_transaction,
                 format!("Rename: {} → {}", old_name, new_name),
-                cx,
+                cx.clone(),
             )
-            .await
+            .await?;
+
+            editor.update(&mut cx, |editor, cx| {
+                editor.refresh_document_highlights(cx);
+            });
+            Ok(())
         }))
     }
 
-    fn take_rename(&mut self, cx: &mut ViewContext<Self>) -> Option<RenameState> {
+    fn take_rename(
+        &mut self,
+        moving_cursor: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<RenameState> {
         let rename = self.pending_rename.take()?;
         self.remove_blocks([rename.block_id].into_iter().collect(), cx);
-        self.clear_highlighted_ranges::<Rename>(cx);
+        self.clear_text_highlights::<Rename>(cx);
+        self.show_local_selections = true;
 
-        let editor = rename.editor.read(cx);
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let selection = editor.newest_selection_with_snapshot::<usize>(&snapshot);
+        if moving_cursor {
+            let cursor_in_rename_editor =
+                rename.editor.read(cx).newest_selection::<usize>(cx).head();
 
-        // Update the selection to match the position of the selection inside
-        // the rename editor.
-        let rename_range = rename.range.to_offset(&snapshot);
-        let start = snapshot
-            .clip_offset(rename_range.start + selection.start, Bias::Left)
-            .min(rename_range.end);
-        let end = snapshot
-            .clip_offset(rename_range.start + selection.end, Bias::Left)
-            .min(rename_range.end);
-        self.update_selections(
-            vec![Selection {
-                id: self.newest_anchor_selection().id,
-                start,
-                end,
-                reversed: selection.reversed,
-                goal: SelectionGoal::None,
-            }],
-            None,
-            cx,
-        );
+            // Update the selection to match the position of the selection inside
+            // the rename editor.
+            let snapshot = self.buffer.read(cx).read(cx);
+            let rename_range = rename.range.to_offset(&snapshot);
+            let cursor_in_editor = snapshot
+                .clip_offset(rename_range.start + cursor_in_rename_editor, Bias::Left)
+                .min(rename_range.end);
+            drop(snapshot);
+
+            self.update_selections(
+                vec![Selection {
+                    id: self.newest_anchor_selection().id,
+                    start: cursor_in_editor,
+                    end: cursor_in_editor,
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                }],
+                None,
+                cx,
+            );
+        }
 
         Some(rename)
     }
@@ -4544,7 +4585,7 @@ impl Editor {
             }
             let rename = self.pending_rename.take().unwrap();
             self.remove_blocks([rename.block_id].into_iter().collect(), cx);
-            self.clear_highlighted_ranges::<Rename>(cx);
+            self.clear_background_highlights::<Rename>(cx);
         }
     }
 
@@ -5256,7 +5297,7 @@ impl Editor {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
-    pub fn set_highlighted_rows(&mut self, rows: Option<Range<u32>>) {
+    pub fn highlight_rows(&mut self, rows: Option<Range<u32>>) {
         self.highlighted_rows = rows;
     }
 
@@ -5264,27 +5305,27 @@ impl Editor {
         self.highlighted_rows.clone()
     }
 
-    pub fn highlight_ranges<T: 'static>(
+    pub fn highlight_background<T: 'static>(
         &mut self,
         ranges: Vec<Range<Anchor>>,
         color: Color,
         cx: &mut ViewContext<Self>,
     ) {
-        self.highlighted_ranges
+        self.background_highlights
             .insert(TypeId::of::<T>(), (color, ranges));
         cx.notify();
     }
 
-    pub fn clear_highlighted_ranges<T: 'static>(
+    pub fn clear_background_highlights<T: 'static>(
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> Option<(Color, Vec<Range<Anchor>>)> {
         cx.notify();
-        self.highlighted_ranges.remove(&TypeId::of::<T>())
+        self.background_highlights.remove(&TypeId::of::<T>())
     }
 
     #[cfg(feature = "test-support")]
-    pub fn all_highlighted_ranges(
+    pub fn all_background_highlights(
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> Vec<(Range<DisplayPoint>, Color)> {
@@ -5292,23 +5333,23 @@ impl Editor {
         let buffer = &snapshot.buffer_snapshot;
         let start = buffer.anchor_before(0);
         let end = buffer.anchor_after(buffer.len());
-        self.highlighted_ranges_in_range(start..end, &snapshot)
+        self.background_highlights_in_range(start..end, &snapshot)
     }
 
-    pub fn highlighted_ranges_for_type<T: 'static>(&self) -> Option<(Color, &[Range<Anchor>])> {
-        self.highlighted_ranges
+    pub fn background_highlights_for_type<T: 'static>(&self) -> Option<(Color, &[Range<Anchor>])> {
+        self.background_highlights
             .get(&TypeId::of::<T>())
             .map(|(color, ranges)| (*color, ranges.as_slice()))
     }
 
-    pub fn highlighted_ranges_in_range(
+    pub fn background_highlights_in_range(
         &self,
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,
     ) -> Vec<(Range<DisplayPoint>, Color)> {
         let mut results = Vec::new();
         let buffer = &display_snapshot.buffer_snapshot;
-        for (color, ranges) in self.highlighted_ranges.values() {
+        for (color, ranges) in self.background_highlights.values() {
             let start_ix = match ranges.binary_search_by(|probe| {
                 let cmp = probe.end.cmp(&search_range.start, &buffer).unwrap();
                 if cmp.is_gt() {
@@ -5335,6 +5376,27 @@ impl Editor {
             }
         }
         results
+    }
+
+    pub fn highlight_text<T: 'static>(
+        &mut self,
+        ranges: Vec<Range<Anchor>>,
+        style: HighlightStyle,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.display_map.update(cx, |map, _| {
+            map.highlight_text(TypeId::of::<T>(), ranges, style)
+        });
+        cx.notify();
+    }
+
+    pub fn clear_text_highlights<T: 'static>(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
+        cx.notify();
+        self.display_map
+            .update(cx, |map, _| map.clear_text_highlights(TypeId::of::<T>()))
     }
 
     fn next_blink_epoch(&mut self) -> usize {
@@ -5560,7 +5622,7 @@ impl View for Editor {
         self.display_map.update(cx, |map, cx| {
             map.set_font(style.text.font_id, style.text.font_size, cx)
         });
-        EditorElement::new(self.handle.clone(), style.clone()).boxed()
+        EditorElement::new(self.handle.clone(), style.clone(), self.cursor_shape).boxed()
     }
 
     fn ui_name() -> &'static str {
@@ -5568,17 +5630,20 @@ impl View for Editor {
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        self.focused = true;
-        self.blink_cursors(self.blink_epoch, cx);
-        self.buffer.update(cx, |buffer, cx| {
-            buffer.finalize_last_transaction(cx);
-            buffer.set_active_selections(&self.selections, cx)
-        });
+        if let Some(rename) = self.pending_rename.as_ref() {
+            cx.focus(&rename.editor);
+        } else {
+            self.focused = true;
+            self.blink_cursors(self.blink_epoch, cx);
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.finalize_last_transaction(cx);
+                buffer.set_active_selections(&self.selections, cx)
+            });
+        }
     }
 
     fn on_blur(&mut self, cx: &mut ViewContext<Self>) {
         self.focused = false;
-        self.show_local_cursors = false;
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
         self.hide_context_menu(cx);
@@ -5613,14 +5678,14 @@ impl View for Editor {
 fn build_style(
     settings: &Settings,
     get_field_editor_theme: Option<GetFieldEditorTheme>,
+    override_text_style: Option<&OverrideTextStyle>,
     cx: &AppContext,
 ) -> EditorStyle {
+    let font_cache = cx.font_cache();
+
     let mut theme = settings.theme.editor.clone();
-    if let Some(get_field_editor_theme) = get_field_editor_theme {
+    let mut style = if let Some(get_field_editor_theme) = get_field_editor_theme {
         let field_editor_theme = get_field_editor_theme(&settings.theme);
-        if let Some(background) = field_editor_theme.container.background_color {
-            theme.background = background;
-        }
         theme.text_color = field_editor_theme.text.color;
         theme.selection = field_editor_theme.selection;
         EditorStyle {
@@ -5629,7 +5694,6 @@ fn build_style(
             theme,
         }
     } else {
-        let font_cache = cx.font_cache();
         let font_family_id = settings.buffer_font_family;
         let font_family_name = cx.font_cache().family_name(font_family_id).unwrap();
         let font_properties = Default::default();
@@ -5650,7 +5714,20 @@ fn build_style(
             placeholder_text: None,
             theme,
         }
+    };
+
+    if let Some(highlight_style) = override_text_style.and_then(|build_style| build_style(&style)) {
+        if let Some(highlighted) = style
+            .text
+            .clone()
+            .highlight(highlight_style, font_cache)
+            .log_err()
+        {
+            style.text = highlighted;
+        }
     }
+
+    style
 }
 
 impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
@@ -8841,7 +8918,7 @@ mod tests {
                 buffer.anchor_after(range.start)..buffer.anchor_after(range.end)
             };
 
-            editor.highlight_ranges::<Type1>(
+            editor.highlight_background::<Type1>(
                 vec![
                     anchor_range(Point::new(2, 1)..Point::new(2, 3)),
                     anchor_range(Point::new(4, 2)..Point::new(4, 4)),
@@ -8851,7 +8928,7 @@ mod tests {
                 Color::red(),
                 cx,
             );
-            editor.highlight_ranges::<Type2>(
+            editor.highlight_background::<Type2>(
                 vec![
                     anchor_range(Point::new(3, 2)..Point::new(3, 5)),
                     anchor_range(Point::new(5, 3)..Point::new(5, 6)),
@@ -8863,7 +8940,7 @@ mod tests {
             );
 
             let snapshot = editor.snapshot(cx);
-            let mut highlighted_ranges = editor.highlighted_ranges_in_range(
+            let mut highlighted_ranges = editor.background_highlights_in_range(
                 anchor_range(Point::new(3, 4)..Point::new(7, 4)),
                 &snapshot,
             );
@@ -8892,7 +8969,7 @@ mod tests {
                 ]
             );
             assert_eq!(
-                editor.highlighted_ranges_in_range(
+                editor.background_highlights_in_range(
                     anchor_range(Point::new(5, 6)..Point::new(6, 4)),
                     &snapshot,
                 ),

@@ -186,7 +186,7 @@ pub struct Run {
     pub glyphs: Vec<Glyph>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Glyph {
     pub id: GlyphId,
     pub position: Vector2F,
@@ -210,15 +210,31 @@ impl Line {
         self.layout.width
     }
 
+    pub fn font_size(&self) -> f32 {
+        self.layout.font_size
+    }
+
     pub fn x_for_index(&self, index: usize) -> f32 {
         for run in &self.layout.runs {
             for glyph in &run.glyphs {
-                if glyph.index == index {
+                if glyph.index >= index {
                     return glyph.position.x();
                 }
             }
         }
         self.layout.width
+    }
+
+    pub fn font_for_index(&self, index: usize) -> Option<FontId> {
+        for run in &self.layout.runs {
+            for glyph in &run.glyphs {
+                if glyph.index >= index {
+                    return Some(run.font_id);
+                }
+            }
+        }
+
+        None
     }
 
     pub fn index_for_x(&self, x: f32) -> Option<usize> {

@@ -740,6 +740,7 @@ type ActionCallback =
 type GlobalActionCallback = dyn FnMut(&dyn AnyAction, &mut MutableAppContext);
 
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
+type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 
@@ -756,8 +757,10 @@ pub struct MutableAppContext {
     next_window_id: usize,
     next_subscription_id: usize,
     frame_count: usize,
-    subscriptions: Arc<Mutex<HashMap<usize, BTreeMap<usize, SubscriptionCallback>>>>,
-    observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ObservationCallback>>>>,
+    subscriptions: Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<SubscriptionCallback>>>>>,
+    global_subscriptions:
+        Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalSubscriptionCallback>>>>>,
+    observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>,
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
     presenters_and_platform_windows:
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
@@ -804,6 +807,7 @@ impl MutableAppContext {
             next_subscription_id: 0,
             frame_count: 0,
             subscriptions: Default::default(),
+            global_subscriptions: Default::default(),
             observations: Default::default(),
             release_observations: Default::default(),
             presenters_and_platform_windows: HashMap::new(),
@@ -1062,6 +1066,12 @@ impl MutableAppContext {
         self.foreground_platform.prompt_for_new_path(directory)
     }
 
+    pub fn emit_global<E: Any>(&mut self, payload: E) {
+        self.pending_effects.push_back(Effect::GlobalEvent {
+            payload: Box::new(payload),
+        });
+    }
+
     pub fn subscribe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
     where
         E: Entity,
@@ -1073,6 +1083,31 @@ impl MutableAppContext {
             callback(handle, event, cx);
             true
         })
+    }
+
+    pub fn subscribe_global<E, F>(&mut self, mut callback: F) -> Subscription
+    where
+        E: Any,
+        F: 'static + FnMut(&E, &mut Self),
+    {
+        let id = post_inc(&mut self.next_subscription_id);
+        let type_id = TypeId::of::<E>();
+        self.global_subscriptions
+            .lock()
+            .entry(type_id)
+            .or_default()
+            .insert(
+                id,
+                Some(Box::new(move |payload, cx| {
+                    let payload = payload.downcast_ref().expect("downcast is type safe");
+                    callback(payload, cx)
+                })),
+            );
+        Subscription::GlobalSubscription {
+            id,
+            type_id,
+            subscriptions: Some(Arc::downgrade(&self.global_subscriptions)),
+        }
     }
 
     pub fn observe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
@@ -1103,14 +1138,14 @@ impl MutableAppContext {
             .or_default()
             .insert(
                 id,
-                Box::new(move |payload, cx| {
+                Some(Box::new(move |payload, cx| {
                     if let Some(emitter) = H::upgrade_from(&emitter, cx.as_ref()) {
                         let payload = payload.downcast_ref().expect("downcast is type safe");
                         callback(emitter, payload, cx)
                     } else {
                         false
                     }
-                }),
+                })),
             );
         Subscription::Subscription {
             id,
@@ -1134,13 +1169,13 @@ impl MutableAppContext {
             .or_default()
             .insert(
                 id,
-                Box::new(move |cx| {
+                Some(Box::new(move |cx| {
                     if let Some(observed) = H::upgrade_from(&observed, cx) {
                         callback(observed, cx)
                     } else {
                         false
                     }
-                }),
+                })),
             );
         Subscription::Observation {
             id,
@@ -1573,6 +1608,7 @@ impl MutableAppContext {
                 if let Some(effect) = self.pending_effects.pop_front() {
                     match effect {
                         Effect::Event { entity_id, payload } => self.emit_event(entity_id, payload),
+                        Effect::GlobalEvent { payload } => self.emit_global_event(payload),
                         Effect::ModelNotification { model_id } => {
                             self.notify_model_observers(model_id)
                         }
@@ -1687,14 +1723,51 @@ impl MutableAppContext {
     fn emit_event(&mut self, entity_id: usize, payload: Box<dyn Any>) {
         let callbacks = self.subscriptions.lock().remove(&entity_id);
         if let Some(callbacks) = callbacks {
-            for (id, mut callback) in callbacks {
-                let alive = callback(payload.as_ref(), self);
-                if alive {
-                    self.subscriptions
+            for (id, callback) in callbacks {
+                if let Some(mut callback) = callback {
+                    let alive = callback(payload.as_ref(), self);
+                    if alive {
+                        match self
+                            .subscriptions
+                            .lock()
+                            .entry(entity_id)
+                            .or_default()
+                            .entry(id)
+                        {
+                            collections::btree_map::Entry::Vacant(entry) => {
+                                entry.insert(Some(callback));
+                            }
+                            collections::btree_map::Entry::Occupied(entry) => {
+                                entry.remove();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn emit_global_event(&mut self, payload: Box<dyn Any>) {
+        let type_id = (&*payload).type_id();
+        let callbacks = self.global_subscriptions.lock().remove(&type_id);
+        if let Some(callbacks) = callbacks {
+            for (id, callback) in callbacks {
+                if let Some(mut callback) = callback {
+                    callback(payload.as_ref(), self);
+                    match self
+                        .global_subscriptions
                         .lock()
-                        .entry(entity_id)
+                        .entry(type_id)
                         .or_default()
-                        .insert(id, callback);
+                        .entry(id)
+                    {
+                        collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(Some(callback));
+                        }
+                        collections::btree_map::Entry::Occupied(entry) => {
+                            entry.remove();
+                        }
+                    }
                 }
             }
         }
@@ -1704,14 +1777,25 @@ impl MutableAppContext {
         let callbacks = self.observations.lock().remove(&observed_id);
         if let Some(callbacks) = callbacks {
             if self.cx.models.contains_key(&observed_id) {
-                for (id, mut callback) in callbacks {
-                    let alive = callback(self);
-                    if alive {
-                        self.observations
-                            .lock()
-                            .entry(observed_id)
-                            .or_default()
-                            .insert(id, callback);
+                for (id, callback) in callbacks {
+                    if let Some(mut callback) = callback {
+                        let alive = callback(self);
+                        if alive {
+                            match self
+                                .observations
+                                .lock()
+                                .entry(observed_id)
+                                .or_default()
+                                .entry(id)
+                            {
+                                collections::btree_map::Entry::Vacant(entry) => {
+                                    entry.insert(Some(callback));
+                                }
+                                collections::btree_map::Entry::Occupied(entry) => {
+                                    entry.remove();
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1734,14 +1818,25 @@ impl MutableAppContext {
                 .views
                 .contains_key(&(observed_window_id, observed_view_id))
             {
-                for (id, mut callback) in callbacks {
-                    let alive = callback(self);
-                    if alive {
-                        self.observations
-                            .lock()
-                            .entry(observed_view_id)
-                            .or_default()
-                            .insert(id, callback);
+                for (id, callback) in callbacks {
+                    if let Some(mut callback) = callback {
+                        let alive = callback(self);
+                        if alive {
+                            match self
+                                .observations
+                                .lock()
+                                .entry(observed_view_id)
+                                .or_default()
+                                .entry(id)
+                            {
+                                collections::btree_map::Entry::Vacant(entry) => {
+                                    entry.insert(Some(callback));
+                                }
+                                collections::btree_map::Entry::Occupied(entry) => {
+                                    entry.remove();
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2071,6 +2166,9 @@ pub enum Effect {
         entity_id: usize,
         payload: Box<dyn Any>,
     },
+    GlobalEvent {
+        payload: Box<dyn Any>,
+    },
     ModelNotification {
         model_id: usize,
     },
@@ -2103,6 +2201,10 @@ impl Debug for Effect {
             Effect::Event { entity_id, .. } => f
                 .debug_struct("Effect::Event")
                 .field("entity_id", entity_id)
+                .finish(),
+            Effect::GlobalEvent { payload, .. } => f
+                .debug_struct("Effect::GlobalEvent")
+                .field("type_id", &(&*payload).type_id())
                 .finish(),
             Effect::ModelNotification { model_id } => f
                 .debug_struct("Effect::ModelNotification")
@@ -3760,12 +3862,21 @@ pub enum Subscription {
     Subscription {
         id: usize,
         entity_id: usize,
-        subscriptions: Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, SubscriptionCallback>>>>>,
+        subscriptions:
+            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<SubscriptionCallback>>>>>>,
+    },
+    GlobalSubscription {
+        id: usize,
+        type_id: TypeId,
+        subscriptions: Option<
+            Weak<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalSubscriptionCallback>>>>>,
+        >,
     },
     Observation {
         id: usize,
         entity_id: usize,
-        observations: Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, ObservationCallback>>>>>,
+        observations:
+            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>>,
     },
     ReleaseObservation {
         id: usize,
@@ -3781,6 +3892,9 @@ impl Subscription {
             Subscription::Subscription { subscriptions, .. } => {
                 subscriptions.take();
             }
+            Subscription::GlobalSubscription { subscriptions, .. } => {
+                subscriptions.take();
+            }
             Subscription::Observation { observations, .. } => {
                 observations.take();
             }
@@ -3794,14 +3908,61 @@ impl Subscription {
 impl Drop for Subscription {
     fn drop(&mut self) {
         match self {
+            Subscription::Subscription {
+                id,
+                entity_id,
+                subscriptions,
+            } => {
+                if let Some(subscriptions) = subscriptions.as_ref().and_then(Weak::upgrade) {
+                    match subscriptions
+                        .lock()
+                        .entry(*entity_id)
+                        .or_default()
+                        .entry(*id)
+                    {
+                        collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(None);
+                        }
+                        collections::btree_map::Entry::Occupied(entry) => {
+                            entry.remove();
+                        }
+                    }
+                }
+            }
+            Subscription::GlobalSubscription {
+                id,
+                type_id,
+                subscriptions,
+            } => {
+                if let Some(subscriptions) = subscriptions.as_ref().and_then(Weak::upgrade) {
+                    match subscriptions.lock().entry(*type_id).or_default().entry(*id) {
+                        collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(None);
+                        }
+                        collections::btree_map::Entry::Occupied(entry) => {
+                            entry.remove();
+                        }
+                    }
+                }
+            }
             Subscription::Observation {
                 id,
                 entity_id,
                 observations,
             } => {
                 if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
-                    if let Some(observations) = observations.lock().get_mut(entity_id) {
-                        observations.remove(id);
+                    match observations
+                        .lock()
+                        .entry(*entity_id)
+                        .or_default()
+                        .entry(*id)
+                    {
+                        collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(None);
+                        }
+                        collections::btree_map::Entry::Occupied(entry) => {
+                            entry.remove();
+                        }
                     }
                 }
             }
@@ -3813,17 +3974,6 @@ impl Drop for Subscription {
                 if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
                     if let Some(observations) = observations.lock().get_mut(entity_id) {
                         observations.remove(id);
-                    }
-                }
-            }
-            Subscription::Subscription {
-                id,
-                entity_id,
-                subscriptions,
-            } => {
-                if let Some(subscriptions) = subscriptions.as_ref().and_then(Weak::upgrade) {
-                    if let Some(subscriptions) = subscriptions.lock().get_mut(entity_id) {
-                        subscriptions.remove(id);
                     }
                 }
             }
@@ -4393,6 +4543,98 @@ mod tests {
     }
 
     #[crate::test(self)]
+    fn test_global_events(cx: &mut MutableAppContext) {
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        struct GlobalEvent(u64);
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let first_subscription;
+        let second_subscription;
+
+        {
+            let events = events.clone();
+            first_subscription = cx.subscribe_global(move |e: &GlobalEvent, _| {
+                events.borrow_mut().push(("First", e.clone()));
+            });
+        }
+
+        {
+            let events = events.clone();
+            second_subscription = cx.subscribe_global(move |e: &GlobalEvent, _| {
+                events.borrow_mut().push(("Second", e.clone()));
+            });
+        }
+
+        cx.update(|cx| {
+            cx.emit_global(GlobalEvent(1));
+            cx.emit_global(GlobalEvent(2));
+        });
+
+        drop(first_subscription);
+
+        cx.update(|cx| {
+            cx.emit_global(GlobalEvent(3));
+        });
+
+        drop(second_subscription);
+
+        cx.update(|cx| {
+            cx.emit_global(GlobalEvent(4));
+        });
+
+        assert_eq!(
+            &*events.borrow(),
+            &[
+                ("First", GlobalEvent(1)),
+                ("Second", GlobalEvent(1)),
+                ("First", GlobalEvent(2)),
+                ("Second", GlobalEvent(2)),
+                ("Second", GlobalEvent(3)),
+            ]
+        );
+    }
+
+    #[crate::test(self)]
+    fn test_global_nested_events(cx: &mut MutableAppContext) {
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        struct GlobalEvent(u64);
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+
+        {
+            let events = events.clone();
+            cx.subscribe_global(move |e: &GlobalEvent, cx| {
+                events.borrow_mut().push(("Outer", e.clone()));
+
+                let events = events.clone();
+                cx.subscribe_global(move |e: &GlobalEvent, _| {
+                    events.borrow_mut().push(("Inner", e.clone()));
+                })
+                .detach();
+            })
+            .detach();
+        }
+
+        cx.update(|cx| {
+            cx.emit_global(GlobalEvent(1));
+            cx.emit_global(GlobalEvent(2));
+            cx.emit_global(GlobalEvent(3));
+        });
+
+        assert_eq!(
+            &*events.borrow(),
+            &[
+                ("Outer", GlobalEvent(1)),
+                ("Outer", GlobalEvent(2)),
+                ("Inner", GlobalEvent(2)),
+                ("Outer", GlobalEvent(3)),
+                ("Inner", GlobalEvent(3)),
+                ("Inner", GlobalEvent(3)),
+            ]
+        );
+    }
+
+    #[crate::test(self)]
     fn test_dropping_subscribers(cx: &mut MutableAppContext) {
         struct View;
 
@@ -4528,6 +4770,137 @@ mod tests {
         });
 
         observed_model.update(cx, |_, cx| cx.notify());
+    }
+
+    #[crate::test(self)]
+    fn test_dropping_subscriptions_during_callback(cx: &mut MutableAppContext) {
+        struct Model;
+
+        impl Entity for Model {
+            type Event = u64;
+        }
+
+        // Events
+        let observing_model = cx.add_model(|_| Model);
+        let observed_model = cx.add_model(|_| Model);
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+
+        observing_model.update(cx, |_, cx| {
+            let events = events.clone();
+            let subscription = Rc::new(RefCell::new(None));
+            *subscription.borrow_mut() = Some(cx.subscribe(&observed_model, {
+                let subscription = subscription.clone();
+                move |_, _, e, _| {
+                    subscription.borrow_mut().take();
+                    events.borrow_mut().push(e.clone());
+                }
+            }));
+        });
+
+        observed_model.update(cx, |_, cx| {
+            cx.emit(1);
+            cx.emit(2);
+        });
+
+        assert_eq!(*events.borrow(), [1]);
+
+        // Global Events
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        struct GlobalEvent(u64);
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+
+        {
+            let events = events.clone();
+            let subscription = Rc::new(RefCell::new(None));
+            *subscription.borrow_mut() = Some(cx.subscribe_global({
+                let subscription = subscription.clone();
+                move |e: &GlobalEvent, _| {
+                    subscription.borrow_mut().take();
+                    events.borrow_mut().push(e.clone());
+                }
+            }));
+        }
+
+        cx.update(|cx| {
+            cx.emit_global(GlobalEvent(1));
+            cx.emit_global(GlobalEvent(2));
+        });
+
+        assert_eq!(*events.borrow(), [GlobalEvent(1)]);
+
+        // Model Observation
+        let observing_model = cx.add_model(|_| Model);
+        let observed_model = cx.add_model(|_| Model);
+
+        let observation_count = Rc::new(RefCell::new(0));
+
+        observing_model.update(cx, |_, cx| {
+            let observation_count = observation_count.clone();
+            let subscription = Rc::new(RefCell::new(None));
+            *subscription.borrow_mut() = Some(cx.observe(&observed_model, {
+                let subscription = subscription.clone();
+                move |_, _, _| {
+                    subscription.borrow_mut().take();
+                    *observation_count.borrow_mut() += 1;
+                }
+            }));
+        });
+
+        observed_model.update(cx, |_, cx| {
+            cx.notify();
+        });
+
+        observed_model.update(cx, |_, cx| {
+            cx.notify();
+        });
+
+        assert_eq!(*observation_count.borrow(), 1);
+
+        // View Observation
+        struct View;
+
+        impl Entity for View {
+            type Event = ();
+        }
+
+        impl super::View for View {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+                Empty::new().boxed()
+            }
+
+            fn ui_name() -> &'static str {
+                "View"
+            }
+        }
+
+        let (window_id, _) = cx.add_window(Default::default(), |_| View);
+        let observing_view = cx.add_view(window_id, |_| View);
+        let observed_view = cx.add_view(window_id, |_| View);
+
+        let observation_count = Rc::new(RefCell::new(0));
+        observing_view.update(cx, |_, cx| {
+            let observation_count = observation_count.clone();
+            let subscription = Rc::new(RefCell::new(None));
+            *subscription.borrow_mut() = Some(cx.observe(&observed_view, {
+                let subscription = subscription.clone();
+                move |_, _, _| {
+                    subscription.borrow_mut().take();
+                    *observation_count.borrow_mut() += 1;
+                }
+            }));
+        });
+
+        observed_view.update(cx, |_, cx| {
+            cx.notify();
+        });
+
+        observed_view.update(cx, |_, cx| {
+            cx.notify();
+        });
+
+        assert_eq!(*observation_count.borrow(), 1);
     }
 
     #[crate::test(self)]
