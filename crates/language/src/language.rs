@@ -49,6 +49,7 @@ lazy_static! {
             name: "Plain Text".into(),
             path_suffixes: Default::default(),
             brackets: Default::default(),
+            autoclose_before: Default::default(),
             line_comment: None,
             language_server: None,
         },
@@ -109,6 +110,8 @@ pub struct LanguageConfig {
     pub name: Arc<str>,
     pub path_suffixes: Vec<String>,
     pub brackets: Vec<BracketPair>,
+    #[serde(default)]
+    pub autoclose_before: String,
     pub line_comment: Option<String>,
     pub language_server: Option<LanguageServerConfig>,
 }
@@ -119,6 +122,7 @@ impl Default for LanguageConfig {
             name: "".into(),
             path_suffixes: Default::default(),
             brackets: Default::default(),
+            autoclose_before: Default::default(),
             line_comment: Default::default(),
             language_server: Default::default(),
         }
@@ -527,6 +531,10 @@ impl Language {
 
     pub fn brackets(&self) -> &[BracketPair] {
         &self.config.brackets
+    }
+
+    pub fn should_autoclose_before(&self, c: char) -> bool {
+        c.is_whitespace() || self.config.autoclose_before.contains(c)
     }
 
     pub fn set_theme(&self, theme: &SyntaxTheme) {
