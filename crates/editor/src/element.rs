@@ -26,6 +26,7 @@ use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
     fmt::Write,
+    iter,
     ops::Range,
 };
 
@@ -610,11 +611,10 @@ impl EditorElement {
 
     fn layout_lines(
         &mut self,
-        mut rows: Range<u32>,
-        snapshot: &mut EditorSnapshot,
+        rows: Range<u32>,
+        snapshot: &EditorSnapshot,
         cx: &LayoutContext,
     ) -> Vec<text_layout::Line> {
-        rows.end = cmp::min(rows.end, snapshot.max_point().row() + 1);
         if rows.start >= rows.end {
             return Vec::new();
         }
@@ -632,6 +632,7 @@ impl EditorElement {
                 .map_or("", AsRef::as_ref)
                 .split('\n')
                 .skip(rows.start as usize)
+                .chain(iter::repeat(""))
                 .take(rows.len());
             return placeholder_lines
                 .map(|line| {
@@ -880,7 +881,12 @@ impl Element for EditorElement {
         let scroll_position = snapshot.scroll_position();
         let start_row = scroll_position.y() as u32;
         let scroll_top = scroll_position.y() * line_height;
-        let end_row = ((scroll_top + size.y()) / line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
+
+        // Add 1 to ensure selections bleed off screen
+        let end_row = 1 + cmp::min(
+            ((scroll_top + size.y()) / line_height).ceil() as u32,
+            snapshot.max_point().row(),
+        );
 
         let start_anchor = if start_row == 0 {
             Anchor::min()
@@ -963,7 +969,7 @@ impl Element for EditorElement {
             self.layout_line_numbers(start_row..end_row, &active_rows, &snapshot, cx);
 
         let mut max_visible_line_width = 0.0;
-        let line_layouts = self.layout_lines(start_row..end_row, &mut snapshot, cx);
+        let line_layouts = self.layout_lines(start_row..end_row, &snapshot, cx);
         for line in &line_layouts {
             if line.width() > max_visible_line_width {
                 max_visible_line_width = line.width();
@@ -1466,8 +1472,13 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
-    use crate::{Editor, MultiBuffer};
+    use crate::{
+        display_map::{BlockDisposition, BlockProperties},
+        Editor, MultiBuffer,
+    };
     use util::test::sample_text;
     use workspace::Settings;
 
@@ -1491,5 +1502,59 @@ mod tests {
             element.layout_line_numbers(0..6, &Default::default(), &snapshot, &mut layout_cx)
         });
         assert_eq!(layouts.len(), 6);
+    }
+
+    #[gpui::test]
+    fn test_layout_with_placeholder_text_and_blocks(cx: &mut gpui::MutableAppContext) {
+        cx.add_app_state(Settings::test(cx));
+        let buffer = MultiBuffer::build_simple("", cx);
+        let (window_id, editor) = cx.add_window(Default::default(), |cx| {
+            Editor::new(EditorMode::Full, buffer, None, None, cx)
+        });
+
+        editor.update(cx, |editor, cx| {
+            editor.set_placeholder_text("hello", cx);
+            editor.insert_blocks(
+                [BlockProperties {
+                    disposition: BlockDisposition::Above,
+                    height: 3,
+                    position: Anchor::min(),
+                    render: Arc::new(|_| Empty::new().boxed()),
+                }],
+                cx,
+            );
+
+            // Blur the editor so that it displays placeholder text.
+            cx.blur();
+        });
+
+        let mut element = EditorElement::new(
+            editor.downgrade(),
+            editor.read(cx).style(cx),
+            CursorShape::Bar,
+        );
+
+        let mut scene = Scene::new(1.0);
+        let mut presenter = cx.build_presenter(window_id, 30.);
+        let mut layout_cx = presenter.build_layout_context(false, cx);
+        let (size, mut state) = element.layout(
+            SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
+            &mut layout_cx,
+        );
+
+        assert_eq!(state.line_layouts.len(), 4);
+        assert_eq!(
+            state
+                .line_number_layouts
+                .iter()
+                .map(Option::is_some)
+                .collect::<Vec<_>>(),
+            &[false, false, false, true]
+        );
+
+        // Don't panic.
+        let bounds = RectF::new(Default::default(), size);
+        let mut paint_cx = presenter.build_paint_context(&mut scene, cx);
+        element.paint(bounds, bounds, &mut state, &mut paint_cx);
     }
 }
