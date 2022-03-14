@@ -38,7 +38,10 @@ use std::{
     ops::Range,
     path::{Component, Path, PathBuf},
     rc::Rc,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize},
+        Arc,
+    },
     time::Instant,
 };
 use util::{post_inc, ResultExt, TryFutureExt as _};
@@ -56,6 +59,7 @@ pub struct Project {
     language_server_settings: Arc<Mutex<serde_json::Value>>,
     next_language_server_id: usize,
     client: Arc<client::Client>,
+    next_entry_id: Arc<AtomicUsize>,
     user_store: ModelHandle<UserStore>,
     fs: Arc<dyn Fs>,
     client_state: ProjectClientState,
@@ -331,6 +335,7 @@ impl Project {
                 client,
                 user_store,
                 fs,
+                next_entry_id: Default::default(),
                 language_servers_with_diagnostics_running: 0,
                 language_servers: Default::default(),
                 started_language_servers: Default::default(),
@@ -381,6 +386,7 @@ impl Project {
                 languages,
                 user_store: user_store.clone(),
                 fs,
+                next_entry_id: Default::default(),
                 subscriptions: vec![client.add_model_for_remote_entity(remote_id, cx)],
                 client: client.clone(),
                 client_state: ProjectClientState::Remote {
@@ -2979,6 +2985,7 @@ impl Project {
     ) -> Task<Result<ModelHandle<Worktree>>> {
         let fs = self.fs.clone();
         let client = self.client.clone();
+        let next_entry_id = self.next_entry_id.clone();
         let path: Arc<Path> = abs_path.as_ref().into();
         let task = self
             .loading_local_worktrees
@@ -2986,9 +2993,15 @@ impl Project {
             .or_insert_with(|| {
                 cx.spawn(|project, mut cx| {
                     async move {
-                        let worktree =
-                            Worktree::local(client.clone(), path.clone(), visible, fs, &mut cx)
-                                .await;
+                        let worktree = Worktree::local(
+                            client.clone(),
+                            path.clone(),
+                            visible,
+                            fs,
+                            next_entry_id,
+                            &mut cx,
+                        )
+                        .await;
                         project.update(&mut cx, |project, _| {
                             project.loading_local_worktrees.remove(&path);
                         });

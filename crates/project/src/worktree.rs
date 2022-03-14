@@ -172,10 +172,11 @@ impl Worktree {
         path: impl Into<Arc<Path>>,
         visible: bool,
         fs: Arc<dyn Fs>,
+        next_entry_id: Arc<AtomicUsize>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
         let (tree, scan_states_tx) =
-            LocalWorktree::new(client, path, visible, fs.clone(), cx).await?;
+            LocalWorktree::new(client, path, visible, fs.clone(), next_entry_id, cx).await?;
         tree.update(cx, |tree, cx| {
             let tree = tree.as_local_mut().unwrap();
             let abs_path = tree.abs_path().clone();
@@ -425,11 +426,11 @@ impl LocalWorktree {
         path: impl Into<Arc<Path>>,
         visible: bool,
         fs: Arc<dyn Fs>,
+        next_entry_id: Arc<AtomicUsize>,
         cx: &mut AsyncAppContext,
     ) -> Result<(ModelHandle<Worktree>, UnboundedSender<ScanState>)> {
         let abs_path = path.into();
         let path: Arc<Path> = Arc::from(Path::new(""));
-        let next_entry_id = AtomicUsize::new(0);
 
         // After determining whether the root entry is a file or a directory, populate the
         // snapshot's "root name", which will be used for the purpose of fuzzy matching.
@@ -457,7 +458,7 @@ impl LocalWorktree {
                 scan_id: 0,
                 ignores: Default::default(),
                 removed_entry_ids: Default::default(),
-                next_entry_id: Arc::new(next_entry_id),
+                next_entry_id,
                 snapshot: Snapshot {
                     id: WorktreeId::from_usize(cx.model_id()),
                     root_name: root_name.clone(),
@@ -2425,6 +2426,7 @@ mod tests {
             Arc::from(Path::new("/root")),
             true,
             fs,
+            Default::default(),
             &mut cx.to_async(),
         )
         .await
@@ -2468,6 +2470,7 @@ mod tests {
             dir.path(),
             true,
             Arc::new(RealFs),
+            Default::default(),
             &mut cx.to_async(),
         )
         .await
