@@ -110,13 +110,7 @@ impl Presenter {
 
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             self.layout(window_size, refreshing, cx);
-            let mut paint_cx = PaintContext {
-                scene: &mut scene,
-                font_cache: &self.font_cache,
-                text_layout_cache: &self.text_layout_cache,
-                rendered_views: &mut self.rendered_views,
-                app: cx.as_ref(),
-            };
+            let mut paint_cx = self.build_paint_context(&mut scene, cx);
             paint_cx.paint(
                 root_view_id,
                 Vector2F::zero(),
@@ -155,6 +149,20 @@ impl Presenter {
             text_layout_cache: &self.text_layout_cache,
             asset_cache: &self.asset_cache,
             view_stack: Vec::new(),
+            app: cx,
+        }
+    }
+
+    pub fn build_paint_context<'a>(
+        &'a mut self,
+        scene: &'a mut Scene,
+        cx: &'a mut MutableAppContext,
+    ) -> PaintContext {
+        PaintContext {
+            scene,
+            font_cache: &self.font_cache,
+            text_layout_cache: &self.text_layout_cache,
+            rendered_views: &mut self.rendered_views,
             app: cx,
         }
     }
