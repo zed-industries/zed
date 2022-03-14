@@ -492,14 +492,12 @@ impl ToJson for SizeConstraint {
 }
 
 pub struct ChildView {
-    view_id: usize,
+    view: AnyViewHandle,
 }
 
 impl ChildView {
     pub fn new(view: impl Into<AnyViewHandle>) -> Self {
-        Self {
-            view_id: view.into().id(),
-        }
+        Self { view: view.into() }
     }
 }
 
@@ -512,7 +510,7 @@ impl Element for ChildView {
         constraint: SizeConstraint,
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let size = cx.layout(self.view_id, constraint);
+        let size = cx.layout(self.view.id(), constraint);
         (size, ())
     }
 
@@ -523,7 +521,7 @@ impl Element for ChildView {
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        cx.paint(self.view_id, bounds.origin(), visible_bounds);
+        cx.paint(self.view.id(), bounds.origin(), visible_bounds);
     }
 
     fn dispatch_event(
@@ -534,7 +532,7 @@ impl Element for ChildView {
         _: &mut Self::PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        cx.dispatch_event(self.view_id, event)
+        cx.dispatch_event(self.view.id(), event)
     }
 
     fn debug(
@@ -546,53 +544,13 @@ impl Element for ChildView {
     ) -> serde_json::Value {
         json!({
             "type": "ChildView",
-            "view_id": self.view_id,
+            "view_id": self.view.id(),
             "bounds": bounds.to_json(),
-            "child": if let Some(view) = cx.rendered_views.get(&self.view_id) {
+            "child": if let Some(view) = cx.rendered_views.get(&self.view.id()) {
                 view.debug(cx)
             } else {
                 json!(null)
             }
         })
     }
-}
-
-#[cfg(test)]
-mod tests {
-    // #[test]
-    // fn test_responder_chain() {
-    //     let settings = settings_rx(None);
-    //     let mut app = App::new().unwrap();
-    //     let workspace = app.add_model(|cx| Workspace::new(Vec::new(), cx));
-    //     let (window_id, workspace_view) =
-    //         app.add_window(|cx| WorkspaceView::new(workspace.clone(), settings, cx));
-
-    //     let invalidations = Rc::new(RefCell::new(Vec::new()));
-    //     let invalidations_ = invalidations.clone();
-    //     app.on_window_invalidated(window_id, move |invalidation, _| {
-    //         invalidations_.borrow_mut().push(invalidation)
-    //     });
-
-    //     let active_pane_id = workspace_view.update(&mut app, |view, cx| {
-    //         cx.focus(view.active_pane());
-    //         view.active_pane().id()
-    //     });
-
-    //     app.update(|app| {
-    //         let mut presenter = Presenter::new(
-    //             window_id,
-    //             Rc::new(FontCache::new()),
-    //             Rc::new(AssetCache::new()),
-    //             app,
-    //         );
-    //         for invalidation in invalidations.borrow().iter().cloned() {
-    //             presenter.update(vec2f(1024.0, 768.0), 2.0, Some(invalidation), app);
-    //         }
-
-    //         assert_eq!(
-    //             presenter.responder_chain(app.cx()).unwrap(),
-    //             vec![workspace_view.id(), active_pane_id]
-    //         );
-    //     });
-    // }
 }
