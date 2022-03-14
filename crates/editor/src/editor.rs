@@ -4952,6 +4952,9 @@ impl Editor {
         );
         let offsets =
             snapshot.summaries_for_anchors::<usize, _>(anchors_with_status.iter().map(|a| &a.1));
+        assert_eq!(anchors_with_status.len(), 2 * self.selections.len());
+        assert_eq!(offsets.len(), anchors_with_status.len());
+
         let offsets = offsets.chunks(2);
         let statuses = anchors_with_status
             .chunks(2)

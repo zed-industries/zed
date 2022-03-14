@@ -3664,10 +3664,9 @@ mod tests {
             }
 
             // Anchor resolution
-            for (anchor, resolved_offset) in anchors
-                .iter()
-                .zip(snapshot.summaries_for_anchors::<usize, _>(&anchors))
-            {
+            let summaries = snapshot.summaries_for_anchors::<usize, _>(&anchors);
+            assert_eq!(anchors.len(), summaries.len());
+            for (anchor, resolved_offset) in anchors.iter().zip(summaries) {
                 assert!(resolved_offset <= snapshot.len());
                 assert_eq!(
                     snapshot.summary_for_anchor::<usize>(anchor),
