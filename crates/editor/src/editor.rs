@@ -1910,15 +1910,10 @@ impl Editor {
                             selection.start.saturating_sub(pair.start.len()),
                             &pair.start,
                         ) {
-                            // Autoclose only if the next character is a whitespace or a pair end
-                            // (possibly a different one from the pair we are inserting).
                             snapshot
                                 .chars_at(selection.start)
                                 .next()
-                                .map_or(true, |ch| ch.is_whitespace())
-                                || language.brackets().iter().any(|pair| {
-                                    snapshot.contains_str_at(selection.start, &pair.end)
-                                })
+                                .map_or(true, |c| language.should_autoclose_before(c))
                         } else {
                             false
                         }
@@ -8129,6 +8124,7 @@ mod tests {
                         newline: true,
                     },
                 ],
+                autoclose_before: "})]".to_string(),
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
@@ -8156,6 +8152,7 @@ mod tests {
                 ],
                 cx,
             );
+
             view.handle_input(&Input("{".to_string()), cx);
             view.handle_input(&Input("{".to_string()), cx);
             view.handle_input(&Input("{".to_string()), cx);
@@ -8219,6 +8216,8 @@ mod tests {
                 .unindent()
             );
 
+            // Don't autoclose if the next character isn't whitespace and isn't
+            // listed in the language's "autoclose_before" section.
             view.finalize_last_transaction(cx);
             view.select_display_ranges(&[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)], cx);
             view.handle_input(&Input("{".to_string()), cx);
