@@ -4992,6 +4992,11 @@ impl Editor {
         pending_selection: Option<PendingSelection>,
         cx: &mut ViewContext<Self>,
     ) {
+        assert!(
+            !selections.is_empty() || pending_selection.is_some(),
+            "must have at least one selection"
+        );
+
         let old_cursor_position = self.newest_anchor_selection().head();
 
         self.selections = selections;

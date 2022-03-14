@@ -3357,7 +3357,7 @@ mod tests {
                 }
                 40..=44 if !anchors.is_empty() => {
                     let multibuffer = multibuffer.read(cx).read(cx);
-
+                    let prev_len = anchors.len();
                     anchors = multibuffer
                         .refresh_anchors(&anchors)
                         .into_iter()
@@ -3366,6 +3366,7 @@ mod tests {
 
                     // Ensure the newly-refreshed anchors point to a valid excerpt and don't
                     // overshoot its boundaries.
+                    assert_eq!(anchors.len(), prev_len);
                     let mut cursor = multibuffer.excerpts.cursor::<Option<&ExcerptId>>();
                     for anchor in &anchors {
                         if anchor.excerpt_id == ExcerptId::min()
