@@ -5696,6 +5696,10 @@ fn build_style(
         let field_editor_theme = get_field_editor_theme(&settings.theme);
         theme.text_color = field_editor_theme.text.color;
         theme.selection = field_editor_theme.selection;
+        theme.background = field_editor_theme
+            .container
+            .background_color
+            .unwrap_or_default();
         EditorStyle {
             text: field_editor_theme.text,
             placeholder_text: field_editor_theme.placeholder_text,
