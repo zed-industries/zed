@@ -279,7 +279,9 @@ impl Layer {
     }
 
     fn push_quad(&mut self, quad: Quad) {
-        self.quads.push(quad);
+        if can_draw(quad.bounds) {
+            self.quads.push(quad);
+        }
     }
 
     pub fn quads(&self) -> &[Quad] {
@@ -287,7 +289,9 @@ impl Layer {
     }
 
     fn push_underline(&mut self, underline: Underline) {
-        self.underlines.push(underline);
+        if underline.width > 0. {
+            self.underlines.push(underline);
+        }
     }
 
     pub fn underlines(&self) -> &[Underline] {
@@ -295,7 +299,9 @@ impl Layer {
     }
 
     fn push_image(&mut self, image: Image) {
-        self.images.push(image);
+        if can_draw(image.bounds) {
+            self.images.push(image);
+        }
     }
 
     pub fn images(&self) -> &[Image] {
@@ -303,7 +309,9 @@ impl Layer {
     }
 
     fn push_shadow(&mut self, shadow: Shadow) {
-        self.shadows.push(shadow);
+        if can_draw(shadow.bounds) {
+            self.shadows.push(shadow);
+        }
     }
 
     pub fn shadows(&self) -> &[Shadow] {
@@ -319,7 +327,9 @@ impl Layer {
     }
 
     pub fn push_icon(&mut self, icon: Icon) {
-        self.icons.push(icon);
+        if can_draw(icon.bounds) {
+            self.icons.push(icon);
+        }
     }
 
     pub fn icons(&self) -> &[Icon] {
@@ -327,7 +337,7 @@ impl Layer {
     }
 
     fn push_path(&mut self, path: Path) {
-        if !path.bounds.is_empty() {
+        if can_draw(path.bounds) {
             self.paths.push(path);
         }
     }
@@ -428,4 +438,9 @@ impl ToJson for Border {
         }
         value
     }
+}
+
+fn can_draw(bounds: RectF) -> bool {
+    let size = bounds.size();
+    size.x() > 0. && size.y() > 0.
 }
