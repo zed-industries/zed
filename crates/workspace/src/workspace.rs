@@ -20,7 +20,7 @@ use gpui::{
     platform::{CursorStyle, WindowOptions},
     AnyModelHandle, AnyViewHandle, AppContext, ClipboardItem, Entity, ImageData, ModelContext,
     ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View,
-    ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    ViewContext, ViewHandle, ViewId, WeakModelHandle, WeakViewHandle,
 };
 use language::LanguageRegistry;
 use log::error;
@@ -235,7 +235,7 @@ pub trait ItemViewHandle: 'static {
     fn added_to_pane(&mut self, cx: &mut ViewContext<Pane>);
     fn deactivated(&self, cx: &mut MutableAppContext);
     fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext);
-    fn id(&self) -> usize;
+    fn id(&self) -> ViewId;
     fn to_any(&self) -> AnyViewHandle;
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
@@ -249,16 +249,25 @@ pub trait ItemViewHandle: 'static {
         cx: &mut MutableAppContext,
     ) -> Task<Result<()>>;
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle>;
+
+    fn entity_id(&self) -> usize {
+        self.id().entity_id()
+    }
+
+    fn window_id(&self) -> usize {
+        self.id().window_id()
+    }
 }
 
 pub trait WeakItemViewHandle {
-    fn id(&self) -> usize;
+    fn id(&self) -> ViewId;
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemViewHandle>>;
 }
 
 impl<T: Item> ItemHandle for ModelHandle<T> {
     fn id(&self) -> usize {
-        self.id()
+        // TODO: This is a bummer
+        std::ops::Deref::deref(&self).id()
     }
 
     fn add_view(
@@ -293,7 +302,7 @@ impl<T: Item> ItemHandle for ModelHandle<T> {
 
 impl ItemHandle for Box<dyn ItemHandle> {
     fn id(&self) -> usize {
-        ItemHandle::id(self.as_ref())
+        self.as_ref().id()
     }
 
     fn add_view(
@@ -391,7 +400,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
     fn added_to_pane(&mut self, cx: &mut ViewContext<Pane>) {
         cx.subscribe(self, |pane, item, event, cx| {
             if T::should_close_item_on_event(event) {
-                pane.close_item(item.id(), cx);
+                pane.close_item(item.entity_id(), cx);
                 return;
             }
             if T::should_activate_item_on_event(event) {
@@ -436,8 +445,8 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         self.read(cx).has_conflict(cx)
     }
 
-    fn id(&self) -> usize {
-        self.id()
+    fn id(&self) -> ViewId {
+        std::ops::Deref::deref(&self).id()
     }
 
     fn to_any(&self) -> AnyViewHandle {
@@ -476,7 +485,7 @@ impl Clone for Box<dyn ItemHandle> {
 }
 
 impl<T: ItemView> WeakItemViewHandle for WeakViewHandle<T> {
-    fn id(&self) -> usize {
+    fn id(&self) -> ViewId {
         self.id()
     }
 
@@ -1043,7 +1052,7 @@ impl Workspace {
 
     fn handle_pane_event(
         &mut self,
-        pane_id: usize,
+        pane_id: ViewId,
         event: &pane::Event,
         cx: &mut ViewContext<Self>,
     ) {
@@ -1060,7 +1069,7 @@ impl Workspace {
                 }
             }
         } else {
-            error!("pane {} not found", pane_id);
+            error!("pane {:?} not found", pane_id);
         }
     }
 
@@ -1097,7 +1106,7 @@ impl Workspace {
         &self.panes
     }
 
-    fn pane(&self, pane_id: usize) -> Option<ViewHandle<Pane>> {
+    fn pane(&self, pane_id: ViewId) -> Option<ViewHandle<Pane>> {
         self.panes.iter().find(|pane| pane.id() == pane_id).cloned()
     }
 
@@ -1590,5 +1599,9 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
         (app_state.build_workspace)(project, &app_state, cx)
     });
     cx.emit_global(WorkspaceCreated(workspace.downgrade()));
-    cx.dispatch_action(window_id, vec![workspace.id()], &OpenNew(app_state.clone()));
+    cx.dispatch_action(
+        window_id,
+        vec![workspace.entity_id()],
+        &OpenNew(app_state.clone()),
+    );
 }

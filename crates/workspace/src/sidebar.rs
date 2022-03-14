@@ -83,22 +83,26 @@ impl Sidebar {
                             &theme.item
                         };
                         enum SidebarButton {}
-                        MouseEventHandler::new::<SidebarButton, _, _>(item.view.id(), cx, |_, _| {
-                            ConstrainedBox::new(
-                                Align::new(
-                                    ConstrainedBox::new(
-                                        Svg::new(item.icon_path)
-                                            .with_color(theme.icon_color)
-                                            .boxed(),
+                        MouseEventHandler::new::<SidebarButton, _, _>(
+                            item.view.entity_id(),
+                            cx,
+                            |_, _| {
+                                ConstrainedBox::new(
+                                    Align::new(
+                                        ConstrainedBox::new(
+                                            Svg::new(item.icon_path)
+                                                .with_color(theme.icon_color)
+                                                .boxed(),
+                                        )
+                                        .with_height(theme.icon_size)
+                                        .boxed(),
                                     )
-                                    .with_height(theme.icon_size)
                                     .boxed(),
                                 )
-                                .boxed(),
-                            )
-                            .with_height(theme.height)
-                            .boxed()
-                        })
+                                .with_height(theme.height)
+                                .boxed()
+                            },
+                        )
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_mouse_down(move |cx| {
                             cx.dispatch_action(ToggleSidebarItem(SidebarItemId {

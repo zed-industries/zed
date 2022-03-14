@@ -104,21 +104,25 @@ impl View for Select {
             Default::default()
         };
         let mut result = Flex::column().with_child(
-            MouseEventHandler::new::<Header, _, _>(self.handle.id(), cx, |mouse_state, cx| {
-                Container::new((self.render_item)(
-                    self.selected_item_ix,
-                    ItemType::Header,
-                    mouse_state.hovered,
-                    cx,
-                ))
-                .with_style(style.header)
-                .boxed()
-            })
+            MouseEventHandler::new::<Header, _, _>(
+                self.handle.entity_id(),
+                cx,
+                |mouse_state, cx| {
+                    Container::new((self.render_item)(
+                        self.selected_item_ix,
+                        ItemType::Header,
+                        mouse_state.hovered,
+                        cx,
+                    ))
+                    .with_style(style.header)
+                    .boxed()
+                },
+            )
             .on_click(move |cx| cx.dispatch_action(ToggleSelect))
             .boxed(),
         );
         if self.is_open {
-            let handle = self.handle.clone();
+            let handle: WeakViewHandle<Self> = self.handle.clone();
             result.add_child(
                 Overlay::new(
                     Container::new(

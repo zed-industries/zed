@@ -8,7 +8,8 @@ use crate::{
     text_layout::TextLayoutCache,
     Action, AnyAction, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox,
     ElementStateContext, Entity, FontSystem, ModelHandle, ReadModel, ReadView, Scene,
-    UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
+    UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, ViewId, WeakModelHandle,
+    WeakViewHandle,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
@@ -65,16 +66,20 @@ impl Presenter {
 
     pub fn invalidate(&mut self, mut invalidation: WindowInvalidation, cx: &mut MutableAppContext) {
         cx.start_frame();
-        for view_id in invalidation.removed {
-            invalidation.updated.remove(&view_id);
-            self.rendered_views.remove(&view_id);
-            self.parents.remove(&view_id);
+        for view_entity_id in invalidation.removed {
+            invalidation.updated.remove(&view_entity_id);
+            self.rendered_views.remove(&view_entity_id);
+            self.parents.remove(&view_entity_id);
         }
-        for view_id in invalidation.updated {
+        for view_entity_id in invalidation.updated {
             self.rendered_views.insert(
-                view_id,
-                cx.render_view(self.window_id, view_id, self.titlebar_height, false)
-                    .unwrap(),
+                view_entity_id,
+                cx.render_view(
+                    ViewId::new(self.window_id, view_entity_id),
+                    self.titlebar_height,
+                    false,
+                )
+                .unwrap(),
             );
         }
     }
@@ -94,7 +99,11 @@ impl Presenter {
 
         for (view_id, view) in &mut self.rendered_views {
             *view = cx
-                .render_view(self.window_id, *view_id, self.titlebar_height, true)
+                .render_view(
+                    ViewId::new(self.window_id, *view_id),
+                    self.titlebar_height,
+                    true,
+                )
                 .unwrap();
         }
     }
@@ -181,7 +190,7 @@ impl Presenter {
             let dispatch_directives = event_cx.dispatched_actions;
 
             for view_id in invalidated_views {
-                cx.notify_view(self.window_id, view_id);
+                cx.notify_view(ViewId::new(self.window_id, view_id));
             }
             for directive in dispatch_directives {
                 cx.dispatch_action_any(self.window_id, &directive.path, directive.action.as_ref());
@@ -236,14 +245,14 @@ pub struct LayoutContext<'a> {
 }
 
 impl<'a> LayoutContext<'a> {
-    fn layout(&mut self, view_id: usize, constraint: SizeConstraint) -> Vector2F {
+    fn layout(&mut self, view_entity_id: usize, constraint: SizeConstraint) -> Vector2F {
         if let Some(parent_id) = self.view_stack.last() {
-            self.parents.insert(view_id, *parent_id);
+            self.parents.insert(view_entity_id, *parent_id);
         }
-        self.view_stack.push(view_id);
-        let mut rendered_view = self.rendered_views.remove(&view_id).unwrap();
+        self.view_stack.push(view_entity_id);
+        let mut rendered_view = self.rendered_views.remove(&view_entity_id).unwrap();
         let size = rendered_view.layout(constraint, self);
-        self.rendered_views.insert(view_id, rendered_view);
+        self.rendered_views.insert(view_entity_id, rendered_view);
         self.view_stack.pop();
         size
     }
@@ -299,7 +308,7 @@ impl<'a> UpgradeViewHandle for LayoutContext<'a> {
 }
 
 impl<'a> ElementStateContext for LayoutContext<'a> {
-    fn current_view_id(&self) -> usize {
+    fn current_view_entity_id(&self) -> usize {
         *self.view_stack.last().unwrap()
     }
 }
@@ -510,7 +519,7 @@ impl Element for ChildView {
         constraint: SizeConstraint,
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let size = cx.layout(self.view.id(), constraint);
+        let size = cx.layout(self.view.entity_id(), constraint);
         (size, ())
     }
 
@@ -521,7 +530,7 @@ impl Element for ChildView {
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        cx.paint(self.view.id(), bounds.origin(), visible_bounds);
+        cx.paint(self.view.entity_id(), bounds.origin(), visible_bounds);
     }
 
     fn dispatch_event(
@@ -532,7 +541,7 @@ impl Element for ChildView {
         _: &mut Self::PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        cx.dispatch_event(self.view.id(), event)
+        cx.dispatch_event(self.view.entity_id(), event)
     }
 
     fn debug(
@@ -546,7 +555,7 @@ impl Element for ChildView {
             "type": "ChildView",
             "view_id": self.view.id(),
             "bounds": bounds.to_json(),
-            "child": if let Some(view) = cx.rendered_views.get(&self.view.id()) {
+            "child": if let Some(view) = cx.rendered_views.get(&self.view.entity_id()) {
                 view.debug(cx)
             } else {
                 json!(null)

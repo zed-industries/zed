@@ -525,7 +525,11 @@ mod tests {
         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
+        cx.dispatch_action(
+            window_id,
+            vec![workspace.entity_id()],
+            OpenNew(app_state.clone()),
+        );
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -580,7 +584,11 @@ mod tests {
 
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
-        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
+        cx.dispatch_action(
+            window_id,
+            vec![workspace.entity_id()],
+            OpenNew(app_state.clone()),
+        );
         workspace
             .update(cx, |workspace, cx| {
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
@@ -617,7 +625,11 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
+        cx.dispatch_action(
+            window_id,
+            vec![workspace.entity_id()],
+            OpenNew(app_state.clone()),
+        );
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -694,7 +706,7 @@ mod tests {
 
         cx.dispatch_action(
             window_id,
-            vec![pane_1.id()],
+            vec![pane_1.entity_id()],
             pane::Split(SplitDirection::Right),
         );
         cx.update(|cx| {
@@ -835,7 +847,7 @@ mod tests {
         workspace.update(cx, |workspace, cx| {
             workspace
                 .active_pane()
-                .update(cx, |pane, cx| pane.close_item(editor3.id(), cx));
+                .update(cx, |pane, cx| pane.close_item(editor3.entity_id(), cx));
             drop(editor3);
         });
         workspace
@@ -851,7 +863,7 @@ mod tests {
             .update(cx, |workspace, cx| {
                 workspace
                     .active_pane()
-                    .update(cx, |pane, cx| pane.close_item(editor2.id(), cx));
+                    .update(cx, |pane, cx| pane.close_item(editor2.entity_id(), cx));
                 drop(editor2);
                 app_state
                     .fs

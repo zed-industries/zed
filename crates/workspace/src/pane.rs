@@ -242,7 +242,7 @@ impl Pane {
                 pane.nav_history
                     .borrow_mut()
                     .paths_by_item
-                    .get(&entry.item_view.id())
+                    .get(&entry.item_view.id().entity_id())
                     .cloned()
                     .map(|project_path| (project_path, entry))
             }
@@ -381,13 +381,13 @@ impl Pane {
 
     pub fn close_active_item(&mut self, cx: &mut ViewContext<Self>) {
         if !self.item_views.is_empty() {
-            self.close_item(self.item_views[self.active_item_index].1.id(), cx)
+            self.close_item(self.item_views[self.active_item_index].1.entity_id(), cx)
         }
     }
 
     pub fn close_inactive_items(&mut self, cx: &mut ViewContext<Self>) {
         if !self.item_views.is_empty() {
-            let active_item_id = self.item_views[self.active_item_index].1.id();
+            let active_item_id = self.item_views[self.active_item_index].1.entity_id();
             self.close_items(cx, |id| id != active_item_id);
         }
     }
@@ -404,7 +404,7 @@ impl Pane {
         let mut item_ix = 0;
         let mut new_active_item_index = self.active_item_index;
         self.item_views.retain(|(_, item_view)| {
-            if should_close(item_view.id()) {
+            if should_close(item_view.entity_id()) {
                 if item_ix == self.active_item_index {
                     item_view.deactivated(cx);
                 }
@@ -415,9 +415,11 @@ impl Pane {
 
                 let mut nav_history = self.nav_history.borrow_mut();
                 if let Some(path) = item_view.project_path(cx) {
-                    nav_history.paths_by_item.insert(item_view.id(), path);
+                    nav_history
+                        .paths_by_item
+                        .insert(item_view.entity_id(), path);
                 } else {
-                    nav_history.paths_by_item.remove(&item_view.id());
+                    nav_history.paths_by_item.remove(&item_view.entity_id());
                 }
 
                 item_ix += 1;
@@ -587,7 +589,7 @@ impl Pane {
                                 .with_child(
                                     Align::new(
                                         ConstrainedBox::new(if mouse_state.hovered {
-                                            let item_id = item_view.id();
+                                            let item_id = item_view.entity_id();
                                             enum TabCloseButton {}
                                             let icon = Svg::new("icons/x.svg");
                                             MouseEventHandler::new::<TabCloseButton, _, _>(

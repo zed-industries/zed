@@ -13,6 +13,7 @@ use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use platform::Event;
 use postage::oneshot;
+use serde::Serialize;
 use smol::prelude::*;
 use std::{
     any::{type_name, Any, TypeId},
@@ -120,14 +121,14 @@ pub trait UpdateView {
 }
 
 pub trait ElementStateContext: DerefMut<Target = MutableAppContext> {
-    fn current_view_id(&self) -> usize;
+    fn current_view_entity_id(&self) -> usize;
 
     fn element_state<Tag: 'static, T: 'static + Default>(
         &mut self,
         element_id: usize,
     ) -> ElementStateHandle<T> {
         let id = ElementStateId {
-            view_id: self.current_view_id(),
+            view_id: self.current_view_entity_id(),
             element_id,
             tag: TypeId::of::<Tag>(),
         };
@@ -735,8 +736,7 @@ impl ReadViewWith for TestAppContext {
     }
 }
 
-type ActionCallback =
-    dyn FnMut(&mut dyn AnyView, &dyn AnyAction, &mut MutableAppContext, usize, usize);
+type ActionCallback = dyn FnMut(&mut dyn AnyView, &dyn AnyAction, &mut MutableAppContext, ViewId);
 type GlobalActionCallback = dyn FnMut(&dyn AnyAction, &mut MutableAppContext);
 
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
@@ -757,10 +757,9 @@ pub struct MutableAppContext {
     next_window_id: usize,
     next_subscription_id: usize,
     frame_count: usize,
-    subscriptions: Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<SubscriptionCallback>>>>>,
-    global_subscriptions:
-        Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalSubscriptionCallback>>>>>,
-    observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>,
+    subscriptions: Arc<Mutex<HashMap<usize, BTreeMap<usize, SubscriptionCallback>>>>,
+    global_subscriptions: Arc<Mutex<HashMap<TypeId, BTreeMap<usize, GlobalSubscriptionCallback>>>>,
+    observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ObservationCallback>>>>,
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
     presenters_and_platform_windows:
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
@@ -908,10 +907,9 @@ impl MutableAppContext {
             move |view: &mut dyn AnyView,
                   action: &dyn AnyAction,
                   cx: &mut MutableAppContext,
-                  window_id: usize,
-                  view_id: usize| {
+                  view_id| {
                 let action = action.as_any().downcast_ref().unwrap();
-                let mut cx = ViewContext::new(cx, window_id, view_id);
+                let mut cx = ViewContext::new(cx, view_id);
                 handler(
                     view.as_any_mut()
                         .downcast_mut()
@@ -985,18 +983,17 @@ impl MutableAppContext {
 
     pub fn render_view(
         &mut self,
-        window_id: usize,
-        view_id: usize,
+        view_id: ViewId,
         titlebar_height: f32,
         refreshing: bool,
     ) -> Result<ElementBox> {
         let mut view = self
             .cx
             .views
-            .remove(&(window_id, view_id))
+            .remove(&view_id)
             .ok_or(anyhow!("view not found"))?;
-        let element = view.render(window_id, view_id, titlebar_height, refreshing, self);
-        self.cx.views.insert((window_id, view_id), view);
+        let element = view.render(titlebar_height, refreshing, view_id, self);
+        self.cx.views.insert(view_id, view);
         Ok(element)
     }
 
@@ -1009,21 +1006,15 @@ impl MutableAppContext {
         let view_ids = self
             .views
             .keys()
-            .filter_map(|(win_id, view_id)| {
-                if *win_id == window_id {
-                    Some(*view_id)
-                } else {
-                    None
-                }
-            })
+            .copied()
+            .filter(|view_id| view_id.window_id() == window_id)
             .collect::<Vec<_>>();
         view_ids
             .into_iter()
             .map(|view_id| {
                 (
-                    view_id,
-                    self.render_view(window_id, view_id, titlebar_height, false)
-                        .unwrap(),
+                    view_id.entity_id(),
+                    self.render_view(view_id, titlebar_height, false).unwrap(),
                 )
             })
             .collect()
@@ -1098,10 +1089,10 @@ impl MutableAppContext {
             .or_default()
             .insert(
                 id,
-                Some(Box::new(move |payload, cx| {
+                Box::new(move |payload, cx| {
                     let payload = payload.downcast_ref().expect("downcast is type safe");
                     callback(payload, cx)
-                })),
+                }),
             );
         Subscription::GlobalSubscription {
             id,
@@ -1134,22 +1125,22 @@ impl MutableAppContext {
         let emitter = handle.downgrade();
         self.subscriptions
             .lock()
-            .entry(handle.id())
+            .entry(handle.entity_id())
             .or_default()
             .insert(
                 id,
-                Some(Box::new(move |payload, cx| {
+                Box::new(move |payload, cx| {
                     if let Some(emitter) = H::upgrade_from(&emitter, cx.as_ref()) {
                         let payload = payload.downcast_ref().expect("downcast is type safe");
                         callback(emitter, payload, cx)
                     } else {
                         false
                     }
-                })),
+                }),
             );
         Subscription::Subscription {
             id,
-            entity_id: handle.id(),
+            entity_id: handle.entity_id(),
             subscriptions: Some(Arc::downgrade(&self.subscriptions)),
         }
     }
@@ -1165,21 +1156,21 @@ impl MutableAppContext {
         let observed = handle.downgrade();
         self.observations
             .lock()
-            .entry(handle.id())
+            .entry(handle.entity_id())
             .or_default()
             .insert(
                 id,
-                Some(Box::new(move |cx| {
+                Box::new(move |cx| {
                     if let Some(observed) = H::upgrade_from(&observed, cx) {
                         callback(observed, cx)
                     } else {
                         false
                     }
-                })),
+                }),
             );
         Subscription::Observation {
             id,
-            entity_id: handle.id(),
+            entity_id: handle.entity_id(),
             observations: Some(Arc::downgrade(&self.observations)),
         }
     }
@@ -1194,7 +1185,7 @@ impl MutableAppContext {
         let id = post_inc(&mut self.next_subscription_id);
         self.release_observations
             .lock()
-            .entry(handle.id())
+            .entry(handle.entity_id())
             .or_default()
             .insert(
                 id,
@@ -1205,7 +1196,7 @@ impl MutableAppContext {
             );
         Subscription::ReleaseObservation {
             id,
-            entity_id: handle.id(),
+            entity_id: handle.entity_id(),
             observations: Some(Arc::downgrade(&self.release_observations)),
         }
     }
@@ -1221,10 +1212,10 @@ impl MutableAppContext {
         }
     }
 
-    pub(crate) fn notify_view(&mut self, window_id: usize, view_id: usize) {
-        if self.pending_notifications.insert(view_id) {
+    pub fn notify_view(&mut self, id: ViewId) {
+        if self.pending_notifications.insert(id.entity_id()) {
             self.pending_effects
-                .push_back(Effect::ViewNotification { window_id, view_id });
+                .push_back(Effect::ViewNotification { id });
         }
     }
 
@@ -1245,12 +1236,13 @@ impl MutableAppContext {
     ) -> bool {
         self.update(|this| {
             this.halt_action_dispatch = false;
-            for (capture_phase, view_id) in path
+            for (capture_phase, view_entity_id) in path
                 .iter()
                 .map(|view_id| (true, *view_id))
                 .chain(path.iter().rev().map(|view_id| (false, *view_id)))
             {
-                if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
+                let view_id = ViewId::new(window_id, view_entity_id);
+                if let Some(mut view) = this.cx.views.remove(&view_id) {
                     let type_id = view.as_any().type_id();
 
                     if let Some((name, mut handlers)) = this
@@ -1260,7 +1252,7 @@ impl MutableAppContext {
                     {
                         for handler in handlers.iter_mut().rev() {
                             this.halt_action_dispatch = true;
-                            handler(view.as_mut(), action, this, window_id, view_id);
+                            handler(view.as_mut(), action, this, view_id);
                             if this.halt_action_dispatch {
                                 break;
                             }
@@ -1271,7 +1263,7 @@ impl MutableAppContext {
                             .insert(name, handlers);
                     }
 
-                    this.cx.views.insert((window_id, view_id), view);
+                    this.cx.views.insert(view_id, view);
 
                     if this.halt_action_dispatch {
                         break;
@@ -1325,7 +1317,7 @@ impl MutableAppContext {
     ) -> Result<bool> {
         let mut context_chain = Vec::new();
         for view_id in &responder_chain {
-            if let Some(view) = self.cx.views.get(&(window_id, *view_id)) {
+            if let Some(view) = self.cx.views.get(&ViewId::new(window_id, *view_id)) {
                 context_chain.push(view.keymap_context(self.as_ref()));
             } else {
                 return Err(anyhow!(
@@ -1409,7 +1401,7 @@ impl MutableAppContext {
                 window_id,
                 Window {
                     root_view: root_view.clone().into(),
-                    focused_view_id: Some(root_view.id()),
+                    focused_view_entity_id: Some(root_view.entity_id()),
                     invalidation: None,
                 },
             );
@@ -1492,8 +1484,7 @@ impl MutableAppContext {
 
     pub fn build_render_context<V: View>(
         &mut self,
-        window_id: usize,
-        view_id: usize,
+        view_id: ViewId,
         titlebar_height: f32,
         refreshing: bool,
     ) -> RenderContext<V> {
@@ -1501,9 +1492,7 @@ impl MutableAppContext {
             app: self,
             titlebar_height,
             refreshing,
-            window_id,
-            view_id,
-            view_type: PhantomData,
+            handle: WeakViewHandle::new(view_id),
         }
     }
 
@@ -1526,18 +1515,19 @@ impl MutableAppContext {
         F: FnOnce(&mut ViewContext<T>) -> Option<T>,
     {
         self.update(|this| {
-            let view_id = post_inc(&mut this.next_entity_id);
-            let mut cx = ViewContext::new(this, window_id, view_id);
+            let view_entity_id = post_inc(&mut this.next_entity_id);
+            let view_id = ViewId::new(window_id, view_entity_id);
+            let mut cx = ViewContext::new(this, view_id);
             let handle = if let Some(view) = build_view(&mut cx) {
-                this.cx.views.insert((window_id, view_id), Box::new(view));
+                this.cx.views.insert(view_id, Box::new(view));
                 if let Some(window) = this.cx.windows.get_mut(&window_id) {
                     window
                         .invalidation
                         .get_or_insert_with(Default::default)
                         .updated
-                        .insert(view_id);
+                        .insert(view_entity_id);
                 }
-                Some(ViewHandle::new(window_id, view_id, &this.cx.ref_counts))
+                Some(ViewHandle::new(view_id, &this.cx.ref_counts))
             } else {
                 None
             };
@@ -1565,18 +1555,18 @@ impl MutableAppContext {
                     .push_back(Effect::ModelRelease { model_id, model });
             }
 
-            for (window_id, view_id) in dropped_views {
-                self.subscriptions.lock().remove(&view_id);
-                self.observations.lock().remove(&view_id);
-                let mut view = self.cx.views.remove(&(window_id, view_id)).unwrap();
+            for id in dropped_views {
+                self.subscriptions.lock().remove(&id.entity_id());
+                self.observations.lock().remove(&id.entity_id());
+                let mut view = self.cx.views.remove(&id).unwrap();
                 view.release(self);
-                let change_focus_to = self.cx.windows.get_mut(&window_id).and_then(|window| {
+                let change_focus_to = self.cx.windows.get_mut(&id.window_id()).and_then(|window| {
                     window
                         .invalidation
                         .get_or_insert_with(Default::default)
                         .removed
-                        .push(view_id);
-                    if window.focused_view_id == Some(view_id) {
+                        .push(id.entity_id());
+                    if window.focused_view_entity_id == Some(id.entity_id()) {
                         Some(window.root_view.id())
                     } else {
                         None
@@ -1584,11 +1574,13 @@ impl MutableAppContext {
                 });
 
                 if let Some(view_id) = change_focus_to {
-                    self.focus(window_id, Some(view_id));
+                    self.focus(view_id.window_id(), Some(view_id.entity_id()));
                 }
 
-                self.pending_effects
-                    .push_back(Effect::ViewRelease { view_id, view });
+                self.pending_effects.push_back(Effect::ViewRelease {
+                    view_entity_id: id.entity_id(),
+                    view,
+                });
             }
 
             for key in dropped_element_states {
@@ -1612,18 +1604,20 @@ impl MutableAppContext {
                         Effect::ModelNotification { model_id } => {
                             self.notify_model_observers(model_id)
                         }
-                        Effect::ViewNotification { window_id, view_id } => {
-                            self.notify_view_observers(window_id, view_id)
-                        }
+                        Effect::ViewNotification { id } => self.notify_view_observers(id),
                         Effect::Deferred(callback) => callback(self),
                         Effect::ModelRelease { model_id, model } => {
                             self.notify_release_observers(model_id, model.as_any())
                         }
-                        Effect::ViewRelease { view_id, view } => {
-                            self.notify_release_observers(view_id, view.as_any())
-                        }
-                        Effect::Focus { window_id, view_id } => {
-                            self.focus(window_id, view_id);
+                        Effect::ViewRelease {
+                            view_entity_id,
+                            view,
+                        } => self.notify_release_observers(view_entity_id, view.as_any()),
+                        Effect::Focus {
+                            window_id,
+                            view_entity_id,
+                        } => {
+                            self.focus(window_id, view_entity_id);
                         }
                         Effect::ResizeWindow { window_id } => {
                             if let Some(window) = self.cx.windows.get_mut(&window_id) {
@@ -1723,25 +1717,14 @@ impl MutableAppContext {
     fn emit_event(&mut self, entity_id: usize, payload: Box<dyn Any>) {
         let callbacks = self.subscriptions.lock().remove(&entity_id);
         if let Some(callbacks) = callbacks {
-            for (id, callback) in callbacks {
-                if let Some(mut callback) = callback {
-                    let alive = callback(payload.as_ref(), self);
-                    if alive {
-                        match self
-                            .subscriptions
-                            .lock()
-                            .entry(entity_id)
-                            .or_default()
-                            .entry(id)
-                        {
-                            collections::btree_map::Entry::Vacant(entry) => {
-                                entry.insert(Some(callback));
-                            }
-                            collections::btree_map::Entry::Occupied(entry) => {
-                                entry.remove();
-                            }
-                        }
-                    }
+            for (id, mut callback) in callbacks {
+                let alive = callback(payload.as_ref(), self);
+                if alive {
+                    self.subscriptions
+                        .lock()
+                        .entry(entity_id)
+                        .or_default()
+                        .insert(id, callback);
                 }
             }
         }
@@ -1751,24 +1734,8 @@ impl MutableAppContext {
         let type_id = (&*payload).type_id();
         let callbacks = self.global_subscriptions.lock().remove(&type_id);
         if let Some(callbacks) = callbacks {
-            for (id, callback) in callbacks {
-                if let Some(mut callback) = callback {
-                    callback(payload.as_ref(), self);
-                    match self
-                        .global_subscriptions
-                        .lock()
-                        .entry(type_id)
-                        .or_default()
-                        .entry(id)
-                    {
-                        collections::btree_map::Entry::Vacant(entry) => {
-                            entry.insert(Some(callback));
-                        }
-                        collections::btree_map::Entry::Occupied(entry) => {
-                            entry.remove();
-                        }
-                    }
-                }
+            for (_, mut callback) in callbacks {
+                callback(payload.as_ref(), self)
             }
         }
     }
@@ -1777,66 +1744,40 @@ impl MutableAppContext {
         let callbacks = self.observations.lock().remove(&observed_id);
         if let Some(callbacks) = callbacks {
             if self.cx.models.contains_key(&observed_id) {
-                for (id, callback) in callbacks {
-                    if let Some(mut callback) = callback {
-                        let alive = callback(self);
-                        if alive {
-                            match self
-                                .observations
-                                .lock()
-                                .entry(observed_id)
-                                .or_default()
-                                .entry(id)
-                            {
-                                collections::btree_map::Entry::Vacant(entry) => {
-                                    entry.insert(Some(callback));
-                                }
-                                collections::btree_map::Entry::Occupied(entry) => {
-                                    entry.remove();
-                                }
-                            }
-                        }
+                for (id, mut callback) in callbacks {
+                    let alive = callback(self);
+                    if alive {
+                        self.observations
+                            .lock()
+                            .entry(observed_id)
+                            .or_default()
+                            .insert(id, callback);
                     }
                 }
             }
         }
     }
 
-    fn notify_view_observers(&mut self, observed_window_id: usize, observed_view_id: usize) {
-        if let Some(window) = self.cx.windows.get_mut(&observed_window_id) {
+    fn notify_view_observers(&mut self, observed_id: ViewId) {
+        if let Some(window) = self.cx.windows.get_mut(&observed_id.window_id()) {
             window
                 .invalidation
                 .get_or_insert_with(Default::default)
                 .updated
-                .insert(observed_view_id);
+                .insert(observed_id.entity_id());
         }
 
-        let callbacks = self.observations.lock().remove(&observed_view_id);
+        let callbacks = self.observations.lock().remove(&observed_id.entity_id());
         if let Some(callbacks) = callbacks {
-            if self
-                .cx
-                .views
-                .contains_key(&(observed_window_id, observed_view_id))
-            {
-                for (id, callback) in callbacks {
-                    if let Some(mut callback) = callback {
-                        let alive = callback(self);
-                        if alive {
-                            match self
-                                .observations
-                                .lock()
-                                .entry(observed_view_id)
-                                .or_default()
-                                .entry(id)
-                            {
-                                collections::btree_map::Entry::Vacant(entry) => {
-                                    entry.insert(Some(callback));
-                                }
-                                collections::btree_map::Entry::Occupied(entry) => {
-                                    entry.remove();
-                                }
-                            }
-                        }
+            if self.cx.views.contains_key(&observed_id) {
+                for (id, mut callback) in callbacks {
+                    let alive = callback(self);
+                    if alive {
+                        self.observations
+                            .lock()
+                            .entry(observed_id.entity_id())
+                            .or_default()
+                            .insert(id, callback);
                     }
                 }
             }
@@ -1852,35 +1793,37 @@ impl MutableAppContext {
         }
     }
 
-    fn focus(&mut self, window_id: usize, focused_id: Option<usize>) {
+    fn focus(&mut self, window_id: usize, focused_entity_id: Option<usize>) {
         if self
             .cx
             .windows
             .get(&window_id)
-            .map(|w| w.focused_view_id)
-            .map_or(false, |cur_focused| cur_focused == focused_id)
+            .map(|w| w.focused_view_entity_id)
+            .map_or(false, |cur_focused| cur_focused == focused_entity_id)
         {
             return;
         }
 
         self.update(|this| {
             let blurred_id = this.cx.windows.get_mut(&window_id).and_then(|window| {
-                let blurred_id = window.focused_view_id;
-                window.focused_view_id = focused_id;
+                let blurred_id = window.focused_view_entity_id;
+                window.focused_view_entity_id = focused_entity_id;
                 blurred_id
             });
 
             if let Some(blurred_id) = blurred_id {
-                if let Some(mut blurred_view) = this.cx.views.remove(&(window_id, blurred_id)) {
-                    blurred_view.on_blur(this, window_id, blurred_id);
-                    this.cx.views.insert((window_id, blurred_id), blurred_view);
+                let view_id = ViewId::new(window_id, blurred_id);
+                if let Some(mut blurred_view) = this.cx.views.remove(&view_id) {
+                    blurred_view.on_blur(this, view_id);
+                    this.cx.views.insert(view_id, blurred_view);
                 }
             }
 
-            if let Some(focused_id) = focused_id {
-                if let Some(mut focused_view) = this.cx.views.remove(&(window_id, focused_id)) {
-                    focused_view.on_focus(this, window_id, focused_id);
-                    this.cx.views.insert((window_id, focused_id), focused_view);
+            if let Some(focused_id) = focused_entity_id {
+                let view_id = ViewId::new(window_id, focused_id);
+                if let Some(mut focused_view) = this.cx.views.remove(&view_id) {
+                    focused_view.on_focus(this, view_id);
+                    this.cx.views.insert(view_id, focused_view);
                 }
             }
         })
@@ -1921,7 +1864,7 @@ impl MutableAppContext {
 
 impl ReadModel for MutableAppContext {
     fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        if let Some(model) = self.cx.models.get(&handle.model_id) {
+        if let Some(model) = self.cx.models.get(&handle.id()) {
             model
                 .as_any()
                 .downcast_ref()
@@ -1938,9 +1881,9 @@ impl UpdateModel for MutableAppContext {
         handle: &ModelHandle<T>,
         update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> V,
     ) -> V {
-        if let Some(mut model) = self.cx.models.remove(&handle.model_id) {
+        if let Some(mut model) = self.cx.models.remove(&handle.id()) {
             self.update(|this| {
-                let mut cx = ModelContext::new(this, handle.model_id);
+                let mut cx = ModelContext::new(this, handle.id());
                 let result = update(
                     model
                         .as_any_mut()
@@ -1948,7 +1891,7 @@ impl UpdateModel for MutableAppContext {
                         .expect("downcast is type safe"),
                     &mut cx,
                 );
-                this.cx.models.insert(handle.model_id, model);
+                this.cx.models.insert(handle.id(), model);
                 result
             })
         } else {
@@ -1982,7 +1925,7 @@ impl UpgradeViewHandle for MutableAppContext {
 
 impl ReadView for MutableAppContext {
     fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
-        if let Some(view) = self.cx.views.get(&(handle.window_id, handle.view_id)) {
+        if let Some(view) = self.cx.views.get(&handle.id) {
             view.as_any().downcast_ref().expect("downcast is type safe")
         } else {
             panic!("circular view reference");
@@ -2003,19 +1946,17 @@ impl UpdateView for MutableAppContext {
             let mut view = this
                 .cx
                 .views
-                .remove(&(handle.window_id, handle.view_id))
+                .remove(&handle.id)
                 .expect("circular view update");
 
-            let mut cx = ViewContext::new(this, handle.window_id, handle.view_id);
+            let mut cx = ViewContext::new(this, handle.id());
             let result = update(
                 view.as_any_mut()
                     .downcast_mut()
                     .expect("downcast is type safe"),
                 &mut cx,
             );
-            this.cx
-                .views
-                .insert((handle.window_id, handle.view_id), view);
+            this.cx.views.insert(handle.id, view);
             result
         })
     }
@@ -2037,7 +1978,7 @@ impl Deref for MutableAppContext {
 
 pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
-    views: HashMap<(usize, usize), Box<dyn AnyView>>,
+    views: HashMap<ViewId, Box<dyn AnyView>>,
     windows: HashMap<usize, Window>,
     app_states: HashMap<TypeId, Box<dyn Any>>,
     element_states: HashMap<ElementStateId, Box<dyn Any>>,
@@ -2051,13 +1992,13 @@ impl AppContext {
     pub fn root_view_id(&self, window_id: usize) -> Option<usize> {
         self.windows
             .get(&window_id)
-            .map(|window| window.root_view.id())
+            .map(|window| window.root_view.entity_id())
     }
 
     pub fn focused_view_id(&self, window_id: usize) -> Option<usize> {
         self.windows
             .get(&window_id)
-            .and_then(|window| window.focused_view_id)
+            .and_then(|window| window.focused_view_entity_id)
     }
 
     pub fn background(&self) -> &Arc<executor::Background> {
@@ -2083,7 +2024,7 @@ impl AppContext {
 
 impl ReadModel for AppContext {
     fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        if let Some(model) = self.models.get(&handle.model_id) {
+        if let Some(model) = self.models.get(&handle.id()) {
             model
                 .as_any()
                 .downcast_ref()
@@ -2099,21 +2040,21 @@ impl UpgradeModelHandle for AppContext {
         &self,
         handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>> {
-        if self.models.contains_key(&handle.model_id) {
-            Some(ModelHandle::new(handle.model_id, &self.ref_counts))
+        if self.models.contains_key(&handle.id()) {
+            Some(ModelHandle::new(handle.id(), &self.ref_counts))
         } else {
             None
         }
     }
 
     fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
-        self.models.contains_key(&handle.model_id)
+        self.models.contains_key(&handle.id())
     }
 
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
-        if self.models.contains_key(&handle.model_id) {
+        if self.models.contains_key(&handle.id()) {
             Some(AnyModelHandle::new(
-                handle.model_id,
+                handle.id(),
                 handle.model_type,
                 self.ref_counts.clone(),
             ))
@@ -2125,12 +2066,8 @@ impl UpgradeModelHandle for AppContext {
 
 impl UpgradeViewHandle for AppContext {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
-        if self.ref_counts.lock().is_entity_alive(handle.view_id) {
-            Some(ViewHandle::new(
-                handle.window_id,
-                handle.view_id,
-                &self.ref_counts,
-            ))
+        if self.ref_counts.lock().is_entity_alive(handle.entity_id()) {
+            Some(ViewHandle::new(handle.id, &self.ref_counts))
         } else {
             None
         }
@@ -2139,7 +2076,7 @@ impl UpgradeViewHandle for AppContext {
 
 impl ReadView for AppContext {
     fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
-        if let Some(view) = self.views.get(&(handle.window_id, handle.view_id)) {
+        if let Some(view) = self.views.get(&handle.id) {
             view.as_any()
                 .downcast_ref()
                 .expect("downcast should be type safe")
@@ -2151,7 +2088,7 @@ impl ReadView for AppContext {
 
 struct Window {
     root_view: AnyViewHandle,
-    focused_view_id: Option<usize>,
+    focused_view_entity_id: Option<usize>,
     invalidation: Option<WindowInvalidation>,
 }
 
@@ -2173,8 +2110,7 @@ pub enum Effect {
         model_id: usize,
     },
     ViewNotification {
-        window_id: usize,
-        view_id: usize,
+        id: ViewId,
     },
     Deferred(Box<dyn FnOnce(&mut MutableAppContext)>),
     ModelRelease {
@@ -2182,12 +2118,12 @@ pub enum Effect {
         model: Box<dyn AnyModel>,
     },
     ViewRelease {
-        view_id: usize,
+        view_entity_id: usize,
         view: Box<dyn AnyView>,
     },
     Focus {
         window_id: usize,
-        view_id: Option<usize>,
+        view_entity_id: Option<usize>,
     },
     ResizeWindow {
         window_id: usize,
@@ -2210,24 +2146,26 @@ impl Debug for Effect {
                 .debug_struct("Effect::ModelNotification")
                 .field("model_id", model_id)
                 .finish(),
-            Effect::ViewNotification { window_id, view_id } => f
+            Effect::ViewNotification { id } => f
                 .debug_struct("Effect::ViewNotification")
-                .field("window_id", window_id)
-                .field("view_id", view_id)
+                .field("view_id", id)
                 .finish(),
             Effect::Deferred(_) => f.debug_struct("Effect::Deferred").finish(),
             Effect::ModelRelease { model_id, .. } => f
                 .debug_struct("Effect::ModelRelease")
                 .field("model_id", model_id)
                 .finish(),
-            Effect::ViewRelease { view_id, .. } => f
+            Effect::ViewRelease { view_entity_id, .. } => f
                 .debug_struct("Effect::ViewRelease")
-                .field("view_id", view_id)
+                .field("view_entity_id", view_entity_id)
                 .finish(),
-            Effect::Focus { window_id, view_id } => f
+            Effect::Focus {
+                window_id,
+                view_entity_id,
+            } => f
                 .debug_struct("Effect::Focus")
                 .field("window_id", window_id)
-                .field("view_id", view_id)
+                .field("view_entity_id", view_entity_id)
                 .finish(),
             Effect::ResizeWindow { window_id } => f
                 .debug_struct("Effect::RefreshWindow")
@@ -2283,14 +2221,13 @@ pub trait AnyView {
     fn ui_name(&self) -> &'static str;
     fn render<'a>(
         &mut self,
-        window_id: usize,
-        view_id: usize,
         titlebar_height: f32,
         refreshing: bool,
+        id: ViewId,
         cx: &mut MutableAppContext,
     ) -> ElementBox;
-    fn on_focus(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
-    fn on_blur(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
+    fn on_focus(&mut self, cx: &mut MutableAppContext, id: ViewId);
+    fn on_blur(&mut self, cx: &mut MutableAppContext, id: ViewId);
     fn keymap_context(&self, cx: &AppContext) -> keymap::Context;
 }
 
@@ -2323,32 +2260,29 @@ where
 
     fn render<'a>(
         &mut self,
-        window_id: usize,
-        view_id: usize,
         titlebar_height: f32,
         refreshing: bool,
+        id: ViewId,
         cx: &mut MutableAppContext,
     ) -> ElementBox {
         View::render(
             self,
             &mut RenderContext {
-                window_id,
-                view_id,
                 app: cx,
-                view_type: PhantomData::<T>,
                 titlebar_height,
                 refreshing,
+                handle: WeakViewHandle::new(id),
             },
         )
     }
 
-    fn on_focus(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize) {
-        let mut cx = ViewContext::new(cx, window_id, view_id);
+    fn on_focus(&mut self, cx: &mut MutableAppContext, id: ViewId) {
+        let mut cx = ViewContext::new(cx, id);
         View::on_focus(self, &mut cx);
     }
 
-    fn on_blur(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize) {
-        let mut cx = ViewContext::new(cx, window_id, view_id);
+    fn on_blur(&mut self, cx: &mut MutableAppContext, id: ViewId) {
+        let mut cx = ViewContext::new(cx, id);
         View::on_blur(self, &mut cx);
     }
 
@@ -2553,37 +2487,37 @@ impl<M> DerefMut for ModelContext<'_, M> {
     }
 }
 
-pub struct ViewContext<'a, T: ?Sized> {
+pub struct ViewContext<'a, T> {
     app: &'a mut MutableAppContext,
-    window_id: usize,
-    view_id: usize,
-    view_type: PhantomData<T>,
+    handle: WeakViewHandle<T>,
 }
 
 impl<'a, T: View> ViewContext<'a, T> {
-    fn new(app: &'a mut MutableAppContext, window_id: usize, view_id: usize) -> Self {
+    fn new(app: &'a mut MutableAppContext, id: ViewId) -> Self {
         Self {
             app,
-            window_id,
-            view_id,
-            view_type: PhantomData,
+            handle: WeakViewHandle::new(id),
         }
     }
 
     pub fn handle(&self) -> ViewHandle<T> {
-        ViewHandle::new(self.window_id, self.view_id, &self.app.cx.ref_counts)
+        ViewHandle::new(self.handle.id, &self.app.cx.ref_counts)
     }
 
     pub fn weak_handle(&self) -> WeakViewHandle<T> {
-        WeakViewHandle::new(self.window_id, self.view_id)
+        self.handle
+    }
+
+    pub fn id(&self) -> ViewId {
+        self.handle.id
+    }
+
+    pub fn entity_id(&self) -> usize {
+        self.handle.entity_id()
     }
 
     pub fn window_id(&self) -> usize {
-        self.window_id
-    }
-
-    pub fn view_id(&self) -> usize {
-        self.view_id
+        self.handle.window_id()
     }
 
     pub fn foreground(&self) -> &Rc<executor::Foreground> {
@@ -2604,7 +2538,8 @@ impl<'a, T: View> ViewContext<'a, T> {
         msg: &str,
         answers: &[&str],
     ) -> oneshot::Receiver<usize> {
-        self.app.prompt(self.window_id, level, msg, answers)
+        self.app
+            .prompt(self.handle.window_id(), level, msg, answers)
     }
 
     pub fn prompt_for_paths(
@@ -2619,7 +2554,7 @@ impl<'a, T: View> ViewContext<'a, T> {
     }
 
     pub fn debug_elements(&self) -> crate::json::Value {
-        self.app.debug_elements(self.window_id).unwrap()
+        self.app.debug_elements(self.handle.window_id()).unwrap()
     }
 
     pub fn focus<S>(&mut self, handle: S)
@@ -2628,22 +2563,22 @@ impl<'a, T: View> ViewContext<'a, T> {
     {
         let handle = handle.into();
         self.app.pending_effects.push_back(Effect::Focus {
-            window_id: handle.window_id,
-            view_id: Some(handle.view_id),
+            window_id: handle.window_id(),
+            view_entity_id: Some(handle.entity_id()),
         });
     }
 
     pub fn focus_self(&mut self) {
         self.app.pending_effects.push_back(Effect::Focus {
-            window_id: self.window_id,
-            view_id: Some(self.view_id),
+            window_id: self.handle.window_id(),
+            view_entity_id: Some(self.handle.entity_id()),
         });
     }
 
     pub fn blur(&mut self) {
         self.app.pending_effects.push_back(Effect::Focus {
-            window_id: self.window_id,
-            view_id: None,
+            window_id: self.handle.window_id(),
+            view_entity_id: None,
         });
     }
 
@@ -2660,7 +2595,7 @@ impl<'a, T: View> ViewContext<'a, T> {
         S: View,
         F: FnOnce(&mut ViewContext<S>) -> S,
     {
-        self.app.add_view(self.window_id, build_view)
+        self.app.add_view(self.handle.window_id(), build_view)
     }
 
     pub fn add_option_view<S, F>(&mut self, build_view: F) -> Option<ViewHandle<S>>
@@ -2668,7 +2603,8 @@ impl<'a, T: View> ViewContext<'a, T> {
         S: View,
         F: FnOnce(&mut ViewContext<S>) -> Option<S>,
     {
-        self.app.add_option_view(self.window_id, build_view)
+        self.app
+            .add_option_view(self.handle.window_id(), build_view)
     }
 
     pub fn subscribe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
@@ -2729,13 +2665,13 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn emit(&mut self, payload: T::Event) {
         self.app.pending_effects.push_back(Effect::Event {
-            entity_id: self.view_id,
+            entity_id: self.handle.entity_id(),
             payload: Box::new(payload),
         });
     }
 
     pub fn notify(&mut self) {
-        self.app.notify_view(self.window_id, self.view_id);
+        self.app.notify_view(self.handle.id);
     }
 
     pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut T, &mut ViewContext<T>)) {
@@ -2776,18 +2712,16 @@ pub struct RenderContext<'a, T: View> {
     pub app: &'a mut MutableAppContext,
     pub titlebar_height: f32,
     pub refreshing: bool,
-    window_id: usize,
-    view_id: usize,
-    view_type: PhantomData<T>,
+    handle: WeakViewHandle<T>,
 }
 
 impl<'a, T: View> RenderContext<'a, T> {
     pub fn handle(&self) -> WeakViewHandle<T> {
-        WeakViewHandle::new(self.window_id, self.view_id)
+        self.handle
     }
 
-    pub fn view_id(&self) -> usize {
-        self.view_id
+    pub fn view_id(&self) -> ViewId {
+        self.handle.id
     }
 }
 
@@ -2834,8 +2768,8 @@ impl<V: View> ReadView for RenderContext<'_, V> {
 }
 
 impl<V: View> ElementStateContext for RenderContext<'_, V> {
-    fn current_view_id(&self) -> usize {
-        self.view_id
+    fn current_view_entity_id(&self) -> usize {
+        self.handle.entity_id()
     }
 }
 
@@ -2924,14 +2858,14 @@ impl<V: View> UpdateView for ViewContext<'_, V> {
 }
 
 impl<V: View> ElementStateContext for ViewContext<'_, V> {
-    fn current_view_id(&self) -> usize {
-        self.view_id
+    fn current_view_entity_id(&self) -> usize {
+        self.handle.entity_id()
     }
 }
 
 pub trait Handle<T> {
     type Weak: 'static;
-    fn id(&self) -> usize;
+    fn entity_id(&self) -> usize;
     fn location(&self) -> EntityLocation;
     fn downgrade(&self) -> Self::Weak;
     fn upgrade_from(weak: &Self::Weak, cx: &AppContext) -> Option<Self>
@@ -2942,12 +2876,11 @@ pub trait Handle<T> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum EntityLocation {
     Model(usize),
-    View(usize, usize),
+    View(ViewId),
 }
 
 pub struct ModelHandle<T: Entity> {
-    model_id: usize,
-    model_type: PhantomData<T>,
+    weak_handle: WeakModelHandle<T>,
     ref_counts: Arc<Mutex<RefCounts>>,
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2966,8 +2899,7 @@ impl<T: Entity> ModelHandle<T> {
             .handle_created(Some(type_name::<T>()), model_id);
 
         Self {
-            model_id,
-            model_type: PhantomData,
+            weak_handle: WeakModelHandle::new(model_id),
             ref_counts: ref_counts.clone(),
 
             #[cfg(any(test, feature = "test-support"))]
@@ -2976,11 +2908,7 @@ impl<T: Entity> ModelHandle<T> {
     }
 
     pub fn downgrade(&self) -> WeakModelHandle<T> {
-        WeakModelHandle::new(self.model_id)
-    }
-
-    pub fn id(&self) -> usize {
-        self.model_id
+        self.weak_handle
     }
 
     pub fn read<'a, C: ReadModel>(&self, cx: &'a C) -> &'a T {
@@ -3131,13 +3059,13 @@ impl<T: Entity> ModelHandle<T> {
 
 impl<T: Entity> Clone for ModelHandle<T> {
     fn clone(&self) -> Self {
-        Self::new(self.model_id, &self.ref_counts)
+        Self::new(self.id(), &self.ref_counts)
     }
 }
 
 impl<T: Entity> PartialEq for ModelHandle<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.model_id == other.model_id
+        self.id() == other.id()
     }
 }
 
@@ -3145,26 +3073,26 @@ impl<T: Entity> Eq for ModelHandle<T> {}
 
 impl<T: Entity> PartialEq<WeakModelHandle<T>> for ModelHandle<T> {
     fn eq(&self, other: &WeakModelHandle<T>) -> bool {
-        self.model_id == other.model_id
+        self.weak_handle == *other
     }
 }
 
 impl<T: Entity> Hash for ModelHandle<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.model_id.hash(state);
+        self.weak_handle.hash(state)
     }
 }
 
 impl<T: Entity> std::borrow::Borrow<usize> for ModelHandle<T> {
     fn borrow(&self) -> &usize {
-        &self.model_id
+        &self.weak_handle.id
     }
 }
 
 impl<T: Entity> Debug for ModelHandle<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple(&format!("ModelHandle<{}>", type_name::<T>()))
-            .field(&self.model_id)
+            .field(&self.id())
             .finish()
     }
 }
@@ -3172,28 +3100,36 @@ impl<T: Entity> Debug for ModelHandle<T> {
 unsafe impl<T: Entity> Send for ModelHandle<T> {}
 unsafe impl<T: Entity> Sync for ModelHandle<T> {}
 
+impl<T: Entity> Deref for ModelHandle<T> {
+    type Target = WeakModelHandle<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.weak_handle
+    }
+}
+
 impl<T: Entity> Drop for ModelHandle<T> {
     fn drop(&mut self) {
         let mut ref_counts = self.ref_counts.lock();
-        ref_counts.dec_model(self.model_id);
+        ref_counts.dec_model(self.weak_handle.id);
 
         #[cfg(any(test, feature = "test-support"))]
         ref_counts
             .leak_detector
             .lock()
-            .handle_dropped(self.model_id, self.handle_id);
+            .handle_dropped(self.weak_handle.id, self.handle_id);
     }
 }
 
 impl<T: Entity> Handle<T> for ModelHandle<T> {
     type Weak = WeakModelHandle<T>;
 
-    fn id(&self) -> usize {
-        self.model_id
+    fn entity_id(&self) -> usize {
+        self.id()
     }
 
     fn location(&self) -> EntityLocation {
-        EntityLocation::Model(self.model_id)
+        EntityLocation::Model(self.weak_handle.id)
     }
 
     fn downgrade(&self) -> Self::Weak {
@@ -3209,23 +3145,23 @@ impl<T: Entity> Handle<T> for ModelHandle<T> {
 }
 
 pub struct WeakModelHandle<T> {
-    model_id: usize,
-    model_type: PhantomData<T>,
+    id: usize,
+    model_type: PhantomData<*const T>,
 }
 
 unsafe impl<T> Send for WeakModelHandle<T> {}
 unsafe impl<T> Sync for WeakModelHandle<T> {}
 
 impl<T: Entity> WeakModelHandle<T> {
-    fn new(model_id: usize) -> Self {
+    fn new(id: usize) -> Self {
         Self {
-            model_id,
+            id,
             model_type: PhantomData,
         }
     }
 
     pub fn id(&self) -> usize {
-        self.model_id
+        self.id
     }
 
     pub fn is_upgradable(&self, cx: &impl UpgradeModelHandle) -> bool {
@@ -3239,13 +3175,13 @@ impl<T: Entity> WeakModelHandle<T> {
 
 impl<T> Hash for WeakModelHandle<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.model_id.hash(state)
+        self.id.hash(state)
     }
 }
 
 impl<T> PartialEq for WeakModelHandle<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.model_id == other.model_id
+        self.id == other.id
     }
 }
 
@@ -3254,7 +3190,7 @@ impl<T> Eq for WeakModelHandle<T> {}
 impl<T> Clone for WeakModelHandle<T> {
     fn clone(&self) -> Self {
         Self {
-            model_id: self.model_id,
+            id: self.id,
             model_type: PhantomData,
         }
     }
@@ -3262,29 +3198,45 @@ impl<T> Clone for WeakModelHandle<T> {
 
 impl<T> Copy for WeakModelHandle<T> {}
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize)]
+pub struct ViewId {
+    window: usize,
+    entity: usize,
+}
+
+impl ViewId {
+    pub fn new(window: usize, entity: usize) -> Self {
+        Self { window, entity }
+    }
+
+    pub fn window_id(&self) -> usize {
+        self.window
+    }
+
+    pub fn entity_id(&self) -> usize {
+        self.entity
+    }
+}
+
 pub struct ViewHandle<T> {
-    window_id: usize,
-    view_id: usize,
-    view_type: PhantomData<T>,
+    weak_handle: WeakViewHandle<T>,
     ref_counts: Arc<Mutex<RefCounts>>,
     #[cfg(any(test, feature = "test-support"))]
     handle_id: usize,
 }
 
 impl<T: View> ViewHandle<T> {
-    fn new(window_id: usize, view_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
-        ref_counts.lock().inc_view(window_id, view_id);
+    fn new(id: ViewId, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
+        ref_counts.lock().inc_view(id);
         #[cfg(any(test, feature = "test-support"))]
         let handle_id = ref_counts
             .lock()
             .leak_detector
             .lock()
-            .handle_created(Some(type_name::<T>()), view_id);
+            .handle_created(Some(type_name::<T>()), id.entity_id());
 
         Self {
-            window_id,
-            view_id,
-            view_type: PhantomData,
+            weak_handle: WeakViewHandle::new(id),
             ref_counts: ref_counts.clone(),
 
             #[cfg(any(test, feature = "test-support"))]
@@ -3293,15 +3245,7 @@ impl<T: View> ViewHandle<T> {
     }
 
     pub fn downgrade(&self) -> WeakViewHandle<T> {
-        WeakViewHandle::new(self.window_id, self.view_id)
-    }
-
-    pub fn window_id(&self) -> usize {
-        self.window_id
-    }
-
-    pub fn id(&self) -> usize {
-        self.view_id
+        self.weak_handle
     }
 
     pub fn read<'a, C: ReadView>(&self, cx: &'a C) -> &'a T {
@@ -3344,8 +3288,10 @@ impl<T: View> ViewHandle<T> {
     }
 
     pub fn is_focused(&self, cx: &AppContext) -> bool {
-        cx.focused_view_id(self.window_id)
-            .map_or(false, |focused_id| focused_id == self.view_id)
+        cx.focused_view_id(self.weak_handle.window_id())
+            .map_or(false, |focused_id| {
+                focused_id == self.weak_handle.entity_id()
+            })
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -3442,13 +3388,13 @@ impl<T: View> ViewHandle<T> {
 
 impl<T: View> Clone for ViewHandle<T> {
     fn clone(&self) -> Self {
-        ViewHandle::new(self.window_id, self.view_id, &self.ref_counts)
+        ViewHandle::new(self.weak_handle.id, &self.ref_counts)
     }
 }
 
 impl<T> PartialEq for ViewHandle<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.window_id == other.window_id && self.view_id == other.view_id
+        self.weak_handle == other.weak_handle
     }
 }
 
@@ -3457,39 +3403,43 @@ impl<T> Eq for ViewHandle<T> {}
 impl<T> Debug for ViewHandle<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct(&format!("ViewHandle<{}>", type_name::<T>()))
-            .field("window_id", &self.window_id)
-            .field("view_id", &self.view_id)
+            .field("view_id", &self.weak_handle.id)
             .finish()
     }
 }
 
 impl<T> Drop for ViewHandle<T> {
     fn drop(&mut self) {
-        self.ref_counts
-            .lock()
-            .dec_view(self.window_id, self.view_id);
+        self.ref_counts.lock().dec_view(self.weak_handle.id);
         #[cfg(any(test, feature = "test-support"))]
         self.ref_counts
             .lock()
             .leak_detector
             .lock()
-            .handle_dropped(self.view_id, self.handle_id);
+            .handle_dropped(self.weak_handle.entity_id(), self.handle_id);
+    }
+}
+
+impl<T> Deref for ViewHandle<T> {
+    type Target = WeakViewHandle<T>;
+    fn deref(&self) -> &WeakViewHandle<T> {
+        &self.weak_handle
     }
 }
 
 impl<T: View> Handle<T> for ViewHandle<T> {
     type Weak = WeakViewHandle<T>;
 
-    fn id(&self) -> usize {
-        self.view_id
+    fn entity_id(&self) -> usize {
+        self.id.entity_id()
     }
 
     fn location(&self) -> EntityLocation {
-        EntityLocation::View(self.window_id, self.view_id)
+        EntityLocation::View(self.weak_handle.id)
     }
 
     fn downgrade(&self) -> Self::Weak {
-        self.downgrade()
+        self.weak_handle
     }
 
     fn upgrade_from(weak: &Self::Weak, cx: &AppContext) -> Option<Self>
@@ -3501,8 +3451,7 @@ impl<T: View> Handle<T> for ViewHandle<T> {
 }
 
 pub struct AnyViewHandle {
-    window_id: usize,
-    view_id: usize,
+    id: ViewId,
     view_type: TypeId,
     ref_counts: Arc<Mutex<RefCounts>>,
 
@@ -3511,24 +3460,18 @@ pub struct AnyViewHandle {
 }
 
 impl AnyViewHandle {
-    fn new(
-        window_id: usize,
-        view_id: usize,
-        view_type: TypeId,
-        ref_counts: Arc<Mutex<RefCounts>>,
-    ) -> Self {
-        ref_counts.lock().inc_view(window_id, view_id);
+    fn new(id: ViewId, view_type: TypeId, ref_counts: Arc<Mutex<RefCounts>>) -> Self {
+        ref_counts.lock().inc_view(id);
 
         #[cfg(any(test, feature = "test-support"))]
         let handle_id = ref_counts
             .lock()
             .leak_detector
             .lock()
-            .handle_created(None, view_id);
+            .handle_created(None, id.entity_id());
 
         Self {
-            window_id,
-            view_id,
+            id,
             view_type,
             ref_counts,
             #[cfg(any(test, feature = "test-support"))]
@@ -3536,8 +3479,16 @@ impl AnyViewHandle {
         }
     }
 
-    pub fn id(&self) -> usize {
-        self.view_id
+    pub fn id(&self) -> ViewId {
+        self.id
+    }
+
+    pub fn window_id(&self) -> usize {
+        self.id.window_id()
+    }
+
+    pub fn entity_id(&self) -> usize {
+        self.id.entity_id()
     }
 
     pub fn is<T: 'static>(&self) -> bool {
@@ -3545,17 +3496,15 @@ impl AnyViewHandle {
     }
 
     pub fn is_focused(&self, cx: &AppContext) -> bool {
-        cx.focused_view_id(self.window_id)
-            .map_or(false, |focused_id| focused_id == self.view_id)
+        cx.focused_view_id(self.id.window_id())
+            .map_or(false, |focused_id| focused_id == self.id.entity_id())
     }
 
     pub fn downcast<T: View>(self) -> Option<ViewHandle<T>> {
         if self.is::<T>() {
             let result = Some(ViewHandle {
-                window_id: self.window_id,
-                view_id: self.view_id,
+                weak_handle: WeakViewHandle::new(self.id),
                 ref_counts: self.ref_counts.clone(),
-                view_type: PhantomData,
                 #[cfg(any(test, feature = "test-support"))]
                 handle_id: self.handle_id,
             });
@@ -3572,12 +3521,7 @@ impl AnyViewHandle {
 
 impl Clone for AnyViewHandle {
     fn clone(&self) -> Self {
-        Self::new(
-            self.window_id,
-            self.view_id,
-            self.view_type,
-            self.ref_counts.clone(),
-        )
+        Self::new(self.id, self.view_type, self.ref_counts.clone())
     }
 }
 
@@ -3589,20 +3533,14 @@ impl From<&AnyViewHandle> for AnyViewHandle {
 
 impl<T: View> From<&ViewHandle<T>> for AnyViewHandle {
     fn from(handle: &ViewHandle<T>) -> Self {
-        Self::new(
-            handle.window_id,
-            handle.view_id,
-            TypeId::of::<T>(),
-            handle.ref_counts.clone(),
-        )
+        Self::new(handle.id, TypeId::of::<T>(), handle.ref_counts.clone())
     }
 }
 
 impl<T: View> From<ViewHandle<T>> for AnyViewHandle {
     fn from(handle: ViewHandle<T>) -> Self {
         let any_handle = AnyViewHandle {
-            window_id: handle.window_id,
-            view_id: handle.view_id,
+            id: handle.id,
             view_type: TypeId::of::<T>(),
             ref_counts: handle.ref_counts.clone(),
             #[cfg(any(test, feature = "test-support"))]
@@ -3616,22 +3554,28 @@ impl<T: View> From<ViewHandle<T>> for AnyViewHandle {
     }
 }
 
+impl Deref for AnyViewHandle {
+    type Target = ViewId;
+
+    fn deref(&self) -> &Self::Target {
+        &self.id
+    }
+}
+
 impl Drop for AnyViewHandle {
     fn drop(&mut self) {
-        self.ref_counts
-            .lock()
-            .dec_view(self.window_id, self.view_id);
+        self.ref_counts.lock().dec_view(self.id);
         #[cfg(any(test, feature = "test-support"))]
         self.ref_counts
             .lock()
             .leak_detector
             .lock()
-            .handle_dropped(self.view_id, self.handle_id);
+            .handle_dropped(self.id.entity_id(), self.handle_id);
     }
 }
 
 pub struct AnyModelHandle {
-    model_id: usize,
+    id: usize,
     model_type: TypeId,
     ref_counts: Arc<Mutex<RefCounts>>,
 
@@ -3640,18 +3584,18 @@ pub struct AnyModelHandle {
 }
 
 impl AnyModelHandle {
-    fn new(model_id: usize, model_type: TypeId, ref_counts: Arc<Mutex<RefCounts>>) -> Self {
-        ref_counts.lock().inc_model(model_id);
+    fn new(id: usize, model_type: TypeId, ref_counts: Arc<Mutex<RefCounts>>) -> Self {
+        ref_counts.lock().inc_model(id);
 
         #[cfg(any(test, feature = "test-support"))]
         let handle_id = ref_counts
             .lock()
             .leak_detector
             .lock()
-            .handle_created(None, model_id);
+            .handle_created(None, id);
 
         Self {
-            model_id,
+            id,
             model_type,
             ref_counts,
 
@@ -3663,8 +3607,7 @@ impl AnyModelHandle {
     pub fn downcast<T: Entity>(self) -> Option<ModelHandle<T>> {
         if self.is::<T>() {
             let result = Some(ModelHandle {
-                model_id: self.model_id,
-                model_type: PhantomData,
+                weak_handle: WeakModelHandle::new(self.id),
                 ref_counts: self.ref_counts.clone(),
 
                 #[cfg(any(test, feature = "test-support"))]
@@ -3682,7 +3625,7 @@ impl AnyModelHandle {
 
     pub fn downgrade(&self) -> AnyWeakModelHandle {
         AnyWeakModelHandle {
-            model_id: self.model_id,
+            id: self.id,
             model_type: self.model_type,
         }
     }
@@ -3694,35 +3637,31 @@ impl AnyModelHandle {
 
 impl<T: Entity> From<ModelHandle<T>> for AnyModelHandle {
     fn from(handle: ModelHandle<T>) -> Self {
-        Self::new(
-            handle.model_id,
-            TypeId::of::<T>(),
-            handle.ref_counts.clone(),
-        )
+        Self::new(handle.id(), TypeId::of::<T>(), handle.ref_counts.clone())
     }
 }
 
 impl Clone for AnyModelHandle {
     fn clone(&self) -> Self {
-        Self::new(self.model_id, self.model_type, self.ref_counts.clone())
+        Self::new(self.id, self.model_type, self.ref_counts.clone())
     }
 }
 
 impl Drop for AnyModelHandle {
     fn drop(&mut self) {
         let mut ref_counts = self.ref_counts.lock();
-        ref_counts.dec_model(self.model_id);
+        ref_counts.dec_model(self.id);
 
         #[cfg(any(test, feature = "test-support"))]
         ref_counts
             .leak_detector
             .lock()
-            .handle_dropped(self.model_id, self.handle_id);
+            .handle_dropped(self.id, self.handle_id);
     }
 }
 
 pub struct AnyWeakModelHandle {
-    model_id: usize,
+    id: usize,
     model_type: TypeId,
 }
 
@@ -3730,36 +3669,40 @@ impl AnyWeakModelHandle {
     pub fn upgrade(&self, cx: &impl UpgradeModelHandle) -> Option<AnyModelHandle> {
         cx.upgrade_any_model_handle(self)
     }
+
+    pub fn id(&self) -> usize {
+        self.id
+    }
 }
 
 impl<T: Entity> From<WeakModelHandle<T>> for AnyWeakModelHandle {
     fn from(handle: WeakModelHandle<T>) -> Self {
         AnyWeakModelHandle {
-            model_id: handle.model_id,
+            id: handle.id,
             model_type: TypeId::of::<T>(),
         }
     }
 }
 
 pub struct WeakViewHandle<T> {
-    window_id: usize,
-    view_id: usize,
-    view_type: PhantomData<T>,
+    pub id: ViewId,
+    view_type: PhantomData<*const T>,
 }
 
-impl<T: View> WeakViewHandle<T> {
-    fn new(window_id: usize, view_id: usize) -> Self {
+impl<T> WeakViewHandle<T> {
+    fn new(id: ViewId) -> Self {
         Self {
-            window_id,
-            view_id,
+            id,
             view_type: PhantomData,
         }
     }
 
-    pub fn id(&self) -> usize {
-        self.view_id
+    pub fn id(&self) -> ViewId {
+        self.id
     }
+}
 
+impl<T: View> WeakViewHandle<T> {
     pub fn upgrade(&self, cx: &impl UpgradeViewHandle) -> Option<ViewHandle<T>> {
         cx.upgrade_view_handle(self)
     }
@@ -3768,16 +3711,17 @@ impl<T: View> WeakViewHandle<T> {
 impl<T> Clone for WeakViewHandle<T> {
     fn clone(&self) -> Self {
         Self {
-            window_id: self.window_id,
-            view_id: self.view_id,
+            id: self.id,
             view_type: PhantomData,
         }
     }
 }
 
+impl<T> Copy for WeakViewHandle<T> {}
+
 impl<T> PartialEq for WeakViewHandle<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.window_id == other.window_id && self.view_id == other.view_id
+        self.id == other.id
     }
 }
 
@@ -3785,8 +3729,15 @@ impl<T> Eq for WeakViewHandle<T> {}
 
 impl<T> Hash for WeakViewHandle<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.window_id.hash(state);
-        self.view_id.hash(state);
+        self.id.hash(state)
+    }
+}
+
+impl<T> Deref for WeakViewHandle<T> {
+    type Target = ViewId;
+
+    fn deref(&self) -> &Self::Target {
+        &self.id
     }
 }
 
@@ -3862,21 +3813,18 @@ pub enum Subscription {
     Subscription {
         id: usize,
         entity_id: usize,
-        subscriptions:
-            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<SubscriptionCallback>>>>>>,
+        subscriptions: Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, SubscriptionCallback>>>>>,
     },
     GlobalSubscription {
         id: usize,
         type_id: TypeId,
-        subscriptions: Option<
-            Weak<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalSubscriptionCallback>>>>>,
-        >,
+        subscriptions:
+            Option<Weak<Mutex<HashMap<TypeId, BTreeMap<usize, GlobalSubscriptionCallback>>>>>,
     },
     Observation {
         id: usize,
         entity_id: usize,
-        observations:
-            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>>,
+        observations: Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, ObservationCallback>>>>>,
     },
     ReleaseObservation {
         id: usize,
@@ -3914,18 +3862,8 @@ impl Drop for Subscription {
                 subscriptions,
             } => {
                 if let Some(subscriptions) = subscriptions.as_ref().and_then(Weak::upgrade) {
-                    match subscriptions
-                        .lock()
-                        .entry(*entity_id)
-                        .or_default()
-                        .entry(*id)
-                    {
-                        collections::btree_map::Entry::Vacant(entry) => {
-                            entry.insert(None);
-                        }
-                        collections::btree_map::Entry::Occupied(entry) => {
-                            entry.remove();
-                        }
+                    if let Some(subscriptions) = subscriptions.lock().get_mut(entity_id) {
+                        subscriptions.remove(id);
                     }
                 }
             }
@@ -3935,13 +3873,8 @@ impl Drop for Subscription {
                 subscriptions,
             } => {
                 if let Some(subscriptions) = subscriptions.as_ref().and_then(Weak::upgrade) {
-                    match subscriptions.lock().entry(*type_id).or_default().entry(*id) {
-                        collections::btree_map::Entry::Vacant(entry) => {
-                            entry.insert(None);
-                        }
-                        collections::btree_map::Entry::Occupied(entry) => {
-                            entry.remove();
-                        }
+                    if let Some(subscriptions) = subscriptions.lock().get_mut(type_id) {
+                        subscriptions.remove(id);
                     }
                 }
             }
@@ -3951,18 +3884,8 @@ impl Drop for Subscription {
                 observations,
             } => {
                 if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
-                    match observations
-                        .lock()
-                        .entry(*entity_id)
-                        .or_default()
-                        .entry(*id)
-                    {
-                        collections::btree_map::Entry::Vacant(entry) => {
-                            entry.insert(None);
-                        }
-                        collections::btree_map::Entry::Occupied(entry) => {
-                            entry.remove();
-                        }
+                    if let Some(observations) = observations.lock().get_mut(entity_id) {
+                        observations.remove(id);
                     }
                 }
             }
@@ -4057,7 +3980,7 @@ struct RefCounts {
     entity_counts: HashMap<usize, usize>,
     element_state_counts: HashMap<ElementStateId, ElementStateRefCount>,
     dropped_models: HashSet<usize>,
-    dropped_views: HashSet<(usize, usize)>,
+    dropped_views: HashSet<ViewId>,
     dropped_element_states: HashSet<ElementStateId>,
 
     #[cfg(any(test, feature = "test-support"))]
@@ -4082,12 +4005,12 @@ impl RefCounts {
         }
     }
 
-    fn inc_view(&mut self, window_id: usize, view_id: usize) {
-        match self.entity_counts.entry(view_id) {
+    fn inc_view(&mut self, id: ViewId) {
+        match self.entity_counts.entry(id.entity_id()) {
             Entry::Occupied(mut entry) => *entry.get_mut() += 1,
             Entry::Vacant(entry) => {
                 entry.insert(1);
-                self.dropped_views.remove(&(window_id, view_id));
+                self.dropped_views.remove(&id);
             }
         }
     }
@@ -4121,12 +4044,12 @@ impl RefCounts {
         }
     }
 
-    fn dec_view(&mut self, window_id: usize, view_id: usize) {
-        let count = self.entity_counts.get_mut(&view_id).unwrap();
+    fn dec_view(&mut self, id: ViewId) {
+        let count = self.entity_counts.get_mut(&id.entity_id()).unwrap();
         *count -= 1;
         if *count == 0 {
-            self.entity_counts.remove(&view_id);
-            self.dropped_views.insert((window_id, view_id));
+            self.entity_counts.remove(&id.entity_id());
+            self.dropped_views.insert(id);
         }
     }
 
@@ -4143,13 +4066,7 @@ impl RefCounts {
         self.entity_counts.contains_key(&entity_id)
     }
 
-    fn take_dropped(
-        &mut self,
-    ) -> (
-        HashSet<usize>,
-        HashSet<(usize, usize)>,
-        HashSet<ElementStateId>,
-    ) {
+    fn take_dropped(&mut self) -> (HashSet<usize>, HashSet<ViewId>, HashSet<ElementStateId>) {
         (
             std::mem::take(&mut self.dropped_models),
             std::mem::take(&mut self.dropped_views),
@@ -4543,98 +4460,6 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_global_events(cx: &mut MutableAppContext) {
-        #[derive(Clone, Debug, Eq, PartialEq)]
-        struct GlobalEvent(u64);
-
-        let events = Rc::new(RefCell::new(Vec::new()));
-        let first_subscription;
-        let second_subscription;
-
-        {
-            let events = events.clone();
-            first_subscription = cx.subscribe_global(move |e: &GlobalEvent, _| {
-                events.borrow_mut().push(("First", e.clone()));
-            });
-        }
-
-        {
-            let events = events.clone();
-            second_subscription = cx.subscribe_global(move |e: &GlobalEvent, _| {
-                events.borrow_mut().push(("Second", e.clone()));
-            });
-        }
-
-        cx.update(|cx| {
-            cx.emit_global(GlobalEvent(1));
-            cx.emit_global(GlobalEvent(2));
-        });
-
-        drop(first_subscription);
-
-        cx.update(|cx| {
-            cx.emit_global(GlobalEvent(3));
-        });
-
-        drop(second_subscription);
-
-        cx.update(|cx| {
-            cx.emit_global(GlobalEvent(4));
-        });
-
-        assert_eq!(
-            &*events.borrow(),
-            &[
-                ("First", GlobalEvent(1)),
-                ("Second", GlobalEvent(1)),
-                ("First", GlobalEvent(2)),
-                ("Second", GlobalEvent(2)),
-                ("Second", GlobalEvent(3)),
-            ]
-        );
-    }
-
-    #[crate::test(self)]
-    fn test_global_nested_events(cx: &mut MutableAppContext) {
-        #[derive(Clone, Debug, Eq, PartialEq)]
-        struct GlobalEvent(u64);
-
-        let events = Rc::new(RefCell::new(Vec::new()));
-
-        {
-            let events = events.clone();
-            cx.subscribe_global(move |e: &GlobalEvent, cx| {
-                events.borrow_mut().push(("Outer", e.clone()));
-
-                let events = events.clone();
-                cx.subscribe_global(move |e: &GlobalEvent, _| {
-                    events.borrow_mut().push(("Inner", e.clone()));
-                })
-                .detach();
-            })
-            .detach();
-        }
-
-        cx.update(|cx| {
-            cx.emit_global(GlobalEvent(1));
-            cx.emit_global(GlobalEvent(2));
-            cx.emit_global(GlobalEvent(3));
-        });
-
-        assert_eq!(
-            &*events.borrow(),
-            &[
-                ("Outer", GlobalEvent(1)),
-                ("Outer", GlobalEvent(2)),
-                ("Inner", GlobalEvent(2)),
-                ("Outer", GlobalEvent(3)),
-                ("Inner", GlobalEvent(3)),
-                ("Inner", GlobalEvent(3)),
-            ]
-        );
-    }
-
-    #[crate::test(self)]
     fn test_dropping_subscribers(cx: &mut MutableAppContext) {
         struct View;
 
@@ -4770,137 +4595,6 @@ mod tests {
         });
 
         observed_model.update(cx, |_, cx| cx.notify());
-    }
-
-    #[crate::test(self)]
-    fn test_dropping_subscriptions_during_callback(cx: &mut MutableAppContext) {
-        struct Model;
-
-        impl Entity for Model {
-            type Event = u64;
-        }
-
-        // Events
-        let observing_model = cx.add_model(|_| Model);
-        let observed_model = cx.add_model(|_| Model);
-
-        let events = Rc::new(RefCell::new(Vec::new()));
-
-        observing_model.update(cx, |_, cx| {
-            let events = events.clone();
-            let subscription = Rc::new(RefCell::new(None));
-            *subscription.borrow_mut() = Some(cx.subscribe(&observed_model, {
-                let subscription = subscription.clone();
-                move |_, _, e, _| {
-                    subscription.borrow_mut().take();
-                    events.borrow_mut().push(e.clone());
-                }
-            }));
-        });
-
-        observed_model.update(cx, |_, cx| {
-            cx.emit(1);
-            cx.emit(2);
-        });
-
-        assert_eq!(*events.borrow(), [1]);
-
-        // Global Events
-        #[derive(Clone, Debug, Eq, PartialEq)]
-        struct GlobalEvent(u64);
-
-        let events = Rc::new(RefCell::new(Vec::new()));
-
-        {
-            let events = events.clone();
-            let subscription = Rc::new(RefCell::new(None));
-            *subscription.borrow_mut() = Some(cx.subscribe_global({
-                let subscription = subscription.clone();
-                move |e: &GlobalEvent, _| {
-                    subscription.borrow_mut().take();
-                    events.borrow_mut().push(e.clone());
-                }
-            }));
-        }
-
-        cx.update(|cx| {
-            cx.emit_global(GlobalEvent(1));
-            cx.emit_global(GlobalEvent(2));
-        });
-
-        assert_eq!(*events.borrow(), [GlobalEvent(1)]);
-
-        // Model Observation
-        let observing_model = cx.add_model(|_| Model);
-        let observed_model = cx.add_model(|_| Model);
-
-        let observation_count = Rc::new(RefCell::new(0));
-
-        observing_model.update(cx, |_, cx| {
-            let observation_count = observation_count.clone();
-            let subscription = Rc::new(RefCell::new(None));
-            *subscription.borrow_mut() = Some(cx.observe(&observed_model, {
-                let subscription = subscription.clone();
-                move |_, _, _| {
-                    subscription.borrow_mut().take();
-                    *observation_count.borrow_mut() += 1;
-                }
-            }));
-        });
-
-        observed_model.update(cx, |_, cx| {
-            cx.notify();
-        });
-
-        observed_model.update(cx, |_, cx| {
-            cx.notify();
-        });
-
-        assert_eq!(*observation_count.borrow(), 1);
-
-        // View Observation
-        struct View;
-
-        impl Entity for View {
-            type Event = ();
-        }
-
-        impl super::View for View {
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-                Empty::new().boxed()
-            }
-
-            fn ui_name() -> &'static str {
-                "View"
-            }
-        }
-
-        let (window_id, _) = cx.add_window(Default::default(), |_| View);
-        let observing_view = cx.add_view(window_id, |_| View);
-        let observed_view = cx.add_view(window_id, |_| View);
-
-        let observation_count = Rc::new(RefCell::new(0));
-        observing_view.update(cx, |_, cx| {
-            let observation_count = observation_count.clone();
-            let subscription = Rc::new(RefCell::new(None));
-            *subscription.borrow_mut() = Some(cx.observe(&observed_view, {
-                let subscription = subscription.clone();
-                move |_, _, _| {
-                    subscription.borrow_mut().take();
-                    *observation_count.borrow_mut() += 1;
-                }
-            }));
-        });
-
-        observed_view.update(cx, |_, cx| {
-            cx.notify();
-        });
-
-        observed_view.update(cx, |_, cx| {
-            cx.notify();
-        });
-
-        assert_eq!(*observation_count.borrow(), 1);
     }
 
     #[crate::test(self)]
