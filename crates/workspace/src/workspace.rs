@@ -1089,6 +1089,7 @@ impl Workspace {
         if self.center.remove(&pane).unwrap() {
             self.panes.retain(|p| p != &pane);
             self.activate_pane(self.panes.last().unwrap().clone(), cx);
+            cx.notify();
         }
     }
 
