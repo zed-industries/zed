@@ -28,13 +28,14 @@ pub struct TextStyle {
     pub font_id: FontId,
     pub font_size: f32,
     pub font_properties: Properties,
-    pub underline: Option<Underline>,
+    pub underline: Underline,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct HighlightStyle {
-    pub color: Color,
-    pub font_properties: Properties,
+    pub color: Option<Color>,
+    pub weight: Option<Weight>,
+    pub italic: Option<bool>,
     pub underline: Option<Underline>,
     pub fade_out: Option<f32>,
 }
@@ -43,7 +44,7 @@ impl Eq for HighlightStyle {}
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Underline {
-    pub color: Color,
+    pub color: Option<Color>,
     pub thickness: OrderedFloat<f32>,
     pub squiggly: bool,
 }
@@ -80,13 +81,10 @@ struct TextStyleJson {
 
 #[derive(Deserialize)]
 struct HighlightStyleJson {
-    color: Color,
+    color: Option<Color>,
     weight: Option<WeightJson>,
-    #[serde(default)]
-    italic: bool,
-    #[serde(default)]
-    underline: UnderlineStyleJson,
-    #[serde(default)]
+    italic: Option<bool>,
+    underline: Option<UnderlineStyleJson>,
     fade_out: Option<f32>,
 }
 
@@ -109,7 +107,7 @@ impl TextStyle {
         font_family_name: impl Into<Arc<str>>,
         font_size: f32,
         font_properties: Properties,
-        underline: Option<Underline>,
+        underline: Underline,
         color: Color,
         font_cache: &FontCache,
     ) -> Result<Self> {
@@ -133,14 +131,31 @@ impl TextStyle {
     }
 
     pub fn highlight(mut self, style: HighlightStyle, font_cache: &FontCache) -> Result<Self> {
-        if self.font_properties != style.font_properties {
-            self.font_id = font_cache.select_font(self.font_family_id, &style.font_properties)?;
+        let mut font_properties = self.font_properties;
+        if let Some(weight) = style.weight {
+            font_properties.weight(weight);
         }
-        self.color = Color::blend(style.color, self.color);
+        if let Some(italic) = style.italic {
+            if italic {
+                font_properties.style(Style::Italic);
+            } else {
+                font_properties.style(Style::Normal);
+            }
+        }
+
+        if self.font_properties != font_properties {
+            self.font_id = font_cache.select_font(self.font_family_id, &font_properties)?;
+        }
+        if let Some(color) = style.color {
+            self.color = Color::blend(color, self.color);
+        }
         if let Some(factor) = style.fade_out {
             self.color.fade_out(factor);
         }
-        self.underline = style.underline;
+        if let Some(underline) = style.underline {
+            self.underline = underline;
+        }
+
         Ok(self)
     }
 
@@ -160,7 +175,7 @@ impl TextStyle {
                     json.family,
                     json.size,
                     font_properties,
-                    underline_from_json(json.underline, json.color),
+                    underline_from_json(json.underline),
                     json.color,
                     font_cache,
                 )
@@ -214,9 +229,10 @@ impl From<TextStyle> for HighlightStyle {
 impl From<&TextStyle> for HighlightStyle {
     fn from(other: &TextStyle) -> Self {
         Self {
-            color: other.color,
-            font_properties: other.font_properties,
-            underline: other.underline,
+            color: Some(other.color),
+            weight: Some(other.font_properties.weight),
+            italic: Some(other.font_properties.style == Style::Italic),
+            underline: Some(other.underline),
             fade_out: None,
         }
     }
@@ -256,17 +272,38 @@ impl Default for TextStyle {
 
 impl HighlightStyle {
     fn from_json(json: HighlightStyleJson) -> Self {
-        let font_properties = properties_from_json(json.weight, json.italic);
         Self {
             color: json.color,
-            font_properties,
-            underline: underline_from_json(json.underline, json.color),
+            weight: json.weight.map(weight_from_json),
+            italic: json.italic,
+            underline: json.underline.map(underline_from_json),
             fade_out: json.fade_out,
         }
     }
 
     pub fn highlight(&mut self, other: HighlightStyle) {
-        self.color = Color::blend(other.color, self.color);
+        match (self.color, other.color) {
+            (Some(self_color), Some(other_color)) => {
+                self.color = Some(Color::blend(other_color, self_color));
+            }
+            (None, Some(other_color)) => {
+                self.color = Some(other_color);
+            }
+            _ => {}
+        }
+
+        if other.weight.is_some() {
+            self.weight = other.weight;
+        }
+
+        if other.italic.is_some() {
+            self.italic = other.italic;
+        }
+
+        if other.underline.is_some() {
+            self.underline = other.underline;
+        }
+
         match (other.fade_out, self.fade_out) {
             (Some(source_fade), None) => self.fade_out = Some(source_fade),
             (Some(source_fade), Some(dest_fade)) => {
@@ -278,20 +315,14 @@ impl HighlightStyle {
             }
             _ => {}
         }
-        self.font_properties = other.font_properties;
-        if other.underline.is_some() {
-            self.underline = other.underline;
-        }
     }
 }
 
 impl From<Color> for HighlightStyle {
     fn from(color: Color) -> Self {
         Self {
-            color,
-            font_properties: Default::default(),
-            underline: None,
-            fade_out: None,
+            color: Some(color),
+            ..Default::default()
         }
     }
 }
@@ -329,36 +360,40 @@ impl<'de> Deserialize<'de> for HighlightStyle {
         } else {
             Ok(Self {
                 color: serde_json::from_value(json).map_err(de::Error::custom)?,
-                font_properties: Properties::new(),
-                underline: None,
-                fade_out: None,
+                ..Default::default()
             })
         }
     }
 }
 
-fn underline_from_json(json: UnderlineStyleJson, text_color: Color) -> Option<Underline> {
+fn underline_from_json(json: UnderlineStyleJson) -> Underline {
     match json {
-        UnderlineStyleJson::Underlined(false) => None,
-        UnderlineStyleJson::Underlined(true) => Some(Underline {
-            color: text_color,
+        UnderlineStyleJson::Underlined(false) => Underline::default(),
+        UnderlineStyleJson::Underlined(true) => Underline {
+            color: None,
             thickness: 1.0.into(),
             squiggly: false,
-        }),
+        },
         UnderlineStyleJson::UnderlinedWithProperties {
             color,
             thickness,
             squiggly,
-        } => Some(Underline {
-            color: color.unwrap_or(text_color),
+        } => Underline {
+            color,
             thickness: thickness.unwrap_or(1.).into(),
             squiggly,
-        }),
+        },
     }
 }
 
 fn properties_from_json(weight: Option<WeightJson>, italic: bool) -> Properties {
-    let weight = match weight.unwrap_or(WeightJson::normal) {
+    let weight = weight.map(weight_from_json).unwrap_or_default();
+    let style = if italic { Style::Italic } else { Style::Normal };
+    *Properties::new().weight(weight).style(style)
+}
+
+fn weight_from_json(weight: WeightJson) -> Weight {
+    match weight {
         WeightJson::thin => Weight::THIN,
         WeightJson::extra_light => Weight::EXTRA_LIGHT,
         WeightJson::light => Weight::LIGHT,
@@ -368,9 +403,7 @@ fn properties_from_json(weight: Option<WeightJson>, italic: bool) -> Properties 
         WeightJson::bold => Weight::BOLD,
         WeightJson::extra_bold => Weight::EXTRA_BOLD,
         WeightJson::black => Weight::BLACK,
-    };
-    let style = if italic { Style::Italic } else { Style::Normal };
-    *Properties::new().weight(weight).style(style)
+    }
 }
 
 impl ToJson for Properties {

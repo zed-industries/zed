@@ -62,7 +62,7 @@ impl gpui::Element for TextElement {
                 .select_font(family, &Default::default())
                 .unwrap(),
             color: Color::default(),
-            underline: None,
+            underline: Default::default(),
         };
         let bold = RunStyle {
             font_id: cx
@@ -76,7 +76,7 @@ impl gpui::Element for TextElement {
                 )
                 .unwrap(),
             color: Color::default(),
-            underline: None,
+            underline: Default::default(),
         };
 
         let text = "Hello world!";

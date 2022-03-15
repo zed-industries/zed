@@ -397,7 +397,7 @@ impl EditorElement {
                                                 RunStyle {
                                                     font_id,
                                                     color: style.background,
-                                                    underline: None,
+                                                    underline: Default::default(),
                                                 },
                                             )],
                                         ))
@@ -555,7 +555,7 @@ impl EditorElement {
                     RunStyle {
                         font_id: style.text.font_id,
                         color: Color::black(),
-                        underline: None,
+                        underline: Default::default(),
                     },
                 )],
             )
@@ -596,7 +596,7 @@ impl EditorElement {
                             RunStyle {
                                 font_id: style.text.font_id,
                                 color,
-                                underline: None,
+                                underline: Default::default(),
                             },
                         )],
                     )));
@@ -644,7 +644,7 @@ impl EditorElement {
                             RunStyle {
                                 font_id: placeholder_style.font_id,
                                 color: placeholder_style.color,
-                                underline: None,
+                                underline: Default::default(),
                             },
                         )],
                     )
@@ -669,7 +669,7 @@ impl EditorElement {
                     let diagnostic_style = super::diagnostic_style(severity, true, style);
                     let diagnostic_highlight = HighlightStyle {
                         underline: Some(Underline {
-                            color: diagnostic_style.message.text.color,
+                            color: Some(diagnostic_style.message.text.color),
                             thickness: 1.0.into(),
                             squiggly: true,
                         }),
@@ -1237,7 +1237,7 @@ fn layout_line(
             RunStyle {
                 font_id: style.text.font_id,
                 color: Color::black(),
-                underline: None,
+                underline: Default::default(),
             },
         )],
     )

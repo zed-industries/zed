@@ -1,4 +1,4 @@
-use std::{ops::Range, sync::Arc};
+use std::{borrow::Cow, ops::Range, sync::Arc};
 
 use crate::{
     color::Color,
@@ -205,8 +205,6 @@ pub fn layout_highlighted_chunks<'a>(
     max_line_count: usize,
 ) -> Vec<Line> {
     let mut layouts = Vec::with_capacity(max_line_count);
-    let mut prev_font_properties = text_style.font_properties.clone();
-    let mut prev_font_id = text_style.font_id;
     let mut line = String::new();
     let mut styles = Vec::new();
     let mut row = 0;
@@ -225,30 +223,14 @@ pub fn layout_highlighted_chunks<'a>(
             }
 
             if !line_chunk.is_empty() && !line_exceeded_max_len {
-                let font_properties;
-                let mut color;
-                let underline;
-
-                if let Some(highlight_style) = highlight_style {
-                    font_properties = highlight_style.font_properties;
-                    color = Color::blend(highlight_style.color, text_style.color);
-                    if let Some(fade) = highlight_style.fade_out {
-                        color.fade_out(fade);
-                    }
-                    underline = highlight_style.underline;
+                let text_style = if let Some(style) = highlight_style {
+                    text_style
+                        .clone()
+                        .highlight(style, font_cache)
+                        .map(Cow::Owned)
+                        .unwrap_or_else(|_| Cow::Borrowed(text_style))
                 } else {
-                    font_properties = text_style.font_properties;
-                    color = text_style.color;
-                    underline = None;
-                }
-
-                // Avoid a lookup if the font properties match the previous ones.
-                let font_id = if font_properties == prev_font_properties {
-                    prev_font_id
-                } else {
-                    font_cache
-                        .select_font(text_style.font_family_id, &font_properties)
-                        .unwrap_or(text_style.font_id)
+                    Cow::Borrowed(text_style)
                 };
 
                 if line.len() + line_chunk.len() > max_line_len {
@@ -264,13 +246,11 @@ pub fn layout_highlighted_chunks<'a>(
                 styles.push((
                     line_chunk.len(),
                     RunStyle {
-                        font_id,
-                        color,
-                        underline,
+                        font_id: text_style.font_id,
+                        color: text_style.color,
+                        underline: text_style.underline,
                     },
                 ));
-                prev_font_id = font_id;
-                prev_font_properties = font_properties;
             }
         }
     }

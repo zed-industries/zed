@@ -284,11 +284,7 @@ impl ProjectSymbolsView {
             &settings.theme.selector.item
         };
         let symbol = &self.symbols[string_match.candidate_id];
-        let syntax_runs = styled_runs_for_code_label(
-            &symbol.label,
-            style.label.text.color,
-            &settings.theme.editor.syntax,
-        );
+        let syntax_runs = styled_runs_for_code_label(&symbol.label, &settings.theme.editor.syntax);
 
         let mut path = symbol.path.to_string_lossy();
         if show_worktree_root_name {
