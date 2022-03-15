@@ -373,7 +373,7 @@ impl DiagnosticMessage {
             .head();
         let new_diagnostic = buffer
             .read(cx)
-            .diagnostics_in_range::<_, usize>(cursor_position..cursor_position)
+            .diagnostics_in_range::<_, usize>(cursor_position..cursor_position, false)
             .filter(|entry| !entry.range.is_empty())
             .min_by_key(|entry| (entry.diagnostic.severity, entry.range.len()))
             .map(|entry| entry.diagnostic);

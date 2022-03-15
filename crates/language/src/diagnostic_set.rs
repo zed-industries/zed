@@ -71,6 +71,7 @@ impl DiagnosticSet {
         range: Range<T>,
         buffer: &'a text::BufferSnapshot,
         inclusive: bool,
+        reversed: bool,
     ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
     where
         T: 'a + ToOffset,
@@ -90,11 +91,19 @@ impl DiagnosticSet {
             }
         });
 
-        cursor.next(buffer);
+        if reversed {
+            cursor.prev(buffer);
+        } else {
+            cursor.next(buffer);
+        }
         iter::from_fn({
             move || {
                 if let Some(diagnostic) = cursor.item() {
-                    cursor.next(buffer);
+                    if reversed {
+                        cursor.prev(buffer);
+                    } else {
+                        cursor.next(buffer);
+                    }
                     Some(diagnostic.resolve(buffer))
                 } else {
                     None

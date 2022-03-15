@@ -2179,6 +2179,7 @@ impl MultiBufferSnapshot {
     pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
         range: Range<T>,
+        reversed: bool,
     ) -> impl Iterator<Item = DiagnosticEntry<O>> + 'a
     where
         T: 'a + ToOffset,
@@ -2187,7 +2188,10 @@ impl MultiBufferSnapshot {
         self.as_singleton()
             .into_iter()
             .flat_map(move |(_, _, buffer)| {
-                buffer.diagnostics_in_range(range.start.to_offset(self)..range.end.to_offset(self))
+                buffer.diagnostics_in_range(
+                    range.start.to_offset(self)..range.end.to_offset(self),
+                    reversed,
+                )
             })
     }
 

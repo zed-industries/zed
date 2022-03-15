@@ -1575,7 +1575,7 @@ impl BufferSnapshot {
         let mut diagnostic_endpoints = Vec::new();
         if language_aware {
             tree = self.tree.as_ref();
-            for entry in self.diagnostics_in_range::<_, usize>(range.clone()) {
+            for entry in self.diagnostics_in_range::<_, usize>(range.clone(), false) {
                 diagnostic_endpoints.push(DiagnosticEndpoint {
                     offset: entry.range.start,
                     is_start: true,
@@ -1838,12 +1838,14 @@ impl BufferSnapshot {
     pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
         search_range: Range<T>,
+        reversed: bool,
     ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
     where
         T: 'a + Clone + ToOffset,
         O: 'a + FromAnchor,
     {
-        self.diagnostics.range(search_range.clone(), self, true)
+        self.diagnostics
+            .range(search_range.clone(), self, true, reversed)
     }
 
     pub fn diagnostic_groups(&self) -> Vec<DiagnosticGroup<Anchor>> {

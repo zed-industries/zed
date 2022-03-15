@@ -4869,7 +4869,7 @@ mod tests {
         buffer.read_with(cx, |buffer, _| {
             let snapshot = buffer.snapshot();
             let diagnostics = snapshot
-                .diagnostics_in_range::<_, Point>(0..buffer.len())
+                .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
                 .collect::<Vec<_>>();
             assert_eq!(
                 diagnostics,
@@ -4985,7 +4985,7 @@ mod tests {
             assert_eq!(
                 buffer
                     .snapshot()
-                    .diagnostics_in_range::<_, Point>(Point::new(3, 0)..Point::new(5, 0))
+                    .diagnostics_in_range::<_, Point>(Point::new(3, 0)..Point::new(5, 0), false)
                     .collect::<Vec<_>>(),
                 &[
                     DiagnosticEntry {
@@ -5063,7 +5063,7 @@ mod tests {
             assert_eq!(
                 buffer
                     .snapshot()
-                    .diagnostics_in_range::<_, Point>(Point::new(2, 0)..Point::new(3, 0))
+                    .diagnostics_in_range::<_, Point>(Point::new(2, 0)..Point::new(3, 0), false)
                     .collect::<Vec<_>>(),
                 &[
                     DiagnosticEntry {
@@ -5150,7 +5150,7 @@ mod tests {
             assert_eq!(
                 buffer
                     .snapshot()
-                    .diagnostics_in_range::<_, Point>(0..buffer.len())
+                    .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
                     .collect::<Vec<_>>(),
                 &[
                     DiagnosticEntry {
@@ -6428,7 +6428,7 @@ mod tests {
 
         assert_eq!(
             buffer
-                .diagnostics_in_range::<_, Point>(0..buffer.len())
+                .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
                 .collect::<Vec<_>>(),
             &[
                 DiagnosticEntry {
