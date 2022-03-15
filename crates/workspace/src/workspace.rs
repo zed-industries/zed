@@ -609,9 +609,13 @@ impl Workspace {
             }
         });
 
+        let weak_self = cx.weak_handle();
+
+        cx.emit_global(WorkspaceCreated(weak_self.clone()));
+
         Workspace {
             modal: None,
-            weak_self: cx.weak_handle(),
+            weak_self,
             center: PaneGroup::new(pane.clone()),
             panes: vec![pane.clone()],
             active_pane: pane.clone(),
@@ -1523,7 +1527,7 @@ pub fn open_paths(
     }
 
     let workspace = existing.unwrap_or_else(|| {
-        let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
+        cx.add_window((app_state.build_window_options)(), |cx| {
             let project = Project::local(
                 app_state.client.clone(),
                 app_state.user_store.clone(),
@@ -1532,9 +1536,8 @@ pub fn open_paths(
                 cx,
             );
             (app_state.build_workspace)(project, &app_state, cx)
-        });
-        cx.emit_global(WorkspaceCreated(workspace.downgrade()));
-        workspace
+        })
+        .1
     });
 
     let task = workspace.update(cx, |workspace, cx| workspace.open_paths(abs_paths, cx));
@@ -1569,11 +1572,10 @@ pub fn join_project(
         )
         .await?;
         Ok(cx.update(|cx| {
-            let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
+            cx.add_window((app_state.build_window_options)(), |cx| {
                 (app_state.build_workspace)(project, &app_state, cx)
-            });
-            cx.emit_global(WorkspaceCreated(workspace.downgrade()));
-            workspace
+            })
+            .1
         }))
     })
 }
@@ -1589,6 +1591,5 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
         );
         (app_state.build_workspace)(project, &app_state, cx)
     });
-    cx.emit_global(WorkspaceCreated(workspace.downgrade()));
     cx.dispatch_action(window_id, vec![workspace.id()], &OpenNew(app_state.clone()));
 }

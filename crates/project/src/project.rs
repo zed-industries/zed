@@ -3699,7 +3699,7 @@ impl Project {
         let buffer_handle = this.read_with(&cx, |this, _| {
             this.opened_buffers
                 .get(&buffer_id)
-                .map(|buffer| buffer.upgrade(&cx).unwrap())
+                .and_then(|buffer| buffer.upgrade(&cx))
                 .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))
         })?;
         let request = T::from_proto(
