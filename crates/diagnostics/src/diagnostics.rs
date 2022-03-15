@@ -218,7 +218,14 @@ impl ProjectDiagnosticsEditor {
         let mut first_excerpt_id = None;
         let excerpts_snapshot = self.excerpts.update(cx, |excerpts, excerpts_cx| {
             let mut old_groups = path_state.diagnostic_groups.iter().enumerate().peekable();
-            let mut new_groups = snapshot.diagnostic_groups().into_iter().peekable();
+            let mut new_groups = snapshot
+                .diagnostic_groups()
+                .into_iter()
+                .filter(|group| {
+                    group.entries[group.primary_ix].diagnostic.severity
+                        <= DiagnosticSeverity::WARNING
+                })
+                .peekable();
             loop {
                 let mut to_insert = None;
                 let mut to_remove = None;
