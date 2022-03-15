@@ -188,7 +188,7 @@ impl TextStyle {
     }
 
     pub fn line_height(&self, font_cache: &FontCache) -> f32 {
-        font_cache.line_height(self.font_id, self.font_size)
+        font_cache.line_height(self.font_size)
     }
 
     pub fn cap_height(&self, font_cache: &FontCache) -> f32 {

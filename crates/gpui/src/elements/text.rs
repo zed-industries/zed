@@ -114,7 +114,7 @@ impl Element for Text {
             max_line_width = max_line_width.max(shaped_line.width());
         }
 
-        let line_height = cx.font_cache.line_height(font_id, self.style.font_size);
+        let line_height = cx.font_cache.line_height(self.style.font_size);
         let size = vec2f(
             max_line_width
                 .ceil()
