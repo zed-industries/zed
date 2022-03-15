@@ -52,17 +52,36 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     });
 
     cx.add_action({
-        let fs = app_state.fs.clone();
+        let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
-            let fs = fs.clone();
+            let app_state = app_state.clone();
             cx.spawn(move |workspace, mut cx| async move {
+                let fs = &app_state.fs;
                 if !fs.is_file(&SETTINGS_PATH).await {
                     fs.create_dir(&ROOT_PATH).await?;
                     fs.create_file(&SETTINGS_PATH, Default::default()).await?;
                 }
+
                 workspace
                     .update(&mut cx, |workspace, cx| {
-                        workspace.open_paths(&[SETTINGS_PATH.clone()], cx)
+                        if workspace.project().read(cx).is_local() {
+                            workspace.open_paths(&[SETTINGS_PATH.clone()], cx)
+                        } else {
+                            let (_, workspace) =
+                                cx.add_window((app_state.build_window_options)(), |cx| {
+                                    let project = Project::local(
+                                        app_state.client.clone(),
+                                        app_state.user_store.clone(),
+                                        app_state.languages.clone(),
+                                        app_state.fs.clone(),
+                                        cx,
+                                    );
+                                    (app_state.build_workspace)(project, &app_state, cx)
+                                });
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.open_paths(&[SETTINGS_PATH.clone()], cx)
+                            })
+                        }
                     })
                     .await;
                 Ok::<_, anyhow::Error>(())
