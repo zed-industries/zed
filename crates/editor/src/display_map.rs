@@ -1174,7 +1174,7 @@ mod tests {
         for chunk in snapshot.chunks(rows, true) {
             let color = chunk
                 .syntax_highlight_id
-                .and_then(|id| id.style(theme).map(|s| s.color));
+                .and_then(|id| id.style(theme)?.color);
             if let Some((last_chunk, last_color)) = chunks.last_mut() {
                 if color == *last_color {
                     last_chunk.push_str(chunk.text);

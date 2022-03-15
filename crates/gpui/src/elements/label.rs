@@ -214,7 +214,7 @@ mod tests {
             "Menlo",
             12.,
             Default::default(),
-            None,
+            Default::default(),
             Color::black(),
             cx.font_cache(),
         )
@@ -223,7 +223,7 @@ mod tests {
             "Menlo",
             12.,
             *FontProperties::new().weight(Weight::BOLD),
-            None,
+            Default::default(),
             Color::new(255, 0, 0, 255),
             cx.font_cache(),
         )

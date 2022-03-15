@@ -28,7 +28,7 @@ pub struct TextLayoutCache {
 pub struct RunStyle {
     pub color: Color,
     pub font_id: FontId,
-    pub underline: Option<Underline>,
+    pub underline: Underline,
 }
 
 impl TextLayoutCache {
@@ -167,7 +167,7 @@ impl<'a> Hash for CacheKeyRef<'a> {
 #[derive(Default, Debug)]
 pub struct Line {
     layout: Arc<LineLayout>,
-    style_runs: SmallVec<[(u32, Color, Option<Underline>); 32]>,
+    style_runs: SmallVec<[(u32, Color, Underline); 32]>,
 }
 
 #[derive(Default, Debug)]
@@ -283,17 +283,21 @@ impl Line {
                 if glyph.index >= run_end {
                     if let Some((run_len, run_color, run_underline)) = style_runs.next() {
                         if let Some((_, underline_style)) = underline {
-                            if *run_underline != Some(underline_style) {
+                            if *run_underline != underline_style {
                                 finished_underline = underline.take();
                             }
                         }
-                        if let Some(run_underline) = run_underline {
+                        if run_underline.thickness.into_inner() > 0. {
                             underline.get_or_insert((
                                 vec2f(
                                     glyph_origin.x(),
                                     origin.y() + baseline_offset.y() + 0.618 * self.layout.descent,
                                 ),
-                                *run_underline,
+                                Underline {
+                                    color: Some(run_underline.color.unwrap_or(*run_color)),
+                                    thickness: run_underline.thickness.into(),
+                                    squiggly: run_underline.squiggly,
+                                },
                             ));
                         }
 
@@ -301,7 +305,6 @@ impl Line {
                         color = *run_color;
                     } else {
                         run_end = self.layout.len;
-                        color = Color::black();
                         finished_underline = underline.take();
                     }
                 }
@@ -315,7 +318,7 @@ impl Line {
                         origin: underline_origin,
                         width: glyph_origin.x() - underline_origin.x(),
                         thickness: underline_style.thickness.into(),
-                        color: underline_style.color,
+                        color: underline_style.color.unwrap(),
                         squiggly: underline_style.squiggly,
                     });
                 }
@@ -335,7 +338,7 @@ impl Line {
             cx.scene.push_underline(scene::Underline {
                 origin: underline_start,
                 width: line_end_x - underline_start.x(),
-                color: underline_style.color,
+                color: underline_style.color.unwrap(),
                 thickness: underline_style.thickness.into(),
                 squiggly: underline_style.squiggly,
             });
@@ -610,7 +613,7 @@ impl LineWrapper {
                     RunStyle {
                         font_id: self.font_id,
                         color: Default::default(),
-                        underline: None,
+                        underline: Default::default(),
                     },
                 )],
             )
@@ -694,7 +697,7 @@ mod tests {
         let normal = RunStyle {
             font_id,
             color: Default::default(),
-            underline: None,
+            underline: Default::default(),
         };
         let bold = RunStyle {
             font_id: font_cache
@@ -707,7 +710,7 @@ mod tests {
                 )
                 .unwrap(),
             color: Default::default(),
-            underline: None,
+            underline: Default::default(),
         };
 
         let text = "aa bbb cccc ddddd eeee";

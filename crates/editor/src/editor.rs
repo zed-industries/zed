@@ -615,11 +615,7 @@ impl CompletionsMenu {
                                 .with_highlights(combine_syntax_and_fuzzy_match_highlights(
                                     &completion.label.text,
                                     style.text.color.into(),
-                                    styled_runs_for_code_label(
-                                        &completion.label,
-                                        style.text.color,
-                                        &style.syntax,
-                                    ),
+                                    styled_runs_for_code_label(&completion.label, &style.syntax),
                                     &mat.positions,
                                 ))
                                 .contained()
@@ -5716,7 +5712,7 @@ fn build_style(
                 font_id,
                 font_size,
                 font_properties,
-                underline: None,
+                underline: Default::default(),
             },
             placeholder_text: None,
             theme,
@@ -5938,7 +5934,7 @@ pub fn combine_syntax_and_fuzzy_match_highlights(
 
     for (range, mut syntax_highlight) in syntax_ranges.chain([(usize::MAX..0, Default::default())])
     {
-        syntax_highlight.font_properties.weight(Default::default());
+        syntax_highlight.weight = None;
 
         // Add highlights for any fuzzy match characters before the next
         // syntax highlight range.
@@ -5949,7 +5945,7 @@ pub fn combine_syntax_and_fuzzy_match_highlights(
             match_indices.next();
             let end_index = char_ix_after(match_index, text);
             let mut match_style = default_style;
-            match_style.font_properties.weight(fonts::Weight::BOLD);
+            match_style.weight = Some(fonts::Weight::BOLD);
             result.push((match_index..end_index, match_style));
         }
 
@@ -5981,7 +5977,7 @@ pub fn combine_syntax_and_fuzzy_match_highlights(
             }
 
             let mut match_style = syntax_highlight;
-            match_style.font_properties.weight(fonts::Weight::BOLD);
+            match_style.weight = Some(fonts::Weight::BOLD);
             result.push((match_index..end_index, match_style));
             offset = end_index;
         }
@@ -6000,16 +5996,12 @@ pub fn combine_syntax_and_fuzzy_match_highlights(
 
 pub fn styled_runs_for_code_label<'a>(
     label: &'a CodeLabel,
-    default_color: Color,
     syntax_theme: &'a theme::SyntaxTheme,
 ) -> impl 'a + Iterator<Item = (Range<usize>, HighlightStyle)> {
-    const MUTED_OPACITY: usize = 165;
-
-    let mut muted_default_style = HighlightStyle {
-        color: default_color,
+    let fade_out = HighlightStyle {
+        fade_out: Some(0.35),
         ..Default::default()
     };
-    muted_default_style.color.a = ((default_color.a as usize * MUTED_OPACITY) / 255) as u8;
 
     let mut prev_end = label.filter_range.end;
     label
@@ -6023,12 +6015,12 @@ pub fn styled_runs_for_code_label<'a>(
                 return Default::default();
             };
             let mut muted_style = style.clone();
-            muted_style.color.a = ((style.color.a as usize * MUTED_OPACITY) / 255) as u8;
+            muted_style.highlight(fade_out);
 
             let mut runs = SmallVec::<[(Range<usize>, HighlightStyle); 3]>::new();
             if range.start >= label.filter_range.end {
                 if range.start > prev_end {
-                    runs.push((prev_end..range.start, muted_default_style));
+                    runs.push((prev_end..range.start, fade_out));
                 }
                 runs.push((range.clone(), muted_style));
             } else if range.end <= label.filter_range.end {
@@ -6040,7 +6032,7 @@ pub fn styled_runs_for_code_label<'a>(
             prev_end = cmp::max(prev_end, range.end);
 
             if ix + 1 == label.runs.len() && label.text.len() > prev_end {
-                runs.push((prev_end..label.text.len(), muted_default_style));
+                runs.push((prev_end..label.text.len(), fade_out));
             }
 
             runs
@@ -8995,20 +8987,19 @@ mod tests {
     #[test]
     fn test_combine_syntax_and_fuzzy_match_highlights() {
         let string = "abcdefghijklmnop";
-        let default = HighlightStyle::default();
         let syntax_ranges = [
             (
                 0..3,
                 HighlightStyle {
-                    color: Color::red(),
-                    ..default
+                    color: Some(Color::red()),
+                    ..Default::default()
                 },
             ),
             (
                 4..8,
                 HighlightStyle {
-                    color: Color::green(),
-                    ..default
+                    color: Some(Color::green()),
+                    ..Default::default()
                 },
             ),
         ];
@@ -9016,7 +9007,7 @@ mod tests {
         assert_eq!(
             combine_syntax_and_fuzzy_match_highlights(
                 &string,
-                default,
+                Default::default(),
                 syntax_ranges.into_iter(),
                 &match_indices,
             ),
@@ -9024,38 +9015,38 @@ mod tests {
                 (
                     0..3,
                     HighlightStyle {
-                        color: Color::red(),
-                        ..default
+                        color: Some(Color::red()),
+                        ..Default::default()
                     },
                 ),
                 (
                     4..5,
                     HighlightStyle {
-                        color: Color::green(),
-                        font_properties: *fonts::Properties::default().weight(fonts::Weight::BOLD),
-                        ..default
+                        color: Some(Color::green()),
+                        weight: Some(fonts::Weight::BOLD),
+                        ..Default::default()
                     },
                 ),
                 (
                     5..6,
                     HighlightStyle {
-                        color: Color::green(),
-                        ..default
+                        color: Some(Color::green()),
+                        ..Default::default()
                     },
                 ),
                 (
                     6..8,
                     HighlightStyle {
-                        color: Color::green(),
-                        font_properties: *fonts::Properties::default().weight(fonts::Weight::BOLD),
-                        ..default
+                        color: Some(Color::green()),
+                        weight: Some(fonts::Weight::BOLD),
+                        ..Default::default()
                     },
                 ),
                 (
                     8..9,
                     HighlightStyle {
-                        font_properties: *fonts::Properties::default().weight(fonts::Weight::BOLD),
-                        ..default
+                        weight: Some(fonts::Weight::BOLD),
+                        ..Default::default()
                     },
                 ),
             ]
