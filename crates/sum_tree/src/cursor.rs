@@ -197,10 +197,6 @@ where
                 }
             }
         }
-
-        if self.stack.is_empty() {
-            self.position = D::default();
-        }
     }
 
     pub fn next(&mut self, cx: &<T::Summary as Summary>::Context) {
@@ -235,8 +231,8 @@ where
                         ..
                     } => {
                         if !descend {
-                            entry.position = self.position.clone();
                             entry.index += 1;
+                            entry.position = self.position.clone();
                         }
 
                         while entry.index < child_summaries.len() {
@@ -244,9 +240,10 @@ where
                             if filter_node(next_summary) {
                                 break;
                             } else {
+                                entry.index += 1;
+                                entry.position.add_summary(next_summary, cx);
                                 self.position.add_summary(next_summary, cx);
                             }
-                            entry.index += 1;
                         }
 
                         child_trees.get(entry.index)
@@ -254,9 +251,9 @@ where
                     Node::Leaf { item_summaries, .. } => {
                         if !descend {
                             let item_summary = &item_summaries[entry.index];
-                            self.position.add_summary(item_summary, cx);
-                            entry.position.add_summary(item_summary, cx);
                             entry.index += 1;
+                            entry.position.add_summary(item_summary, cx);
+                            self.position.add_summary(item_summary, cx);
                         }
 
                         loop {
@@ -264,9 +261,9 @@ where
                                 if filter_node(next_item_summary) {
                                     return;
                                 } else {
-                                    self.position.add_summary(next_item_summary, cx);
-                                    entry.position.add_summary(next_item_summary, cx);
                                     entry.index += 1;
+                                    entry.position.add_summary(next_item_summary, cx);
+                                    self.position.add_summary(next_item_summary, cx);
                                 }
                             } else {
                                 break None;
@@ -597,6 +594,10 @@ where
 
     pub fn next(&mut self, cx: &<T::Summary as Summary>::Context) {
         self.cursor.next_internal(&mut self.filter_node, cx);
+    }
+
+    pub fn prev(&mut self, cx: &<T::Summary as Summary>::Context) {
+        self.cursor.prev_internal(&mut self.filter_node, cx);
     }
 }
 
