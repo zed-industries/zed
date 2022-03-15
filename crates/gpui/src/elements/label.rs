@@ -146,8 +146,7 @@ impl Element for Label {
                 .ceil()
                 .max(constraint.min.x())
                 .min(constraint.max.x()),
-            cx.font_cache
-                .line_height(self.style.text.font_id, self.style.text.font_size),
+            cx.font_cache.line_height(self.style.text.font_size),
         );
 
         (size, line)

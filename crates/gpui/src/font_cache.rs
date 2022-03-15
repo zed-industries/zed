@@ -168,9 +168,8 @@ impl FontCache {
         advance.x() * self.em_scale(font_id, font_size)
     }
 
-    pub fn line_height(&self, font_id: FontId, font_size: f32) -> f32 {
-        let height = self.metric(font_id, |m| m.bounding_box.height());
-        (height * self.em_scale(font_id, font_size)).ceil()
+    pub fn line_height(&self, font_size: f32) -> f32 {
+        (font_size * 1.618).round()
     }
 
     pub fn cap_height(&self, font_id: FontId, font_size: f32) -> f32 {
@@ -194,7 +193,7 @@ impl FontCache {
     }
 
     pub fn baseline_offset(&self, font_id: FontId, font_size: f32) -> f32 {
-        let line_height = self.line_height(font_id, font_size);
+        let line_height = self.line_height(font_size);
         let ascent = self.ascent(font_id, font_size);
         let descent = self.descent(font_id, font_size);
         let padding_top = (line_height - ascent - descent) / 2.;
