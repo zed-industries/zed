@@ -21,7 +21,7 @@ use gpui::{
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
-use language::Bias;
+use language::{Bias, DiagnosticSeverity};
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
@@ -665,19 +665,22 @@ impl EditorElement {
                     }
                 }
 
-                let mut diagnostic_highlight = HighlightStyle {
-                    ..Default::default()
-                };
+                let mut diagnostic_highlight = HighlightStyle::default();
 
                 if chunk.is_unnecessary {
                     diagnostic_highlight.fade_out = Some(style.unnecessary_code_fade);
-                } else if let Some(severity) = chunk.diagnostic_severity {
-                    let diagnostic_style = super::diagnostic_style(severity, true, style);
-                    diagnostic_highlight.underline = Some(Underline {
-                        color: Some(diagnostic_style.message.text.color),
-                        thickness: 1.0.into(),
-                        squiggly: true,
-                    });
+                }
+
+                if let Some(severity) = chunk.diagnostic_severity {
+                    // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
+                    if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
+                        let diagnostic_style = super::diagnostic_style(severity, true, style);
+                        diagnostic_highlight.underline = Some(Underline {
+                            color: Some(diagnostic_style.message.text.color),
+                            thickness: 1.0.into(),
+                            squiggly: true,
+                        });
+                    }
                 }
 
                 if let Some(highlight_style) = highlight_style.as_mut() {

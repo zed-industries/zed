@@ -4211,7 +4211,7 @@ impl Editor {
             };
             let group = diagnostics.find_map(|entry| {
                 if entry.diagnostic.is_primary
-                    && !entry.diagnostic.is_unnecessary
+                    && entry.diagnostic.severity <= DiagnosticSeverity::WARNING
                     && !entry.range.is_empty()
                     && Some(entry.range.end) != active_primary_range.as_ref().map(|r| *r.end())
                 {
