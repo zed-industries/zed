@@ -115,7 +115,7 @@ action!(ToggleComments);
 action!(SelectLargerSyntaxNode);
 action!(SelectSmallerSyntaxNode);
 action!(MoveToEnclosingBracket);
-action!(ShowNextDiagnostic);
+action!(GoToDiagnostic, Direction);
 action!(GoToDefinition);
 action!(FindAllReferences);
 action!(Rename);
@@ -135,6 +135,12 @@ action!(OpenExcerpts);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum Direction {
+    Prev,
+    Next,
+}
 
 pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpener>>) {
     path_openers.push(Box::new(items::BufferOpener));
@@ -250,7 +256,8 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
         Binding::new("ctrl-w", SelectLargerSyntaxNode, Some("Editor")),
         Binding::new("alt-down", SelectSmallerSyntaxNode, Some("Editor")),
         Binding::new("ctrl-shift-W", SelectSmallerSyntaxNode, Some("Editor")),
-        Binding::new("f8", ShowNextDiagnostic, Some("Editor")),
+        Binding::new("f8", GoToDiagnostic(Direction::Next), Some("Editor")),
+        Binding::new("shift-f8", GoToDiagnostic(Direction::Prev), Some("Editor")),
         Binding::new("f2", Rename, Some("Editor")),
         Binding::new("f12", GoToDefinition, Some("Editor")),
         Binding::new("alt-shift-f12", FindAllReferences, Some("Editor")),
@@ -319,7 +326,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_action(Editor::select_larger_syntax_node);
     cx.add_action(Editor::select_smaller_syntax_node);
     cx.add_action(Editor::move_to_enclosing_bracket);
-    cx.add_action(Editor::show_next_diagnostic);
+    cx.add_action(Editor::go_to_diagnostic);
     cx.add_action(Editor::go_to_definition);
     cx.add_action(Editor::page_up);
     cx.add_action(Editor::page_down);
@@ -4173,7 +4180,11 @@ impl Editor {
         self.update_selections(selections, Some(Autoscroll::Fit), cx);
     }
 
-    pub fn show_next_diagnostic(&mut self, _: &ShowNextDiagnostic, cx: &mut ViewContext<Self>) {
+    pub fn go_to_diagnostic(
+        &mut self,
+        &GoToDiagnostic(direction): &GoToDiagnostic,
+        cx: &mut ViewContext<Self>,
+    ) {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selection = self.newest_selection_with_snapshot::<usize>(&buffer);
         let mut active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
@@ -4193,20 +4204,23 @@ impl Editor {
         };
 
         loop {
-            let next_group = buffer
-                .diagnostics_in_range::<_, usize>(search_start..buffer.len())
-                .find_map(|entry| {
-                    if entry.diagnostic.is_primary
-                        && !entry.range.is_empty()
-                        && Some(entry.range.end) != active_primary_range.as_ref().map(|r| *r.end())
-                    {
-                        Some((entry.range, entry.diagnostic.group_id))
-                    } else {
-                        None
-                    }
-                });
+            let mut diagnostics = if direction == Direction::Prev {
+                buffer.diagnostics_in_range::<_, usize>(0..search_start, true)
+            } else {
+                buffer.diagnostics_in_range::<_, usize>(search_start..buffer.len(), false)
+            };
+            let group = diagnostics.find_map(|entry| {
+                if entry.diagnostic.is_primary
+                    && !entry.range.is_empty()
+                    && Some(entry.range.end) != active_primary_range.as_ref().map(|r| *r.end())
+                {
+                    Some((entry.range, entry.diagnostic.group_id))
+                } else {
+                    None
+                }
+            });
 
-            if let Some((primary_range, group_id)) = next_group {
+            if let Some((primary_range, group_id)) = group {
                 self.activate_diagnostics(group_id, cx);
                 self.update_selections(
                     vec![Selection {
@@ -4220,13 +4234,23 @@ impl Editor {
                     cx,
                 );
                 break;
-            } else if search_start == 0 {
-                break;
             } else {
                 // Cycle around to the start of the buffer, potentially moving back to the start of
                 // the currently active diagnostic.
-                search_start = 0;
                 active_primary_range.take();
+                if direction == Direction::Prev {
+                    if search_start == buffer.len() {
+                        break;
+                    } else {
+                        search_start = buffer.len();
+                    }
+                } else {
+                    if search_start == 0 {
+                        break;
+                    } else {
+                        search_start = 0;
+                    }
+                }
             }
         }
     }
@@ -4590,7 +4614,7 @@ impl Editor {
             let buffer = self.buffer.read(cx).snapshot(cx);
             let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
             let is_valid = buffer
-                .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
+                .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone(), false)
                 .any(|entry| {
                     entry.diagnostic.is_primary
                         && !entry.range.is_empty()

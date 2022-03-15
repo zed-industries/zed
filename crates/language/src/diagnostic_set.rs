@@ -71,6 +71,7 @@ impl DiagnosticSet {
         range: Range<T>,
         buffer: &'a text::BufferSnapshot,
         inclusive: bool,
+        reversed: bool,
     ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
     where
         T: 'a + ToOffset,
@@ -78,25 +79,31 @@ impl DiagnosticSet {
     {
         let end_bias = if inclusive { Bias::Right } else { Bias::Left };
         let range = buffer.anchor_before(range.start)..buffer.anchor_at(range.end, end_bias);
-        let mut cursor = self.diagnostics.filter::<_, ()>(
-            {
-                move |summary: &Summary| {
-                    let start_cmp = range.start.cmp(&summary.max_end, buffer).unwrap();
-                    let end_cmp = range.end.cmp(&summary.min_start, buffer).unwrap();
-                    if inclusive {
-                        start_cmp <= Ordering::Equal && end_cmp >= Ordering::Equal
-                    } else {
-                        start_cmp == Ordering::Less && end_cmp == Ordering::Greater
-                    }
+        let mut cursor = self.diagnostics.filter::<_, ()>({
+            move |summary: &Summary| {
+                let start_cmp = range.start.cmp(&summary.max_end, buffer).unwrap();
+                let end_cmp = range.end.cmp(&summary.min_start, buffer).unwrap();
+                if inclusive {
+                    start_cmp <= Ordering::Equal && end_cmp >= Ordering::Equal
+                } else {
+                    start_cmp == Ordering::Less && end_cmp == Ordering::Greater
                 }
-            },
-            buffer,
-        );
+            }
+        });
 
+        if reversed {
+            cursor.prev(buffer);
+        } else {
+            cursor.next(buffer);
+        }
         iter::from_fn({
             move || {
                 if let Some(diagnostic) = cursor.item() {
-                    cursor.next(buffer);
+                    if reversed {
+                        cursor.prev(buffer);
+                    } else {
+                        cursor.next(buffer);
+                    }
                     Some(diagnostic.resolve(buffer))
                 } else {
                     None

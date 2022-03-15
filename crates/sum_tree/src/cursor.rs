@@ -60,7 +60,7 @@ where
     }
 
     pub fn item(&self) -> Option<&'a T> {
-        assert!(self.did_seek, "Must seek before calling this method");
+        self.assert_did_seek();
         if let Some(entry) = self.stack.last() {
             match *entry.tree.0 {
                 Node::Leaf { ref items, .. } => {
@@ -78,7 +78,7 @@ where
     }
 
     pub fn item_summary(&self) -> Option<&'a T::Summary> {
-        assert!(self.did_seek, "Must seek before calling this method");
+        self.assert_did_seek();
         if let Some(entry) = self.stack.last() {
             match *entry.tree.0 {
                 Node::Leaf {
@@ -98,7 +98,7 @@ where
     }
 
     pub fn prev_item(&self) -> Option<&'a T> {
-        assert!(self.did_seek, "Must seek before calling this method");
+        self.assert_did_seek();
         if let Some(entry) = self.stack.last() {
             if entry.index == 0 {
                 if let Some(prev_leaf) = self.prev_leaf() {
@@ -134,52 +134,69 @@ where
     }
 
     pub fn prev(&mut self, cx: &<T::Summary as Summary>::Context) {
-        assert!(self.did_seek, "Must seek before calling this method");
+        self.prev_internal(|_| true, cx)
+    }
+
+    fn prev_internal<F>(&mut self, mut filter_node: F, cx: &<T::Summary as Summary>::Context)
+    where
+        F: FnMut(&T::Summary) -> bool,
+    {
+        if !self.did_seek {
+            self.did_seek = true;
+            self.at_end = true;
+        }
 
         if self.at_end {
             self.position = D::default();
-            self.descend_to_last_item(self.tree, cx);
             self.at_end = self.tree.is_empty();
-        } else {
-            while let Some(entry) = self.stack.pop() {
-                if entry.index > 0 {
-                    let new_index = entry.index - 1;
+            if !self.tree.is_empty() {
+                self.stack.push(StackEntry {
+                    tree: self.tree,
+                    index: self.tree.0.child_summaries().len(),
+                    position: D::from_summary(self.tree.summary(), cx),
+                });
+            }
+        }
 
-                    if let Some(StackEntry { position, .. }) = self.stack.last() {
-                        self.position = position.clone();
-                    } else {
-                        self.position = D::default();
+        let mut descending = false;
+        while !self.stack.is_empty() {
+            if let Some(StackEntry { position, .. }) = self.stack.iter().rev().skip(1).next() {
+                self.position = position.clone();
+            } else {
+                self.position = D::default();
+            }
+
+            let mut entry = self.stack.last_mut().unwrap();
+            if !descending {
+                if entry.index == 0 {
+                    self.stack.pop();
+                    continue;
+                } else {
+                    entry.index -= 1;
+                }
+            }
+
+            for summary in &entry.tree.0.child_summaries()[..entry.index] {
+                self.position.add_summary(summary, cx);
+            }
+            entry.position = self.position.clone();
+
+            descending = filter_node(&entry.tree.0.child_summaries()[entry.index]);
+            match entry.tree.0.as_ref() {
+                Node::Internal { child_trees, .. } => {
+                    if descending {
+                        let tree = &child_trees[entry.index];
+                        self.stack.push(StackEntry {
+                            position: D::default(),
+                            tree,
+                            index: tree.0.child_summaries().len() - 1,
+                        })
                     }
-
-                    match entry.tree.0.as_ref() {
-                        Node::Internal {
-                            child_trees,
-                            child_summaries,
-                            ..
-                        } => {
-                            for summary in &child_summaries[0..new_index] {
-                                self.position.add_summary(summary, cx);
-                            }
-                            self.stack.push(StackEntry {
-                                tree: entry.tree,
-                                index: new_index,
-                                position: self.position.clone(),
-                            });
-                            self.descend_to_last_item(&child_trees[new_index], cx);
-                        }
-                        Node::Leaf { item_summaries, .. } => {
-                            for item_summary in &item_summaries[0..new_index] {
-                                self.position.add_summary(item_summary, cx);
-                            }
-                            self.stack.push(StackEntry {
-                                tree: entry.tree,
-                                index: new_index,
-                                position: self.position.clone(),
-                            });
-                        }
+                }
+                Node::Leaf { .. } => {
+                    if descending {
+                        break;
                     }
-
-                    break;
                 }
             }
         }
@@ -217,8 +234,8 @@ where
                         ..
                     } => {
                         if !descend {
-                            entry.position = self.position.clone();
                             entry.index += 1;
+                            entry.position = self.position.clone();
                         }
 
                         while entry.index < child_summaries.len() {
@@ -226,9 +243,10 @@ where
                             if filter_node(next_summary) {
                                 break;
                             } else {
+                                entry.index += 1;
+                                entry.position.add_summary(next_summary, cx);
                                 self.position.add_summary(next_summary, cx);
                             }
-                            entry.index += 1;
                         }
 
                         child_trees.get(entry.index)
@@ -236,9 +254,9 @@ where
                     Node::Leaf { item_summaries, .. } => {
                         if !descend {
                             let item_summary = &item_summaries[entry.index];
-                            self.position.add_summary(item_summary, cx);
-                            entry.position.add_summary(item_summary, cx);
                             entry.index += 1;
+                            entry.position.add_summary(item_summary, cx);
+                            self.position.add_summary(item_summary, cx);
                         }
 
                         loop {
@@ -246,9 +264,9 @@ where
                                 if filter_node(next_item_summary) {
                                     return;
                                 } else {
-                                    self.position.add_summary(next_item_summary, cx);
-                                    entry.position.add_summary(next_item_summary, cx);
                                     entry.index += 1;
+                                    entry.position.add_summary(next_item_summary, cx);
+                                    self.position.add_summary(next_item_summary, cx);
                                 }
                             } else {
                                 break None;
@@ -275,48 +293,11 @@ where
         debug_assert!(self.stack.is_empty() || self.stack.last().unwrap().tree.0.is_leaf());
     }
 
-    fn descend_to_last_item(
-        &mut self,
-        mut subtree: &'a SumTree<T>,
-        cx: &<T::Summary as Summary>::Context,
-    ) {
-        self.did_seek = true;
-        if subtree.is_empty() {
-            return;
-        }
-
-        loop {
-            match subtree.0.as_ref() {
-                Node::Internal {
-                    child_trees,
-                    child_summaries,
-                    ..
-                } => {
-                    for summary in &child_summaries[0..child_summaries.len() - 1] {
-                        self.position.add_summary(summary, cx);
-                    }
-
-                    self.stack.push(StackEntry {
-                        tree: subtree,
-                        index: child_trees.len() - 1,
-                        position: self.position.clone(),
-                    });
-                    subtree = child_trees.last().unwrap();
-                }
-                Node::Leaf { item_summaries, .. } => {
-                    let last_index = item_summaries.len() - 1;
-                    for item_summary in &item_summaries[0..last_index] {
-                        self.position.add_summary(item_summary, cx);
-                    }
-                    self.stack.push(StackEntry {
-                        tree: subtree,
-                        index: last_index,
-                        position: self.position.clone(),
-                    });
-                    break;
-                }
-            }
-        }
+    fn assert_did_seek(&self) {
+        assert!(
+            self.did_seek,
+            "Must call `seek`, `next` or `prev` before calling this method"
+        );
     }
 }
 
@@ -596,13 +577,8 @@ where
     T: Item,
     D: Dimension<'a, T::Summary>,
 {
-    pub fn new(
-        tree: &'a SumTree<T>,
-        mut filter_node: F,
-        cx: &<T::Summary as Summary>::Context,
-    ) -> Self {
-        let mut cursor = tree.cursor::<D>();
-        cursor.next_internal(&mut filter_node, cx);
+    pub fn new(tree: &'a SumTree<T>, filter_node: F) -> Self {
+        let cursor = tree.cursor::<D>();
         Self {
             cursor,
             filter_node,
@@ -624,6 +600,10 @@ where
     pub fn next(&mut self, cx: &<T::Summary as Summary>::Context) {
         self.cursor.next_internal(&mut self.filter_node, cx);
     }
+
+    pub fn prev(&mut self, cx: &<T::Summary as Summary>::Context) {
+        self.cursor.prev_internal(&mut self.filter_node, cx);
+    }
 }
 
 impl<'a, F, T, S, U> Iterator for FilterCursor<'a, F, T, U>
@@ -636,6 +616,10 @@ where
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if !self.cursor.did_seek {
+            self.next(&());
+        }
+
         if let Some(item) = self.item() {
             self.cursor.next_internal(&self.filter_node, &());
             Some(item)

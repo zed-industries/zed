@@ -4929,6 +4929,9 @@ name = "sum_tree"
 version = "0.1.0"
 dependencies = [
  "arrayvec 0.7.1",
+ "ctor",
+ "env_logger",
+ "log",
  "rand 0.8.3",
 ]
 

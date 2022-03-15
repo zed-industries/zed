@@ -1849,10 +1849,11 @@ impl BufferSnapshot {
         let fragments_cursor = if *since == self.version {
             None
         } else {
-            Some(self.fragments.filter(
-                move |summary| !since.observed_all(&summary.max_version),
-                &None,
-            ))
+            let mut cursor = self
+                .fragments
+                .filter(move |summary| !since.observed_all(&summary.max_version));
+            cursor.next(&None);
+            Some(cursor)
         };
         let mut cursor = self
             .fragments

@@ -2061,7 +2061,7 @@ mod tests {
             assert_eq!(
                 buffer
                     .snapshot()
-                    .diagnostics_in_range::<_, Point>(0..buffer.len())
+                    .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
                     .map(|entry| entry)
                     .collect::<Vec<_>>(),
                 &[

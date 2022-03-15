@@ -768,10 +768,10 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
         );
         assert_eq!(
             buffer
-                .diagnostics_in_range::<_, usize>(0..buffer.len())
+                .diagnostics_in_range::<_, usize>(0..buffer.len(), false)
                 .collect::<Vec<_>>(),
             first_buffer
-                .diagnostics_in_range::<_, usize>(0..first_buffer.len())
+                .diagnostics_in_range::<_, usize>(0..first_buffer.len(), false)
                 .collect::<Vec<_>>(),
             "Replica {} diagnostics != Replica 0 diagnostics",
             buffer.replica_id()
