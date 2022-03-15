@@ -5,4 +5,4 @@ pub mod proto;
 pub use conn::Connection;
 pub use peer::*;
 
-pub const PROTOCOL_VERSION: u32 = 10;
+pub const PROTOCOL_VERSION: u32 = 11;

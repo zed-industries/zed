@@ -105,6 +105,7 @@ pub struct Diagnostic {
     pub is_valid: bool,
     pub is_primary: bool,
     pub is_disk_based: bool,
+    pub is_unnecessary: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -240,6 +241,7 @@ pub struct BufferChunks<'a> {
     warning_depth: usize,
     information_depth: usize,
     hint_depth: usize,
+    unnecessary_depth: usize,
     highlights: Option<BufferChunkHighlights<'a>>,
 }
 
@@ -248,7 +250,8 @@ pub struct Chunk<'a> {
     pub text: &'a str,
     pub syntax_highlight_id: Option<HighlightId>,
     pub highlight_style: Option<HighlightStyle>,
-    pub diagnostic: Option<DiagnosticSeverity>,
+    pub diagnostic_severity: Option<DiagnosticSeverity>,
+    pub is_unnecessary: bool,
 }
 
 pub(crate) struct Diff {
@@ -263,6 +266,7 @@ pub(crate) struct DiagnosticEndpoint {
     offset: usize,
     is_start: bool,
     severity: DiagnosticSeverity,
+    is_unnecessary: bool,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug)]
@@ -1580,11 +1584,13 @@ impl BufferSnapshot {
                     offset: entry.range.start,
                     is_start: true,
                     severity: entry.diagnostic.severity,
+                    is_unnecessary: entry.diagnostic.is_unnecessary,
                 });
                 diagnostic_endpoints.push(DiagnosticEndpoint {
                     offset: entry.range.end,
                     is_start: false,
                     severity: entry.diagnostic.severity,
+                    is_unnecessary: entry.diagnostic.is_unnecessary,
                 });
             }
             diagnostic_endpoints
@@ -1976,6 +1982,7 @@ impl<'a> BufferChunks<'a> {
             warning_depth: 0,
             information_depth: 0,
             hint_depth: 0,
+            unnecessary_depth: 0,
             highlights,
         }
     }
@@ -2021,9 +2028,17 @@ impl<'a> BufferChunks<'a> {
         } else {
             *depth -= 1;
         }
+
+        if endpoint.is_unnecessary {
+            if endpoint.is_start {
+                self.unnecessary_depth += 1;
+            } else {
+                self.unnecessary_depth -= 1;
+            }
+        }
     }
 
-    fn current_diagnostic_severity(&mut self) -> Option<DiagnosticSeverity> {
+    fn current_diagnostic_severity(&self) -> Option<DiagnosticSeverity> {
         if self.error_depth > 0 {
             Some(DiagnosticSeverity::ERROR)
         } else if self.warning_depth > 0 {
@@ -2035,6 +2050,10 @@ impl<'a> BufferChunks<'a> {
         } else {
             None
         }
+    }
+
+    fn current_code_is_unnecessary(&self) -> bool {
+        self.unnecessary_depth > 0
     }
 }
 
@@ -2107,7 +2126,8 @@ impl<'a> Iterator for BufferChunks<'a> {
                 text: slice,
                 syntax_highlight_id: highlight_id,
                 highlight_style: None,
-                diagnostic: self.current_diagnostic_severity(),
+                diagnostic_severity: self.current_diagnostic_severity(),
+                is_unnecessary: self.current_code_is_unnecessary(),
             })
         } else {
             None
@@ -2193,6 +2213,7 @@ impl Default for Diagnostic {
             is_primary: Default::default(),
             is_valid: true,
             is_disk_based: false,
+            is_unnecessary: false,
         }
     }
 }

@@ -250,6 +250,7 @@ gutter_padding_factor = 2.5
 active_line_background = "$state.active_line"
 highlighted_line_background = "$state.highlighted_line"
 rename_fade = 0.6
+unnecessary_code_fade = 0.5
 document_highlight_read_background = "#99999920"
 document_highlight_write_background = "#99999916"
 diff_background_deleted = "$state.deleted_line"

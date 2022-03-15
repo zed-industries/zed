@@ -665,22 +665,25 @@ impl EditorElement {
                     }
                 }
 
-                if let Some(severity) = chunk.diagnostic {
-                    let diagnostic_style = super::diagnostic_style(severity, true, style);
-                    let diagnostic_highlight = HighlightStyle {
-                        underline: Some(Underline {
-                            color: Some(diagnostic_style.message.text.color),
-                            thickness: 1.0.into(),
-                            squiggly: true,
-                        }),
-                        ..Default::default()
-                    };
+                let mut diagnostic_highlight = HighlightStyle {
+                    ..Default::default()
+                };
 
-                    if let Some(highlight_style) = highlight_style.as_mut() {
-                        highlight_style.highlight(diagnostic_highlight);
-                    } else {
-                        highlight_style = Some(diagnostic_highlight);
-                    }
+                if chunk.is_unnecessary {
+                    diagnostic_highlight.fade_out = Some(style.unnecessary_code_fade);
+                } else if let Some(severity) = chunk.diagnostic_severity {
+                    let diagnostic_style = super::diagnostic_style(severity, true, style);
+                    diagnostic_highlight.underline = Some(Underline {
+                        color: Some(diagnostic_style.message.text.color),
+                        thickness: 1.0.into(),
+                        squiggly: true,
+                    });
+                }
+
+                if let Some(highlight_style) = highlight_style.as_mut() {
+                    highlight_style.highlight(diagnostic_highlight);
+                } else {
+                    highlight_style = Some(diagnostic_highlight);
                 }
 
                 (chunk.text, highlight_style)

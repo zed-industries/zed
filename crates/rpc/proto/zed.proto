@@ -630,6 +630,7 @@ message Diagnostic {
     bool is_primary = 7;
     bool is_valid = 8;
     bool is_disk_based = 9;
+    bool is_unnecessary = 10;
 
     enum Severity {
         None = 0;
