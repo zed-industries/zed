@@ -282,36 +282,6 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_outline(cx: &mut gpui::TestAppContext) {
-    let language = Arc::new(
-        rust_lang()
-            .with_outline_query(
-                r#"
-                (struct_item
-                    "struct" @context
-                    name: (_) @name) @item
-                (enum_item
-                    "enum" @context
-                    name: (_) @name) @item
-                (enum_variant
-                    name: (_) @name) @item
-                (field_declaration
-                    name: (_) @name) @item
-                (impl_item
-                    "impl" @context
-                    trait: (_) @name
-                    "for" @context
-                    type: (_) @name) @item
-                (function_item
-                    "fn" @context
-                    name: (_) @name) @item
-                (mod_item
-                    "mod" @context
-                    name: (_) @name) @item
-                "#,
-            )
-            .unwrap(),
-    );
-
     let text = r#"
         struct Person {
             name: String,
@@ -339,7 +309,8 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
     "#
     .unindent();
 
-    let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
+    let buffer =
+        cx.add_model(|cx| Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx));
     let outline = buffer
         .read_with(cx, |buffer, _| buffer.snapshot().outline(None))
         .unwrap();
@@ -410,6 +381,93 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
             .into_iter()
             .map(|mat| (outline.items[mat.candidate_id].text.as_str(), mat.positions))
             .collect::<Vec<_>>()
+    }
+}
+
+#[gpui::test]
+async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
+    let text = r#"
+        impl Person {
+            fn one() {
+                1
+            }
+
+            fn two() {
+                2
+            }fn three() {
+                3
+            }
+        }
+    "#
+    .unindent();
+
+    let buffer =
+        cx.add_model(|cx| Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx));
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+    // point is at the start of an item
+    assert_eq!(
+        symbols_containing(Point::new(1, 4), &snapshot),
+        vec![
+            (
+                "impl Person".to_string(),
+                Point::new(0, 0)..Point::new(10, 1)
+            ),
+            ("fn one".to_string(), Point::new(1, 4)..Point::new(3, 5))
+        ]
+    );
+
+    // point is in the middle of an item
+    assert_eq!(
+        symbols_containing(Point::new(2, 8), &snapshot),
+        vec![
+            (
+                "impl Person".to_string(),
+                Point::new(0, 0)..Point::new(10, 1)
+            ),
+            ("fn one".to_string(), Point::new(1, 4)..Point::new(3, 5))
+        ]
+    );
+
+    // point is at the end of an item
+    assert_eq!(
+        symbols_containing(Point::new(3, 5), &snapshot),
+        vec![
+            (
+                "impl Person".to_string(),
+                Point::new(0, 0)..Point::new(10, 1)
+            ),
+            ("fn one".to_string(), Point::new(1, 4)..Point::new(3, 5))
+        ]
+    );
+
+    // point is in between two adjacent items
+    assert_eq!(
+        symbols_containing(Point::new(7, 5), &snapshot),
+        vec![
+            (
+                "impl Person".to_string(),
+                Point::new(0, 0)..Point::new(10, 1)
+            ),
+            ("fn two".to_string(), Point::new(5, 4)..Point::new(7, 5))
+        ]
+    );
+
+    fn symbols_containing<'a>(
+        position: Point,
+        snapshot: &'a BufferSnapshot,
+    ) -> Vec<(String, Range<Point>)> {
+        snapshot
+            .symbols_containing(position, None)
+            .unwrap()
+            .into_iter()
+            .map(|item| {
+                (
+                    item.text,
+                    item.range.start.to_point(snapshot)..item.range.end.to_point(snapshot),
+                )
+            })
+            .collect()
     }
 }
 
@@ -848,6 +906,35 @@ fn rust_lang() -> Language {
     .with_brackets_query(
         r#"
         ("{" @open "}" @close)
+        "#,
+    )
+    .unwrap()
+    .with_outline_query(
+        r#"
+        (struct_item
+            "struct" @context
+            name: (_) @name) @item
+        (enum_item
+            "enum" @context
+            name: (_) @name) @item
+        (enum_variant
+            name: (_) @name) @item
+        (field_declaration
+            name: (_) @name) @item
+        (impl_item
+            "impl" @context
+            type: (_) @name) @item
+        (impl_item
+            "impl" @context
+            trait: (_) @name
+            "for" @context
+            type: (_) @name) @item
+        (function_item
+            "fn" @context
+            name: (_) @name) @item
+        (mod_item
+            "mod" @context
+            name: (_) @name) @item
         "#,
     )
     .unwrap()
