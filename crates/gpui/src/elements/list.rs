@@ -614,7 +614,7 @@ mod tests {
         let (size, _) = list.layout(constraint, &mut presenter.build_layout_context(false, cx));
         assert_eq!(size, vec2f(100., 40.));
         assert_eq!(
-            state.0.borrow().items.summary(),
+            state.0.borrow().items.summary().clone(),
             ListItemSummary {
                 count: 3,
                 rendered_count: 3,
@@ -649,7 +649,7 @@ mod tests {
         state.splice(1..2, 2);
         state.splice(4..4, 1);
         assert_eq!(
-            state.0.borrow().items.summary(),
+            state.0.borrow().items.summary().clone(),
             ListItemSummary {
                 count: 5,
                 rendered_count: 2,
@@ -662,7 +662,7 @@ mod tests {
             list.layout(constraint, &mut presenter.build_layout_context(false, cx));
         assert_eq!(size, vec2f(100., 40.));
         assert_eq!(
-            state.0.borrow().items.summary(),
+            state.0.borrow().items.summary().clone(),
             ListItemSummary {
                 count: 5,
                 rendered_count: 5,

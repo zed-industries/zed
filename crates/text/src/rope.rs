@@ -115,7 +115,7 @@ impl Rope {
     }
 
     pub fn summary(&self) -> TextSummary {
-        self.chunks.summary()
+        self.chunks.summary().clone()
     }
 
     pub fn len(&self) -> usize {

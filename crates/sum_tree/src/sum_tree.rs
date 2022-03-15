@@ -242,10 +242,10 @@ impl<T: Item> SumTree<T> {
         extent
     }
 
-    pub fn summary(&self) -> T::Summary {
+    pub fn summary(&self) -> &T::Summary {
         match self.0.as_ref() {
-            Node::Internal { summary, .. } => summary.clone(),
-            Node::Leaf { summary, .. } => summary.clone(),
+            Node::Internal { summary, .. } => summary,
+            Node::Leaf { summary, .. } => summary,
         }
     }
 

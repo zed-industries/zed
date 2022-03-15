@@ -1700,7 +1700,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn text_summary(&self) -> TextSummary {
-        self.excerpts.summary().text
+        self.excerpts.summary().text.clone()
     }
 
     pub fn text_summary_for_range<'a, D, O>(&'a self, range: Range<O>) -> D
