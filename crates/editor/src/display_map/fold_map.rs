@@ -1078,7 +1078,8 @@ impl<'a> Iterator for FoldChunks<'a> {
                 text: output_text,
                 syntax_highlight_id: None,
                 highlight_style: None,
-                diagnostic: None,
+                diagnostic_severity: None,
+                is_unnecessary: false,
             });
         }
 

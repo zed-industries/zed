@@ -21,7 +21,7 @@ use language::{
     LocalFile, OffsetRangeExt, Operation, PointUtf16, TextBufferSnapshot, ToLspPosition, ToOffset,
     ToPointUtf16, Transaction,
 };
-use lsp::{DiagnosticSeverity, DocumentHighlightKind, LanguageServer};
+use lsp::{DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer};
 use lsp_command::*;
 use parking_lot::Mutex;
 use postage::watch;
@@ -1621,7 +1621,7 @@ impl Project {
         let mut diagnostics = Vec::default();
         let mut primary_diagnostic_group_ids = HashMap::default();
         let mut sources_by_group_id = HashMap::default();
-        let mut supporting_diagnostic_severities = HashMap::default();
+        let mut supporting_diagnostics = HashMap::default();
         for diagnostic in &params.diagnostics {
             let source = diagnostic.source.as_ref();
             let code = diagnostic.code.as_ref().map(|code| match code {
@@ -1642,11 +1642,15 @@ impl Project {
                     })
                 });
 
+            let is_unnecessary = diagnostic.tags.as_ref().map_or(false, |tags| {
+                tags.iter().any(|tag| *tag == DiagnosticTag::UNNECESSARY)
+            });
+
             if is_supporting {
-                if let Some(severity) = diagnostic.severity {
-                    supporting_diagnostic_severities
-                        .insert((source, code.clone(), range), severity);
-                }
+                supporting_diagnostics.insert(
+                    (source, code.clone(), range),
+                    (diagnostic.severity, is_unnecessary),
+                );
             } else {
                 let group_id = post_inc(&mut next_group_id);
                 let is_disk_based =
@@ -1666,6 +1670,7 @@ impl Project {
                         is_primary: true,
                         is_valid: true,
                         is_disk_based,
+                        is_unnecessary,
                     },
                 });
                 if let Some(infos) = &diagnostic.related_information {
@@ -1682,6 +1687,7 @@ impl Project {
                                     is_primary: false,
                                     is_valid: true,
                                     is_disk_based,
+                                    is_unnecessary: false,
                                 },
                             });
                         }
@@ -1694,12 +1700,15 @@ impl Project {
             let diagnostic = &mut entry.diagnostic;
             if !diagnostic.is_primary {
                 let source = *sources_by_group_id.get(&diagnostic.group_id).unwrap();
-                if let Some(&severity) = supporting_diagnostic_severities.get(&(
+                if let Some(&(severity, is_unnecessary)) = supporting_diagnostics.get(&(
                     source,
                     diagnostic.code.clone(),
                     entry.range.clone(),
                 )) {
-                    diagnostic.severity = severity;
+                    if let Some(severity) = severity {
+                        diagnostic.severity = severity;
+                    }
+                    diagnostic.is_unnecessary = is_unnecessary;
                 }
             }
         }
@@ -5568,13 +5577,12 @@ mod tests {
     ) -> Vec<(String, Option<DiagnosticSeverity>)> {
         let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
         for chunk in buffer.snapshot().chunks(range, true) {
-            if chunks
-                .last()
-                .map_or(false, |prev_chunk| prev_chunk.1 == chunk.diagnostic)
-            {
+            if chunks.last().map_or(false, |prev_chunk| {
+                prev_chunk.1 == chunk.diagnostic_severity
+            }) {
                 chunks.last_mut().unwrap().0.push_str(chunk.text);
             } else {
-                chunks.push((chunk.text.to_string(), chunk.diagnostic));
+                chunks.push((chunk.text.to_string(), chunk.diagnostic_severity));
             }
         }
         chunks

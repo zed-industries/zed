@@ -303,6 +303,7 @@ pub struct Editor {
     pub invalid_hint_diagnostic: DiagnosticStyle,
     pub autocomplete: AutocompleteStyle,
     pub code_actions_indicator: Color,
+    pub unnecessary_code_fade: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
