@@ -819,19 +819,18 @@ where
 {
     let start = buffer.anchor_before(range.start.to_offset(buffer));
     let end = buffer.anchor_after(range.end.to_offset(buffer));
-    folds.filter::<_, usize>(
-        move |summary| {
-            let start_cmp = start.cmp(&summary.max_end, buffer).unwrap();
-            let end_cmp = end.cmp(&summary.min_start, buffer).unwrap();
+    let mut cursor = folds.filter::<_, usize>(move |summary| {
+        let start_cmp = start.cmp(&summary.max_end, buffer).unwrap();
+        let end_cmp = end.cmp(&summary.min_start, buffer).unwrap();
 
-            if inclusive {
-                start_cmp <= Ordering::Equal && end_cmp >= Ordering::Equal
-            } else {
-                start_cmp == Ordering::Less && end_cmp == Ordering::Greater
-            }
-        },
-        buffer,
-    )
+        if inclusive {
+            start_cmp <= Ordering::Equal && end_cmp >= Ordering::Equal
+        } else {
+            start_cmp == Ordering::Less && end_cmp == Ordering::Greater
+        }
+    });
+    cursor.next(buffer);
+    cursor
 }
 
 fn consolidate_buffer_edits(edits: &mut Vec<text::Edit<usize>>) {

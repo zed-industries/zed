@@ -60,7 +60,7 @@ where
     }
 
     pub fn item(&self) -> Option<&'a T> {
-        assert!(self.did_seek, "Must seek before calling this method");
+        self.assert_did_seek();
         if let Some(entry) = self.stack.last() {
             match *entry.tree.0 {
                 Node::Leaf { ref items, .. } => {
@@ -78,7 +78,7 @@ where
     }
 
     pub fn item_summary(&self) -> Option<&'a T::Summary> {
-        assert!(self.did_seek, "Must seek before calling this method");
+        self.assert_did_seek();
         if let Some(entry) = self.stack.last() {
             match *entry.tree.0 {
                 Node::Leaf {
@@ -98,7 +98,7 @@ where
     }
 
     pub fn prev_item(&self) -> Option<&'a T> {
-        assert!(self.did_seek, "Must seek before calling this method");
+        self.assert_did_seek();
         if let Some(entry) = self.stack.last() {
             if entry.index == 0 {
                 if let Some(prev_leaf) = self.prev_leaf() {
@@ -141,6 +141,11 @@ where
     where
         F: FnMut(&T::Summary) -> bool,
     {
+        if !self.did_seek {
+            self.did_seek = true;
+            self.at_end = true;
+        }
+
         if self.at_end {
             self.position = D::default();
             self.at_end = self.tree.is_empty();
@@ -151,8 +156,6 @@ where
                     position: D::from_summary(self.tree.summary(), cx),
                 });
             }
-        } else {
-            assert!(self.did_seek, "Must seek before calling this method");
         }
 
         let mut descending = false;
@@ -288,6 +291,13 @@ where
 
         self.at_end = self.stack.is_empty();
         debug_assert!(self.stack.is_empty() || self.stack.last().unwrap().tree.0.is_leaf());
+    }
+
+    fn assert_did_seek(&self) {
+        assert!(
+            self.did_seek,
+            "Must call `seek`, `next` or `prev` before calling this method"
+        );
     }
 }
 
@@ -567,13 +577,8 @@ where
     T: Item,
     D: Dimension<'a, T::Summary>,
 {
-    pub fn new(
-        tree: &'a SumTree<T>,
-        mut filter_node: F,
-        cx: &<T::Summary as Summary>::Context,
-    ) -> Self {
-        let mut cursor = tree.cursor::<D>();
-        cursor.next_internal(&mut filter_node, cx);
+    pub fn new(tree: &'a SumTree<T>, filter_node: F) -> Self {
+        let cursor = tree.cursor::<D>();
         Self {
             cursor,
             filter_node,
@@ -611,6 +616,10 @@ where
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if !self.cursor.did_seek {
+            self.next(&());
+        }
+
         if let Some(item) = self.item() {
             self.cursor.next_internal(&self.filter_node, &());
             Some(item)

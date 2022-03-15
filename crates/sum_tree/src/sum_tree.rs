@@ -168,16 +168,12 @@ impl<T: Item> SumTree<T> {
         Cursor::new(self)
     }
 
-    pub fn filter<'a, F, U>(
-        &'a self,
-        filter_node: F,
-        cx: &<T::Summary as Summary>::Context,
-    ) -> FilterCursor<F, T, U>
+    pub fn filter<'a, F, U>(&'a self, filter_node: F) -> FilterCursor<F, T, U>
     where
         F: FnMut(&T::Summary) -> bool,
         U: Dimension<'a, T::Summary>,
     {
-        FilterCursor::new(self, filter_node, cx)
+        FilterCursor::new(self, filter_node)
     }
 
     #[allow(dead_code)]
@@ -752,8 +748,7 @@ mod tests {
 
                 log::info!("tree items: {:?}", tree.items(&()));
 
-                let mut filter_cursor =
-                    tree.filter::<_, Count>(|summary| summary.contains_even, &());
+                let mut filter_cursor = tree.filter::<_, Count>(|summary| summary.contains_even);
                 let expected_filtered_items = tree
                     .items(&())
                     .into_iter()
@@ -761,7 +756,13 @@ mod tests {
                     .filter(|(_, item)| (item & 1) == 0)
                     .collect::<Vec<_>>();
 
-                let mut item_ix = 0;
+                let mut item_ix = if rng.gen() {
+                    filter_cursor.next(&());
+                    0
+                } else {
+                    filter_cursor.prev(&());
+                    expected_filtered_items.len().saturating_sub(1)
+                };
                 while item_ix < expected_filtered_items.len() {
                     log::info!("filter_cursor, item_ix: {}", item_ix);
                     let actual_item = filter_cursor.item().unwrap();
