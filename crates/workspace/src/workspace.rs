@@ -26,7 +26,7 @@ use log::error;
 pub use pane::*;
 pub use pane_group::*;
 use postage::prelude::Stream;
-use project::{fs, Fs, Project, ProjectEntry, ProjectPath, Worktree};
+use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, Worktree};
 pub use settings::Settings;
 use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus};
 use status_bar::StatusBar;
@@ -138,7 +138,7 @@ pub trait ItemView: View {
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) {}
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
-    fn project_entry(&self, cx: &AppContext) -> Option<ProjectEntry>;
+    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
     fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>);
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
     where
@@ -191,7 +191,7 @@ pub trait ItemView: View {
 pub trait ItemViewHandle: 'static {
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
-    fn project_entry_id(&self, cx: &AppContext) -> Option<usize>;
+    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle>;
     fn set_nav_history(&self, nav_history: Rc<RefCell<NavHistory>>, cx: &mut MutableAppContext);
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemViewHandle>>;
@@ -239,8 +239,8 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         self.read(cx).project_path(cx)
     }
 
-    fn project_entry_id(&self, cx: &AppContext) -> Option<usize> {
-        Some(self.read(cx).project_entry(cx)?.entry_id)
+    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId> {
+        self.read(cx).project_entry_id(cx)
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle> {
@@ -850,7 +850,7 @@ impl Workspace {
 
     pub fn open_item_for_project_entry<T, F>(
         &mut self,
-        project_entry: ProjectEntry,
+        project_entry: ProjectEntryId,
         cx: &mut ViewContext<Self>,
         build_view: F,
     ) -> Box<dyn ItemViewHandle>

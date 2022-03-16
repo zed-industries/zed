@@ -5,7 +5,7 @@ use gpui::{
     View, ViewContext, ViewHandle, WeakModelHandle,
 };
 use language::{Bias, Buffer, Diagnostic, File as _};
-use project::{File, Project, ProjectEntry, ProjectPath};
+use project::{File, Project, ProjectEntryId, ProjectPath};
 use std::fmt::Write;
 use std::path::PathBuf;
 use text::{Point, Selection};
@@ -75,8 +75,8 @@ impl ItemView for Editor {
         })
     }
 
-    fn project_entry(&self, cx: &AppContext) -> Option<ProjectEntry> {
-        File::from_dyn(self.buffer().read(cx).file(cx)).and_then(|file| file.project_entry(cx))
+    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId> {
+        File::from_dyn(self.buffer().read(cx).file(cx)).and_then(|file| file.project_entry_id(cx))
     }
 
     fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>

@@ -10,7 +10,7 @@ use gpui::{
     AnyViewHandle, Entity, MutableAppContext, Quad, RenderContext, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
-use project::{ProjectEntry, ProjectPath};
+use project::{ProjectEntryId, ProjectPath};
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
@@ -97,7 +97,7 @@ pub enum Event {
 }
 
 pub struct Pane {
-    item_views: Vec<(Option<usize>, Box<dyn ItemViewHandle>)>,
+    item_views: Vec<(Option<ProjectEntryId>, Box<dyn ItemViewHandle>)>,
     active_item_index: usize,
     nav_history: Rc<RefCell<NavHistory>>,
     toolbars: HashMap<TypeId, Box<dyn ToolbarHandle>>,
@@ -323,9 +323,9 @@ impl Pane {
             .map(|(_, view)| view.clone())
     }
 
-    pub fn item_for_entry(&self, entry: ProjectEntry) -> Option<Box<dyn ItemViewHandle>> {
+    pub fn item_for_entry(&self, entry_id: ProjectEntryId) -> Option<Box<dyn ItemViewHandle>> {
         self.item_views.iter().find_map(|(id, view)| {
-            if *id == Some(entry.entry_id) {
+            if *id == Some(entry_id) {
                 Some(view.boxed_clone())
             } else {
                 None

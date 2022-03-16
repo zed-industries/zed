@@ -1,4 +1,4 @@
-use crate::ProjectEntry;
+use crate::ProjectEntryId;
 
 use super::{
     fs::{self, Fs},
@@ -41,10 +41,7 @@ use std::{
     future::Future,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
-        Arc,
-    },
+    sync::{atomic::AtomicUsize, Arc},
     time::{Duration, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap};
@@ -103,7 +100,7 @@ pub struct LocalSnapshot {
     abs_path: Arc<Path>,
     scan_id: usize,
     ignores: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
-    removed_entry_ids: HashMap<u64, usize>,
+    removed_entry_ids: HashMap<u64, ProjectEntryId>,
     next_entry_id: Arc<AtomicUsize>,
     snapshot: Snapshot,
 }
@@ -858,13 +855,16 @@ impl Snapshot {
         self.id
     }
 
+    pub fn contains_entry(&self, entry_id: ProjectEntryId) -> bool {
+        self.entries_by_id.get(&entry_id, &()).is_some()
+    }
+
     pub(crate) fn apply_remote_update(&mut self, update: proto::UpdateWorktree) -> Result<()> {
         let mut entries_by_path_edits = Vec::new();
         let mut entries_by_id_edits = Vec::new();
         for entry_id in update.removed_entries {
-            let entry_id = entry_id as usize;
             let entry = self
-                .entry_for_id(entry_id)
+                .entry_for_id(ProjectEntryId::from_proto(entry_id))
                 .ok_or_else(|| anyhow!("unknown entry"))?;
             entries_by_path_edits.push(Edit::Remove(PathKey(entry.path.clone())));
             entries_by_id_edits.push(Edit::Remove(entry.id));
@@ -987,7 +987,7 @@ impl Snapshot {
             })
     }
 
-    pub fn entry_for_id(&self, id: usize) -> Option<&Entry> {
+    pub fn entry_for_id(&self, id: ProjectEntryId) -> Option<&Entry> {
         let entry = self.entries_by_id.get(&id, &())?;
         self.entry_for_path(&entry.path)
     }
@@ -1064,7 +1064,7 @@ impl LocalSnapshot {
                             other_entries.next();
                         }
                         Ordering::Greater => {
-                            removed_entries.push(other_entry.id as u64);
+                            removed_entries.push(other_entry.id.to_proto());
                             other_entries.next();
                         }
                     }
@@ -1075,7 +1075,7 @@ impl LocalSnapshot {
                     self_entries.next();
                 }
                 (None, Some(other_entry)) => {
-                    removed_entries.push(other_entry.id as u64);
+                    removed_entries.push(other_entry.id.to_proto());
                     other_entries.next();
                 }
                 (None, None) => break,
@@ -1328,7 +1328,7 @@ pub struct File {
     pub worktree: ModelHandle<Worktree>,
     pub path: Arc<Path>,
     pub mtime: SystemTime,
-    pub(crate) entry_id: Option<usize>,
+    pub(crate) entry_id: Option<ProjectEntryId>,
     pub(crate) is_local: bool,
 }
 
@@ -1425,7 +1425,7 @@ impl language::File for File {
     fn to_proto(&self) -> rpc::proto::File {
         rpc::proto::File {
             worktree_id: self.worktree.id() as u64,
-            entry_id: self.entry_id.map(|entry_id| entry_id as u64),
+            entry_id: self.entry_id.map(|entry_id| entry_id.to_proto()),
             path: self.path.to_string_lossy().into(),
             mtime: Some(self.mtime.into()),
         }
@@ -1492,7 +1492,7 @@ impl File {
             worktree,
             path: Path::new(&proto.path).into(),
             mtime: proto.mtime.ok_or_else(|| anyhow!("no timestamp"))?.into(),
-            entry_id: proto.entry_id.map(|entry_id| entry_id as usize),
+            entry_id: proto.entry_id.map(ProjectEntryId::from_proto),
             is_local: false,
         })
     }
@@ -1505,17 +1505,14 @@ impl File {
         self.worktree.read(cx).id()
     }
 
-    pub fn project_entry(&self, cx: &AppContext) -> Option<ProjectEntry> {
-        self.entry_id.map(|entry_id| ProjectEntry {
-            worktree_id: self.worktree_id(cx),
-            entry_id,
-        })
+    pub fn project_entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
+        self.entry_id
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
-    pub id: usize,
+    pub id: ProjectEntryId,
     pub kind: EntryKind,
     pub path: Arc<Path>,
     pub inode: u64,
@@ -1539,7 +1536,7 @@ impl Entry {
         root_char_bag: CharBag,
     ) -> Self {
         Self {
-            id: next_entry_id.fetch_add(1, SeqCst),
+            id: ProjectEntryId::new(next_entry_id),
             kind: if metadata.is_dir {
                 EntryKind::PendingDir
             } else {
@@ -1629,7 +1626,7 @@ impl sum_tree::Summary for EntrySummary {
 
 #[derive(Clone, Debug)]
 struct PathEntry {
-    id: usize,
+    id: ProjectEntryId,
     path: Arc<Path>,
     is_ignored: bool,
     scan_id: usize,
@@ -1644,7 +1641,7 @@ impl sum_tree::Item for PathEntry {
 }
 
 impl sum_tree::KeyedItem for PathEntry {
-    type Key = usize;
+    type Key = ProjectEntryId;
 
     fn key(&self) -> Self::Key {
         self.id
@@ -1653,7 +1650,7 @@ impl sum_tree::KeyedItem for PathEntry {
 
 #[derive(Clone, Debug, Default)]
 struct PathEntrySummary {
-    max_id: usize,
+    max_id: ProjectEntryId,
 }
 
 impl sum_tree::Summary for PathEntrySummary {
@@ -1664,7 +1661,7 @@ impl sum_tree::Summary for PathEntrySummary {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, PathEntrySummary> for usize {
+impl<'a> sum_tree::Dimension<'a, PathEntrySummary> for ProjectEntryId {
     fn add_summary(&mut self, summary: &'a PathEntrySummary, _: &()) {
         *self = summary.max_id;
     }
@@ -2354,7 +2351,7 @@ impl<'a> Iterator for ChildEntriesIter<'a> {
 impl<'a> From<&'a Entry> for proto::Entry {
     fn from(entry: &'a Entry) -> Self {
         Self {
-            id: entry.id as u64,
+            id: entry.id.to_proto(),
             is_dir: entry.is_dir(),
             path: entry.path.to_string_lossy().to_string(),
             inode: entry.inode,
@@ -2379,7 +2376,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
             };
             let path: Arc<Path> = Arc::from(Path::new(&entry.path));
             Ok(Entry {
-                id: entry.id as usize,
+                id: ProjectEntryId::from_proto(entry.id),
                 kind,
                 path: path.clone(),
                 inode: entry.inode,

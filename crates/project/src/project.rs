@@ -39,7 +39,7 @@ use std::{
     path::{Component, Path, PathBuf},
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, AtomicUsize},
+        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc,
     },
     time::Instant,
@@ -51,7 +51,7 @@ pub use worktree::*;
 
 pub struct Project {
     worktrees: Vec<WorktreeHandle>,
-    active_entry: Option<ProjectEntry>,
+    active_entry: Option<ProjectEntryId>,
     languages: Arc<LanguageRegistry>,
     language_servers: HashMap<(WorktreeId, Arc<str>), Arc<LanguageServer>>,
     started_language_servers: HashMap<(WorktreeId, Arc<str>), Task<Option<Arc<LanguageServer>>>>,
@@ -114,7 +114,7 @@ pub struct Collaborator {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
-    ActiveEntryChanged(Option<ProjectEntry>),
+    ActiveEntryChanged(Option<ProjectEntryId>),
     WorktreeRemoved(WorktreeId),
     DiskBasedDiagnosticsStarted,
     DiskBasedDiagnosticsUpdated,
@@ -226,10 +226,25 @@ impl DiagnosticSummary {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ProjectEntry {
-    pub worktree_id: WorktreeId,
-    pub entry_id: usize,
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ProjectEntryId(usize);
+
+impl ProjectEntryId {
+    pub fn new(counter: &AtomicUsize) -> Self {
+        Self(counter.fetch_add(1, SeqCst))
+    }
+
+    pub fn from_proto(id: u64) -> Self {
+        Self(id as usize)
+    }
+
+    pub fn to_proto(&self) -> u64 {
+        self.0 as u64
+    }
+
+    pub fn to_usize(&self) -> usize {
+        self.0
+    }
 }
 
 impl Project {
@@ -621,6 +636,24 @@ impl Project {
     ) -> Option<ModelHandle<Worktree>> {
         self.worktrees(cx)
             .find(|worktree| worktree.read(cx).id() == id)
+    }
+
+    pub fn worktree_for_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        cx: &AppContext,
+    ) -> Option<ModelHandle<Worktree>> {
+        self.worktrees(cx)
+            .find(|worktree| worktree.read(cx).contains_entry(entry_id))
+    }
+
+    pub fn worktree_id_for_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        cx: &AppContext,
+    ) -> Option<WorktreeId> {
+        self.worktree_for_entry(entry_id, cx)
+            .map(|worktree| worktree.read(cx).id())
     }
 
     pub fn share(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
@@ -3163,10 +3196,7 @@ impl Project {
         let new_active_entry = entry.and_then(|project_path| {
             let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
             let entry = worktree.read(cx).entry_for_path(project_path.path)?;
-            Some(ProjectEntry {
-                worktree_id: project_path.worktree_id,
-                entry_id: entry.id,
-            })
+            Some(entry.id)
         });
         if new_active_entry != self.active_entry {
             self.active_entry = new_active_entry;
@@ -3217,18 +3247,15 @@ impl Project {
         }
     }
 
-    pub fn active_entry(&self) -> Option<ProjectEntry> {
+    pub fn active_entry(&self) -> Option<ProjectEntryId> {
         self.active_entry
     }
 
-    pub fn entry_for_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<ProjectEntry> {
+    pub fn entry_for_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<ProjectEntryId> {
         self.worktree_for_id(path.worktree_id, cx)?
             .read(cx)
             .entry_for_path(&path.path)
-            .map(|entry| ProjectEntry {
-                worktree_id: path.worktree_id,
-                entry_id: entry.id,
-            })
+            .map(|entry| entry.id)
     }
 
     // RPC message handlers

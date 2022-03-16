@@ -250,7 +250,7 @@ impl ItemView for ProjectSearchView {
         None
     }
 
-    fn project_entry(&self, _: &AppContext) -> Option<project::ProjectEntry> {
+    fn project_entry_id(&self, _: &AppContext) -> Option<project::ProjectEntryId> {
         None
     }
 

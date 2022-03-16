@@ -842,8 +842,8 @@ impl Editor {
     ) -> ViewHandle<Editor> {
         let project = workspace.project().clone();
 
-        if let Some(project_entry) =
-            project::File::from_dyn(buffer.read(cx).file()).and_then(|file| file.project_entry(cx))
+        if let Some(project_entry) = project::File::from_dyn(buffer.read(cx).file())
+            .and_then(|file| file.project_entry_id(cx))
         {
             return workspace
                 .open_item_for_project_entry(project_entry, cx, |cx| {

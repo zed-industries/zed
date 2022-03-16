@@ -9,7 +9,7 @@ use gpui::{
     AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
-use project::{Project, ProjectEntry, ProjectPath, Worktree, WorktreeId};
+use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use std::{
     collections::{hash_map, HashMap},
     ffi::OsStr,
@@ -24,7 +24,7 @@ pub struct ProjectPanel {
     project: ModelHandle<Project>,
     list: UniformListState,
     visible_entries: Vec<(WorktreeId, Vec<usize>)>,
-    expanded_dir_ids: HashMap<WorktreeId, Vec<usize>>,
+    expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     selection: Option<Selection>,
     handle: WeakViewHandle<Self>,
 }
@@ -32,7 +32,7 @@ pub struct ProjectPanel {
 #[derive(Copy, Clone)]
 struct Selection {
     worktree_id: WorktreeId,
-    entry_id: usize,
+    entry_id: ProjectEntryId,
     index: usize,
 }
 
@@ -47,8 +47,8 @@ struct EntryDetails {
 
 action!(ExpandSelectedEntry);
 action!(CollapseSelectedEntry);
-action!(ToggleExpanded, ProjectEntry);
-action!(Open, ProjectEntry);
+action!(ToggleExpanded, ProjectEntryId);
+action!(Open, ProjectEntryId);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::expand_selected_entry);
@@ -64,10 +64,7 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 pub enum Event {
-    OpenedEntry {
-        worktree_id: WorktreeId,
-        entry_id: usize,
-    },
+    OpenedEntry(ProjectEntryId),
 }
 
 impl ProjectPanel {
@@ -78,15 +75,15 @@ impl ProjectPanel {
                 cx.notify();
             })
             .detach();
-            cx.subscribe(&project, |this, _, event, cx| match event {
-                project::Event::ActiveEntryChanged(Some(ProjectEntry {
-                    worktree_id,
-                    entry_id,
-                })) => {
-                    this.expand_entry(*worktree_id, *entry_id, cx);
-                    this.update_visible_entries(Some((*worktree_id, *entry_id)), cx);
-                    this.autoscroll();
-                    cx.notify();
+            cx.subscribe(&project, |this, project, event, cx| match event {
+                project::Event::ActiveEntryChanged(Some(entry_id)) => {
+                    if let Some(worktree_id) = project.read(cx).worktree_id_for_entry(*entry_id, cx)
+                    {
+                        this.expand_entry(worktree_id, *entry_id, cx);
+                        this.update_visible_entries(Some((worktree_id, *entry_id)), cx);
+                        this.autoscroll();
+                        cx.notify();
+                    }
                 }
                 project::Event::WorktreeRemoved(id) => {
                     this.expanded_dir_ids.remove(id);
@@ -109,16 +106,13 @@ impl ProjectPanel {
             this
         });
         cx.subscribe(&project_panel, move |workspace, _, event, cx| match event {
-            &Event::OpenedEntry {
-                worktree_id,
-                entry_id,
-            } => {
-                if let Some(worktree) = project.read(cx).worktree_for_id(worktree_id, cx) {
+            &Event::OpenedEntry(entry_id) => {
+                if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
                     if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
                         workspace
                             .open_path(
                                 ProjectPath {
-                                    worktree_id,
+                                    worktree_id: worktree.read(cx).id(),
                                     path: entry.path.clone(),
                                 },
                                 cx,
@@ -152,10 +146,7 @@ impl ProjectPanel {
                     }
                 }
             } else {
-                let event = Event::OpenedEntry {
-                    worktree_id: worktree.id(),
-                    entry_id: entry.id,
-                };
+                let event = Event::OpenedEntry(entry.id);
                 cx.emit(event);
             }
         }
@@ -193,22 +184,20 @@ impl ProjectPanel {
     }
 
     fn toggle_expanded(&mut self, action: &ToggleExpanded, cx: &mut ViewContext<Self>) {
-        let ProjectEntry {
-            worktree_id,
-            entry_id,
-        } = action.0;
-
-        if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
-            match expanded_dir_ids.binary_search(&entry_id) {
-                Ok(ix) => {
-                    expanded_dir_ids.remove(ix);
+        let entry_id = action.0;
+        if let Some(worktree_id) = self.project.read(cx).worktree_id_for_entry(entry_id, cx) {
+            if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
+                match expanded_dir_ids.binary_search(&entry_id) {
+                    Ok(ix) => {
+                        expanded_dir_ids.remove(ix);
+                    }
+                    Err(ix) => {
+                        expanded_dir_ids.insert(ix, entry_id);
+                    }
                 }
-                Err(ix) => {
-                    expanded_dir_ids.insert(ix, entry_id);
-                }
+                self.update_visible_entries(Some((worktree_id, entry_id)), cx);
+                cx.focus_self();
             }
-            self.update_visible_entries(Some((worktree_id, entry_id)), cx);
-            cx.focus_self();
         }
     }
 
@@ -229,10 +218,7 @@ impl ProjectPanel {
     }
 
     fn open_entry(&mut self, action: &Open, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::OpenedEntry {
-            worktree_id: action.0.worktree_id,
-            entry_id: action.0.entry_id,
-        });
+        cx.emit(Event::OpenedEntry(action.0));
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
@@ -313,7 +299,7 @@ impl ProjectPanel {
 
     fn update_visible_entries(
         &mut self,
-        new_selected_entry: Option<(WorktreeId, usize)>,
+        new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
         cx: &mut ViewContext<Self>,
     ) {
         let worktrees = self
@@ -379,7 +365,7 @@ impl ProjectPanel {
     fn expand_entry(
         &mut self,
         worktree_id: WorktreeId,
-        entry_id: usize,
+        entry_id: ProjectEntryId,
         cx: &mut ViewContext<Self>,
     ) {
         let project = self.project.read(cx);
@@ -411,7 +397,7 @@ impl ProjectPanel {
         &self,
         range: Range<usize>,
         cx: &mut ViewContext<ProjectPanel>,
-        mut callback: impl FnMut(ProjectEntry, EntryDetails, &mut ViewContext<ProjectPanel>),
+        mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut ViewContext<ProjectPanel>),
     ) {
         let mut ix = 0;
         for (worktree_id, visible_worktree_entries) in &self.visible_entries {
@@ -450,11 +436,7 @@ impl ProjectPanel {
                                 e.worktree_id == snapshot.id() && e.entry_id == entry.id
                             }),
                         };
-                        let entry = ProjectEntry {
-                            worktree_id: snapshot.id(),
-                            entry_id: entry.id,
-                        };
-                        callback(entry, details, cx);
+                        callback(entry.id, details, cx);
                     }
                 }
             }
@@ -463,13 +445,13 @@ impl ProjectPanel {
     }
 
     fn render_entry(
-        entry: ProjectEntry,
+        entry_id: ProjectEntryId,
         details: EntryDetails,
         theme: &theme::ProjectPanel,
         cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         let is_dir = details.is_dir;
-        MouseEventHandler::new::<Self, _, _>(entry.entry_id, cx, |state, _| {
+        MouseEventHandler::new::<Self, _, _>(entry_id.to_usize(), cx, |state, _| {
             let style = match (details.is_selected, state.hovered) {
                 (false, false) => &theme.entry,
                 (false, true) => &theme.hovered_entry,
@@ -519,9 +501,9 @@ impl ProjectPanel {
         })
         .on_click(move |cx| {
             if is_dir {
-                cx.dispatch_action(ToggleExpanded(entry))
+                cx.dispatch_action(ToggleExpanded(entry_id))
             } else {
-                cx.dispatch_action(Open(entry))
+                cx.dispatch_action(Open(entry_id))
             }
         })
         .with_cursor_style(CursorStyle::PointingHand)
@@ -830,13 +812,7 @@ mod tests {
                     let worktree = worktree.read(cx);
                     if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                         let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
-                        panel.toggle_expanded(
-                            &ToggleExpanded(ProjectEntry {
-                                worktree_id: worktree.id(),
-                                entry_id,
-                            }),
-                            cx,
-                        );
+                        panel.toggle_expanded(&ToggleExpanded(entry_id), cx);
                         return;
                     }
                 }
