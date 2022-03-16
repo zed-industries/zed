@@ -155,7 +155,9 @@ impl ProjectDiagnosticsEditor {
             async move {
                 for path in paths {
                     let buffer = project
-                        .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))
+                        .update(&mut cx, |project, cx| {
+                            project.open_buffer_for_path(path.clone(), cx)
+                        })
                         .await?;
                     this.update(&mut cx, |view, cx| view.populate_excerpts(path, buffer, cx))
                 }
@@ -446,10 +448,6 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
     }
 
     fn project_path(&self, _: &AppContext) -> Option<project::ProjectPath> {
-        None
-    }
-
-    fn project_entry_id(&self, _: &AppContext) -> Option<project::ProjectEntryId> {
         None
     }
 

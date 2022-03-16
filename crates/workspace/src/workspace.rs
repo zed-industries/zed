@@ -9,6 +9,7 @@ mod status_bar;
 use anyhow::{anyhow, Result};
 use client::{Authenticate, ChannelList, Client, User, UserStore};
 use clock::ReplicaId;
+use futures::TryFutureExt;
 use gpui::{
     action,
     color::Color,
@@ -21,7 +22,7 @@ use gpui::{
     MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
-use language::LanguageRegistry;
+use language::{Buffer, LanguageRegistry};
 use log::error;
 pub use pane::*;
 pub use pane_group::*;
@@ -40,6 +41,15 @@ use std::{
     sync::Arc,
 };
 use theme::{Theme, ThemeRegistry};
+
+pub type BuildEditor = Box<
+    dyn Fn(
+        usize,
+        ModelHandle<Project>,
+        ModelHandle<Buffer>,
+        &mut MutableAppContext,
+    ) -> Box<dyn ItemViewHandle>,
+>;
 
 action!(Open, Arc<AppState>);
 action!(OpenNew, Arc<AppState>);
@@ -95,6 +105,16 @@ pub fn init(cx: &mut MutableAppContext) {
     ]);
 }
 
+pub fn register_editor_builder<F, V>(cx: &mut MutableAppContext, build_editor: F)
+where
+    V: ItemView,
+    F: 'static + Fn(ModelHandle<Project>, ModelHandle<Buffer>, &mut ViewContext<V>) -> V,
+{
+    cx.add_app_state::<BuildEditor>(Box::new(|window_id, project, model, cx| {
+        Box::new(cx.add_view(window_id, |cx| build_editor(project, model, cx)))
+    }));
+}
+
 pub struct AppState {
     pub languages: Arc<LanguageRegistry>,
     pub themes: Arc<ThemeRegistry>,
@@ -138,7 +158,6 @@ pub trait ItemView: View {
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) {}
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
-    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
     fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>);
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
     where
@@ -191,7 +210,6 @@ pub trait ItemView: View {
 pub trait ItemViewHandle: 'static {
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
-    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle>;
     fn set_nav_history(&self, nav_history: Rc<RefCell<NavHistory>>, cx: &mut MutableAppContext);
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemViewHandle>>;
@@ -237,10 +255,6 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
         self.read(cx).project_path(cx)
-    }
-
-    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId> {
-        self.read(cx).project_entry_id(cx)
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle> {
@@ -656,6 +670,24 @@ impl Workspace {
         path: ProjectPath,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>> {
+        let project_entry = self.project.read(cx).entry_for_path(&path, cx);
+
+        let existing_entry = self
+            .active_pane()
+            .update(cx, |pane, cx| pane.activate_project_entry(project_entry));
+
+        cx.spawn(|this, cx| {
+            if let Some(existing_entry) = existing_entry {
+                return Ok(existing_entry);
+            }
+
+            let load_task = this
+                .update(&mut cx, |this, cx| {
+                    this.load_project_entry(project_entry, cx)
+                })
+                .await;
+        });
+
         let load_task = self.load_path(path, cx);
         let pane = self.active_pane().clone().downgrade();
         cx.as_mut().spawn(|mut cx| async move {
@@ -663,7 +695,7 @@ impl Workspace {
             let pane = pane
                 .upgrade(&cx)
                 .ok_or_else(|| anyhow!("could not upgrade pane reference"))?;
-            Ok(pane.update(&mut cx, |pane, cx| pane.open_item(item, cx)))
+            Ok(pane.update(&mut cx, |pane, cx| pane.open_editor(item, cx)))
         })
     }
 
@@ -672,13 +704,23 @@ impl Workspace {
         path: ProjectPath,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemViewHandle>>> {
-        let project_entry = self.project.read(cx).entry_for_path(&path, cx);
+        if let Some(project_entry) = self.project.read(cx).entry_for_path(&path, cx) {
+            self.load_project_entry(project_entry, cx)
+        } else {
+            Task::ready(Err(anyhow!("no such file {:?}", path)))
+        }
+    }
 
-        if let Some(existing_item) = project_entry.and_then(|entry| {
-            self.panes
-                .iter()
-                .find_map(|pane| pane.read(cx).item_for_entry(entry))
-        }) {
+    pub fn load_project_entry(
+        &mut self,
+        project_entry: ProjectEntryId,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<Box<dyn ItemViewHandle>>> {
+        if let Some(existing_item) = self
+            .panes
+            .iter()
+            .find_map(|pane| pane.read(cx).item_for_entry(project_entry))
+        {
             return Task::ready(Ok(existing_item));
         }
 
@@ -829,36 +871,107 @@ impl Workspace {
         pane
     }
 
-    pub fn open_item(
-        &mut self,
-        item_view: Box<dyn ItemViewHandle>,
-        cx: &mut ViewContext<Self>,
-    ) -> Box<dyn ItemViewHandle> {
+    pub fn open_item(&mut self, item_view: Box<dyn ItemViewHandle>, cx: &mut ViewContext<Self>) {
         self.active_pane()
             .update(cx, |pane, cx| pane.open_item(item_view, cx))
     }
 
-    pub fn open_item_for_project_entry<T, F>(
+    pub fn open_editor(
         &mut self,
         project_entry: ProjectEntryId,
         cx: &mut ViewContext<Self>,
-        build_view: F,
-    ) -> Box<dyn ItemViewHandle>
-    where
-        T: ItemView,
-        F: FnOnce(&mut ViewContext<T>) -> T,
-    {
-        if let Some(existing_item) = self
-            .panes
-            .iter()
-            .find_map(|pane| pane.read(cx).item_for_entry(project_entry))
-        {
-            return existing_item.boxed_clone();
-        }
+    ) -> Task<Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>> {
+        let pane = self.active_pane().clone();
+        let project = self.project().clone();
+        let buffer = project.update(cx, |project, cx| {
+            project.open_buffer_for_entry(project_entry, cx)
+        });
 
-        let view = Box::new(cx.add_view(build_view));
-        self.open_item(view, cx)
+        cx.spawn(|this, cx| async move {
+            let buffer = buffer.await?;
+            let editor = this.update(&mut cx, |this, cx| {
+                let window_id = cx.window_id();
+                pane.update(cx, |pane, cx| {
+                    pane.open_editor(project_entry, cx, |cx| {
+                        cx.app_state::<BuildEditor>()(window_id, project, buffer, cx)
+                    })
+                })
+            });
+            Ok(editor)
+        })
     }
+
+    //     pub fn open_path(
+    //     &mut self,
+    //     path: ProjectPath,
+    //     cx: &mut ViewContext<Self>,
+    // ) -> Task<Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>> {
+    //     let project_entry = self.project.read(cx).entry_for_path(&path, cx);
+
+    //     let existing_entry = self
+    //         .active_pane()
+    //         .update(cx, |pane, cx| pane.activate_project_entry(project_entry));
+
+    //     cx.spawn(|this, cx| {
+    //         if let Some(existing_entry) = existing_entry {
+    //             return Ok(existing_entry);
+    //         }
+
+    //         let load_task = this
+    //             .update(&mut cx, |this, cx| {
+    //                 this.load_project_entry(project_entry, cx)
+    //             })
+    //             .await;
+    //     });
+
+    //     let load_task = self.load_path(path, cx);
+    //     let pane = self.active_pane().clone().downgrade();
+    //     cx.as_mut().spawn(|mut cx| async move {
+    //         let item = load_task.await?;
+    //         let pane = pane
+    //             .upgrade(&cx)
+    //             .ok_or_else(|| anyhow!("could not upgrade pane reference"))?;
+    //         Ok(pane.update(&mut cx, |pane, cx| pane.open_editor(item, cx)))
+    //     })
+    // }
+
+    // pub fn load_path(
+    //     &mut self,
+    //     path: ProjectPath,
+    //     cx: &mut ViewContext<Self>,
+    // ) -> Task<Result<Box<dyn ItemViewHandle>>> {
+    //     if let Some(project_entry) = self.project.read(cx).entry_for_path(&path, cx) {
+    //         self.load_project_entry(project_entry, cx)
+    //     } else {
+    //         Task::ready(Err(anyhow!("no such file {:?}", path)))
+    //     }
+    // }
+
+    // pub fn load_project_entry(
+    //     &mut self,
+    //     project_entry: ProjectEntryId,
+    //     cx: &mut ViewContext<Self>,
+    // ) -> Task<Result<Box<dyn ItemViewHandle>>> {
+    //     if let Some(existing_item) = self
+    //         .panes
+    //         .iter()
+    //         .find_map(|pane| pane.read(cx).item_for_entry(project_entry))
+    //     {
+    //         return Task::ready(Ok(existing_item));
+    //     }
+
+    //     let project_path = path.clone();
+    //     let path_openers = self.path_openers.clone();
+    //     let window_id = cx.window_id();
+    //     self.project.update(cx, |project, cx| {
+    //         for opener in path_openers.iter() {
+    //             if let Some(task) = opener.open(project, project_path.clone(), window_id, cx) {
+    //                 return task;
+    //             }
+    //         }
+    //         Task::ready(Err(anyhow!("no opener found for path {:?}", project_path)))
+    //     })
+    // }
 
     pub fn activate_item(&mut self, item: &dyn ItemViewHandle, cx: &mut ViewContext<Self>) -> bool {
         let result = self.panes.iter().find_map(|pane| {
@@ -930,10 +1043,11 @@ impl Workspace {
         let new_pane = self.add_pane(cx);
         self.activate_pane(new_pane.clone(), cx);
         if let Some(item) = pane.read(cx).active_item() {
-            let nav_history = new_pane.read(cx).nav_history().clone();
+            let project_entry_id = pane.read(cx).project_entry_id_for_item(item.as_ref());
             if let Some(clone) = item.clone_on_split(cx.as_mut()) {
-                clone.set_nav_history(nav_history, cx);
-                new_pane.update(cx, |new_pane, cx| new_pane.add_item_view(clone, cx));
+                new_pane.update(cx, |new_pane, cx| {
+                    new_pane.open_item(project_entry_id, clone, cx);
+                });
             }
         }
         self.center.split(&pane, &new_pane, direction).unwrap();

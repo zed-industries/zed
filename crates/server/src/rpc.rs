@@ -1137,7 +1137,9 @@ mod tests {
 
         // Open the same file as client B and client A.
         let buffer_b = project_b
-            .update(cx_b, |p, cx| p.open_buffer((worktree_id, "b.txt"), cx))
+            .update(cx_b, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "b.txt"), cx)
+            })
             .await
             .unwrap();
         let buffer_b = cx_b.add_model(|cx| MultiBuffer::singleton(buffer_b, cx));
@@ -1148,7 +1150,9 @@ mod tests {
             assert!(project.has_open_buffer((worktree_id, "b.txt"), cx))
         });
         let buffer_a = project_a
-            .update(cx_a, |p, cx| p.open_buffer((worktree_id, "b.txt"), cx))
+            .update(cx_a, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "b.txt"), cx)
+            })
             .await
             .unwrap();
 
@@ -1238,7 +1242,9 @@ mod tests {
         .await
         .unwrap();
         project_b
-            .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+            .update(cx_b, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "a.txt"), cx)
+            })
             .await
             .unwrap();
 
@@ -1273,7 +1279,9 @@ mod tests {
         .await
         .unwrap();
         project_b2
-            .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+            .update(cx_b, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "a.txt"), cx)
+            })
             .await
             .unwrap();
     }
@@ -1352,11 +1360,15 @@ mod tests {
 
         // Open and edit a buffer as both guests B and C.
         let buffer_b = project_b
-            .update(cx_b, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
+            .update(cx_b, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "file1"), cx)
+            })
             .await
             .unwrap();
         let buffer_c = project_c
-            .update(cx_c, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
+            .update(cx_c, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "file1"), cx)
+            })
             .await
             .unwrap();
         buffer_b.update(cx_b, |buf, cx| buf.edit([0..0], "i-am-b, ", cx));
@@ -1364,7 +1376,9 @@ mod tests {
 
         // Open and edit that buffer as the host.
         let buffer_a = project_a
-            .update(cx_a, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
+            .update(cx_a, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "file1"), cx)
+            })
             .await
             .unwrap();
 
@@ -1514,7 +1528,9 @@ mod tests {
 
         // Open a buffer as client B
         let buffer_b = project_b
-            .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+            .update(cx_b, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "a.txt"), cx)
+            })
             .await
             .unwrap();
 
@@ -1597,7 +1613,9 @@ mod tests {
 
         // Open a buffer as client B
         let buffer_b = project_b
-            .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+            .update(cx_b, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "a.txt"), cx)
+            })
             .await
             .unwrap();
         buffer_b.read_with(cx_b, |buf, _| {
@@ -1677,14 +1695,16 @@ mod tests {
 
         // Open a buffer as client A
         let buffer_a = project_a
-            .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+            .update(cx_a, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "a.txt"), cx)
+            })
             .await
             .unwrap();
 
         // Start opening the same buffer as client B
-        let buffer_b = cx_b
-            .background()
-            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx)));
+        let buffer_b = cx_b.background().spawn(project_b.update(cx_b, |p, cx| {
+            p.open_buffer_for_path((worktree_id, "a.txt"), cx)
+        }));
 
         // Edit the buffer as client A while client B is still opening it.
         cx_b.background().simulate_random_delay().await;
@@ -1760,9 +1780,9 @@ mod tests {
             .await;
 
         // Begin opening a buffer as client B, but leave the project before the open completes.
-        let buffer_b = cx_b
-            .background()
-            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx)));
+        let buffer_b = cx_b.background().spawn(project_b.update(cx_b, |p, cx| {
+            p.open_buffer_for_path((worktree_id, "a.txt"), cx)
+        }));
         cx_b.update(|_| drop(project_b));
         drop(buffer_b);
 
@@ -1932,7 +1952,7 @@ mod tests {
         let _ = cx_a
             .background()
             .spawn(project_a.update(cx_a, |project, cx| {
-                project.open_buffer(
+                project.open_buffer_for_path(
                     ProjectPath {
                         worktree_id,
                         path: Path::new("other.rs").into(),
@@ -2053,7 +2073,9 @@ mod tests {
         // Open the file with the errors on client B. They should be present.
         let buffer_b = cx_b
             .background()
-            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
+            .spawn(project_b.update(cx_b, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "a.rs"), cx)
+            }))
             .await
             .unwrap();
 
@@ -2171,7 +2193,9 @@ mod tests {
 
         // Open a file in an editor as the guest.
         let buffer_b = project_b
-            .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+            .update(cx_b, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "main.rs"), cx)
+            })
             .await
             .unwrap();
         let (window_b, _) = cx_b.add_window(|_| EmptyView);
@@ -2245,7 +2269,9 @@ mod tests {
 
         // Open the buffer on the host.
         let buffer_a = project_a
-            .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+            .update(cx_a, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "main.rs"), cx)
+            })
             .await
             .unwrap();
         buffer_a
@@ -2369,7 +2395,9 @@ mod tests {
 
         let buffer_b = cx_b
             .background()
-            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
+            .spawn(project_b.update(cx_b, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "a.rs"), cx)
+            }))
             .await
             .unwrap();
 
@@ -2477,7 +2505,9 @@ mod tests {
         // Open the file on client B.
         let buffer_b = cx_b
             .background()
-            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
+            .spawn(project_b.update(cx_b, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "a.rs"), cx)
+            }))
             .await
             .unwrap();
 
@@ -2616,7 +2646,9 @@ mod tests {
         // Open the file on client B.
         let buffer_b = cx_b
             .background()
-            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "one.rs"), cx)))
+            .spawn(project_b.update(cx_b, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "one.rs"), cx)
+            }))
             .await
             .unwrap();
 
@@ -2845,7 +2877,9 @@ mod tests {
         // Open the file on client B.
         let buffer_b = cx_b
             .background()
-            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx)))
+            .spawn(project_b.update(cx_b, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "main.rs"), cx)
+            }))
             .await
             .unwrap();
 
@@ -2992,7 +3026,9 @@ mod tests {
         // Cause the language server to start.
         let _buffer = cx_b
             .background()
-            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "one.rs"), cx)))
+            .spawn(project_b.update(cx_b, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "one.rs"), cx)
+            }))
             .await
             .unwrap();
 
@@ -3123,7 +3159,9 @@ mod tests {
 
         let buffer_b1 = cx_b
             .background()
-            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
+            .spawn(project_b.update(cx_b, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "a.rs"), cx)
+            }))
             .await
             .unwrap();
 
@@ -3139,9 +3177,13 @@ mod tests {
         let buffer_b2;
         if rng.gen() {
             definitions = project_b.update(cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
-            buffer_b2 = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "b.rs"), cx));
+            buffer_b2 = project_b.update(cx_b, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "b.rs"), cx)
+            });
         } else {
-            buffer_b2 = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "b.rs"), cx));
+            buffer_b2 = project_b.update(cx_b, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "b.rs"), cx)
+            });
             definitions = project_b.update(cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
         }
 
@@ -4762,7 +4804,7 @@ mod tests {
                                 );
                                 let buffer = project
                                     .update(&mut cx, |project, cx| {
-                                        project.open_buffer(project_path, cx)
+                                        project.open_buffer_for_path(project_path, cx)
                                     })
                                     .await
                                     .unwrap();
@@ -4879,7 +4921,7 @@ mod tests {
                     );
                     let buffer = project
                         .update(&mut cx, |project, cx| {
-                            project.open_buffer(project_path.clone(), cx)
+                            project.open_buffer_for_path(project_path.clone(), cx)
                         })
                         .await
                         .unwrap();

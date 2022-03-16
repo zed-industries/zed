@@ -5,7 +5,7 @@ use gpui::{
     View, ViewContext, ViewHandle, WeakModelHandle,
 };
 use language::{Bias, Buffer, Diagnostic, File as _};
-use project::{File, Project, ProjectEntryId, ProjectPath};
+use project::{File, Project, ProjectPath};
 use std::fmt::Write;
 use std::path::PathBuf;
 use text::{Point, Selection};
@@ -34,7 +34,7 @@ impl PathOpener for BufferOpener {
         window_id: usize,
         cx: &mut ModelContext<Project>,
     ) -> Option<Task<Result<Box<dyn ItemViewHandle>>>> {
-        let buffer = project.open_buffer(project_path, cx);
+        let buffer = project.open_buffer_for_path(project_path, cx);
         Some(cx.spawn(|project, mut cx| async move {
             let buffer = buffer.await?;
             let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
@@ -73,10 +73,6 @@ impl ItemView for Editor {
             worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
         })
-    }
-
-    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId> {
-        File::from_dyn(self.buffer().read(cx).file(cx)).and_then(|file| file.project_entry_id(cx))
     }
 
     fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>

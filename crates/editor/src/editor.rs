@@ -846,10 +846,7 @@ impl Editor {
             .and_then(|file| file.project_entry_id(cx))
         {
             return workspace
-                .open_item_for_project_entry(project_entry, cx, |cx| {
-                    let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-                    Editor::for_buffer(multibuffer, Some(project.clone()), cx)
-                })
+                .open_editor(project_entry, cx)
                 .downcast::<Editor>()
                 .unwrap();
         }
@@ -8442,7 +8439,9 @@ mod tests {
             .0
             .read_with(cx, |tree, _| tree.id());
         let buffer = project
-            .update(cx, |project, cx| project.open_buffer((worktree_id, ""), cx))
+            .update(cx, |project, cx| {
+                project.open_buffer_for_path((worktree_id, ""), cx)
+            })
             .await
             .unwrap();
         let mut fake_server = fake_servers.next().await.unwrap();

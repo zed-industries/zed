@@ -818,7 +818,19 @@ impl Project {
         Ok(buffer)
     }
 
-    pub fn open_buffer(
+    pub fn open_buffer_for_entry(
+        &mut self,
+        entry_id: ProjectEntryId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<Buffer>>> {
+        if let Some(project_path) = self.path_for_entry(entry_id, cx) {
+            self.open_buffer_for_path(project_path, cx)
+        } else {
+            Task::ready(Err(anyhow!("entry not found")))
+        }
+    }
+
+    pub fn open_buffer_for_path(
         &mut self,
         path: impl Into<ProjectPath>,
         cx: &mut ModelContext<Self>,
@@ -953,8 +965,10 @@ impl Project {
                 worktree_id: worktree.read_with(&cx, |worktree, _| worktree.id()),
                 path: relative_path.into(),
             };
-            this.update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
-                .await
+            this.update(&mut cx, |this, cx| {
+                this.open_buffer_for_path(project_path, cx)
+            })
+            .await
         })
     }
 
@@ -2854,7 +2868,9 @@ impl Project {
                     let buffers_tx = buffers_tx.clone();
                     cx.spawn(|mut cx| async move {
                         if let Some(buffer) = this
-                            .update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
+                            .update(&mut cx, |this, cx| {
+                                this.open_buffer_for_path(project_path, cx)
+                            })
                             .await
                             .log_err()
                         {
@@ -3256,6 +3272,14 @@ impl Project {
             .read(cx)
             .entry_for_path(&path.path)
             .map(|entry| entry.id)
+    }
+
+    pub fn path_for_entry(&self, entry_id: ProjectEntryId, cx: &AppContext) -> Option<ProjectPath> {
+        let worktree = self.worktree_for_entry(entry_id, cx)?;
+        let worktree = worktree.read(cx);
+        let worktree_id = worktree.id();
+        let path = worktree.entry_for_id(entry_id)?.path.clone();
+        Some(ProjectPath { worktree_id, path })
     }
 
     // RPC message handlers
@@ -3867,7 +3891,7 @@ impl Project {
         let peer_id = envelope.original_sender_id()?;
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let open_buffer = this.update(&mut cx, |this, cx| {
-            this.open_buffer(
+            this.open_buffer_for_path(
                 ProjectPath {
                     worktree_id,
                     path: PathBuf::from(envelope.payload.path).into(),
@@ -4664,7 +4688,7 @@ mod tests {
         // Open a buffer without an associated language server.
         let toml_buffer = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "Cargo.toml"), cx)
+                project.open_buffer_for_path((worktree_id, "Cargo.toml"), cx)
             })
             .await
             .unwrap();
@@ -4672,7 +4696,7 @@ mod tests {
         // Open a buffer with an associated language server.
         let rust_buffer = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "test.rs"), cx)
+                project.open_buffer_for_path((worktree_id, "test.rs"), cx)
             })
             .await
             .unwrap();
@@ -4719,7 +4743,7 @@ mod tests {
         // Open a third buffer with a different associated language server.
         let json_buffer = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "package.json"), cx)
+                project.open_buffer_for_path((worktree_id, "package.json"), cx)
             })
             .await
             .unwrap();
@@ -4750,7 +4774,7 @@ mod tests {
         // it is also configured based on the existing language server's capabilities.
         let rust_buffer2 = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "test2.rs"), cx)
+                project.open_buffer_for_path((worktree_id, "test2.rs"), cx)
             })
             .await
             .unwrap();
@@ -4861,7 +4885,7 @@ mod tests {
         // Cause worktree to start the fake language server
         let _buffer = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, Path::new("b.rs")), cx)
+                project.open_buffer_for_path((worktree_id, Path::new("b.rs")), cx)
             })
             .await
             .unwrap();
@@ -4908,7 +4932,9 @@ mod tests {
         );
 
         let buffer = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
+            .update(cx, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "a.rs"), cx)
+            })
             .await
             .unwrap();
 
@@ -4975,7 +5001,7 @@ mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "a.rs"), cx)
+                project.open_buffer_for_path((worktree_id, "a.rs"), cx)
             })
             .await
             .unwrap();
@@ -5251,7 +5277,7 @@ mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "a.rs"), cx)
+                project.open_buffer_for_path((worktree_id, "a.rs"), cx)
             })
             .await
             .unwrap();
@@ -5356,7 +5382,7 @@ mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "a.rs"), cx)
+                project.open_buffer_for_path((worktree_id, "a.rs"), cx)
             })
             .await
             .unwrap();
@@ -5514,7 +5540,7 @@ mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "a.rs"), cx)
+                project.open_buffer_for_path((worktree_id, "a.rs"), cx)
             })
             .await
             .unwrap();
@@ -5697,7 +5723,7 @@ mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_buffer(
+                project.open_buffer_for_path(
                     ProjectPath {
                         worktree_id,
                         path: Path::new("").into(),
@@ -5793,7 +5819,9 @@ mod tests {
             .read_with(cx, |tree, _| tree.id());
 
         let buffer = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
+            .update(cx, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "file1"), cx)
+            })
             .await
             .unwrap();
         buffer
@@ -5831,7 +5859,7 @@ mod tests {
             .read_with(cx, |tree, _| tree.id());
 
         let buffer = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, ""), cx))
+            .update(cx, |p, cx| p.open_buffer_for_path((worktree_id, ""), cx))
             .await
             .unwrap();
         buffer
@@ -5881,7 +5909,7 @@ mod tests {
 
         let opened_buffer = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "file1"), cx)
+                project.open_buffer_for_path((worktree_id, "file1"), cx)
             })
             .await
             .unwrap();
@@ -5916,7 +5944,8 @@ mod tests {
         let worktree_id = tree.read_with(cx, |tree, _| tree.id());
 
         let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
-            let buffer = project.update(cx, |p, cx| p.open_buffer((worktree_id, path), cx));
+            let buffer =
+                project.update(cx, |p, cx| p.open_buffer_for_path((worktree_id, path), cx));
             async move { buffer.await.unwrap() }
         };
         let id_for_path = |path: &'static str, cx: &gpui::TestAppContext| {
@@ -6065,9 +6094,9 @@ mod tests {
         // Spawn multiple tasks to open paths, repeating some paths.
         let (buffer_a_1, buffer_b, buffer_a_2) = project.update(cx, |p, cx| {
             (
-                p.open_buffer((worktree_id, "a.txt"), cx),
-                p.open_buffer((worktree_id, "b.txt"), cx),
-                p.open_buffer((worktree_id, "a.txt"), cx),
+                p.open_buffer_for_path((worktree_id, "a.txt"), cx),
+                p.open_buffer_for_path((worktree_id, "b.txt"), cx),
+                p.open_buffer_for_path((worktree_id, "a.txt"), cx),
             )
         });
 
@@ -6084,7 +6113,9 @@ mod tests {
         // Open the same path again while it is still open.
         drop(buffer_a_1);
         let buffer_a_3 = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+            .update(cx, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "a.txt"), cx)
+            })
             .await
             .unwrap();
 
@@ -6117,7 +6148,9 @@ mod tests {
             .await;
 
         let buffer1 = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
+            .update(cx, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "file1"), cx)
+            })
             .await
             .unwrap();
         let events = Rc::new(RefCell::new(Vec::new()));
@@ -6187,7 +6220,9 @@ mod tests {
         // When a file is deleted, the buffer is considered dirty.
         let events = Rc::new(RefCell::new(Vec::new()));
         let buffer2 = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "file2"), cx))
+            .update(cx, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "file2"), cx)
+            })
             .await
             .unwrap();
         buffer2.update(cx, |_, cx| {
@@ -6208,7 +6243,9 @@ mod tests {
         // When a file is already dirty when deleted, we don't emit a Dirtied event.
         let events = Rc::new(RefCell::new(Vec::new()));
         let buffer3 = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "file3"), cx))
+            .update(cx, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "file3"), cx)
+            })
             .await
             .unwrap();
         buffer3.update(cx, |_, cx| {
@@ -6254,7 +6291,9 @@ mod tests {
 
         let abs_path = dir.path().join("the-file");
         let buffer = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "the-file"), cx))
+            .update(cx, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "the-file"), cx)
+            })
             .await
             .unwrap();
 
@@ -6360,7 +6399,9 @@ mod tests {
         let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
 
         let buffer = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
+            .update(cx, |p, cx| {
+                p.open_buffer_for_path((worktree_id, "a.rs"), cx)
+            })
             .await
             .unwrap();
 
@@ -6633,7 +6674,7 @@ mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, Path::new("one.rs")), cx)
+                project.open_buffer_for_path((worktree_id, Path::new("one.rs")), cx)
             })
             .await
             .unwrap();
@@ -6771,7 +6812,7 @@ mod tests {
 
         let buffer_4 = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "four.rs"), cx)
+                project.open_buffer_for_path((worktree_id, "four.rs"), cx)
             })
             .await
             .unwrap();

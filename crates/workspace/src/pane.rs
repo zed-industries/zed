@@ -258,14 +258,13 @@ impl Pane {
                     if let Some(item) = item.log_err() {
                         pane.update(&mut cx, |pane, cx| {
                             pane.nav_history.borrow_mut().set_mode(mode);
-                            let item = pane.open_item(item, cx);
+                            pane.open_item(item, cx);
                             pane.nav_history
                                 .borrow_mut()
                                 .set_mode(NavigationMode::Normal);
                             if let Some(data) = entry.data {
                                 item.navigate(data, cx);
                             }
-                            item
                         });
                     } else {
                         workspace
@@ -281,34 +280,43 @@ impl Pane {
         }
     }
 
-    pub fn open_item(
+    pub(crate) fn open_editor(
         &mut self,
-        item_view_to_open: Box<dyn ItemViewHandle>,
+        project_entry_id: ProjectEntryId,
         cx: &mut ViewContext<Self>,
+        build_editor: impl FnOnce(&mut MutableAppContext) -> Box<dyn ItemViewHandle>,
     ) -> Box<dyn ItemViewHandle> {
-        // Find an existing view for the same project entry.
-        for (ix, (entry_id, item_view)) in self.item_views.iter().enumerate() {
-            if *entry_id == item_view_to_open.project_entry_id(cx) {
+        for (ix, (existing_entry_id, item_view)) in self.item_views.iter().enumerate() {
+            if *existing_entry_id == Some(project_entry_id) {
                 let item_view = item_view.boxed_clone();
                 self.activate_item(ix, cx);
                 return item_view;
             }
         }
 
-        item_view_to_open.set_nav_history(self.nav_history.clone(), cx);
-        self.add_item_view(item_view_to_open.boxed_clone(), cx);
-        item_view_to_open
+        let item_view = build_editor(cx);
+        self.add_item(Some(project_entry_id), item_view.boxed_clone(), cx);
+        item_view
     }
 
-    pub fn add_item_view(
+    pub fn open_item(
         &mut self,
-        mut item_view: Box<dyn ItemViewHandle>,
+        item_view_to_open: Box<dyn ItemViewHandle>,
         cx: &mut ViewContext<Self>,
     ) {
-        item_view.added_to_pane(cx);
+        self.add_item(None, item_view_to_open.boxed_clone(), cx);
+    }
+
+    pub(crate) fn add_item(
+        &mut self,
+        project_entry_id: Option<ProjectEntryId>,
+        mut item: Box<dyn ItemViewHandle>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        item.set_nav_history(self.nav_history.clone(), cx);
+        item.added_to_pane(cx);
         let item_idx = cmp::min(self.active_item_index + 1, self.item_views.len());
-        self.item_views
-            .insert(item_idx, (item_view.project_entry_id(cx), item_view));
+        self.item_views.insert(item_idx, (project_entry_id, item));
         self.activate_item(item_idx, cx);
         cx.notify();
     }
@@ -321,6 +329,16 @@ impl Pane {
         self.item_views
             .get(self.active_item_index)
             .map(|(_, view)| view.clone())
+    }
+
+    pub fn project_entry_id_for_item(&self, item: &dyn ItemViewHandle) -> Option<ProjectEntryId> {
+        self.item_views.iter().find_map(|(entry_id, existing)| {
+            if existing.id() == item.id() {
+                *entry_id
+            } else {
+                None
+            }
+        })
     }
 
     pub fn item_for_entry(&self, entry_id: ProjectEntryId) -> Option<Box<dyn ItemViewHandle>> {
