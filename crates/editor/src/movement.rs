@@ -1,35 +1,33 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{char_kind, CharKind, ToPoint};
-use anyhow::Result;
 use language::Point;
 use std::ops::Range;
 
-pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> Result<DisplayPoint> {
+pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint, wrap: bool) -> DisplayPoint {
     if point.column() > 0 {
         *point.column_mut() -= 1;
-    } else if point.row() > 0 {
+    } else if wrap && point.row() > 0 {
         *point.row_mut() -= 1;
         *point.column_mut() = map.line_len(point.row());
     }
-    Ok(map.clip_point(point, Bias::Left))
+    map.clip_point(point, Bias::Left)
 }
 
-pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> Result<DisplayPoint> {
-    let max_column = map.line_len(point.row());
-    if point.column() < max_column {
+pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint, wrap: bool) -> DisplayPoint {
+    if point.column() < map.line_len(point.row()) {
         *point.column_mut() += 1;
-    } else if point.row() < map.max_point().row() {
+    } else if wrap && point.row() < map.max_point().row() {
         *point.row_mut() += 1;
         *point.column_mut() = 0;
     }
-    Ok(map.clip_point(point, Bias::Right))
+    map.clip_point(point, Bias::Right)
 }
 
 pub fn up(
     map: &DisplaySnapshot,
     start: DisplayPoint,
     goal: SelectionGoal,
-) -> Result<(DisplayPoint, SelectionGoal)> {
+) -> (DisplayPoint, SelectionGoal) {
     let mut goal_column = if let SelectionGoal::Column(column) = goal {
         column
     } else {
@@ -54,17 +52,17 @@ pub fn up(
         Bias::Right
     };
 
-    Ok((
+    (
         map.clip_point(point, clip_bias),
         SelectionGoal::Column(goal_column),
-    ))
+    )
 }
 
 pub fn down(
     map: &DisplaySnapshot,
     start: DisplayPoint,
     goal: SelectionGoal,
-) -> Result<(DisplayPoint, SelectionGoal)> {
+) -> (DisplayPoint, SelectionGoal) {
     let mut goal_column = if let SelectionGoal::Column(column) = goal {
         column
     } else {
@@ -86,10 +84,10 @@ pub fn down(
         Bias::Right
     };
 
-    Ok((
+    (
         map.clip_point(point, clip_bias),
         SelectionGoal::Column(goal_column),
-    ))
+    )
 }
 
 pub fn line_beginning(
@@ -132,58 +130,140 @@ pub fn line_end(
     }
 }
 
-pub fn prev_word_boundary(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
-    let mut line_start = 0;
-    if point.row() > 0 {
-        if let Some(indent) = map.soft_wrap_indent(point.row() - 1) {
-            line_start = indent;
+pub fn prev_word_boundary(
+    map: &DisplaySnapshot,
+    mut point: DisplayPoint,
+    wrap: bool,
+    ignore_symbols: bool,
+) -> DisplayPoint {
+    loop {
+        let mut line_start = 0;
+        if point.row() > 0 {
+            if let Some(indent) = map.soft_wrap_indent(point.row() - 1) {
+                line_start = indent;
+            }
         }
-    }
 
-    if point.column() == line_start {
-        if point.row() == 0 {
-            return DisplayPoint::new(0, 0);
+        if point.column() == line_start {
+            if point.row() == 0 {
+                return DisplayPoint::new(0, 0);
+            } else {
+                let row = point.row() - 1;
+                point = map.clip_point(DisplayPoint::new(row, map.line_len(row)), Bias::Left);
+            }
+        }
+
+        let mut boundary = DisplayPoint::new(point.row(), 0);
+        let mut column = 0;
+        let mut found_boundary = false;
+        let mut prev_char_kind = CharKind::Newline;
+        for c in map.chars_at(DisplayPoint::new(point.row(), 0)) {
+            if column >= point.column() {
+                break;
+            }
+
+            let char_kind = char_kind(c);
+            if char_kind.visible() {
+                if (ignore_symbols && !prev_char_kind.visible())
+                    || (!ignore_symbols && char_kind != prev_char_kind)
+                {
+                    *boundary.column_mut() = column;
+                    found_boundary = true;
+                }
+            }
+
+            prev_char_kind = char_kind;
+            column += c.len_utf8() as u32;
+        }
+
+        if wrap && !found_boundary {
+            // Trigger a line wrap to the end of the next line
+            // and run again
+            *point.column_mut() = line_start;
         } else {
-            let row = point.row() - 1;
-            point = map.clip_point(DisplayPoint::new(row, map.line_len(row)), Bias::Left);
+            return boundary;
         }
     }
-
-    let mut boundary = DisplayPoint::new(point.row(), 0);
-    let mut column = 0;
-    let mut prev_char_kind = CharKind::Newline;
-    for c in map.chars_at(DisplayPoint::new(point.row(), 0)) {
-        if column >= point.column() {
-            break;
-        }
-
-        let char_kind = char_kind(c);
-        if char_kind != prev_char_kind
-            && char_kind != CharKind::Whitespace
-            && char_kind != CharKind::Newline
-        {
-            *boundary.column_mut() = column;
-        }
-
-        prev_char_kind = char_kind;
-        column += c.len_utf8() as u32;
-    }
-    boundary
+    // TODO: Determine whether clip_point is needed
 }
 
-pub fn next_word_boundary(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
-    let mut prev_char_kind = None;
+pub fn next_word_boundary(
+    map: &DisplaySnapshot,
+    mut point: DisplayPoint,
+    wrap: bool,
+) -> DisplayPoint {
+    let mut prev_char_kind: Option<CharKind> = None;
     for c in map.chars_at(point) {
         let char_kind = char_kind(c);
         if let Some(prev_char_kind) = prev_char_kind {
-            if c == '\n' {
+            if c == '\n' && !wrap {
                 break;
             }
-            if prev_char_kind != char_kind
-                && prev_char_kind != CharKind::Whitespace
-                && prev_char_kind != CharKind::Newline
-            {
+            if prev_char_kind != char_kind && prev_char_kind.visible() {
                 break;
+            }
+        }
+
+        if c == '\n' {
+            *point.row_mut() += 1;
+            *point.column_mut() = 0;
+        } else {
+            *point.column_mut() += c.len_utf8() as u32;
+        }
+        prev_char_kind = Some(char_kind);
+    }
+    map.clip_point(point, Bias::Right)
+}
+
+pub fn next_word(
+    map: &DisplaySnapshot,
+    mut point: DisplayPoint,
+    wrap: bool,
+    ignore_symbols: bool,
+) -> DisplayPoint {
+    let mut prev_char_kind: Option<CharKind> = None;
+    for c in map.chars_at(point) {
+        let char_kind = char_kind(c);
+        if let Some(prev_char_kind) = prev_char_kind {
+            if c == '\n' && !wrap {
+                break;
+            }
+
+            if char_kind.visible() {
+                if (ignore_symbols && !prev_char_kind.visible())
+                    || (!ignore_symbols && prev_char_kind != char_kind)
+                {
+                    break;
+                }
+            }
+        }
+
+        if c == '\n' {
+            *point.row_mut() += 1;
+            *point.column_mut() = 0;
+        } else {
+            *point.column_mut() += c.len_utf8() as u32;
+        }
+        prev_char_kind = Some(char_kind);
+    }
+    map.clip_point(point, Bias::Right)
+}
+
+pub fn end_of_word(
+    map: &DisplaySnapshot,
+    mut point: DisplayPoint,
+    ignore_symbols: bool,
+) -> DisplayPoint {
+    let mut prev_char_kind: Option<CharKind> = None;
+    for c in map.chars_at(point) {
+        let char_kind = char_kind(c);
+        if let Some(prev_char_kind) = prev_char_kind {
+            if prev_char_kind.visible() {
+                if (ignore_symbols && !char_kind.visible())
+                    || (!ignore_symbols && prev_char_kind != char_kind)
+                {
+                    break;
+                }
             }
         }
 
@@ -258,41 +338,41 @@ mod tests {
 
         // Can't move up into the first excerpt's header
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(2, 2), SelectionGoal::Column(2)).unwrap(),
+            up(&snapshot, DisplayPoint::new(2, 2), SelectionGoal::Column(2)),
             (DisplayPoint::new(2, 0), SelectionGoal::Column(0)),
         );
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(2, 0), SelectionGoal::None).unwrap(),
+            up(&snapshot, DisplayPoint::new(2, 0), SelectionGoal::None),
             (DisplayPoint::new(2, 0), SelectionGoal::Column(0)),
         );
 
         // Move up and down within first excerpt
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(4)).unwrap(),
+            up(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(4)),
             (DisplayPoint::new(2, 3), SelectionGoal::Column(4)),
         );
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(2, 3), SelectionGoal::Column(4)).unwrap(),
+            down(&snapshot, DisplayPoint::new(2, 3), SelectionGoal::Column(4)),
             (DisplayPoint::new(3, 4), SelectionGoal::Column(4)),
         );
 
         // Move up and down across second excerpt's header
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(6, 5), SelectionGoal::Column(5)).unwrap(),
+            up(&snapshot, DisplayPoint::new(6, 5), SelectionGoal::Column(5)),
             (DisplayPoint::new(3, 4), SelectionGoal::Column(5)),
         );
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(5)).unwrap(),
+            down(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(5)),
             (DisplayPoint::new(6, 5), SelectionGoal::Column(5)),
         );
 
         // Can't move down off the end
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(7, 0), SelectionGoal::Column(0)).unwrap(),
+            down(&snapshot, DisplayPoint::new(7, 0), SelectionGoal::Column(0)),
             (DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
         );
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(7, 2), SelectionGoal::Column(2)).unwrap(),
+            down(&snapshot, DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
             (DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
         );
     }
@@ -312,44 +392,44 @@ mod tests {
             .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 12)),
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 12), false, false),
             DisplayPoint::new(0, 7)
         );
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 7)),
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 7), false, false),
             DisplayPoint::new(0, 2)
         );
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 6)),
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 6), false, false),
             DisplayPoint::new(0, 2)
         );
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 2)),
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 2), false, false),
             DisplayPoint::new(0, 0)
         );
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 1)),
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 1), false, false),
             DisplayPoint::new(0, 0)
         );
 
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 0)),
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 0), false),
             DisplayPoint::new(0, 1)
         );
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 1)),
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 1), false),
             DisplayPoint::new(0, 6)
         );
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 2)),
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 2), false),
             DisplayPoint::new(0, 6)
         );
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 6)),
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 6), false),
             DisplayPoint::new(0, 12)
         );
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 7)),
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 7), false),
             DisplayPoint::new(0, 12)
         );
     }

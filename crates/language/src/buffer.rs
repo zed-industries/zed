@@ -273,6 +273,17 @@ pub enum CharKind {
     Word,
 }
 
+impl CharKind {
+    pub fn visible(&self) -> bool {
+        match self {
+            CharKind::Newline => false,
+            CharKind::Punctuation => true,
+            CharKind::Whitespace => false,
+            CharKind::Word => true,
+        }
+    }
+}
+
 impl Buffer {
     pub fn new<T: Into<Arc<str>>>(
         replica_id: ReplicaId,
