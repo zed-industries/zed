@@ -3221,6 +3221,16 @@ impl Project {
         self.active_entry
     }
 
+    pub fn entry_for_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<ProjectEntry> {
+        self.worktree_for_id(path.worktree_id, cx)?
+            .read(cx)
+            .entry_for_path(&path.path)
+            .map(|entry| ProjectEntry {
+                worktree_id: path.worktree_id,
+                entry_id: entry.id,
+            })
+    }
+
     // RPC message handlers
 
     async fn handle_unshare_project(

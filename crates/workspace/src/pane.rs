@@ -1,5 +1,5 @@
 use super::{ItemViewHandle, SplitDirection};
-use crate::{ItemHandle, ItemView, Settings, WeakItemViewHandle, Workspace};
+use crate::{ItemView, Settings, WeakItemViewHandle, Workspace};
 use collections::{HashMap, VecDeque};
 use gpui::{
     action,
@@ -10,7 +10,7 @@ use gpui::{
     AnyViewHandle, Entity, MutableAppContext, Quad, RenderContext, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
-use project::ProjectPath;
+use project::{ProjectEntry, ProjectPath};
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
@@ -97,7 +97,7 @@ pub enum Event {
 }
 
 pub struct Pane {
-    item_views: Vec<(usize, Box<dyn ItemViewHandle>)>,
+    item_views: Vec<(Option<usize>, Box<dyn ItemViewHandle>)>,
     active_item_index: usize,
     nav_history: Rc<RefCell<NavHistory>>,
     toolbars: HashMap<TypeId, Box<dyn ToolbarHandle>>,
@@ -281,27 +281,23 @@ impl Pane {
         }
     }
 
-    pub fn open_item<T>(
+    pub fn open_item(
         &mut self,
-        item_handle: T,
-        workspace: &Workspace,
+        item_view_to_open: Box<dyn ItemViewHandle>,
         cx: &mut ViewContext<Self>,
-    ) -> Box<dyn ItemViewHandle>
-    where
-        T: 'static + ItemHandle,
-    {
-        for (ix, (item_id, item_view)) in self.item_views.iter().enumerate() {
-            if *item_id == item_handle.id() {
+    ) -> Box<dyn ItemViewHandle> {
+        // Find an existing view for the same project entry.
+        for (ix, (entry_id, item_view)) in self.item_views.iter().enumerate() {
+            if *entry_id == item_view_to_open.project_entry_id(cx) {
                 let item_view = item_view.boxed_clone();
                 self.activate_item(ix, cx);
                 return item_view;
             }
         }
 
-        let item_view =
-            item_handle.add_view(cx.window_id(), workspace, self.nav_history.clone(), cx);
-        self.add_item_view(item_view.boxed_clone(), cx);
-        item_view
+        item_view_to_open.set_nav_history(self.nav_history.clone(), cx);
+        self.add_item_view(item_view_to_open.boxed_clone(), cx);
+        item_view_to_open
     }
 
     pub fn add_item_view(
@@ -312,16 +308,9 @@ impl Pane {
         item_view.added_to_pane(cx);
         let item_idx = cmp::min(self.active_item_index + 1, self.item_views.len());
         self.item_views
-            .insert(item_idx, (item_view.item(cx).id(), item_view));
+            .insert(item_idx, (item_view.project_entry_id(cx), item_view));
         self.activate_item(item_idx, cx);
         cx.notify();
-    }
-
-    pub fn contains_item(&self, item: &dyn ItemHandle) -> bool {
-        let item_id = item.id();
-        self.item_views
-            .iter()
-            .any(|(existing_item_id, _)| *existing_item_id == item_id)
     }
 
     pub fn item_views(&self) -> impl Iterator<Item = &Box<dyn ItemViewHandle>> {
@@ -334,14 +323,26 @@ impl Pane {
             .map(|(_, view)| view.clone())
     }
 
+    pub fn item_for_entry(&self, entry: ProjectEntry) -> Option<Box<dyn ItemViewHandle>> {
+        self.item_views.iter().find_map(|(id, view)| {
+            if *id == Some(entry.entry_id) {
+                Some(view.boxed_clone())
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn index_for_item_view(&self, item_view: &dyn ItemViewHandle) -> Option<usize> {
         self.item_views
             .iter()
             .position(|(_, i)| i.id() == item_view.id())
     }
 
-    pub fn index_for_item(&self, item: &dyn ItemHandle) -> Option<usize> {
-        self.item_views.iter().position(|(id, _)| *id == item.id())
+    pub fn index_for_item(&self, item: &dyn ItemViewHandle) -> Option<usize> {
+        self.item_views
+            .iter()
+            .position(|(_, my_item)| my_item.id() == item.id())
     }
 
     pub fn activate_item(&mut self, index: usize, cx: &mut ViewContext<Self>) {

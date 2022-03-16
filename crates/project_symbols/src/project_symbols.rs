@@ -1,6 +1,5 @@
 use editor::{
-    combine_syntax_and_fuzzy_match_highlights, items::BufferItemHandle, styled_runs_for_code_label,
-    Autoscroll, Bias, Editor,
+    combine_syntax_and_fuzzy_match_highlights, styled_runs_for_code_label, Autoscroll, Bias, Editor,
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -346,6 +345,7 @@ impl ProjectSymbolsView {
                 let buffer = workspace
                     .project()
                     .update(cx, |project, cx| project.open_buffer_for_symbol(symbol, cx));
+
                 let symbol = symbol.clone();
                 cx.spawn(|workspace, mut cx| async move {
                     let buffer = buffer.await?;
@@ -353,10 +353,8 @@ impl ProjectSymbolsView {
                         let position = buffer
                             .read(cx)
                             .clip_point_utf16(symbol.range.start, Bias::Left);
-                        let editor = workspace
-                            .open_item(BufferItemHandle(buffer), cx)
-                            .downcast::<Editor>()
-                            .unwrap();
+
+                        let editor = Editor::find_or_create(workspace, buffer, cx);
                         editor.update(cx, |editor, cx| {
                             editor.select_ranges(
                                 [position..position],

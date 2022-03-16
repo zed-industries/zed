@@ -595,6 +595,14 @@ impl AsyncAppContext {
         self.update(|cx| cx.add_model(build_model))
     }
 
+    pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
+    where
+        T: View,
+        F: FnOnce(&mut ViewContext<T>) -> T,
+    {
+        self.update(|cx| cx.add_view(window_id, build_view))
+    }
+
     pub fn platform(&self) -> Arc<dyn Platform> {
         self.0.borrow().platform()
     }
@@ -3455,6 +3463,12 @@ impl<T: View> Clone for ViewHandle<T> {
 
 impl<T> PartialEq for ViewHandle<T> {
     fn eq(&self, other: &Self) -> bool {
+        self.window_id == other.window_id && self.view_id == other.view_id
+    }
+}
+
+impl<T> PartialEq<WeakViewHandle<T>> for ViewHandle<T> {
+    fn eq(&self, other: &WeakViewHandle<T>) -> bool {
         self.window_id == other.window_id && self.view_id == other.view_id
     }
 }

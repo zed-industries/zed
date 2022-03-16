@@ -28,7 +28,6 @@ use gpui::{
     ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
-use items::{BufferItemHandle, MultiBufferItemHandle};
 use itertools::Itertools as _;
 pub use language::{char_kind, CharKind};
 use language::{
@@ -836,7 +835,32 @@ impl Editor {
         Self::new(EditorMode::Full, buffer, project, None, cx)
     }
 
-    pub fn clone(&self, nav_history: ItemNavHistory, cx: &mut ViewContext<Self>) -> Self {
+    pub fn find_or_create(
+        workspace: &mut Workspace,
+        buffer: ModelHandle<Buffer>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> ViewHandle<Editor> {
+        let project = workspace.project().clone();
+
+        if let Some(project_entry) =
+            project::File::from_dyn(buffer.read(cx).file()).and_then(|file| file.project_entry(cx))
+        {
+            return workspace
+                .open_item_for_project_entry(project_entry, cx, |cx| {
+                    let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+                    Editor::for_buffer(multibuffer, Some(project.clone()), cx)
+                })
+                .downcast::<Editor>()
+                .unwrap();
+        }
+
+        let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let editor = cx.add_view(|cx| Editor::for_buffer(multibuffer, Some(project.clone()), cx));
+        workspace.open_item(Box::new(editor.clone()), cx);
+        editor
+    }
+
+    pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
         let mut clone = Self::new(
             self.mode,
             self.buffer.clone(),
@@ -846,7 +870,6 @@ impl Editor {
         );
         clone.scroll_position = self.scroll_position;
         clone.scroll_top_anchor = self.scroll_top_anchor.clone();
-        clone.nav_history = Some(nav_history);
         clone.searchable = self.searchable;
         clone
     }
@@ -938,14 +961,20 @@ impl Editor {
         _: &workspace::OpenNew,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let project = workspace.project();
+        let project = workspace.project().clone();
         if project.read(cx).is_remote() {
             cx.propagate_action();
         } else if let Some(buffer) = project
             .update(cx, |project, cx| project.create_buffer(cx))
             .log_err()
         {
-            workspace.open_item(BufferItemHandle(buffer), cx);
+            let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+            workspace.open_item(
+                Box::new(
+                    cx.add_view(|cx| Editor::for_buffer(multibuffer, Some(project.clone()), cx)),
+                ),
+                cx,
+            );
         }
     }
 
@@ -2349,7 +2378,11 @@ impl Editor {
         });
 
         workspace.update(&mut cx, |workspace, cx| {
-            let editor = workspace.open_item(MultiBufferItemHandle(excerpt_buffer), cx);
+            let project = workspace.project().clone();
+            let editor = workspace.open_item(
+                Box::new(cx.add_view(|cx| Editor::for_buffer(excerpt_buffer, Some(project), cx))),
+                cx,
+            );
             if let Some(editor) = editor.act_as::<Self>(cx) {
                 editor.update(cx, |editor, cx| {
                     let color = editor.style(cx).highlighted_line_background;
@@ -4280,20 +4313,17 @@ impl Editor {
                 return;
             };
 
-        let definitions = workspace
-            .project()
-            .update(cx, |project, cx| project.definition(&buffer, head, cx));
+        let project = workspace.project().clone();
+        let definitions = project.update(cx, |project, cx| project.definition(&buffer, head, cx));
         cx.spawn(|workspace, mut cx| async move {
             let definitions = definitions.await?;
             workspace.update(&mut cx, |workspace, cx| {
                 let nav_history = workspace.active_pane().read(cx).nav_history().clone();
                 for definition in definitions {
                     let range = definition.range.to_offset(definition.buffer.read(cx));
-                    let target_editor_handle = workspace
-                        .open_item(BufferItemHandle(definition.buffer), cx)
-                        .downcast::<Self>()
-                        .unwrap();
 
+                    let target_editor_handle =
+                        Self::find_or_create(workspace, definition.buffer, cx);
                     target_editor_handle.update(cx, |target_editor, cx| {
                         // When selecting a definition in a different buffer, disable the nav history
                         // to avoid creating a history entry at the previous cursor location.
@@ -4324,9 +4354,8 @@ impl Editor {
         let (buffer, head) = editor.buffer.read(cx).text_anchor_for_position(head, cx)?;
         let replica_id = editor.replica_id(cx);
 
-        let references = workspace
-            .project()
-            .update(cx, |project, cx| project.references(&buffer, head, cx));
+        let project = workspace.project().clone();
+        let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
         Some(cx.spawn(|workspace, mut cx| async move {
             let mut locations = references.await?;
             if locations.is_empty() {
@@ -4370,13 +4399,13 @@ impl Editor {
             });
 
             workspace.update(&mut cx, |workspace, cx| {
-                let editor = workspace.open_item(MultiBufferItemHandle(excerpt_buffer), cx);
-                if let Some(editor) = editor.act_as::<Self>(cx) {
-                    editor.update(cx, |editor, cx| {
-                        let color = editor.style(cx).highlighted_line_background;
-                        editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
-                    });
-                }
+                let editor =
+                    cx.add_view(|cx| Editor::for_buffer(excerpt_buffer, Some(project), cx));
+                editor.update(cx, |editor, cx| {
+                    let color = editor.style(cx).highlighted_line_background;
+                    editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
+                });
+                workspace.open_item(Box::new(editor), cx);
             });
 
             Ok(())
@@ -5563,17 +5592,10 @@ impl Editor {
         // and activating a new item causes the pane to call a method on us reentrantly,
         // which panics if we're on the stack.
         cx.defer(move |workspace, cx| {
-            for (ix, (buffer, ranges)) in new_selections_by_buffer.into_iter().enumerate() {
-                let buffer = BufferItemHandle(buffer);
-                if ix == 0 && !workspace.activate_pane_for_item(&buffer, cx) {
-                    workspace.activate_next_pane(cx);
-                }
+            workspace.activate_next_pane(cx);
 
-                let editor = workspace
-                    .open_item(buffer, cx)
-                    .downcast::<Editor>()
-                    .unwrap();
-
+            for (buffer, ranges) in new_selections_by_buffer.into_iter() {
+                let editor = Self::find_or_create(workspace, buffer, cx);
                 editor.update(cx, |editor, cx| {
                     editor.select_ranges(ranges, Some(Autoscroll::Newest), cx);
                 });
