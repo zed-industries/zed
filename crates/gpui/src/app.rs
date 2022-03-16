@@ -1413,11 +1413,10 @@ impl MutableAppContext {
                     invalidation: None,
                 },
             );
-            this.open_platform_window(window_id, window_options);
             root_view.update(this, |view, cx| {
                 view.on_focus(cx);
-                cx.notify();
             });
+            this.open_platform_window(window_id, window_options);
 
             (window_id, root_view)
         })
@@ -1475,6 +1474,11 @@ impl MutableAppContext {
             }));
         }
 
+        let scene =
+            presenter
+                .borrow_mut()
+                .build_scene(window.size(), window.scale_factor(), false, self);
+        window.present_scene(scene);
         self.presenters_and_platform_windows
             .insert(window_id, (presenter.clone(), window));
     }
@@ -1666,13 +1670,13 @@ impl MutableAppContext {
             }
         }
 
-        for (window_id, invalidation) in invalidations {
+        for (window_id, mut invalidation) in invalidations {
             if let Some((presenter, mut window)) =
                 self.presenters_and_platform_windows.remove(&window_id)
             {
                 {
                     let mut presenter = presenter.borrow_mut();
-                    presenter.invalidate(invalidation, self);
+                    presenter.invalidate(&mut invalidation, self);
                     let scene =
                         presenter.build_scene(window.size(), window.scale_factor(), false, self);
                     window.present_scene(scene);
@@ -1695,7 +1699,7 @@ impl MutableAppContext {
     fn perform_window_refresh(&mut self) {
         let mut presenters = mem::take(&mut self.presenters_and_platform_windows);
         for (window_id, (presenter, window)) in &mut presenters {
-            let invalidation = self
+            let mut invalidation = self
                 .cx
                 .windows
                 .get_mut(&window_id)
@@ -1703,7 +1707,10 @@ impl MutableAppContext {
                 .invalidation
                 .take();
             let mut presenter = presenter.borrow_mut();
-            presenter.refresh(invalidation, self);
+            presenter.refresh(
+                invalidation.as_mut().unwrap_or(&mut Default::default()),
+                self,
+            );
             let scene = presenter.build_scene(window.size(), window.scale_factor(), true, self);
             window.present_scene(scene);
         }
@@ -5362,5 +5369,66 @@ mod tests {
         let condition = view.condition(&cx, |_, _| false);
         cx.update(|_| drop(view));
         condition.await;
+    }
+
+    #[crate::test(self)]
+    fn test_refresh_windows(cx: &mut MutableAppContext) {
+        struct View(usize);
+
+        impl super::Entity for View {
+            type Event = ();
+        }
+
+        impl super::View for View {
+            fn ui_name() -> &'static str {
+                "test view"
+            }
+
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+                Empty::new().named(format!("render count: {}", post_inc(&mut self.0)))
+            }
+        }
+
+        let (window_id, root_view) = cx.add_window(Default::default(), |_| View(0));
+        let presenter = cx.presenters_and_platform_windows[&window_id].0.clone();
+
+        assert_eq!(
+            presenter.borrow().rendered_views[&root_view.id()].name(),
+            Some("render count: 0")
+        );
+
+        let view = cx.add_view(window_id, |cx| {
+            cx.refresh_windows();
+            View(0)
+        });
+
+        assert_eq!(
+            presenter.borrow().rendered_views[&root_view.id()].name(),
+            Some("render count: 1")
+        );
+        assert_eq!(
+            presenter.borrow().rendered_views[&view.id()].name(),
+            Some("render count: 0")
+        );
+
+        cx.update(|cx| cx.refresh_windows());
+        assert_eq!(
+            presenter.borrow().rendered_views[&root_view.id()].name(),
+            Some("render count: 2")
+        );
+        assert_eq!(
+            presenter.borrow().rendered_views[&view.id()].name(),
+            Some("render count: 1")
+        );
+
+        cx.update(|cx| {
+            cx.refresh_windows();
+            drop(view);
+        });
+        assert_eq!(
+            presenter.borrow().rendered_views[&root_view.id()].name(),
+            Some("render count: 3")
+        );
+        assert_eq!(presenter.borrow().rendered_views.len(), 1);
     }
 }
