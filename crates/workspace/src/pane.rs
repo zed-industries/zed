@@ -256,16 +256,16 @@ impl Pane {
                 let item = task.await;
                 if let Some(pane) = pane.upgrade(&cx) {
                     if let Some(item) = item.log_err() {
-                        workspace.update(&mut cx, |workspace, cx| {
-                            pane.update(cx, |p, _| p.nav_history.borrow_mut().set_mode(mode));
-                            let item_view = workspace.open_item_in_pane(item, &pane, cx);
-                            pane.update(cx, |p, _| {
-                                p.nav_history.borrow_mut().set_mode(NavigationMode::Normal)
-                            });
-
+                        pane.update(&mut cx, |pane, cx| {
+                            pane.nav_history.borrow_mut().set_mode(mode);
+                            let item = pane.open_item(item, cx);
+                            pane.nav_history
+                                .borrow_mut()
+                                .set_mode(NavigationMode::Normal);
                             if let Some(data) = entry.data {
-                                item_view.navigate(data, cx);
+                                item.navigate(data, cx);
                             }
+                            item
                         });
                     } else {
                         workspace

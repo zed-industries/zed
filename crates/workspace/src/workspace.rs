@@ -658,14 +658,12 @@ impl Workspace {
     ) -> Task<Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>> {
         let load_task = self.load_path(path, cx);
         let pane = self.active_pane().clone().downgrade();
-        cx.spawn(|this, mut cx| async move {
+        cx.as_mut().spawn(|mut cx| async move {
             let item = load_task.await?;
-            this.update(&mut cx, |this, cx| {
-                let pane = pane
-                    .upgrade(cx)
-                    .ok_or_else(|| anyhow!("could not upgrade pane reference"))?;
-                Ok(this.open_item_in_pane(item, &pane, cx))
-            })
+            let pane = pane
+                .upgrade(&cx)
+                .ok_or_else(|| anyhow!("could not upgrade pane reference"))?;
+            Ok(pane.update(&mut cx, |pane, cx| pane.open_item(item, cx)))
         })
     }
 
@@ -836,16 +834,8 @@ impl Workspace {
         item_view: Box<dyn ItemViewHandle>,
         cx: &mut ViewContext<Self>,
     ) -> Box<dyn ItemViewHandle> {
-        self.open_item_in_pane(item_view, &self.active_pane().clone(), cx)
-    }
-
-    pub fn open_item_in_pane(
-        &mut self,
-        item_view: Box<dyn ItemViewHandle>,
-        pane: &ViewHandle<Pane>,
-        cx: &mut ViewContext<Self>,
-    ) -> Box<dyn ItemViewHandle> {
-        pane.update(cx, |pane, cx| pane.open_item(item_view, cx))
+        self.active_pane()
+            .update(cx, |pane, cx| pane.open_item(item_view, cx))
     }
 
     pub fn open_item_for_project_entry<T, F>(
