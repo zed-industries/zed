@@ -847,27 +847,6 @@ impl Editor {
         Self::new(EditorMode::Full, buffer, project, None, cx)
     }
 
-    pub fn find_or_create(
-        workspace: &mut Workspace,
-        buffer: ModelHandle<Buffer>,
-        cx: &mut ViewContext<Workspace>,
-    ) -> ViewHandle<Editor> {
-        let project = workspace.project().clone();
-
-        if let Some(item) = project::File::from_dyn(buffer.read(cx).file())
-            .and_then(|file| file.project_entry_id(cx))
-            .and_then(|entry_id| workspace.active_pane().read(cx).item_for_entry(entry_id))
-            .and_then(|item| item.downcast())
-        {
-            workspace.activate_item(&item, cx);
-            return item;
-        }
-
-        let editor = cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx));
-        workspace.add_item(Box::new(editor.clone()), cx);
-        editor
-    }
-
     pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
         let mut clone = Self::new(
             self.mode,
@@ -4324,8 +4303,7 @@ impl Editor {
                 for definition in definitions {
                     let range = definition.range.to_offset(definition.buffer.read(cx));
 
-                    let target_editor_handle =
-                        Self::find_or_create(workspace, definition.buffer, cx);
+                    let target_editor_handle = workspace.open_project_item(definition.buffer, cx);
                     target_editor_handle.update(cx, |target_editor, cx| {
                         // When selecting a definition in a different buffer, disable the nav history
                         // to avoid creating a history entry at the previous cursor location.
@@ -5597,7 +5575,7 @@ impl Editor {
             workspace.activate_next_pane(cx);
 
             for (buffer, ranges) in new_selections_by_buffer.into_iter() {
-                let editor = Self::find_or_create(workspace, buffer, cx);
+                let editor = workspace.open_project_item::<Self>(buffer, cx);
                 editor.update(cx, |editor, cx| {
                     editor.select_ranges(ranges, Some(Autoscroll::Newest), cx);
                 });

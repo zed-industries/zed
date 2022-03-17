@@ -280,7 +280,7 @@ impl Pane {
         }
     }
 
-    pub(crate) fn open_item(
+    pub fn open_item(
         &mut self,
         project_entry_id: ProjectEntryId,
         cx: &mut ViewContext<Self>,

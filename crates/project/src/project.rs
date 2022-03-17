@@ -49,6 +49,10 @@ use util::{post_inc, ResultExt, TryFutureExt as _};
 pub use fs::*;
 pub use worktree::*;
 
+pub trait Item: Entity {
+    fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
+}
+
 pub struct Project {
     worktrees: Vec<WorktreeHandle>,
     active_entry: Option<ProjectEntryId>,
@@ -4520,6 +4524,12 @@ fn relativize_path(base: &Path, path: &Path) -> PathBuf {
         }
     }
     components.iter().map(|c| c.as_os_str()).collect()
+}
+
+impl Item for Buffer {
+    fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId> {
+        File::from_dyn(self.file()).and_then(|file| file.project_entry_id(cx))
+    }
 }
 
 #[cfg(test)]

@@ -4,13 +4,13 @@ use gpui::{
     elements::*, AppContext, Entity, ModelHandle, RenderContext, Subscription, Task, View,
     ViewContext, ViewHandle,
 };
-use language::{Bias, Diagnostic, File as _};
+use language::{Bias, Buffer, Diagnostic, File as _};
 use project::{File, Project, ProjectPath};
 use std::fmt::Write;
 use std::path::PathBuf;
 use text::{Point, Selection};
 use util::ResultExt;
-use workspace::{Item, ItemHandle, ItemNavHistory, Settings, StatusItemView};
+use workspace::{Item, ItemHandle, ItemNavHistory, ProjectItem, Settings, StatusItemView};
 
 impl Item for Editor {
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) {
@@ -129,6 +129,18 @@ impl Item for Editor {
 
     fn should_update_tab_on_event(event: &Event) -> bool {
         matches!(event, Event::Saved | Event::Dirtied | Event::TitleChanged)
+    }
+}
+
+impl ProjectItem for Editor {
+    type Item = Buffer;
+
+    fn for_project_item(
+        project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        Self::for_buffer(buffer, Some(project), cx)
     }
 }
 

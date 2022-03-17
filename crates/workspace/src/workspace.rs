@@ -195,6 +195,16 @@ pub trait Item: View {
     }
 }
 
+pub trait ProjectItem: Item {
+    type Item: project::Item;
+
+    fn for_project_item(
+        project: ModelHandle<Project>,
+        item: ModelHandle<Self::Item>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self;
+}
+
 pub trait ItemHandle: 'static {
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
@@ -831,6 +841,31 @@ impl Workspace {
                 move |cx: &mut MutableAppContext| build_editor(window_id, project, buffer, cx);
             Ok((project_entry_id, build_editor))
         })
+    }
+
+    pub fn open_project_item<T>(
+        &mut self,
+        project_item: ModelHandle<T::Item>,
+        cx: &mut ViewContext<Self>,
+    ) -> ViewHandle<T>
+    where
+        T: ProjectItem,
+    {
+        use project::Item as _;
+
+        if let Some(item) = project_item
+            .read(cx)
+            .entry_id(cx)
+            .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(entry_id))
+            .and_then(|item| item.downcast())
+        {
+            self.activate_item(&item, cx);
+            return item;
+        }
+
+        let item = cx.add_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
+        self.add_item(Box::new(item.clone()), cx);
+        item
     }
 
     pub fn activate_item(&mut self, item: &dyn ItemHandle, cx: &mut ViewContext<Self>) -> bool {

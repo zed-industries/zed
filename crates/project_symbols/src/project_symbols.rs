@@ -354,7 +354,7 @@ impl ProjectSymbolsView {
                             .read(cx)
                             .clip_point_utf16(symbol.range.start, Bias::Left);
 
-                        let editor = Editor::find_or_create(workspace, buffer, cx);
+                        let editor = workspace.open_project_item::<Editor>(buffer, cx);
                         editor.update(cx, |editor, cx| {
                             editor.select_ranges(
                                 [position..position],
