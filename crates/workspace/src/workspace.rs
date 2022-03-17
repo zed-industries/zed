@@ -108,17 +108,16 @@ pub fn init(cx: &mut MutableAppContext) {
     ]);
 }
 
-pub fn register_project_item<F, V>(cx: &mut MutableAppContext, build_item: F)
+pub fn register_project_item<V>(cx: &mut MutableAppContext)
 where
     V: ProjectItem,
-    F: 'static + Fn(ModelHandle<Project>, ModelHandle<V::Item>, &mut ViewContext<V>) -> V,
 {
     cx.update_default_global(|builders: &mut ItemBuilders, _| {
         builders.insert(
             TypeId::of::<V::Item>(),
             Arc::new(move |window_id, project, model, cx| {
-                let model = model.downcast::<V::Item>().unwrap();
-                Box::new(cx.add_view(window_id, |cx| build_item(project, model, cx)))
+                let item = model.downcast::<V::Item>().unwrap();
+                Box::new(cx.add_view(window_id, |cx| V::for_project_item(project, item, cx)))
             }),
         );
     });
@@ -813,13 +812,13 @@ impl Workspace {
         let pane = self.active_pane().downgrade();
         let task = self.load_path(path, cx);
         cx.spawn(|this, mut cx| async move {
-            let (project_entry_id, build_editor) = task.await?;
+            let (project_entry_id, build_item) = task.await?;
             let pane = pane
                 .upgrade(&cx)
                 .ok_or_else(|| anyhow!("pane was closed"))?;
             this.update(&mut cx, |_, cx| {
                 pane.update(cx, |pane, cx| {
-                    Ok(pane.open_item(project_entry_id, cx, build_editor))
+                    Ok(pane.open_item(project_entry_id, cx, build_item))
                 })
             })
         })
