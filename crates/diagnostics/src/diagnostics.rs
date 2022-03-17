@@ -25,7 +25,7 @@ use std::{
     sync::Arc,
 };
 use util::TryFutureExt;
-use workspace::{ItemNavHistory, ItemViewHandle as _, Settings, Workspace};
+use workspace::{ItemHandle as _, ItemNavHistory, Settings, Workspace};
 
 action!(Deploy);
 
@@ -438,7 +438,7 @@ impl ProjectDiagnosticsEditor {
     }
 }
 
-impl workspace::ItemView for ProjectDiagnosticsEditor {
+impl workspace::Item for ProjectDiagnosticsEditor {
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox {
         render_summary(
             &self.summary,

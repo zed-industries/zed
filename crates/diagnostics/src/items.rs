@@ -71,7 +71,7 @@ impl View for DiagnosticSummary {
 impl StatusItemView for DiagnosticSummary {
     fn set_active_pane_item(
         &mut self,
-        _: Option<&dyn workspace::ItemViewHandle>,
+        _: Option<&dyn workspace::ItemHandle>,
         _: &mut ViewContext<Self>,
     ) {
     }

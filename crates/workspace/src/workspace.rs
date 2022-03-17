@@ -47,7 +47,7 @@ pub type BuildEditor = Arc<
         ModelHandle<Project>,
         ModelHandle<Buffer>,
         &mut MutableAppContext,
-    ) -> Box<dyn ItemViewHandle>,
+    ) -> Box<dyn ItemHandle>,
 >;
 
 action!(Open, Arc<AppState>);
@@ -106,7 +106,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
 pub fn register_editor_builder<F, V>(cx: &mut MutableAppContext, build_editor: F)
 where
-    V: ItemView,
+    V: Item,
     F: 'static + Fn(ModelHandle<Project>, ModelHandle<Buffer>, &mut ViewContext<V>) -> V,
 {
     cx.add_app_state::<BuildEditor>(Arc::new(move |window_id, project, model, cx| {
@@ -141,7 +141,7 @@ pub struct JoinProjectParams {
     pub app_state: Arc<AppState>,
 }
 
-pub trait ItemView: View {
+pub trait Item: View {
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) {}
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
@@ -195,12 +195,12 @@ pub trait ItemView: View {
     }
 }
 
-pub trait ItemViewHandle: 'static {
+pub trait ItemHandle: 'static {
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
-    fn boxed_clone(&self) -> Box<dyn ItemViewHandle>;
+    fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn set_nav_history(&self, nav_history: Rc<RefCell<NavHistory>>, cx: &mut MutableAppContext);
-    fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemViewHandle>>;
+    fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemHandle>>;
     fn added_to_pane(&mut self, cx: &mut ViewContext<Pane>);
     fn deactivated(&self, cx: &mut MutableAppContext);
     fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext);
@@ -220,12 +220,12 @@ pub trait ItemViewHandle: 'static {
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle>;
 }
 
-pub trait WeakItemViewHandle {
+pub trait WeakItemHandle {
     fn id(&self) -> usize;
-    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemViewHandle>>;
+    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>>;
 }
 
-impl dyn ItemViewHandle {
+impl dyn ItemHandle {
     pub fn downcast<T: View>(&self) -> Option<ViewHandle<T>> {
         self.to_any().downcast()
     }
@@ -236,7 +236,7 @@ impl dyn ItemViewHandle {
     }
 }
 
-impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
+impl<T: Item> ItemHandle for ViewHandle<T> {
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox {
         self.read(cx).tab_content(style, cx)
     }
@@ -245,7 +245,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         self.read(cx).project_path(cx)
     }
 
-    fn boxed_clone(&self) -> Box<dyn ItemViewHandle> {
+    fn boxed_clone(&self) -> Box<dyn ItemHandle> {
         Box::new(self.clone())
     }
 
@@ -253,11 +253,11 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         &self,
         // nav_history: Rc<RefCell<NavHistory>>,
         cx: &mut MutableAppContext,
-    ) -> Option<Box<dyn ItemViewHandle>> {
+    ) -> Option<Box<dyn ItemHandle>> {
         self.update(cx, |item, cx| {
             cx.add_option_view(|cx| item.clone_on_split(cx))
         })
-        .map(|handle| Box::new(handle) as Box<dyn ItemViewHandle>)
+        .map(|handle| Box::new(handle) as Box<dyn ItemHandle>)
     }
 
     fn set_nav_history(&self, nav_history: Rc<RefCell<NavHistory>>, cx: &mut MutableAppContext) {
@@ -273,7 +273,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
                 return;
             }
             if T::should_activate_item_on_event(event) {
-                if let Some(ix) = pane.index_for_item_view(&item) {
+                if let Some(ix) = pane.index_for_item(&item) {
                     pane.activate_item(ix, cx);
                     pane.activate(cx);
                 }
@@ -335,26 +335,25 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
     }
 }
 
-impl Into<AnyViewHandle> for Box<dyn ItemViewHandle> {
+impl Into<AnyViewHandle> for Box<dyn ItemHandle> {
     fn into(self) -> AnyViewHandle {
         self.to_any()
     }
 }
 
-impl Clone for Box<dyn ItemViewHandle> {
-    fn clone(&self) -> Box<dyn ItemViewHandle> {
+impl Clone for Box<dyn ItemHandle> {
+    fn clone(&self) -> Box<dyn ItemHandle> {
         self.boxed_clone()
     }
 }
 
-impl<T: ItemView> WeakItemViewHandle for WeakViewHandle<T> {
+impl<T: Item> WeakItemHandle for WeakViewHandle<T> {
     fn id(&self) -> usize {
         self.id()
     }
 
-    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemViewHandle>> {
-        self.upgrade(cx)
-            .map(|v| Box::new(v) as Box<dyn ItemViewHandle>)
+    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
+        self.upgrade(cx).map(|v| Box::new(v) as Box<dyn ItemHandle>)
     }
 }
 
@@ -556,7 +555,7 @@ impl Workspace {
         &mut self,
         abs_paths: &[PathBuf],
         cx: &mut ViewContext<Self>,
-    ) -> Task<Vec<Option<Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>>>> {
+    ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>> {
         let entries = abs_paths
             .iter()
             .cloned()
@@ -652,28 +651,28 @@ impl Workspace {
         &self,
         entry_id: ProjectEntryId,
         cx: &AppContext,
-    ) -> Option<Box<dyn ItemViewHandle>> {
+    ) -> Option<Box<dyn ItemHandle>> {
         self.panes()
             .iter()
             .find_map(|pane| pane.read(cx).item_for_entry(entry_id))
     }
 
-    pub fn item_of_type<T: ItemView>(&self, cx: &AppContext) -> Option<ViewHandle<T>> {
+    pub fn item_of_type<T: Item>(&self, cx: &AppContext) -> Option<ViewHandle<T>> {
         self.items_of_type(cx).max_by_key(|item| item.id())
     }
 
-    pub fn items_of_type<'a, T: ItemView>(
+    pub fn items_of_type<'a, T: Item>(
         &'a self,
         cx: &'a AppContext,
     ) -> impl 'a + Iterator<Item = ViewHandle<T>> {
         self.panes.iter().flat_map(|pane| {
             pane.read(cx)
-                .item_views()
+                .items()
                 .filter_map(|item| item.to_any().downcast())
         })
     }
 
-    pub fn active_item(&self, cx: &AppContext) -> Option<Box<dyn ItemViewHandle>> {
+    pub fn active_item(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
         self.active_pane().read(cx).active_item()
     }
 
@@ -792,16 +791,16 @@ impl Workspace {
         pane
     }
 
-    pub fn add_item(&mut self, item_view: Box<dyn ItemViewHandle>, cx: &mut ViewContext<Self>) {
+    pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
         self.active_pane()
-            .update(cx, |pane, cx| pane.add_item(None, item_view, cx))
+            .update(cx, |pane, cx| pane.add_item(None, item, cx))
     }
 
     pub fn open_path(
         &mut self,
         path: ProjectPath,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>> {
+    ) -> Task<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>> {
         let pane = self.active_pane().downgrade();
         let task = self.load_path(path, cx);
         cx.spawn(|this, mut cx| async move {
@@ -824,7 +823,7 @@ impl Workspace {
     ) -> Task<
         Result<(
             ProjectEntryId,
-            impl 'static + FnOnce(&mut MutableAppContext) -> Box<dyn ItemViewHandle>,
+            impl 'static + FnOnce(&mut MutableAppContext) -> Box<dyn ItemHandle>,
         )>,
     > {
         let project = self.project().clone();
@@ -845,7 +844,7 @@ impl Workspace {
         })
     }
 
-    pub fn activate_item(&mut self, item: &dyn ItemViewHandle, cx: &mut ViewContext<Self>) -> bool {
+    pub fn activate_item(&mut self, item: &dyn ItemHandle, cx: &mut ViewContext<Self>) -> bool {
         let result = self.panes.iter().find_map(|pane| {
             if let Some(ix) = pane.read(cx).index_for_item(item) {
                 Some((pane.clone(), ix))

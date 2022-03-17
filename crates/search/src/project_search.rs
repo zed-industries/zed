@@ -16,7 +16,7 @@ use std::{
     path::PathBuf,
 };
 use util::ResultExt as _;
-use workspace::{ItemNavHistory, ItemView, Settings, Workspace};
+use workspace::{Item, ItemNavHistory, Settings, Workspace};
 
 action!(Deploy);
 action!(Search);
@@ -197,7 +197,7 @@ impl View for ProjectSearchView {
     }
 }
 
-impl ItemView for ProjectSearchView {
+impl Item for ProjectSearchView {
     fn act_as_type(
         &self,
         type_id: TypeId,

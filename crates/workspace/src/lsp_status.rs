@@ -1,4 +1,4 @@
-use crate::{ItemViewHandle, Settings, StatusItemView};
+use crate::{ItemHandle, Settings, StatusItemView};
 use futures::StreamExt;
 use gpui::AppContext;
 use gpui::{
@@ -187,5 +187,5 @@ impl View for LspStatus {
 }
 
 impl StatusItemView for LspStatus {
-    fn set_active_pane_item(&mut self, _: Option<&dyn ItemViewHandle>, _: &mut ViewContext<Self>) {}
+    fn set_active_pane_item(&mut self, _: Option<&dyn ItemHandle>, _: &mut ViewContext<Self>) {}
 }

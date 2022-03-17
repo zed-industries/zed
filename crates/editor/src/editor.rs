@@ -6264,7 +6264,7 @@ mod tests {
     #[gpui::test]
     fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
         populate_settings(cx);
-        use workspace::ItemView;
+        use workspace::Item;
         let nav_history = Rc::new(RefCell::new(workspace::NavHistory::default()));
         let buffer = MultiBuffer::build_simple(&sample_text(30, 5, 'a'), cx);
 
@@ -6283,7 +6283,7 @@ mod tests {
             editor.select_display_ranges(&[DisplayPoint::new(13, 0)..DisplayPoint::new(13, 3)], cx);
             let nav_entry = nav_history.borrow_mut().pop_backward().unwrap();
             editor.navigate(nav_entry.data.unwrap(), cx);
-            assert_eq!(nav_entry.item_view.id(), cx.view_id());
+            assert_eq!(nav_entry.item.id(), cx.view_id());
             assert_eq!(
                 editor.selected_display_ranges(cx),
                 &[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)]
@@ -6309,7 +6309,7 @@ mod tests {
             );
             let nav_entry = nav_history.borrow_mut().pop_backward().unwrap();
             editor.navigate(nav_entry.data.unwrap(), cx);
-            assert_eq!(nav_entry.item_view.id(), cx.view_id());
+            assert_eq!(nav_entry.item.id(), cx.view_id());
             assert_eq!(
                 editor.selected_display_ranges(cx),
                 &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]

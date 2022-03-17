@@ -8,7 +8,7 @@ use gpui::{
 use language::OffsetRangeExt;
 use project::search::SearchQuery;
 use std::ops::Range;
-use workspace::{ItemViewHandle, Pane, Settings, Toolbar, Workspace};
+use workspace::{ItemHandle, Pane, Settings, Toolbar, Workspace};
 
 action!(Deploy, bool);
 action!(Dismiss);
@@ -126,7 +126,7 @@ impl View for SearchBar {
 impl Toolbar for SearchBar {
     fn active_item_changed(
         &mut self,
-        item: Option<Box<dyn ItemViewHandle>>,
+        item: Option<Box<dyn ItemHandle>>,
         cx: &mut ViewContext<Self>,
     ) -> bool {
         self.active_editor_subscription.take();

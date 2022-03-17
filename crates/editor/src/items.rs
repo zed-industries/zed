@@ -10,7 +10,7 @@ use std::fmt::Write;
 use std::path::PathBuf;
 use text::{Point, Selection};
 use util::ResultExt;
-use workspace::{ItemNavHistory, ItemView, ItemViewHandle, Settings, StatusItemView};
+use workspace::{Item, ItemHandle, ItemNavHistory, Settings, StatusItemView};
 
 #[derive(Clone)]
 pub struct BufferItemHandle(pub ModelHandle<Buffer>);
@@ -24,7 +24,7 @@ pub struct MultiBufferItemHandle(pub ModelHandle<MultiBuffer>);
 #[derive(Clone)]
 struct WeakMultiBufferItemHandle(WeakModelHandle<MultiBuffer>);
 
-impl ItemView for Editor {
+impl Item for Editor {
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) {
         if let Some(data) = data.downcast_ref::<NavigationData>() {
             let buffer = self.buffer.read(cx).read(cx);
@@ -206,7 +206,7 @@ impl View for CursorPosition {
 impl StatusItemView for CursorPosition {
     fn set_active_pane_item(
         &mut self,
-        active_pane_item: Option<&dyn ItemViewHandle>,
+        active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
@@ -279,7 +279,7 @@ impl View for DiagnosticMessage {
 impl StatusItemView for DiagnosticMessage {
     fn set_active_pane_item(
         &mut self,
-        active_pane_item: Option<&dyn ItemViewHandle>,
+        active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
