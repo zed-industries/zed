@@ -825,11 +825,11 @@ impl Workspace {
 
     pub fn open_path(
         &mut self,
-        path: ProjectPath,
+        path: impl Into<ProjectPath>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>> {
         let pane = self.active_pane().downgrade();
-        let task = self.load_path(path, cx);
+        let task = self.load_path(path.into(), cx);
         cx.spawn(|this, mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
             let pane = pane
