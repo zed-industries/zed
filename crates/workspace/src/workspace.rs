@@ -816,7 +816,7 @@ impl Workspace {
         )>,
     > {
         let project = self.project().clone();
-        let buffer = project.update(cx, |project, cx| project.open_buffer_for_path(path, cx));
+        let buffer = project.update(cx, |project, cx| project.open_buffer(path, cx));
         cx.spawn(|this, mut cx| async move {
             let buffer = buffer.await?;
             let project_entry_id = buffer.read_with(&cx, |buffer, cx| {

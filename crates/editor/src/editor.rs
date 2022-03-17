@@ -8439,9 +8439,7 @@ mod tests {
             .0
             .read_with(cx, |tree, _| tree.id());
         let buffer = project
-            .update(cx, |project, cx| {
-                project.open_buffer_for_path((worktree_id, ""), cx)
-            })
+            .update(cx, |project, cx| project.open_buffer((worktree_id, ""), cx))
             .await
             .unwrap();
         let mut fake_server = fake_servers.next().await.unwrap();
