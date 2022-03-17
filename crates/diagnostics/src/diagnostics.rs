@@ -72,7 +72,7 @@ impl View for ProjectDiagnosticsEditor {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         if self.path_states.is_empty() {
-            let theme = &cx.app_state::<Settings>().theme.project_diagnostics;
+            let theme = &cx.global::<Settings>().theme.project_diagnostics;
             Label::new(
                 "No problems in workspace".to_string(),
                 theme.empty_message.clone(),
@@ -441,7 +441,7 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         render_summary(
             &self.summary,
             &style.label.text,
-            &cx.app_state::<Settings>().theme.project_diagnostics,
+            &cx.global::<Settings>().theme.project_diagnostics,
         )
     }
 
@@ -535,7 +535,7 @@ impl workspace::Item for ProjectDiagnosticsEditor {
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, highlights) = highlight_diagnostic_message(&diagnostic.message);
     Arc::new(move |cx| {
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         let theme = &settings.theme.editor;
         let style = &theme.diagnostic_header;
         let font_size = (style.text_scale_factor * settings.buffer_font_size).round();

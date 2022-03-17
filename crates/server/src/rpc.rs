@@ -4414,7 +4414,7 @@ mod tests {
         async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
             cx.update(|cx| {
                 let settings = Settings::test(cx);
-                cx.add_app_state(settings);
+                cx.set_global(settings);
             });
 
             let http = FakeHttpClient::with_404_response();

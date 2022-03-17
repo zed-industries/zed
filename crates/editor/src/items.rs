@@ -179,7 +179,7 @@ impl View for CursorPosition {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         if let Some(position) = self.position {
-            let theme = &cx.app_state::<Settings>().theme.workspace.status_bar;
+            let theme = &cx.global::<Settings>().theme.workspace.status_bar;
             let mut text = format!("{},{}", position.row + 1, position.column + 1);
             if self.selected_count > 0 {
                 write!(text, " ({} selected)", self.selected_count).unwrap();
@@ -252,7 +252,7 @@ impl View for DiagnosticMessage {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         if let Some(diagnostic) = &self.diagnostic {
-            let theme = &cx.app_state::<Settings>().theme.workspace.status_bar;
+            let theme = &cx.global::<Settings>().theme.workspace.status_bar;
             Label::new(
                 diagnostic.message.split('\n').next().unwrap().to_string(),
                 theme.diagnostic_message.clone(),

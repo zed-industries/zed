@@ -43,7 +43,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_global_action(quit);
     cx.add_global_action({
         move |action: &AdjustBufferFontSize, cx| {
-            cx.update_app_state::<Settings, _, _>(|settings, cx| {
+            cx.update_global::<Settings, _, _>(|settings, cx| {
                 settings.buffer_font_size =
                     (settings.buffer_font_size + action.0).max(MIN_FONT_SIZE);
                 cx.refresh_windows();

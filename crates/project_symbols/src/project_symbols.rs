@@ -69,7 +69,7 @@ impl View for ProjectSymbolsView {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         Flex::new(Axis::Vertical)
             .with_child(
                 Container::new(ChildView::new(&self.query_editor).boxed())
@@ -233,7 +233,7 @@ impl ProjectSymbolsView {
 
     fn render_matches(&self, cx: &AppContext) -> ElementBox {
         if self.matches.is_empty() {
-            let settings = cx.app_state::<Settings>();
+            let settings = cx.global::<Settings>();
             return Container::new(
                 Label::new(
                     "No matches".into(),
@@ -276,7 +276,7 @@ impl ProjectSymbolsView {
         show_worktree_root_name: bool,
         cx: &AppContext,
     ) -> ElementBox {
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         let style = if index == self.selected_match_index {
             &settings.theme.selector.active_item
         } else {

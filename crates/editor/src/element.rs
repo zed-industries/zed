@@ -1490,7 +1490,7 @@ mod tests {
 
     #[gpui::test]
     fn test_layout_line_numbers(cx: &mut gpui::MutableAppContext) {
-        cx.add_app_state(Settings::test(cx));
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
         let (window_id, editor) = cx.add_window(Default::default(), |cx| {
             Editor::new(EditorMode::Full, buffer, None, None, cx)
@@ -1512,7 +1512,7 @@ mod tests {
 
     #[gpui::test]
     fn test_layout_with_placeholder_text_and_blocks(cx: &mut gpui::MutableAppContext) {
-        cx.add_app_state(Settings::test(cx));
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("", cx);
         let (window_id, editor) = cx.add_window(Default::default(), |cx| {
             Editor::new(EditorMode::Full, buffer, None, None, cx)

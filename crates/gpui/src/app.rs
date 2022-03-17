@@ -799,7 +799,7 @@ impl MutableAppContext {
                 models: Default::default(),
                 views: Default::default(),
                 windows: Default::default(),
-                app_states: Default::default(),
+                globals: Default::default(),
                 element_states: Default::default(),
                 ref_counts: Arc::new(Mutex::new(ref_counts)),
                 background,
@@ -1364,24 +1364,22 @@ impl MutableAppContext {
         Ok(pending)
     }
 
-    pub fn add_app_state<T: 'static>(&mut self, state: T) {
-        self.cx
-            .app_states
-            .insert(TypeId::of::<T>(), Box::new(state));
+    pub fn set_global<T: 'static>(&mut self, state: T) {
+        self.cx.globals.insert(TypeId::of::<T>(), Box::new(state));
     }
 
-    pub fn update_app_state<T: 'static, F, U>(&mut self, update: F) -> U
+    pub fn update_global<T: 'static, F, U>(&mut self, update: F) -> U
     where
         F: FnOnce(&mut T, &mut MutableAppContext) -> U,
     {
         let type_id = TypeId::of::<T>();
         let mut state = self
             .cx
-            .app_states
+            .globals
             .remove(&type_id)
             .expect("no app state has been added for this type");
         let result = update(state.downcast_mut().unwrap(), self);
-        self.cx.app_states.insert(type_id, state);
+        self.cx.globals.insert(type_id, state);
         result
     }
 
@@ -2054,7 +2052,7 @@ pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     views: HashMap<(usize, usize), Box<dyn AnyView>>,
     windows: HashMap<usize, Window>,
-    app_states: HashMap<TypeId, Box<dyn Any>>,
+    globals: HashMap<TypeId, Box<dyn Any>>,
     element_states: HashMap<ElementStateId, Box<dyn Any>>,
     background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
@@ -2087,8 +2085,8 @@ impl AppContext {
         &self.platform
     }
 
-    pub fn app_state<T: 'static>(&self) -> &T {
-        self.app_states
+    pub fn global<T: 'static>(&self) -> &T {
+        self.globals
             .get(&TypeId::of::<T>())
             .expect("no app state has been added for this type")
             .downcast_ref()

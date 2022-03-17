@@ -67,7 +67,7 @@ impl View for FileFinder {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         Align::new(
             ConstrainedBox::new(
                 Container::new(
@@ -106,7 +106,7 @@ impl View for FileFinder {
 impl FileFinder {
     fn render_matches(&self, cx: &AppContext) -> ElementBox {
         if self.matches.is_empty() {
-            let settings = cx.app_state::<Settings>();
+            let settings = cx.global::<Settings>();
             return Container::new(
                 Label::new(
                     "No matches".into(),
@@ -142,7 +142,7 @@ impl FileFinder {
 
     fn render_match(&self, path_match: &PathMatch, index: usize, cx: &AppContext) -> ElementBox {
         let selected_index = self.selected_index();
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         let style = if index == selected_index {
             &settings.theme.selector.active_item
         } else {

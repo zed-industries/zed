@@ -38,7 +38,7 @@ impl View for StatusBar {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &cx.app_state::<Settings>().theme.workspace.status_bar;
+        let theme = &cx.global::<Settings>().theme.workspace.status_bar;
         Flex::row()
             .with_children(self.left_items.iter().map(|i| {
                 ChildView::new(i.as_ref())

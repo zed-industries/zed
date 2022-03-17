@@ -18,7 +18,7 @@ fn init_logger() {
 pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
     let settings = Settings::test(cx);
     editor::init(cx);
-    cx.add_app_state(settings);
+    cx.set_global(settings);
     let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
     let http = FakeHttpClient::with_404_response();
     let client = Client::new(http.clone());

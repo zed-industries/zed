@@ -66,7 +66,7 @@ impl View for SearchBar {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = cx.app_state::<Settings>().theme.clone();
+        let theme = cx.global::<Settings>().theme.clone();
         let editor_container = if self.query_contains_error {
             theme.search.invalid_editor
         } else {
@@ -197,7 +197,7 @@ impl SearchBar {
     ) -> ElementBox {
         let is_active = self.is_search_option_enabled(search_option);
         MouseEventHandler::new::<Self, _, _>(search_option as usize, cx, |state, cx| {
-            let theme = &cx.app_state::<Settings>().theme.search;
+            let theme = &cx.global::<Settings>().theme.search;
             let style = match (is_active, state.hovered) {
                 (false, false) => &theme.option_button,
                 (false, true) => &theme.hovered_option_button,
@@ -222,7 +222,7 @@ impl SearchBar {
     ) -> ElementBox {
         enum NavButton {}
         MouseEventHandler::new::<NavButton, _, _>(direction as usize, cx, |state, cx| {
-            let theme = &cx.app_state::<Settings>().theme.search;
+            let theme = &cx.global::<Settings>().theme.search;
             let style = if state.hovered {
                 &theme.hovered_option_button
             } else {
@@ -475,7 +475,7 @@ impl SearchBar {
                                         }
                                     }
 
-                                    let theme = &cx.app_state::<Settings>().theme.search;
+                                    let theme = &cx.global::<Settings>().theme.search;
                                     editor.highlight_background::<Self>(
                                         ranges,
                                         theme.match_background,
@@ -521,7 +521,7 @@ mod tests {
         let mut theme = gpui::fonts::with_font_cache(fonts.clone(), || theme::Theme::default());
         theme.search.match_background = Color::red();
         let settings = Settings::new("Courier", &fonts, Arc::new(theme)).unwrap();
-        cx.update(|cx| cx.add_app_state(settings));
+        cx.update(|cx| cx.set_global(settings));
 
         let buffer = cx.update(|cx| {
             MultiBuffer::build_simple(

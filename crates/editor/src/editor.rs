@@ -883,7 +883,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let display_map = cx.add_model(|cx| {
-            let settings = cx.app_state::<Settings>();
+            let settings = cx.global::<Settings>();
             let style = build_style(&*settings, get_field_editor_theme, None, cx);
             DisplayMap::new(
                 buffer.clone(),
@@ -1011,7 +1011,7 @@ impl Editor {
 
     fn style(&self, cx: &AppContext) -> EditorStyle {
         build_style(
-            cx.app_state::<Settings>(),
+            cx.global::<Settings>(),
             self.get_field_editor_theme,
             self.override_text_style.as_deref(),
             cx,
@@ -2729,7 +2729,7 @@ impl Editor {
         }
 
         self.start_transaction(cx);
-        let tab_size = cx.app_state::<Settings>().tab_size;
+        let tab_size = cx.global::<Settings>().tab_size;
         let mut selections = self.local_selections::<Point>(cx);
         let mut last_indent = None;
         self.buffer.update(cx, |buffer, cx| {
@@ -2806,7 +2806,7 @@ impl Editor {
         }
 
         self.start_transaction(cx);
-        let tab_size = cx.app_state::<Settings>().tab_size;
+        let tab_size = cx.global::<Settings>().tab_size;
         let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut deletion_ranges = Vec::new();
@@ -5324,7 +5324,7 @@ impl Editor {
 
     pub fn soft_wrap_mode(&self, cx: &AppContext) -> SoftWrap {
         let language = self.language(cx);
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         let mode = self
             .soft_wrap_mode_override
             .unwrap_or_else(|| settings.soft_wrap(language));
@@ -5906,7 +5906,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
     }
 
     Arc::new(move |cx: &BlockContext| {
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         let theme = &settings.theme.editor;
         let style = diagnostic_style(diagnostic.severity, is_valid, theme);
         let font_size = (style.text_scale_factor * settings.buffer_font_size).round();
@@ -9108,7 +9108,7 @@ mod tests {
 
     fn populate_settings(cx: &mut gpui::MutableAppContext) {
         let settings = Settings::test(cx);
-        cx.add_app_state(settings);
+        cx.set_global(settings);
     }
 }
 

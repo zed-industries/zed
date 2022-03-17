@@ -101,7 +101,7 @@ fn main() {
         cx.spawn(|mut cx| async move {
             while let Some(settings) = settings_rx.next().await {
                 cx.update(|cx| {
-                    cx.update_app_state(|s, _| *s = settings);
+                    cx.update_global(|s, _| *s = settings);
                     cx.refresh_windows();
                 });
             }
@@ -110,7 +110,7 @@ fn main() {
 
         languages.set_language_server_download_dir(zed::ROOT_PATH.clone());
         languages.set_theme(&settings.theme.editor.syntax);
-        cx.add_app_state(settings);
+        cx.set_global(settings);
 
         let app_state = Arc::new(AppState {
             languages: Arc::new(languages),

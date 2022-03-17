@@ -49,7 +49,7 @@ impl View for DiagnosticSummary {
 
         let in_progress = self.in_progress;
         MouseEventHandler::new::<Tag, _, _>(0, cx, |_, cx| {
-            let theme = &cx.app_state::<Settings>().theme.project_diagnostics;
+            let theme = &cx.global::<Settings>().theme.project_diagnostics;
             if in_progress {
                 Label::new(
                     "Checking... ".to_string(),

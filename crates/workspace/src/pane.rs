@@ -513,7 +513,7 @@ impl Pane {
     }
 
     fn render_tabs(&self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = cx.app_state::<Settings>().theme.clone();
+        let theme = cx.global::<Settings>().theme.clone();
 
         enum Tabs {}
         let tabs = MouseEventHandler::new::<Tabs, _, _>(0, cx, |mouse_state, cx| {

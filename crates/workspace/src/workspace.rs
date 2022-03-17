@@ -109,7 +109,7 @@ where
     V: Item,
     F: 'static + Fn(ModelHandle<Project>, ModelHandle<Buffer>, &mut ViewContext<V>) -> V,
 {
-    cx.add_app_state::<BuildEditor>(Arc::new(move |window_id, project, model, cx| {
+    cx.set_global::<BuildEditor>(Arc::new(move |window_id, project, model, cx| {
         Box::new(cx.add_view(window_id, |cx| build_editor(project, model, cx)))
     }));
 }
@@ -371,7 +371,7 @@ impl WorkspaceParams {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut MutableAppContext) -> Self {
         let settings = Settings::test(cx);
-        cx.add_app_state(settings);
+        cx.set_global(settings);
 
         let fs = project::FakeFs::new(cx.background().clone());
         let languages = Arc::new(LanguageRegistry::test());
@@ -825,7 +825,7 @@ impl Workspace {
                     .ok_or_else(|| anyhow!("buffer has no entry"))
             })?;
             let (window_id, build_editor) = this.update(&mut cx, |_, cx| {
-                (cx.window_id(), cx.app_state::<BuildEditor>().clone())
+                (cx.window_id(), cx.global::<BuildEditor>().clone())
             });
             let build_editor =
                 move |cx: &mut MutableAppContext| build_editor(window_id, project, buffer, cx);
@@ -948,7 +948,7 @@ impl Workspace {
     }
 
     fn render_connection_status(&self, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
-        let theme = &cx.app_state::<Settings>().theme;
+        let theme = &cx.global::<Settings>().theme;
         match &*self.client.status().borrow() {
             client::Status::ConnectionError
             | client::Status::ConnectionLost
@@ -1134,7 +1134,7 @@ impl Workspace {
 
     fn render_disconnected_overlay(&self, cx: &AppContext) -> Option<ElementBox> {
         if self.project.read(cx).is_read_only() {
-            let theme = &cx.app_state::<Settings>().theme;
+            let theme = &cx.global::<Settings>().theme;
             Some(
                 EventHandler::new(
                     Label::new(
@@ -1165,7 +1165,7 @@ impl View for Workspace {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = cx.app_state::<Settings>().theme.clone();
+        let theme = cx.global::<Settings>().theme.clone();
         Stack::new()
             .with_child(
                 Flex::column()

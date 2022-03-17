@@ -69,7 +69,7 @@ impl View for OutlineView {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
 
         Flex::new(Axis::Vertical)
             .with_child(
@@ -124,9 +124,12 @@ impl OutlineView {
             .active_item(cx)
             .and_then(|item| item.downcast::<Editor>())
         {
-            let buffer = editor.read(cx).buffer().read(cx).read(cx).outline(Some(
-                cx.app_state::<Settings>().theme.editor.syntax.as_ref(),
-            ));
+            let buffer = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .read(cx)
+                .outline(Some(cx.global::<Settings>().theme.editor.syntax.as_ref()));
             if let Some(outline) = buffer {
                 workspace.toggle_modal(cx, |cx, _| {
                     let view = cx.add_view(|cx| OutlineView::new(outline, editor, cx));
@@ -288,7 +291,7 @@ impl OutlineView {
 
     fn render_matches(&self, cx: &AppContext) -> ElementBox {
         if self.matches.is_empty() {
-            let settings = cx.app_state::<Settings>();
+            let settings = cx.global::<Settings>();
             return Container::new(
                 Label::new(
                     "No matches".into(),
@@ -330,7 +333,7 @@ impl OutlineView {
         index: usize,
         cx: &AppContext,
     ) -> ElementBox {
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         let style = if index == self.selected_match_index {
             &settings.theme.selector.active_item
         } else {

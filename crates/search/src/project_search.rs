@@ -29,7 +29,7 @@ const MAX_TAB_TITLE_LEN: usize = 24;
 struct ActiveSearches(HashMap<WeakModelHandle<Project>, WeakViewHandle<ProjectSearchView>>);
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_app_state(ActiveSearches::default());
+    cx.set_global(ActiveSearches::default());
     cx.add_bindings([
         Binding::new("cmd-shift-F", ToggleFocus, Some("ProjectSearchView")),
         Binding::new("cmd-f", ToggleFocus, Some("ProjectSearchView")),
@@ -155,7 +155,7 @@ impl View for ProjectSearchView {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let model = &self.model.read(cx);
         let results = if model.match_ranges.is_empty() {
-            let theme = &cx.app_state::<Settings>().theme;
+            let theme = &cx.global::<Settings>().theme;
             let text = if self.query_editor.read(cx).text(cx).is_empty() {
                 ""
             } else if model.pending_search.is_some() {
@@ -183,7 +183,7 @@ impl View for ProjectSearchView {
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
         let handle = cx.weak_handle();
-        cx.update_app_state(|state: &mut ActiveSearches, cx| {
+        cx.update_global(|state: &mut ActiveSearches, cx| {
             state
                 .0
                 .insert(self.model.read(cx).project.downgrade(), handle)
@@ -219,7 +219,7 @@ impl Item for ProjectSearchView {
     }
 
     fn tab_content(&self, tab_theme: &theme::Tab, cx: &gpui::AppContext) -> ElementBox {
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         let search_theme = &settings.theme.search;
         Flex::row()
             .with_child(
@@ -370,12 +370,12 @@ impl ProjectSearchView {
     // If no search exists in the workspace, create a new one.
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         // Clean up entries for dropped projects
-        cx.update_app_state(|state: &mut ActiveSearches, cx| {
+        cx.update_global(|state: &mut ActiveSearches, cx| {
             state.0.retain(|project, _| project.is_upgradable(cx))
         });
 
         let active_search = cx
-            .app_state::<ActiveSearches>()
+            .global::<ActiveSearches>()
             .0
             .get(&workspace.project().downgrade());
 
@@ -534,7 +534,7 @@ impl ProjectSearchView {
                 if reset_selections {
                     editor.select_ranges(match_ranges.first().cloned(), Some(Autoscroll::Fit), cx);
                 }
-                let theme = &cx.app_state::<Settings>().theme.search;
+                let theme = &cx.global::<Settings>().theme.search;
                 editor.highlight_background::<Self>(match_ranges, theme.match_background, cx);
             });
             if self.query_editor.is_focused(cx) {
@@ -560,7 +560,7 @@ impl ProjectSearchView {
     }
 
     fn render_query_editor(&self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = cx.app_state::<Settings>().theme.clone();
+        let theme = cx.global::<Settings>().theme.clone();
         let editor_container = if self.query_contains_error {
             theme.search.invalid_editor
         } else {
@@ -624,7 +624,7 @@ impl ProjectSearchView {
     ) -> ElementBox {
         let is_active = self.is_option_enabled(option);
         MouseEventHandler::new::<Self, _, _>(option as usize, cx, |state, cx| {
-            let theme = &cx.app_state::<Settings>().theme.search;
+            let theme = &cx.global::<Settings>().theme.search;
             let style = match (is_active, state.hovered) {
                 (false, false) => &theme.option_button,
                 (false, true) => &theme.hovered_option_button,
@@ -657,7 +657,7 @@ impl ProjectSearchView {
     ) -> ElementBox {
         enum NavButton {}
         MouseEventHandler::new::<NavButton, _, _>(direction as usize, cx, |state, cx| {
-            let theme = &cx.app_state::<Settings>().theme.search;
+            let theme = &cx.global::<Settings>().theme.search;
             let style = if state.hovered {
                 &theme.hovered_option_button
             } else {
@@ -689,7 +689,7 @@ mod tests {
         let mut theme = gpui::fonts::with_font_cache(fonts.clone(), || theme::Theme::default());
         theme.search.match_background = Color::red();
         let settings = Settings::new("Courier", &fonts, Arc::new(theme)).unwrap();
-        cx.update(|cx| cx.add_app_state(settings));
+        cx.update(|cx| cx.set_global(settings));
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(

@@ -517,7 +517,7 @@ impl View for ProjectPanel {
     }
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
-        let theme = &cx.app_state::<Settings>().theme.project_panel;
+        let theme = &cx.global::<Settings>().theme.project_panel;
         let mut container_style = theme.container;
         let padding = std::mem::take(&mut container_style.padding);
         let handle = self.handle.clone();
@@ -528,7 +528,7 @@ impl View for ProjectPanel {
                 .map(|(_, worktree_entries)| worktree_entries.len())
                 .sum(),
             move |range, items, cx| {
-                let theme = cx.app_state::<Settings>().theme.clone();
+                let theme = cx.global::<Settings>().theme.clone();
                 let this = handle.upgrade(cx).unwrap();
                 this.update(cx.app, |this, cx| {
                     this.for_each_visible_entry(range.clone(), cx, |entry, details, cx| {
