@@ -8,7 +8,7 @@ use gpui::{
 use language::OffsetRangeExt;
 use project::search::SearchQuery;
 use std::ops::Range;
-use workspace::{ItemViewHandle, Pane, Settings, Toolbar, Workspace};
+use workspace::{ItemHandle, Pane, Settings, Toolbar, Workspace};
 
 action!(Deploy, bool);
 action!(Dismiss);
@@ -66,7 +66,7 @@ impl View for SearchBar {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = cx.app_state::<Settings>().theme.clone();
+        let theme = cx.global::<Settings>().theme.clone();
         let editor_container = if self.query_contains_error {
             theme.search.invalid_editor
         } else {
@@ -126,7 +126,7 @@ impl View for SearchBar {
 impl Toolbar for SearchBar {
     fn active_item_changed(
         &mut self,
-        item: Option<Box<dyn ItemViewHandle>>,
+        item: Option<Box<dyn ItemHandle>>,
         cx: &mut ViewContext<Self>,
     ) -> bool {
         self.active_editor_subscription.take();
@@ -197,7 +197,7 @@ impl SearchBar {
     ) -> ElementBox {
         let is_active = self.is_search_option_enabled(search_option);
         MouseEventHandler::new::<Self, _, _>(search_option as usize, cx, |state, cx| {
-            let theme = &cx.app_state::<Settings>().theme.search;
+            let theme = &cx.global::<Settings>().theme.search;
             let style = match (is_active, state.hovered) {
                 (false, false) => &theme.option_button,
                 (false, true) => &theme.hovered_option_button,
@@ -222,7 +222,7 @@ impl SearchBar {
     ) -> ElementBox {
         enum NavButton {}
         MouseEventHandler::new::<NavButton, _, _>(direction as usize, cx, |state, cx| {
-            let theme = &cx.app_state::<Settings>().theme.search;
+            let theme = &cx.global::<Settings>().theme.search;
             let style = if state.hovered {
                 &theme.hovered_option_button
             } else {
@@ -475,7 +475,7 @@ impl SearchBar {
                                         }
                                     }
 
-                                    let theme = &cx.app_state::<Settings>().theme.search;
+                                    let theme = &cx.global::<Settings>().theme.search;
                                     editor.highlight_background::<Self>(
                                         ranges,
                                         theme.match_background,
@@ -510,8 +510,9 @@ impl SearchBar {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::{DisplayPoint, Editor, MultiBuffer};
+    use editor::{DisplayPoint, Editor};
     use gpui::{color::Color, TestAppContext};
+    use language::Buffer;
     use std::sync::Arc;
     use unindent::Unindent as _;
 
@@ -521,11 +522,12 @@ mod tests {
         let mut theme = gpui::fonts::with_font_cache(fonts.clone(), || theme::Theme::default());
         theme.search.match_background = Color::red();
         let settings = Settings::new("Courier", &fonts, Arc::new(theme)).unwrap();
-        cx.update(|cx| cx.add_app_state(settings));
+        cx.update(|cx| cx.set_global(settings));
 
-        let buffer = cx.update(|cx| {
-            MultiBuffer::build_simple(
-                &r#"
+        let buffer = cx.add_model(|cx| {
+            Buffer::new(
+                0,
+                r#"
                 A regular expression (shortened as regex or regexp;[1] also referred to as
                 rational expression[2][3]) is a sequence of characters that specifies a search
                 pattern in text. Usually such patterns are used by string-searching algorithms

@@ -1782,7 +1782,9 @@ dependencies = [
 name = "file_finder"
 version = "0.1.0"
 dependencies = [
+ "ctor",
  "editor",
+ "env_logger",
  "fuzzy",
  "gpui",
  "postage",

@@ -28,7 +28,6 @@ use gpui::{
     ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
-use items::{BufferItemHandle, MultiBufferItemHandle};
 use itertools::Itertools as _;
 pub use language::{char_kind, CharKind};
 use language::{
@@ -58,7 +57,7 @@ pub use sum_tree::Bias;
 use text::rope::TextDimension;
 use theme::DiagnosticStyle;
 use util::{post_inc, ResultExt, TryFutureExt};
-use workspace::{settings, ItemNavHistory, PathOpener, Settings, Workspace};
+use workspace::{settings, ItemNavHistory, Settings, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -142,8 +141,7 @@ pub enum Direction {
     Next,
 }
 
-pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpener>>) {
-    path_openers.push(Box::new(items::BufferOpener));
+pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings(vec![
         Binding::new("escape", Cancel, Some("Editor")),
         Binding::new("backspace", Backspace, Some("Editor")),
@@ -341,6 +339,10 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_async_action(Editor::rename);
     cx.add_async_action(Editor::confirm_rename);
     cx.add_async_action(Editor::find_all_references);
+
+    workspace::register_project_item(cx, |project, buffer, cx| {
+        Editor::for_buffer(buffer, Some(project), cx)
+    });
 }
 
 trait SelectionExt {
@@ -829,6 +831,15 @@ impl Editor {
     }
 
     pub fn for_buffer(
+        buffer: ModelHandle<Buffer>,
+        project: Option<ModelHandle<Project>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        Self::new(EditorMode::Full, buffer, project, None, cx)
+    }
+
+    pub fn for_multibuffer(
         buffer: ModelHandle<MultiBuffer>,
         project: Option<ModelHandle<Project>>,
         cx: &mut ViewContext<Self>,
@@ -836,7 +847,7 @@ impl Editor {
         Self::new(EditorMode::Full, buffer, project, None, cx)
     }
 
-    pub fn clone(&self, nav_history: ItemNavHistory, cx: &mut ViewContext<Self>) -> Self {
+    pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
         let mut clone = Self::new(
             self.mode,
             self.buffer.clone(),
@@ -846,7 +857,6 @@ impl Editor {
         );
         clone.scroll_position = self.scroll_position;
         clone.scroll_top_anchor = self.scroll_top_anchor.clone();
-        clone.nav_history = Some(nav_history);
         clone.searchable = self.searchable;
         clone
     }
@@ -859,7 +869,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let display_map = cx.add_model(|cx| {
-            let settings = cx.app_state::<Settings>();
+            let settings = cx.global::<Settings>();
             let style = build_style(&*settings, get_field_editor_theme, None, cx);
             DisplayMap::new(
                 buffer.clone(),
@@ -938,14 +948,17 @@ impl Editor {
         _: &workspace::OpenNew,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let project = workspace.project();
+        let project = workspace.project().clone();
         if project.read(cx).is_remote() {
             cx.propagate_action();
         } else if let Some(buffer) = project
             .update(cx, |project, cx| project.create_buffer(cx))
             .log_err()
         {
-            workspace.open_item(BufferItemHandle(buffer), cx);
+            workspace.add_item(
+                Box::new(cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
+                cx,
+            );
         }
     }
 
@@ -981,7 +994,7 @@ impl Editor {
 
     fn style(&self, cx: &AppContext) -> EditorStyle {
         build_style(
-            cx.app_state::<Settings>(),
+            cx.global::<Settings>(),
             self.get_field_editor_theme,
             self.override_text_style.as_deref(),
             cx,
@@ -2349,13 +2362,14 @@ impl Editor {
         });
 
         workspace.update(&mut cx, |workspace, cx| {
-            let editor = workspace.open_item(MultiBufferItemHandle(excerpt_buffer), cx);
-            if let Some(editor) = editor.act_as::<Self>(cx) {
-                editor.update(cx, |editor, cx| {
-                    let color = editor.style(cx).highlighted_line_background;
-                    editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
-                });
-            }
+            let project = workspace.project().clone();
+            let editor =
+                cx.add_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
+            workspace.add_item(Box::new(editor.clone()), cx);
+            editor.update(cx, |editor, cx| {
+                let color = editor.style(cx).highlighted_line_background;
+                editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
+            });
         });
 
         Ok(())
@@ -2699,7 +2713,7 @@ impl Editor {
         }
 
         self.start_transaction(cx);
-        let tab_size = cx.app_state::<Settings>().tab_size;
+        let tab_size = cx.global::<Settings>().tab_size;
         let mut selections = self.local_selections::<Point>(cx);
         let mut last_indent = None;
         self.buffer.update(cx, |buffer, cx| {
@@ -2776,7 +2790,7 @@ impl Editor {
         }
 
         self.start_transaction(cx);
-        let tab_size = cx.app_state::<Settings>().tab_size;
+        let tab_size = cx.global::<Settings>().tab_size;
         let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut deletion_ranges = Vec::new();
@@ -4280,20 +4294,16 @@ impl Editor {
                 return;
             };
 
-        let definitions = workspace
-            .project()
-            .update(cx, |project, cx| project.definition(&buffer, head, cx));
+        let project = workspace.project().clone();
+        let definitions = project.update(cx, |project, cx| project.definition(&buffer, head, cx));
         cx.spawn(|workspace, mut cx| async move {
             let definitions = definitions.await?;
             workspace.update(&mut cx, |workspace, cx| {
                 let nav_history = workspace.active_pane().read(cx).nav_history().clone();
                 for definition in definitions {
                     let range = definition.range.to_offset(definition.buffer.read(cx));
-                    let target_editor_handle = workspace
-                        .open_item(BufferItemHandle(definition.buffer), cx)
-                        .downcast::<Self>()
-                        .unwrap();
 
+                    let target_editor_handle = workspace.open_project_item(definition.buffer, cx);
                     target_editor_handle.update(cx, |target_editor, cx| {
                         // When selecting a definition in a different buffer, disable the nav history
                         // to avoid creating a history entry at the previous cursor location.
@@ -4324,9 +4334,8 @@ impl Editor {
         let (buffer, head) = editor.buffer.read(cx).text_anchor_for_position(head, cx)?;
         let replica_id = editor.replica_id(cx);
 
-        let references = workspace
-            .project()
-            .update(cx, |project, cx| project.references(&buffer, head, cx));
+        let project = workspace.project().clone();
+        let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
         Some(cx.spawn(|workspace, mut cx| async move {
             let mut locations = references.await?;
             if locations.is_empty() {
@@ -4370,13 +4379,13 @@ impl Editor {
             });
 
             workspace.update(&mut cx, |workspace, cx| {
-                let editor = workspace.open_item(MultiBufferItemHandle(excerpt_buffer), cx);
-                if let Some(editor) = editor.act_as::<Self>(cx) {
-                    editor.update(cx, |editor, cx| {
-                        let color = editor.style(cx).highlighted_line_background;
-                        editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
-                    });
-                }
+                let editor =
+                    cx.add_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
+                editor.update(cx, |editor, cx| {
+                    let color = editor.style(cx).highlighted_line_background;
+                    editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
+                });
+                workspace.add_item(Box::new(editor), cx);
             });
 
             Ok(())
@@ -5298,7 +5307,7 @@ impl Editor {
 
     pub fn soft_wrap_mode(&self, cx: &AppContext) -> SoftWrap {
         let language = self.language(cx);
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         let mode = self
             .soft_wrap_mode_override
             .unwrap_or_else(|| settings.soft_wrap(language));
@@ -5563,17 +5572,10 @@ impl Editor {
         // and activating a new item causes the pane to call a method on us reentrantly,
         // which panics if we're on the stack.
         cx.defer(move |workspace, cx| {
-            for (ix, (buffer, ranges)) in new_selections_by_buffer.into_iter().enumerate() {
-                let buffer = BufferItemHandle(buffer);
-                if ix == 0 && !workspace.activate_pane_for_item(&buffer, cx) {
-                    workspace.activate_next_pane(cx);
-                }
+            workspace.activate_next_pane(cx);
 
-                let editor = workspace
-                    .open_item(buffer, cx)
-                    .downcast::<Editor>()
-                    .unwrap();
-
+            for (buffer, ranges) in new_selections_by_buffer.into_iter() {
+                let editor = workspace.open_project_item::<Self>(buffer, cx);
                 editor.update(cx, |editor, cx| {
                     editor.select_ranges(ranges, Some(Autoscroll::Newest), cx);
                 });
@@ -5887,7 +5889,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
     }
 
     Arc::new(move |cx: &BlockContext| {
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         let theme = &settings.theme.editor;
         let style = diagnostic_style(diagnostic.severity, is_valid, theme);
         let font_size = (style.text_scale_factor * settings.buffer_font_size).round();
@@ -6246,7 +6248,7 @@ mod tests {
     #[gpui::test]
     fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
         populate_settings(cx);
-        use workspace::ItemView;
+        use workspace::Item;
         let nav_history = Rc::new(RefCell::new(workspace::NavHistory::default()));
         let buffer = MultiBuffer::build_simple(&sample_text(30, 5, 'a'), cx);
 
@@ -6265,7 +6267,7 @@ mod tests {
             editor.select_display_ranges(&[DisplayPoint::new(13, 0)..DisplayPoint::new(13, 3)], cx);
             let nav_entry = nav_history.borrow_mut().pop_backward().unwrap();
             editor.navigate(nav_entry.data.unwrap(), cx);
-            assert_eq!(nav_entry.item_view.id(), cx.view_id());
+            assert_eq!(nav_entry.item.id(), cx.view_id());
             assert_eq!(
                 editor.selected_display_ranges(cx),
                 &[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)]
@@ -6291,7 +6293,7 @@ mod tests {
             );
             let nav_entry = nav_history.borrow_mut().pop_backward().unwrap();
             editor.navigate(nav_entry.data.unwrap(), cx);
-            assert_eq!(nav_entry.item_view.id(), cx.view_id());
+            assert_eq!(nav_entry.item.id(), cx.view_id());
             assert_eq!(
                 editor.selected_display_ranges(cx),
                 &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
@@ -9089,7 +9091,7 @@ mod tests {
 
     fn populate_settings(cx: &mut gpui::MutableAppContext) {
         let settings = Settings::test(cx);
-        cx.add_app_state(settings);
+        cx.set_global(settings);
     }
 }
 

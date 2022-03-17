@@ -61,7 +61,6 @@ fn main() {
     app.run(move |cx| {
         let http = http::client();
         let client = client::Client::new(http.clone());
-        let mut path_openers = Vec::new();
         let mut languages = language::build_language_registry(login_shell_env_loaded);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
         let channel_list =
@@ -71,7 +70,7 @@ fn main() {
         client::Channel::init(&client);
         client::init(client.clone(), cx);
         workspace::init(cx);
-        editor::init(cx, &mut path_openers);
+        editor::init(cx);
         go_to_line::init(cx);
         file_finder::init(cx);
         chat_panel::init(cx);
@@ -102,7 +101,7 @@ fn main() {
         cx.spawn(|mut cx| async move {
             while let Some(settings) = settings_rx.next().await {
                 cx.update(|cx| {
-                    cx.update_app_state(|s, _| *s = settings);
+                    cx.update_global(|s, _| *s = settings);
                     cx.refresh_windows();
                 });
             }
@@ -111,7 +110,7 @@ fn main() {
 
         languages.set_language_server_download_dir(zed::ROOT_PATH.clone());
         languages.set_theme(&settings.theme.editor.syntax);
-        cx.add_app_state(settings);
+        cx.set_global(settings);
 
         let app_state = Arc::new(AppState {
             languages: Arc::new(languages),
@@ -120,7 +119,6 @@ fn main() {
             client,
             user_store,
             fs,
-            path_openers: Arc::from(path_openers),
             build_window_options: &build_window_options,
             build_workspace: &build_workspace,
         });

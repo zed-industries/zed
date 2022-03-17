@@ -7,7 +7,7 @@ use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll};
 use gpui::{
     action, elements::*, keymap::Binding, platform::CursorStyle, AppContext, ElementBox, Entity,
     ModelContext, ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext,
-    ViewHandle, WeakModelHandle,
+    ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use project::{search::SearchQuery, Project};
 use std::{
@@ -16,7 +16,7 @@ use std::{
     path::PathBuf,
 };
 use util::ResultExt as _;
-use workspace::{Item, ItemHandle, ItemNavHistory, ItemView, Settings, Workspace};
+use workspace::{Item, ItemNavHistory, Settings, Workspace};
 
 action!(Deploy);
 action!(Search);
@@ -26,10 +26,10 @@ action!(ToggleFocus);
 const MAX_TAB_TITLE_LEN: usize = 24;
 
 #[derive(Default)]
-struct ActiveSearches(HashMap<WeakModelHandle<Project>, WeakModelHandle<ProjectSearch>>);
+struct ActiveSearches(HashMap<WeakModelHandle<Project>, WeakViewHandle<ProjectSearchView>>);
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_app_state(ActiveSearches::default());
+    cx.set_global(ActiveSearches::default());
     cx.add_bindings([
         Binding::new("cmd-shift-F", ToggleFocus, Some("ProjectSearchView")),
         Binding::new("cmd-f", ToggleFocus, Some("ProjectSearchView")),
@@ -139,23 +139,6 @@ impl ProjectSearch {
     }
 }
 
-impl Item for ProjectSearch {
-    type View = ProjectSearchView;
-
-    fn build_view(
-        model: ModelHandle<Self>,
-        _: &Workspace,
-        nav_history: ItemNavHistory,
-        cx: &mut gpui::ViewContext<Self::View>,
-    ) -> Self::View {
-        ProjectSearchView::new(model, Some(nav_history), cx)
-    }
-
-    fn project_path(&self) -> Option<project::ProjectPath> {
-        None
-    }
-}
-
 enum ViewEvent {
     UpdateTab,
 }
@@ -172,7 +155,7 @@ impl View for ProjectSearchView {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let model = &self.model.read(cx);
         let results = if model.match_ranges.is_empty() {
-            let theme = &cx.app_state::<Settings>().theme;
+            let theme = &cx.global::<Settings>().theme;
             let text = if self.query_editor.read(cx).text(cx).is_empty() {
                 ""
             } else if model.pending_search.is_some() {
@@ -199,11 +182,11 @@ impl View for ProjectSearchView {
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.update_app_state(|state: &mut ActiveSearches, cx| {
-            state.0.insert(
-                self.model.read(cx).project.downgrade(),
-                self.model.downgrade(),
-            )
+        let handle = cx.weak_handle();
+        cx.update_global(|state: &mut ActiveSearches, cx| {
+            state
+                .0
+                .insert(self.model.read(cx).project.downgrade(), handle)
         });
 
         if self.model.read(cx).match_ranges.is_empty() {
@@ -214,7 +197,7 @@ impl View for ProjectSearchView {
     }
 }
 
-impl ItemView for ProjectSearchView {
+impl Item for ProjectSearchView {
     fn act_as_type(
         &self,
         type_id: TypeId,
@@ -235,12 +218,8 @@ impl ItemView for ProjectSearchView {
             .update(cx, |editor, cx| editor.deactivated(cx));
     }
 
-    fn item(&self, _: &gpui::AppContext) -> Box<dyn ItemHandle> {
-        Box::new(self.model.clone())
-    }
-
     fn tab_content(&self, tab_theme: &theme::Tab, cx: &gpui::AppContext) -> ElementBox {
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         let search_theme = &settings.theme.search;
         Flex::row()
             .with_child(
@@ -305,16 +284,18 @@ impl ItemView for ProjectSearchView {
         unreachable!("save_as should not have been called")
     }
 
-    fn clone_on_split(
-        &self,
-        nav_history: ItemNavHistory,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<Self>
+    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
     {
         let model = self.model.update(cx, |model, cx| model.clone(cx));
-        Some(Self::new(model, Some(nav_history), cx))
+        Some(Self::new(model, cx))
+    }
+
+    fn set_nav_history(&mut self, nav_history: ItemNavHistory, cx: &mut ViewContext<Self>) {
+        self.results_editor.update(cx, |editor, _| {
+            editor.set_nav_history(Some(nav_history));
+        });
     }
 
     fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) {
@@ -328,11 +309,7 @@ impl ItemView for ProjectSearchView {
 }
 
 impl ProjectSearchView {
-    fn new(
-        model: ModelHandle<ProjectSearch>,
-        nav_history: Option<ItemNavHistory>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    fn new(model: ModelHandle<ProjectSearch>, cx: &mut ViewContext<Self>) -> Self {
         let project;
         let excerpts;
         let mut query_text = String::new();
@@ -362,9 +339,8 @@ impl ProjectSearchView {
         });
 
         let results_editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_buffer(excerpts, Some(project), cx);
+            let mut editor = Editor::for_multibuffer(excerpts, Some(project), cx);
             editor.set_searchable(false);
-            editor.set_nav_history(nav_history);
             editor
         });
         cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab))
@@ -394,28 +370,31 @@ impl ProjectSearchView {
     // If no search exists in the workspace, create a new one.
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         // Clean up entries for dropped projects
-        cx.update_app_state(|state: &mut ActiveSearches, cx| {
+        cx.update_global(|state: &mut ActiveSearches, cx| {
             state.0.retain(|project, _| project.is_upgradable(cx))
         });
 
         let active_search = cx
-            .app_state::<ActiveSearches>()
+            .global::<ActiveSearches>()
             .0
             .get(&workspace.project().downgrade());
 
         let existing = active_search
             .and_then(|active_search| {
                 workspace
-                    .items_of_type::<ProjectSearch>(cx)
+                    .items_of_type::<ProjectSearchView>(cx)
                     .find(|search| search == active_search)
             })
-            .or_else(|| workspace.item_of_type::<ProjectSearch>(cx));
+            .or_else(|| workspace.item_of_type::<ProjectSearchView>(cx));
 
         if let Some(existing) = existing {
             workspace.activate_item(&existing, cx);
         } else {
             let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
-            workspace.open_item(model, cx);
+            workspace.add_item(
+                Box::new(cx.add_view(|cx| ProjectSearchView::new(model, cx))),
+                cx,
+            );
         }
     }
 
@@ -450,7 +429,10 @@ impl ProjectSearchView {
                     model.search(new_query, cx);
                     model
                 });
-                workspace.open_item(model, cx);
+                workspace.add_item(
+                    Box::new(cx.add_view(|cx| ProjectSearchView::new(model, cx))),
+                    cx,
+                );
             }
         }
     }
@@ -552,7 +534,7 @@ impl ProjectSearchView {
                 if reset_selections {
                     editor.select_ranges(match_ranges.first().cloned(), Some(Autoscroll::Fit), cx);
                 }
-                let theme = &cx.app_state::<Settings>().theme.search;
+                let theme = &cx.global::<Settings>().theme.search;
                 editor.highlight_background::<Self>(match_ranges, theme.match_background, cx);
             });
             if self.query_editor.is_focused(cx) {
@@ -578,7 +560,7 @@ impl ProjectSearchView {
     }
 
     fn render_query_editor(&self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = cx.app_state::<Settings>().theme.clone();
+        let theme = cx.global::<Settings>().theme.clone();
         let editor_container = if self.query_contains_error {
             theme.search.invalid_editor
         } else {
@@ -642,7 +624,7 @@ impl ProjectSearchView {
     ) -> ElementBox {
         let is_active = self.is_option_enabled(option);
         MouseEventHandler::new::<Self, _, _>(option as usize, cx, |state, cx| {
-            let theme = &cx.app_state::<Settings>().theme.search;
+            let theme = &cx.global::<Settings>().theme.search;
             let style = match (is_active, state.hovered) {
                 (false, false) => &theme.option_button,
                 (false, true) => &theme.hovered_option_button,
@@ -675,7 +657,7 @@ impl ProjectSearchView {
     ) -> ElementBox {
         enum NavButton {}
         MouseEventHandler::new::<NavButton, _, _>(direction as usize, cx, |state, cx| {
-            let theme = &cx.app_state::<Settings>().theme.search;
+            let theme = &cx.global::<Settings>().theme.search;
             let style = if state.hovered {
                 &theme.hovered_option_button
             } else {
@@ -707,7 +689,7 @@ mod tests {
         let mut theme = gpui::fonts::with_font_cache(fonts.clone(), || theme::Theme::default());
         theme.search.match_background = Color::red();
         let settings = Settings::new("Courier", &fonts, Arc::new(theme)).unwrap();
-        cx.update(|cx| cx.add_app_state(settings));
+        cx.update(|cx| cx.set_global(settings));
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -732,7 +714,7 @@ mod tests {
 
         let search = cx.add_model(|cx| ProjectSearch::new(project, cx));
         let search_view = cx.add_view(Default::default(), |cx| {
-            ProjectSearchView::new(search.clone(), None, cx)
+            ProjectSearchView::new(search.clone(), cx)
         });
 
         search_view.update(cx, |search_view, cx| {

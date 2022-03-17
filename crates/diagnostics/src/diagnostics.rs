@@ -25,7 +25,7 @@ use std::{
     sync::Arc,
 };
 use util::TryFutureExt;
-use workspace::{ItemHandle, ItemNavHistory, ItemViewHandle as _, Settings, Workspace};
+use workspace::{ItemHandle as _, ItemNavHistory, Settings, Workspace};
 
 action!(Deploy);
 
@@ -38,12 +38,8 @@ pub fn init(cx: &mut MutableAppContext) {
 
 type Event = editor::Event;
 
-struct ProjectDiagnostics {
-    project: ModelHandle<Project>,
-}
-
 struct ProjectDiagnosticsEditor {
-    model: ModelHandle<ProjectDiagnostics>,
+    project: ModelHandle<Project>,
     workspace: WeakViewHandle<Workspace>,
     editor: ViewHandle<Editor>,
     summary: DiagnosticSummary,
@@ -65,16 +61,6 @@ struct DiagnosticGroupState {
     block_count: usize,
 }
 
-impl ProjectDiagnostics {
-    fn new(project: ModelHandle<Project>) -> Self {
-        Self { project }
-    }
-}
-
-impl Entity for ProjectDiagnostics {
-    type Event = ();
-}
-
 impl Entity for ProjectDiagnosticsEditor {
     type Event = Event;
 }
@@ -86,7 +72,7 @@ impl View for ProjectDiagnosticsEditor {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         if self.path_states.is_empty() {
-            let theme = &cx.app_state::<Settings>().theme.project_diagnostics;
+            let theme = &cx.global::<Settings>().theme.project_diagnostics;
             Label::new(
                 "No problems in workspace".to_string(),
                 theme.empty_message.clone(),
@@ -109,12 +95,11 @@ impl View for ProjectDiagnosticsEditor {
 
 impl ProjectDiagnosticsEditor {
     fn new(
-        model: ModelHandle<ProjectDiagnostics>,
+        project_handle: ModelHandle<Project>,
         workspace: WeakViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let project = model.read(cx).project.clone();
-        cx.subscribe(&project, |this, _, event, cx| match event {
+        cx.subscribe(&project_handle, |this, _, event, cx| match event {
             project::Event::DiskBasedDiagnosticsFinished => {
                 this.update_excerpts(cx);
                 this.update_title(cx);
@@ -126,20 +111,22 @@ impl ProjectDiagnosticsEditor {
         })
         .detach();
 
-        let excerpts = cx.add_model(|cx| MultiBuffer::new(project.read(cx).replica_id()));
+        let excerpts = cx.add_model(|cx| MultiBuffer::new(project_handle.read(cx).replica_id()));
         let editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_buffer(excerpts.clone(), Some(project.clone()), cx);
+            let mut editor =
+                Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
         cx.subscribe(&editor, |_, _, event, cx| cx.emit(*event))
             .detach();
 
-        let project = project.read(cx);
+        let project = project_handle.read(cx);
         let paths_to_update = project.diagnostic_summaries(cx).map(|e| e.0).collect();
+        let summary = project.diagnostic_summary(cx);
         let mut this = Self {
-            model,
-            summary: project.diagnostic_summary(cx),
+            project: project_handle,
+            summary,
             workspace,
             excerpts,
             editor,
@@ -151,18 +138,20 @@ impl ProjectDiagnosticsEditor {
     }
 
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
-        if let Some(existing) = workspace.item_of_type::<ProjectDiagnostics>(cx) {
+        if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
             workspace.activate_item(&existing, cx);
         } else {
-            let diagnostics =
-                cx.add_model(|_| ProjectDiagnostics::new(workspace.project().clone()));
-            workspace.open_item(diagnostics, cx);
+            let workspace_handle = cx.weak_handle();
+            let diagnostics = cx.add_view(|cx| {
+                ProjectDiagnosticsEditor::new(workspace.project().clone(), workspace_handle, cx)
+            });
+            workspace.add_item(Box::new(diagnostics), cx);
         }
     }
 
     fn update_excerpts(&mut self, cx: &mut ViewContext<Self>) {
         let paths = mem::take(&mut self.paths_to_update);
-        let project = self.model.read(cx).project.clone();
+        let project = self.project.clone();
         cx.spawn(|this, mut cx| {
             async move {
                 for path in paths {
@@ -443,42 +432,17 @@ impl ProjectDiagnosticsEditor {
     }
 
     fn update_title(&mut self, cx: &mut ViewContext<Self>) {
-        self.summary = self.model.read(cx).project.read(cx).diagnostic_summary(cx);
+        self.summary = self.project.read(cx).diagnostic_summary(cx);
         cx.emit(Event::TitleChanged);
     }
 }
 
-impl workspace::Item for ProjectDiagnostics {
-    type View = ProjectDiagnosticsEditor;
-
-    fn build_view(
-        handle: ModelHandle<Self>,
-        workspace: &Workspace,
-        nav_history: ItemNavHistory,
-        cx: &mut ViewContext<Self::View>,
-    ) -> Self::View {
-        let diagnostics = ProjectDiagnosticsEditor::new(handle, workspace.weak_handle(), cx);
-        diagnostics
-            .editor
-            .update(cx, |editor, _| editor.set_nav_history(Some(nav_history)));
-        diagnostics
-    }
-
-    fn project_path(&self) -> Option<project::ProjectPath> {
-        None
-    }
-}
-
-impl workspace::ItemView for ProjectDiagnosticsEditor {
-    fn item(&self, _: &AppContext) -> Box<dyn ItemHandle> {
-        Box::new(self.model.clone())
-    }
-
+impl workspace::Item for ProjectDiagnosticsEditor {
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox {
         render_summary(
             &self.summary,
             &style.label.text,
-            &cx.app_state::<Settings>().theme.project_diagnostics,
+            &cx.global::<Settings>().theme.project_diagnostics,
         )
     }
 
@@ -532,20 +496,21 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         matches!(event, Event::Saved | Event::Dirtied | Event::TitleChanged)
     }
 
-    fn clone_on_split(
-        &self,
-        nav_history: ItemNavHistory,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<Self>
+    fn set_nav_history(&mut self, nav_history: ItemNavHistory, cx: &mut ViewContext<Self>) {
+        self.editor.update(cx, |editor, _| {
+            editor.set_nav_history(Some(nav_history));
+        });
+    }
+
+    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
     {
-        let diagnostics =
-            ProjectDiagnosticsEditor::new(self.model.clone(), self.workspace.clone(), cx);
-        diagnostics.editor.update(cx, |editor, _| {
-            editor.set_nav_history(Some(nav_history));
-        });
-        Some(diagnostics)
+        Some(ProjectDiagnosticsEditor::new(
+            self.project.clone(),
+            self.workspace.clone(),
+            cx,
+        ))
     }
 
     fn act_as_type(
@@ -571,7 +536,7 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, highlights) = highlight_diagnostic_message(&diagnostic.message);
     Arc::new(move |cx| {
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         let theme = &settings.theme.editor;
         let style = &theme.diagnostic_header;
         let font_size = (style.text_scale_factor * settings.buffer_font_size).round();
@@ -829,9 +794,8 @@ mod tests {
         });
 
         // Open the project diagnostics view while there are already diagnostics.
-        let model = cx.add_model(|_| ProjectDiagnostics::new(project.clone()));
         let view = cx.add_view(0, |cx| {
-            ProjectDiagnosticsEditor::new(model, workspace.downgrade(), cx)
+            ProjectDiagnosticsEditor::new(project.clone(), workspace.downgrade(), cx)
         });
 
         view.next_notification(&cx).await;

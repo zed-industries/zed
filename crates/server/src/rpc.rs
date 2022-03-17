@@ -1013,8 +1013,8 @@ mod tests {
     };
     use collections::BTreeMap;
     use editor::{
-        self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Input, MultiBuffer,
-        Redo, Rename, ToOffset, ToggleCodeActions, Undo,
+        self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Input, Redo, Rename,
+        ToOffset, ToggleCodeActions, Undo,
     };
     use gpui::{executor, ModelHandle, TestAppContext};
     use language::{
@@ -1140,10 +1140,7 @@ mod tests {
             .update(cx_b, |p, cx| p.open_buffer((worktree_id, "b.txt"), cx))
             .await
             .unwrap();
-        let buffer_b = cx_b.add_model(|cx| MultiBuffer::singleton(buffer_b, cx));
-        buffer_b.read_with(cx_b, |buf, cx| {
-            assert_eq!(buf.read(cx).text(), "b-contents")
-        });
+        buffer_b.read_with(cx_b, |buf, _| assert_eq!(buf.text(), "b-contents"));
         project_a.read_with(cx_a, |project, cx| {
             assert!(project.has_open_buffer((worktree_id, "b.txt"), cx))
         });
@@ -2176,11 +2173,7 @@ mod tests {
             .unwrap();
         let (window_b, _) = cx_b.add_window(|_| EmptyView);
         let editor_b = cx_b.add_view(window_b, |cx| {
-            Editor::for_buffer(
-                cx.add_model(|cx| MultiBuffer::singleton(buffer_b.clone(), cx)),
-                Some(project_b.clone()),
-                cx,
-            )
+            Editor::for_buffer(buffer_b.clone(), Some(project_b.clone()), cx)
         });
 
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
@@ -3159,8 +3152,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
-        let mut path_openers_b = Vec::new();
-        cx_b.update(|cx| editor::init(cx, &mut path_openers_b));
+        cx_b.update(|cx| editor::init(cx));
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
@@ -3229,7 +3221,6 @@ mod tests {
         params.client = client_b.client.clone();
         params.user_store = client_b.user_store.clone();
         params.project = project_b;
-        params.path_openers = path_openers_b.into();
 
         let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
         let editor_b = workspace_b
@@ -3395,8 +3386,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
-        let mut path_openers_b = Vec::new();
-        cx_b.update(|cx| editor::init(cx, &mut path_openers_b));
+        cx_b.update(|cx| editor::init(cx));
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
@@ -3465,7 +3455,6 @@ mod tests {
         params.client = client_b.client.clone();
         params.user_store = client_b.user_store.clone();
         params.project = project_b;
-        params.path_openers = path_openers_b.into();
 
         let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
         let editor_b = workspace_b
@@ -4418,7 +4407,7 @@ mod tests {
         async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
             cx.update(|cx| {
                 let settings = Settings::test(cx);
-                cx.add_app_state(settings);
+                cx.set_global(settings);
             });
 
             let http = FakeHttpClient::with_404_response();

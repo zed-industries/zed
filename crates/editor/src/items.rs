@@ -1,161 +1,18 @@
-use crate::{Autoscroll, Editor, Event, MultiBuffer, NavigationData, ToOffset, ToPoint as _};
+use crate::{Autoscroll, Editor, Event, NavigationData, ToOffset, ToPoint as _};
 use anyhow::Result;
 use gpui::{
-    elements::*, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, RenderContext,
-    Subscription, Task, View, ViewContext, ViewHandle, WeakModelHandle,
+    elements::*, AppContext, Entity, ModelHandle, RenderContext, Subscription, Task, View,
+    ViewContext, ViewHandle,
 };
 use language::{Bias, Buffer, Diagnostic, File as _};
 use project::{File, Project, ProjectPath};
+use std::fmt::Write;
 use std::path::PathBuf;
-use std::rc::Rc;
-use std::{cell::RefCell, fmt::Write};
 use text::{Point, Selection};
 use util::ResultExt;
-use workspace::{
-    ItemHandle, ItemNavHistory, ItemView, ItemViewHandle, NavHistory, PathOpener, Settings,
-    StatusItemView, WeakItemHandle, Workspace,
-};
+use workspace::{Item, ItemHandle, ItemNavHistory, ProjectItem, Settings, StatusItemView};
 
-pub struct BufferOpener;
-
-#[derive(Clone)]
-pub struct BufferItemHandle(pub ModelHandle<Buffer>);
-
-#[derive(Clone)]
-struct WeakBufferItemHandle(WeakModelHandle<Buffer>);
-
-#[derive(Clone)]
-pub struct MultiBufferItemHandle(pub ModelHandle<MultiBuffer>);
-
-#[derive(Clone)]
-struct WeakMultiBufferItemHandle(WeakModelHandle<MultiBuffer>);
-
-impl PathOpener for BufferOpener {
-    fn open(
-        &self,
-        project: &mut Project,
-        project_path: ProjectPath,
-        cx: &mut ModelContext<Project>,
-    ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
-        let buffer = project.open_buffer(project_path, cx);
-        let task = cx.spawn(|_, _| async move {
-            let buffer = buffer.await?;
-            Ok(Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
-        });
-        Some(task)
-    }
-}
-
-impl ItemHandle for BufferItemHandle {
-    fn add_view(
-        &self,
-        window_id: usize,
-        workspace: &Workspace,
-        nav_history: Rc<RefCell<NavHistory>>,
-        cx: &mut MutableAppContext,
-    ) -> Box<dyn ItemViewHandle> {
-        let buffer = cx.add_model(|cx| MultiBuffer::singleton(self.0.clone(), cx));
-        Box::new(cx.add_view(window_id, |cx| {
-            let mut editor = Editor::for_buffer(buffer, Some(workspace.project().clone()), cx);
-            editor.nav_history = Some(ItemNavHistory::new(nav_history, &cx.handle()));
-            editor
-        }))
-    }
-
-    fn boxed_clone(&self) -> Box<dyn ItemHandle> {
-        Box::new(self.clone())
-    }
-
-    fn to_any(&self) -> gpui::AnyModelHandle {
-        self.0.clone().into()
-    }
-
-    fn downgrade(&self) -> Box<dyn workspace::WeakItemHandle> {
-        Box::new(WeakBufferItemHandle(self.0.downgrade()))
-    }
-
-    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
-        File::from_dyn(self.0.read(cx).file()).map(|f| ProjectPath {
-            worktree_id: f.worktree_id(cx),
-            path: f.path().clone(),
-        })
-    }
-
-    fn id(&self) -> usize {
-        self.0.id()
-    }
-}
-
-impl ItemHandle for MultiBufferItemHandle {
-    fn add_view(
-        &self,
-        window_id: usize,
-        workspace: &Workspace,
-        nav_history: Rc<RefCell<NavHistory>>,
-        cx: &mut MutableAppContext,
-    ) -> Box<dyn ItemViewHandle> {
-        Box::new(cx.add_view(window_id, |cx| {
-            let mut editor =
-                Editor::for_buffer(self.0.clone(), Some(workspace.project().clone()), cx);
-            editor.nav_history = Some(ItemNavHistory::new(nav_history, &cx.handle()));
-            editor
-        }))
-    }
-
-    fn boxed_clone(&self) -> Box<dyn ItemHandle> {
-        Box::new(self.clone())
-    }
-
-    fn to_any(&self) -> gpui::AnyModelHandle {
-        self.0.clone().into()
-    }
-
-    fn downgrade(&self) -> Box<dyn WeakItemHandle> {
-        Box::new(WeakMultiBufferItemHandle(self.0.downgrade()))
-    }
-
-    fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
-        None
-    }
-
-    fn id(&self) -> usize {
-        self.0.id()
-    }
-}
-
-impl WeakItemHandle for WeakBufferItemHandle {
-    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
-        self.0
-            .upgrade(cx)
-            .map(|buffer| Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
-    }
-
-    fn id(&self) -> usize {
-        self.0.id()
-    }
-}
-
-impl WeakItemHandle for WeakMultiBufferItemHandle {
-    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
-        self.0
-            .upgrade(cx)
-            .map(|buffer| Box::new(MultiBufferItemHandle(buffer)) as Box<dyn ItemHandle>)
-    }
-
-    fn id(&self) -> usize {
-        self.0.id()
-    }
-}
-
-impl ItemView for Editor {
-    fn item(&self, cx: &AppContext) -> Box<dyn ItemHandle> {
-        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
-            Box::new(BufferItemHandle(buffer))
-        } else {
-            Box::new(MultiBufferItemHandle(self.buffer.clone()))
-        }
-    }
-
+impl Item for Editor {
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) {
         if let Some(data) = data.downcast_ref::<NavigationData>() {
             let buffer = self.buffer.read(cx).read(cx);
@@ -184,15 +41,15 @@ impl ItemView for Editor {
         })
     }
 
-    fn clone_on_split(
-        &self,
-        nav_history: ItemNavHistory,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<Self>
+    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
     {
-        Some(self.clone(nav_history, cx))
+        Some(self.clone(cx))
+    }
+
+    fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {
+        self.nav_history = Some(history);
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
@@ -275,6 +132,18 @@ impl ItemView for Editor {
     }
 }
 
+impl ProjectItem for Editor {
+    type Item = Buffer;
+
+    fn for_project_item(
+        project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        Self::for_buffer(buffer, Some(project), cx)
+    }
+}
+
 pub struct CursorPosition {
     position: Option<Point>,
     selected_count: usize,
@@ -322,7 +191,7 @@ impl View for CursorPosition {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         if let Some(position) = self.position {
-            let theme = &cx.app_state::<Settings>().theme.workspace.status_bar;
+            let theme = &cx.global::<Settings>().theme.workspace.status_bar;
             let mut text = format!("{},{}", position.row + 1, position.column + 1);
             if self.selected_count > 0 {
                 write!(text, " ({} selected)", self.selected_count).unwrap();
@@ -337,7 +206,7 @@ impl View for CursorPosition {
 impl StatusItemView for CursorPosition {
     fn set_active_pane_item(
         &mut self,
-        active_pane_item: Option<&dyn ItemViewHandle>,
+        active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
@@ -395,7 +264,7 @@ impl View for DiagnosticMessage {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         if let Some(diagnostic) = &self.diagnostic {
-            let theme = &cx.app_state::<Settings>().theme.workspace.status_bar;
+            let theme = &cx.global::<Settings>().theme.workspace.status_bar;
             Label::new(
                 diagnostic.message.split('\n').next().unwrap().to_string(),
                 theme.diagnostic_message.clone(),
@@ -410,7 +279,7 @@ impl View for DiagnosticMessage {
 impl StatusItemView for DiagnosticMessage {
     fn set_active_pane_item(
         &mut self,
-        active_pane_item: Option<&dyn ItemViewHandle>,
+        active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {

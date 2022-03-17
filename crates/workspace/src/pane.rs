@@ -1,5 +1,5 @@
-use super::{ItemViewHandle, SplitDirection};
-use crate::{ItemHandle, ItemView, Settings, WeakItemViewHandle, Workspace};
+use super::{ItemHandle, SplitDirection};
+use crate::{Item, Settings, WeakItemHandle, Workspace};
 use collections::{HashMap, VecDeque};
 use gpui::{
     action,
@@ -10,7 +10,7 @@ use gpui::{
     AnyViewHandle, Entity, MutableAppContext, Quad, RenderContext, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
-use project::ProjectPath;
+use project::{ProjectEntryId, ProjectPath};
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
@@ -97,7 +97,7 @@ pub enum Event {
 }
 
 pub struct Pane {
-    item_views: Vec<(usize, Box<dyn ItemViewHandle>)>,
+    items: Vec<(Option<ProjectEntryId>, Box<dyn ItemHandle>)>,
     active_item_index: usize,
     nav_history: Rc<RefCell<NavHistory>>,
     toolbars: HashMap<TypeId, Box<dyn ToolbarHandle>>,
@@ -108,7 +108,7 @@ pub struct Pane {
 pub trait Toolbar: View {
     fn active_item_changed(
         &mut self,
-        item: Option<Box<dyn ItemViewHandle>>,
+        item: Option<Box<dyn ItemHandle>>,
         cx: &mut ViewContext<Self>,
     ) -> bool;
     fn on_dismiss(&mut self, cx: &mut ViewContext<Self>);
@@ -117,7 +117,7 @@ pub trait Toolbar: View {
 trait ToolbarHandle {
     fn active_item_changed(
         &self,
-        item: Option<Box<dyn ItemViewHandle>>,
+        item: Option<Box<dyn ItemHandle>>,
         cx: &mut MutableAppContext,
     ) -> bool;
     fn on_dismiss(&self, cx: &mut MutableAppContext);
@@ -126,7 +126,7 @@ trait ToolbarHandle {
 
 pub struct ItemNavHistory {
     history: Rc<RefCell<NavHistory>>,
-    item_view: Rc<dyn WeakItemViewHandle>,
+    item: Rc<dyn WeakItemHandle>,
 }
 
 #[derive(Default)]
@@ -152,14 +152,14 @@ impl Default for NavigationMode {
 }
 
 pub struct NavigationEntry {
-    pub item_view: Rc<dyn WeakItemViewHandle>,
+    pub item: Rc<dyn WeakItemHandle>,
     pub data: Option<Box<dyn Any>>,
 }
 
 impl Pane {
     pub fn new() -> Self {
         Self {
-            item_views: Vec::new(),
+            items: Vec::new(),
             active_item_index: 0,
             nav_history: Default::default(),
             toolbars: Default::default(),
@@ -216,13 +216,13 @@ impl Pane {
 
             // If the item is still present in this pane, then activate it.
             if let Some(index) = entry
-                .item_view
+                .item
                 .upgrade(cx)
-                .and_then(|v| pane.index_for_item_view(v.as_ref()))
+                .and_then(|v| pane.index_for_item(v.as_ref()))
             {
-                if let Some(item_view) = pane.active_item() {
+                if let Some(item) = pane.active_item() {
                     pane.nav_history.borrow_mut().set_mode(mode);
-                    item_view.deactivated(cx);
+                    item.deactivated(cx);
                     pane.nav_history
                         .borrow_mut()
                         .set_mode(NavigationMode::Normal);
@@ -242,7 +242,7 @@ impl Pane {
                 pane.nav_history
                     .borrow_mut()
                     .paths_by_item
-                    .get(&entry.item_view.id())
+                    .get(&entry.item.id())
                     .cloned()
                     .map(|project_path| (project_path, entry))
             }
@@ -253,18 +253,17 @@ impl Pane {
             let pane = pane.downgrade();
             let task = workspace.load_path(project_path, cx);
             cx.spawn(|workspace, mut cx| async move {
-                let item = task.await;
+                let task = task.await;
                 if let Some(pane) = pane.upgrade(&cx) {
-                    if let Some(item) = item.log_err() {
-                        workspace.update(&mut cx, |workspace, cx| {
-                            pane.update(cx, |p, _| p.nav_history.borrow_mut().set_mode(mode));
-                            let item_view = workspace.open_item_in_pane(item, &pane, cx);
-                            pane.update(cx, |p, _| {
-                                p.nav_history.borrow_mut().set_mode(NavigationMode::Normal)
-                            });
-
+                    if let Some((project_entry_id, build_item)) = task.log_err() {
+                        pane.update(&mut cx, |pane, cx| {
+                            pane.nav_history.borrow_mut().set_mode(mode);
+                            let item = pane.open_item(project_entry_id, cx, build_item);
+                            pane.nav_history
+                                .borrow_mut()
+                                .set_mode(NavigationMode::Normal);
                             if let Some(data) = entry.data {
-                                item_view.navigate(data, cx);
+                                item.navigate(data, cx);
                             }
                         });
                     } else {
@@ -281,76 +280,80 @@ impl Pane {
         }
     }
 
-    pub fn open_item<T>(
+    pub fn open_item(
         &mut self,
-        item_handle: T,
-        workspace: &Workspace,
+        project_entry_id: ProjectEntryId,
         cx: &mut ViewContext<Self>,
-    ) -> Box<dyn ItemViewHandle>
-    where
-        T: 'static + ItemHandle,
-    {
-        for (ix, (item_id, item_view)) in self.item_views.iter().enumerate() {
-            if *item_id == item_handle.id() {
-                let item_view = item_view.boxed_clone();
+        build_item: impl FnOnce(&mut MutableAppContext) -> Box<dyn ItemHandle>,
+    ) -> Box<dyn ItemHandle> {
+        for (ix, (existing_entry_id, item)) in self.items.iter().enumerate() {
+            if *existing_entry_id == Some(project_entry_id) {
+                let item = item.boxed_clone();
                 self.activate_item(ix, cx);
-                return item_view;
+                return item;
             }
         }
 
-        let item_view =
-            item_handle.add_view(cx.window_id(), workspace, self.nav_history.clone(), cx);
-        self.add_item_view(item_view.boxed_clone(), cx);
-        item_view
+        let item = build_item(cx);
+        self.add_item(Some(project_entry_id), item.boxed_clone(), cx);
+        item
     }
 
-    pub fn add_item_view(
+    pub(crate) fn add_item(
         &mut self,
-        mut item_view: Box<dyn ItemViewHandle>,
+        project_entry_id: Option<ProjectEntryId>,
+        mut item: Box<dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) {
-        item_view.added_to_pane(cx);
-        let item_idx = cmp::min(self.active_item_index + 1, self.item_views.len());
-        self.item_views
-            .insert(item_idx, (item_view.item(cx).id(), item_view));
+        item.set_nav_history(self.nav_history.clone(), cx);
+        item.added_to_pane(cx);
+        let item_idx = cmp::min(self.active_item_index + 1, self.items.len());
+        self.items.insert(item_idx, (project_entry_id, item));
         self.activate_item(item_idx, cx);
         cx.notify();
     }
 
-    pub fn contains_item(&self, item: &dyn ItemHandle) -> bool {
-        let item_id = item.id();
-        self.item_views
-            .iter()
-            .any(|(existing_item_id, _)| *existing_item_id == item_id)
+    pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> {
+        self.items.iter().map(|(_, view)| view)
     }
 
-    pub fn item_views(&self) -> impl Iterator<Item = &Box<dyn ItemViewHandle>> {
-        self.item_views.iter().map(|(_, view)| view)
-    }
-
-    pub fn active_item(&self) -> Option<Box<dyn ItemViewHandle>> {
-        self.item_views
+    pub fn active_item(&self) -> Option<Box<dyn ItemHandle>> {
+        self.items
             .get(self.active_item_index)
             .map(|(_, view)| view.clone())
     }
 
-    pub fn index_for_item_view(&self, item_view: &dyn ItemViewHandle) -> Option<usize> {
-        self.item_views
-            .iter()
-            .position(|(_, i)| i.id() == item_view.id())
+    pub fn project_entry_id_for_item(&self, item: &dyn ItemHandle) -> Option<ProjectEntryId> {
+        self.items.iter().find_map(|(entry_id, existing)| {
+            if existing.id() == item.id() {
+                *entry_id
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn item_for_entry(&self, entry_id: ProjectEntryId) -> Option<Box<dyn ItemHandle>> {
+        self.items.iter().find_map(|(id, view)| {
+            if *id == Some(entry_id) {
+                Some(view.boxed_clone())
+            } else {
+                None
+            }
+        })
     }
 
     pub fn index_for_item(&self, item: &dyn ItemHandle) -> Option<usize> {
-        self.item_views.iter().position(|(id, _)| *id == item.id())
+        self.items.iter().position(|(_, i)| i.id() == item.id())
     }
 
     pub fn activate_item(&mut self, index: usize, cx: &mut ViewContext<Self>) {
-        if index < self.item_views.len() {
+        if index < self.items.len() {
             let prev_active_item_ix = mem::replace(&mut self.active_item_index, index);
             if prev_active_item_ix != self.active_item_index
-                && prev_active_item_ix < self.item_views.len()
+                && prev_active_item_ix < self.items.len()
             {
-                self.item_views[prev_active_item_ix].1.deactivated(cx);
+                self.items[prev_active_item_ix].1.deactivated(cx);
             }
             self.update_active_toolbar(cx);
             self.focus_active_item(cx);
@@ -363,15 +366,15 @@ impl Pane {
         let mut index = self.active_item_index;
         if index > 0 {
             index -= 1;
-        } else if self.item_views.len() > 0 {
-            index = self.item_views.len() - 1;
+        } else if self.items.len() > 0 {
+            index = self.items.len() - 1;
         }
         self.activate_item(index, cx);
     }
 
     pub fn activate_next_item(&mut self, cx: &mut ViewContext<Self>) {
         let mut index = self.active_item_index;
-        if index + 1 < self.item_views.len() {
+        if index + 1 < self.items.len() {
             index += 1;
         } else {
             index = 0;
@@ -380,14 +383,14 @@ impl Pane {
     }
 
     pub fn close_active_item(&mut self, cx: &mut ViewContext<Self>) {
-        if !self.item_views.is_empty() {
-            self.close_item(self.item_views[self.active_item_index].1.id(), cx)
+        if !self.items.is_empty() {
+            self.close_item(self.items[self.active_item_index].1.id(), cx)
         }
     }
 
     pub fn close_inactive_items(&mut self, cx: &mut ViewContext<Self>) {
-        if !self.item_views.is_empty() {
-            let active_item_id = self.item_views[self.active_item_index].1.id();
+        if !self.items.is_empty() {
+            let active_item_id = self.items[self.active_item_index].1.id();
             self.close_items(cx, |id| id != active_item_id);
         }
     }
@@ -403,10 +406,10 @@ impl Pane {
     ) {
         let mut item_ix = 0;
         let mut new_active_item_index = self.active_item_index;
-        self.item_views.retain(|(_, item_view)| {
-            if should_close(item_view.id()) {
+        self.items.retain(|(_, item)| {
+            if should_close(item.id()) {
                 if item_ix == self.active_item_index {
-                    item_view.deactivated(cx);
+                    item.deactivated(cx);
                 }
 
                 if item_ix < self.active_item_index {
@@ -414,10 +417,10 @@ impl Pane {
                 }
 
                 let mut nav_history = self.nav_history.borrow_mut();
-                if let Some(path) = item_view.project_path(cx) {
-                    nav_history.paths_by_item.insert(item_view.id(), path);
+                if let Some(path) = item.project_path(cx) {
+                    nav_history.paths_by_item.insert(item.id(), path);
                 } else {
-                    nav_history.paths_by_item.remove(&item_view.id());
+                    nav_history.paths_by_item.remove(&item.id());
                 }
 
                 item_ix += 1;
@@ -428,10 +431,10 @@ impl Pane {
             }
         });
 
-        if self.item_views.is_empty() {
+        if self.items.is_empty() {
             cx.emit(Event::Remove);
         } else {
-            self.active_item_index = cmp::min(new_active_item_index, self.item_views.len() - 1);
+            self.active_item_index = cmp::min(new_active_item_index, self.items.len() - 1);
             self.focus_active_item(cx);
             self.activate(cx);
         }
@@ -500,7 +503,7 @@ impl Pane {
     }
 
     fn update_active_toolbar(&mut self, cx: &mut ViewContext<Self>) {
-        let active_item = self.item_views.get(self.active_item_index);
+        let active_item = self.items.get(self.active_item_index);
         for (toolbar_type_id, toolbar) in &self.toolbars {
             let visible = toolbar.active_item_changed(active_item.map(|i| i.1.clone()), cx);
             if Some(*toolbar_type_id) == self.active_toolbar_type {
@@ -510,12 +513,12 @@ impl Pane {
     }
 
     fn render_tabs(&self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = cx.app_state::<Settings>().theme.clone();
+        let theme = cx.global::<Settings>().theme.clone();
 
         enum Tabs {}
         let tabs = MouseEventHandler::new::<Tabs, _, _>(0, cx, |mouse_state, cx| {
             let mut row = Flex::row();
-            for (ix, (_, item_view)) in self.item_views.iter().enumerate() {
+            for (ix, (_, item)) in self.items.iter().enumerate() {
                 let is_active = ix == self.active_item_index;
 
                 row.add_child({
@@ -524,7 +527,7 @@ impl Pane {
                     } else {
                         theme.workspace.tab.clone()
                     };
-                    let title = item_view.tab_content(&tab_style, cx);
+                    let title = item.tab_content(&tab_style, cx);
 
                     let mut style = if is_active {
                         theme.workspace.active_tab.clone()
@@ -541,9 +544,9 @@ impl Pane {
                                 .with_child(
                                     Align::new({
                                         let diameter = 7.0;
-                                        let icon_color = if item_view.has_conflict(cx) {
+                                        let icon_color = if item.has_conflict(cx) {
                                             Some(style.icon_conflict)
-                                        } else if item_view.is_dirty(cx) {
+                                        } else if item.is_dirty(cx) {
                                             Some(style.icon_dirty)
                                         } else {
                                             None
@@ -587,7 +590,7 @@ impl Pane {
                                 .with_child(
                                     Align::new(
                                         ConstrainedBox::new(if mouse_state.hovered {
-                                            let item_id = item_view.id();
+                                            let item_id = item.id();
                                             enum TabCloseButton {}
                                             let icon = Svg::new("icons/x.svg");
                                             MouseEventHandler::new::<TabCloseButton, _, _>(
@@ -691,7 +694,7 @@ impl View for Pane {
 impl<T: Toolbar> ToolbarHandle for ViewHandle<T> {
     fn active_item_changed(
         &self,
-        item: Option<Box<dyn ItemViewHandle>>,
+        item: Option<Box<dyn ItemHandle>>,
         cx: &mut MutableAppContext,
     ) -> bool {
         self.update(cx, |this, cx| this.active_item_changed(item, cx))
@@ -707,10 +710,10 @@ impl<T: Toolbar> ToolbarHandle for ViewHandle<T> {
 }
 
 impl ItemNavHistory {
-    pub fn new<T: ItemView>(history: Rc<RefCell<NavHistory>>, item_view: &ViewHandle<T>) -> Self {
+    pub fn new<T: Item>(history: Rc<RefCell<NavHistory>>, item: &ViewHandle<T>) -> Self {
         Self {
             history,
-            item_view: Rc::new(item_view.downgrade()),
+            item: Rc::new(item.downgrade()),
         }
     }
 
@@ -719,7 +722,7 @@ impl ItemNavHistory {
     }
 
     pub fn push<D: 'static + Any>(&self, data: Option<D>) {
-        self.history.borrow_mut().push(data, self.item_view.clone());
+        self.history.borrow_mut().push(data, self.item.clone());
     }
 }
 
@@ -752,11 +755,7 @@ impl NavHistory {
         self.mode = mode;
     }
 
-    pub fn push<D: 'static + Any>(
-        &mut self,
-        data: Option<D>,
-        item_view: Rc<dyn WeakItemViewHandle>,
-    ) {
+    pub fn push<D: 'static + Any>(&mut self, data: Option<D>, item: Rc<dyn WeakItemHandle>) {
         match self.mode {
             NavigationMode::Disabled => {}
             NavigationMode::Normal => {
@@ -764,7 +763,7 @@ impl NavHistory {
                     self.backward_stack.pop_front();
                 }
                 self.backward_stack.push_back(NavigationEntry {
-                    item_view,
+                    item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
                 });
                 self.forward_stack.clear();
@@ -774,7 +773,7 @@ impl NavHistory {
                     self.forward_stack.pop_front();
                 }
                 self.forward_stack.push_back(NavigationEntry {
-                    item_view,
+                    item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
                 });
             }
@@ -783,7 +782,7 @@ impl NavHistory {
                     self.backward_stack.pop_front();
                 }
                 self.backward_stack.push_back(NavigationEntry {
-                    item_view,
+                    item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
                 });
             }

@@ -1,6 +1,5 @@
 use editor::{
-    combine_syntax_and_fuzzy_match_highlights, items::BufferItemHandle, styled_runs_for_code_label,
-    Autoscroll, Bias, Editor,
+    combine_syntax_and_fuzzy_match_highlights, styled_runs_for_code_label, Autoscroll, Bias, Editor,
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -70,7 +69,7 @@ impl View for ProjectSymbolsView {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         Flex::new(Axis::Vertical)
             .with_child(
                 Container::new(ChildView::new(&self.query_editor).boxed())
@@ -234,7 +233,7 @@ impl ProjectSymbolsView {
 
     fn render_matches(&self, cx: &AppContext) -> ElementBox {
         if self.matches.is_empty() {
-            let settings = cx.app_state::<Settings>();
+            let settings = cx.global::<Settings>();
             return Container::new(
                 Label::new(
                     "No matches".into(),
@@ -277,7 +276,7 @@ impl ProjectSymbolsView {
         show_worktree_root_name: bool,
         cx: &AppContext,
     ) -> ElementBox {
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         let style = if index == self.selected_match_index {
             &settings.theme.selector.active_item
         } else {
@@ -346,6 +345,7 @@ impl ProjectSymbolsView {
                 let buffer = workspace
                     .project()
                     .update(cx, |project, cx| project.open_buffer_for_symbol(symbol, cx));
+
                 let symbol = symbol.clone();
                 cx.spawn(|workspace, mut cx| async move {
                     let buffer = buffer.await?;
@@ -353,10 +353,8 @@ impl ProjectSymbolsView {
                         let position = buffer
                             .read(cx)
                             .clip_point_utf16(symbol.range.start, Bias::Left);
-                        let editor = workspace
-                            .open_item(BufferItemHandle(buffer), cx)
-                            .downcast::<Editor>()
-                            .unwrap();
+
+                        let editor = workspace.open_project_item::<Editor>(buffer, cx);
                         editor.update(cx, |editor, cx| {
                             editor.select_ranges(
                                 [position..position],

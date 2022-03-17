@@ -54,7 +54,7 @@ impl ThemeSelector {
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
 
-        let original_theme = cx.app_state::<Settings>().theme.clone();
+        let original_theme = cx.global::<Settings>().theme.clone();
 
         let mut this = Self {
             themes: registry,
@@ -82,7 +82,7 @@ impl ThemeSelector {
     }
 
     fn reload(_: &mut Workspace, action: &Reload, cx: &mut ViewContext<Workspace>) {
-        let current_theme_name = cx.app_state::<Settings>().theme.name.clone();
+        let current_theme_name = cx.global::<Settings>().theme.name.clone();
         action.0.clear();
         match action.0.get(&current_theme_name) {
             Ok(theme) => {
@@ -206,7 +206,7 @@ impl ThemeSelector {
         match event {
             editor::Event::Edited => {
                 self.update_matches(cx);
-                self.select_if_matching(&cx.app_state::<Settings>().theme.name);
+                self.select_if_matching(&cx.global::<Settings>().theme.name);
                 self.show_selected_theme(cx);
             }
             editor::Event::Blurred => cx.emit(Event::Dismissed),
@@ -216,7 +216,7 @@ impl ThemeSelector {
 
     fn render_matches(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         if self.matches.is_empty() {
-            let settings = cx.app_state::<Settings>();
+            let settings = cx.global::<Settings>();
             return Container::new(
                 Label::new(
                     "No matches".into(),
@@ -251,7 +251,7 @@ impl ThemeSelector {
     }
 
     fn render_match(&self, theme_match: &StringMatch, index: usize, cx: &AppContext) -> ElementBox {
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         let theme = &settings.theme;
 
         let container = Container::new(
@@ -276,7 +276,7 @@ impl ThemeSelector {
     }
 
     fn set_theme(theme: Arc<Theme>, cx: &mut MutableAppContext) {
-        cx.update_app_state::<Settings, _, _>(|settings, cx| {
+        cx.update_global::<Settings, _, _>(|settings, cx| {
             settings.theme = theme;
             cx.refresh_windows();
         });
@@ -299,7 +299,7 @@ impl View for ThemeSelector {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = cx.app_state::<Settings>().theme.clone();
+        let theme = cx.global::<Settings>().theme.clone();
         Align::new(
             ConstrainedBox::new(
                 Container::new(

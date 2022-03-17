@@ -11,8 +11,8 @@ use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{future::Shared, Future, FutureExt, StreamExt, TryFutureExt};
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
-    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
-    UpgradeModelHandle, WeakModelHandle,
+    AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
+    MutableAppContext, Task, UpgradeModelHandle, WeakModelHandle,
 };
 use language::{
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
@@ -39,7 +39,7 @@ use std::{
     path::{Component, Path, PathBuf},
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, AtomicUsize},
+        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc,
     },
     time::Instant,
@@ -49,9 +49,13 @@ use util::{post_inc, ResultExt, TryFutureExt as _};
 pub use fs::*;
 pub use worktree::*;
 
+pub trait Item: Entity {
+    fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
+}
+
 pub struct Project {
     worktrees: Vec<WorktreeHandle>,
-    active_entry: Option<ProjectEntry>,
+    active_entry: Option<ProjectEntryId>,
     languages: Arc<LanguageRegistry>,
     language_servers: HashMap<(WorktreeId, Arc<str>), Arc<LanguageServer>>,
     started_language_servers: HashMap<(WorktreeId, Arc<str>), Task<Option<Arc<LanguageServer>>>>,
@@ -114,7 +118,7 @@ pub struct Collaborator {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
-    ActiveEntryChanged(Option<ProjectEntry>),
+    ActiveEntryChanged(Option<ProjectEntryId>),
     WorktreeRemoved(WorktreeId),
     DiskBasedDiagnosticsStarted,
     DiskBasedDiagnosticsUpdated,
@@ -226,10 +230,25 @@ impl DiagnosticSummary {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ProjectEntry {
-    pub worktree_id: WorktreeId,
-    pub entry_id: usize,
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ProjectEntryId(usize);
+
+impl ProjectEntryId {
+    pub fn new(counter: &AtomicUsize) -> Self {
+        Self(counter.fetch_add(1, SeqCst))
+    }
+
+    pub fn from_proto(id: u64) -> Self {
+        Self(id as usize)
+    }
+
+    pub fn to_proto(&self) -> u64 {
+        self.0 as u64
+    }
+
+    pub fn to_usize(&self) -> usize {
+        self.0
+    }
 }
 
 impl Project {
@@ -623,6 +642,24 @@ impl Project {
             .find(|worktree| worktree.read(cx).id() == id)
     }
 
+    pub fn worktree_for_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        cx: &AppContext,
+    ) -> Option<ModelHandle<Worktree>> {
+        self.worktrees(cx)
+            .find(|worktree| worktree.read(cx).contains_entry(entry_id))
+    }
+
+    pub fn worktree_id_for_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        cx: &AppContext,
+    ) -> Option<WorktreeId> {
+        self.worktree_for_entry(entry_id, cx)
+            .map(|worktree| worktree.read(cx).id())
+    }
+
     pub fn share(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let rpc = self.client.clone();
         cx.spawn(|this, mut cx| async move {
@@ -783,6 +820,23 @@ impl Project {
         });
         self.register_buffer(&buffer, cx)?;
         Ok(buffer)
+    }
+
+    pub fn open_path(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<(ProjectEntryId, AnyModelHandle)>> {
+        let task = self.open_buffer(path, cx);
+        cx.spawn_weak(|_, cx| async move {
+            let buffer = task.await?;
+            let project_entry_id = buffer
+                .read_with(&cx, |buffer, cx| {
+                    File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx))
+                })
+                .ok_or_else(|| anyhow!("no project entry"))?;
+            Ok((project_entry_id, buffer.into()))
+        })
     }
 
     pub fn open_buffer(
@@ -3163,10 +3217,7 @@ impl Project {
         let new_active_entry = entry.and_then(|project_path| {
             let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
             let entry = worktree.read(cx).entry_for_path(project_path.path)?;
-            Some(ProjectEntry {
-                worktree_id: project_path.worktree_id,
-                entry_id: entry.id,
-            })
+            Some(entry.id)
         });
         if new_active_entry != self.active_entry {
             self.active_entry = new_active_entry;
@@ -3217,8 +3268,23 @@ impl Project {
         }
     }
 
-    pub fn active_entry(&self) -> Option<ProjectEntry> {
+    pub fn active_entry(&self) -> Option<ProjectEntryId> {
         self.active_entry
+    }
+
+    pub fn entry_for_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<ProjectEntryId> {
+        self.worktree_for_id(path.worktree_id, cx)?
+            .read(cx)
+            .entry_for_path(&path.path)
+            .map(|entry| entry.id)
+    }
+
+    pub fn path_for_entry(&self, entry_id: ProjectEntryId, cx: &AppContext) -> Option<ProjectPath> {
+        let worktree = self.worktree_for_entry(entry_id, cx)?;
+        let worktree = worktree.read(cx);
+        let worktree_id = worktree.id();
+        let path = worktree.entry_for_id(entry_id)?.path.clone();
+        Some(ProjectPath { worktree_id, path })
     }
 
     // RPC message handlers
@@ -4475,6 +4541,12 @@ fn relativize_path(base: &Path, path: &Path) -> PathBuf {
         }
     }
     components.iter().map(|c| c.as_os_str()).collect()
+}
+
+impl Item for Buffer {
+    fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId> {
+        File::from_dyn(self.file()).and_then(|file| file.project_entry_id(cx))
+    }
 }
 
 #[cfg(test)]

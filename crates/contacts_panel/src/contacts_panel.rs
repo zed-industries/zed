@@ -55,7 +55,7 @@ impl ContactsPanel {
         app_state: Arc<AppState>,
         cx: &mut LayoutContext,
     ) -> ElementBox {
-        let theme = cx.app_state::<Settings>().theme.clone();
+        let theme = cx.global::<Settings>().theme.clone();
         let theme = &theme.contacts_panel;
         let project_count = collaborator.projects.len();
         let font_cache = cx.font_cache();
@@ -236,7 +236,7 @@ impl View for ContactsPanel {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &cx.app_state::<Settings>().theme.contacts_panel;
+        let theme = &cx.global::<Settings>().theme.contacts_panel;
         Container::new(List::new(self.contacts.clone()).boxed())
             .with_style(theme.container)
             .boxed()
