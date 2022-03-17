@@ -284,7 +284,7 @@ impl Pane {
         &mut self,
         project_entry_id: ProjectEntryId,
         cx: &mut ViewContext<Self>,
-        build_editor: impl FnOnce(&mut MutableAppContext) -> Box<dyn ItemHandle>,
+        build_item: impl FnOnce(&mut MutableAppContext) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
         for (ix, (existing_entry_id, item)) in self.items.iter().enumerate() {
             if *existing_entry_id == Some(project_entry_id) {
@@ -294,7 +294,7 @@ impl Pane {
             }
         }
 
-        let item = build_editor(cx);
+        let item = build_item(cx);
         self.add_item(Some(project_entry_id), item.boxed_clone(), cx);
         item
     }
