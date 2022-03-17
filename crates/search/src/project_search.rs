@@ -339,7 +339,7 @@ impl ProjectSearchView {
         });
 
         let results_editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_buffer(excerpts, Some(project), cx);
+            let mut editor = Editor::for_multibuffer(excerpts, Some(project), cx);
             editor.set_searchable(false);
             editor
         });

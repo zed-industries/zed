@@ -1013,8 +1013,8 @@ mod tests {
     };
     use collections::BTreeMap;
     use editor::{
-        self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Input, MultiBuffer,
-        Redo, Rename, ToOffset, ToggleCodeActions, Undo,
+        self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Input, Redo, Rename,
+        ToOffset, ToggleCodeActions, Undo,
     };
     use gpui::{executor, ModelHandle, TestAppContext};
     use language::{
@@ -1140,10 +1140,7 @@ mod tests {
             .update(cx_b, |p, cx| p.open_buffer((worktree_id, "b.txt"), cx))
             .await
             .unwrap();
-        let buffer_b = cx_b.add_model(|cx| MultiBuffer::singleton(buffer_b, cx));
-        buffer_b.read_with(cx_b, |buf, cx| {
-            assert_eq!(buf.read(cx).text(), "b-contents")
-        });
+        buffer_b.read_with(cx_b, |buf, _| assert_eq!(buf.text(), "b-contents"));
         project_a.read_with(cx_a, |project, cx| {
             assert!(project.has_open_buffer((worktree_id, "b.txt"), cx))
         });
@@ -2176,11 +2173,7 @@ mod tests {
             .unwrap();
         let (window_b, _) = cx_b.add_window(|_| EmptyView);
         let editor_b = cx_b.add_view(window_b, |cx| {
-            Editor::for_buffer(
-                cx.add_model(|cx| MultiBuffer::singleton(buffer_b.clone(), cx)),
-                Some(project_b.clone()),
-                cx,
-            )
+            Editor::for_buffer(buffer_b.clone(), Some(project_b.clone()), cx)
         });
 
         let mut fake_language_server = fake_language_servers.next().await.unwrap();

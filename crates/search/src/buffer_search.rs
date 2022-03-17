@@ -510,8 +510,9 @@ impl SearchBar {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::{DisplayPoint, Editor, MultiBuffer};
+    use editor::{DisplayPoint, Editor};
     use gpui::{color::Color, TestAppContext};
+    use language::Buffer;
     use std::sync::Arc;
     use unindent::Unindent as _;
 
@@ -523,9 +524,10 @@ mod tests {
         let settings = Settings::new("Courier", &fonts, Arc::new(theme)).unwrap();
         cx.update(|cx| cx.set_global(settings));
 
-        let buffer = cx.update(|cx| {
-            MultiBuffer::build_simple(
-                &r#"
+        let buffer = cx.add_model(|cx| {
+            Buffer::new(
+                0,
+                r#"
                 A regular expression (shortened as regex or regexp;[1] also referred to as
                 rational expression[2][3]) is a sequence of characters that specifies a search
                 pattern in text. Usually such patterns are used by string-searching algorithms

@@ -341,7 +341,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(Editor::find_all_references);
 
     workspace::register_editor_builder(cx, |project, buffer, cx| {
-        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         Editor::for_buffer(buffer, Some(project), cx)
     });
 }
@@ -832,6 +831,15 @@ impl Editor {
     }
 
     pub fn for_buffer(
+        buffer: ModelHandle<Buffer>,
+        project: Option<ModelHandle<Project>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        Self::new(EditorMode::Full, buffer, project, None, cx)
+    }
+
+    pub fn for_multibuffer(
         buffer: ModelHandle<MultiBuffer>,
         project: Option<ModelHandle<Project>>,
         cx: &mut ViewContext<Self>,
@@ -855,8 +863,7 @@ impl Editor {
             return item;
         }
 
-        let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-        let editor = cx.add_view(|cx| Editor::for_buffer(multibuffer, Some(project.clone()), cx));
+        let editor = cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx));
         workspace.add_item(Box::new(editor.clone()), cx);
         editor
     }
@@ -969,11 +976,8 @@ impl Editor {
             .update(cx, |project, cx| project.create_buffer(cx))
             .log_err()
         {
-            let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
             workspace.add_item(
-                Box::new(
-                    cx.add_view(|cx| Editor::for_buffer(multibuffer, Some(project.clone()), cx)),
-                ),
+                Box::new(cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
                 cx,
             );
         }
@@ -2380,7 +2384,8 @@ impl Editor {
 
         workspace.update(&mut cx, |workspace, cx| {
             let project = workspace.project().clone();
-            let editor = cx.add_view(|cx| Editor::for_buffer(excerpt_buffer, Some(project), cx));
+            let editor =
+                cx.add_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
             workspace.add_item(Box::new(editor.clone()), cx);
             editor.update(cx, |editor, cx| {
                 let color = editor.style(cx).highlighted_line_background;
@@ -4397,7 +4402,7 @@ impl Editor {
 
             workspace.update(&mut cx, |workspace, cx| {
                 let editor =
-                    cx.add_view(|cx| Editor::for_buffer(excerpt_buffer, Some(project), cx));
+                    cx.add_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
                 editor.update(cx, |editor, cx| {
                     let color = editor.style(cx).highlighted_line_background;
                     editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
