@@ -83,7 +83,8 @@ message Envelope {
 
         Follow follow = 72;
         FollowResponse follow_response = 73;
-        UpdateFollower update_follower = 74;
+        UpdateFollowers update_followers = 74;
+        Unfollow unfollow = 75;
     }
 }
 
@@ -537,16 +538,27 @@ message UpdateDiagnostics {
     repeated Diagnostic diagnostics = 3;
 }
 
-message Follow {}
+message Follow {
+    uint64 project_id = 1;
+    uint32 leader_id = 2;
+}
 
 message FollowResponse {
     uint64 current_view_id = 1;
     repeated View views = 2;
 }
 
-message UpdateFollower {
-    uint64 current_view_id = 1;
-    repeated ViewUpdate view_updates = 2;
+message UpdateFollowers {
+    uint64 project_id = 1;
+    uint64 current_view_id = 2;
+    repeated View created_views = 3;
+    repeated ViewUpdate updated_views = 4;
+    repeated uint32 follower_ids = 5;
+}
+
+message Unfollow {
+    uint64 project_id = 1;
+    uint32 leader_id = 2;
 }
 
 // Entities

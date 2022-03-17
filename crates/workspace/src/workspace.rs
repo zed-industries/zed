@@ -7,7 +7,7 @@ pub mod sidebar;
 mod status_bar;
 
 use anyhow::{anyhow, Result};
-use client::{Authenticate, ChannelList, Client, User, UserStore};
+use client::{proto, Authenticate, ChannelList, Client, PeerId, User, UserStore};
 use clock::ReplicaId;
 use collections::HashMap;
 use gpui::{
@@ -42,16 +42,18 @@ use std::{
 };
 use theme::{Theme, ThemeRegistry};
 
-type ItemBuilders = HashMap<
+type ProjectItemBuilders = HashMap<
     TypeId,
-    Arc<
-        dyn Fn(
-            usize,
-            ModelHandle<Project>,
-            AnyModelHandle,
-            &mut MutableAppContext,
-        ) -> Box<dyn ItemHandle>,
-    >,
+    fn(usize, ModelHandle<Project>, AnyModelHandle, &mut MutableAppContext) -> Box<dyn ItemHandle>,
+>;
+
+type FollowedItemBuilders = Vec<
+    fn(
+        ViewHandle<Pane>,
+        ModelHandle<Project>,
+        &mut Option<proto::view::Variant>,
+        &mut MutableAppContext,
+    ) -> Option<Task<Result<(Option<ProjectEntryId>, Box<dyn ItemHandle>)>>>,
 >;
 
 action!(Open, Arc<AppState>);
@@ -108,18 +110,18 @@ pub fn init(cx: &mut MutableAppContext) {
     ]);
 }
 
-pub fn register_project_item<V>(cx: &mut MutableAppContext)
-where
-    V: ProjectItem,
-{
-    cx.update_default_global(|builders: &mut ItemBuilders, _| {
-        builders.insert(
-            TypeId::of::<V::Item>(),
-            Arc::new(move |window_id, project, model, cx| {
-                let item = model.downcast::<V::Item>().unwrap();
-                Box::new(cx.add_view(window_id, |cx| V::for_project_item(project, item, cx)))
-            }),
-        );
+pub fn register_project_item<I: ProjectItem>(cx: &mut MutableAppContext) {
+    cx.update_default_global(|builders: &mut ProjectItemBuilders, _| {
+        builders.insert(TypeId::of::<I::Item>(), |window_id, project, model, cx| {
+            let item = model.downcast::<I::Item>().unwrap();
+            Box::new(cx.add_view(window_id, |cx| I::for_project_item(project, item, cx)))
+        });
+    });
+}
+
+pub fn register_followed_item<I: FollowedItem>(cx: &mut MutableAppContext) {
+    cx.update_default_global(|builders: &mut FollowedItemBuilders, _| {
+        builders.push(I::for_state_message)
     });
 }
 
@@ -212,6 +214,17 @@ pub trait ProjectItem: Item {
         item: ModelHandle<Self::Item>,
         cx: &mut ViewContext<Self>,
     ) -> Self;
+}
+
+pub trait FollowedItem: Item {
+    type UpdateMessage;
+
+    fn for_state_message(
+        pane: ViewHandle<Pane>,
+        project: ModelHandle<Project>,
+        state: &mut Option<proto::view::Variant>,
+        cx: &mut MutableAppContext,
+    ) -> Option<Task<Result<(Option<ProjectEntryId>, Box<dyn ItemHandle>)>>>;
 }
 
 pub trait ItemHandle: 'static {
@@ -840,7 +853,7 @@ impl Workspace {
         cx.as_mut().spawn(|mut cx| async move {
             let (project_entry_id, project_item) = project_item.await?;
             let build_item = cx.update(|cx| {
-                cx.default_global::<ItemBuilders>()
+                cx.default_global::<ProjectItemBuilders>()
                     .get(&project_item.model_type())
                     .ok_or_else(|| anyhow!("no item builder for project item"))
                     .cloned()
@@ -988,6 +1001,63 @@ impl Workspace {
                 }
             }
         });
+    }
+
+    pub fn follow(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+        if let Some(project_id) = self.project.read(cx).remote_id() {
+            let request = self.client.request(proto::Follow {
+                project_id,
+                leader_id: leader_id.0,
+            });
+            cx.spawn_weak(|this, mut cx| async move {
+                let mut response = request.await?;
+                if let Some(this) = this.upgrade(&cx) {
+                    let mut item_tasks = Vec::new();
+                    let (project, pane) = this.read_with(&cx, |this, _| {
+                        (this.project.clone(), this.active_pane().clone())
+                    });
+                    for view in &mut response.views {
+                        let variant = view
+                            .variant
+                            .take()
+                            .ok_or_else(|| anyhow!("missing variant"))?;
+                        cx.update(|cx| {
+                            let mut variant = Some(variant);
+                            for build_item in cx.default_global::<FollowedItemBuilders>().clone() {
+                                if let Some(task) =
+                                    build_item(pane.clone(), project.clone(), &mut variant, cx)
+                                {
+                                    item_tasks.push(task);
+                                    break;
+                                } else {
+                                    assert!(variant.is_some());
+                                }
+                            }
+                        });
+                    }
+
+                    let items = futures::future::try_join_all(item_tasks).await?;
+                    let mut items_by_leader_view_id = HashMap::default();
+                    for (view, item) in response.views.into_iter().zip(items) {
+                        items_by_leader_view_id.insert(view.id as usize, item);
+                    }
+
+                    pane.update(&mut cx, |pane, cx| {
+                        pane.set_follow_state(
+                            FollowerState {
+                                leader_id,
+                                current_view_id: response.current_view_id as usize,
+                                items_by_leader_view_id,
+                            },
+                            cx,
+                        )
+                    })?;
+                }
+                Ok(())
+            })
+        } else {
+            Task::ready(Err(anyhow!("project is not remote")))
+        }
     }
 
     fn render_connection_status(&self, cx: &mut RenderContext<Self>) -> Option<ElementBox> {

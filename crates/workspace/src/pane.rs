@@ -1,5 +1,7 @@
 use super::{ItemHandle, SplitDirection};
 use crate::{Item, Settings, WeakItemHandle, Workspace};
+use anyhow::{anyhow, Result};
+use client::PeerId;
 use collections::{HashMap, VecDeque};
 use gpui::{
     action,
@@ -103,6 +105,13 @@ pub struct Pane {
     toolbars: HashMap<TypeId, Box<dyn ToolbarHandle>>,
     active_toolbar_type: Option<TypeId>,
     active_toolbar_visible: bool,
+}
+
+pub(crate) struct FollowerState {
+    pub(crate) leader_id: PeerId,
+    pub(crate) current_view_id: usize,
+    pub(crate) items_by_leader_view_id:
+        HashMap<usize, (Option<ProjectEntryId>, Box<dyn ItemHandle>)>,
 }
 
 pub trait Toolbar: View {
@@ -311,6 +320,21 @@ impl Pane {
         self.items.insert(item_idx, (project_entry_id, item));
         self.activate_item(item_idx, cx);
         cx.notify();
+    }
+
+    pub(crate) fn set_follow_state(
+        &mut self,
+        follower_state: FollowerState,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<()> {
+        let current_view_id = follower_state.current_view_id as usize;
+        let (project_entry_id, item) = follower_state
+            .items_by_leader_view_id
+            .get(&current_view_id)
+            .ok_or_else(|| anyhow!("invalid current view id"))?
+            .clone();
+        self.add_item(project_entry_id, item, cx);
+        Ok(())
     }
 
     pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> {
