@@ -250,6 +250,10 @@ impl Item for ProjectSearchView {
         None
     }
 
+    fn project_entry_id(&self, _: &AppContext) -> Option<project::ProjectEntryId> {
+        None
+    }
+
     fn can_save(&self, _: &gpui::AppContext) -> bool {
         true
     }

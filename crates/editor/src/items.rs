@@ -5,7 +5,7 @@ use gpui::{
     ViewContext, ViewHandle,
 };
 use language::{Bias, Buffer, Diagnostic, File as _};
-use project::{File, Project, ProjectPath};
+use project::{File, Project, ProjectEntryId, ProjectPath};
 use std::fmt::Write;
 use std::path::PathBuf;
 use text::{Point, Selection};
@@ -39,6 +39,10 @@ impl Item for Editor {
             worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
         })
+    }
+
+    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId> {
+        File::from_dyn(self.buffer().read(cx).file(cx)).and_then(|file| file.project_entry_id(cx))
     }
 
     fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>

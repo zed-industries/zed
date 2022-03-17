@@ -53,7 +53,7 @@ type FollowedItemBuilders = Vec<
         ModelHandle<Project>,
         &mut Option<proto::view::Variant>,
         &mut MutableAppContext,
-    ) -> Option<Task<Result<(Option<ProjectEntryId>, Box<dyn ItemHandle>)>>>,
+    ) -> Option<Task<Result<Box<dyn ItemHandle>>>>,
 >;
 
 action!(Open, Arc<AppState>);
@@ -157,6 +157,7 @@ pub trait Item: View {
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) {}
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
+    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
     fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>);
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
     where
@@ -224,12 +225,13 @@ pub trait FollowedItem: Item {
         project: ModelHandle<Project>,
         state: &mut Option<proto::view::Variant>,
         cx: &mut MutableAppContext,
-    ) -> Option<Task<Result<(Option<ProjectEntryId>, Box<dyn ItemHandle>)>>>;
+    ) -> Option<Task<Result<Box<dyn ItemHandle>>>>;
 }
 
 pub trait ItemHandle: 'static {
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
+    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn set_nav_history(&self, nav_history: Rc<RefCell<NavHistory>>, cx: &mut MutableAppContext);
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemHandle>>;
@@ -275,6 +277,10 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
         self.read(cx).project_path(cx)
+    }
+
+    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId> {
+        self.read(cx).project_entry_id(cx)
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemHandle> {
@@ -814,7 +820,7 @@ impl Workspace {
 
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
         self.active_pane()
-            .update(cx, |pane, cx| pane.add_item(None, item, cx))
+            .update(cx, |pane, cx| pane.add_item(item, cx))
     }
 
     pub fn open_path(
@@ -877,7 +883,7 @@ impl Workspace {
         if let Some(item) = project_item
             .read(cx)
             .entry_id(cx)
-            .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(entry_id))
+            .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(entry_id, cx))
             .and_then(|item| item.downcast())
         {
             self.activate_item(&item, cx);
@@ -959,10 +965,9 @@ impl Workspace {
         let new_pane = self.add_pane(cx);
         self.activate_pane(new_pane.clone(), cx);
         if let Some(item) = pane.read(cx).active_item() {
-            let project_entry_id = pane.read(cx).project_entry_id_for_item(item.as_ref());
             if let Some(clone) = item.clone_on_split(cx.as_mut()) {
                 new_pane.update(cx, |new_pane, cx| {
-                    new_pane.add_item(project_entry_id, clone, cx);
+                    new_pane.add_item(clone, cx);
                 });
             }
         }
