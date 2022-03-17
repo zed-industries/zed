@@ -279,7 +279,7 @@ impl Project {
         client.add_entity_request_handler(Self::handle_search_project);
         client.add_entity_request_handler(Self::handle_get_project_symbols);
         client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
-        client.add_entity_request_handler(Self::handle_open_buffer);
+        client.add_entity_request_handler(Self::handle_open_buffer_by_path);
         client.add_entity_request_handler(Self::handle_save_buffer);
     }
 
@@ -930,7 +930,7 @@ impl Project {
         let path_string = path.to_string_lossy().to_string();
         cx.spawn(|this, mut cx| async move {
             let response = rpc
-                .request(proto::OpenBuffer {
+                .request(proto::OpenBufferByPath {
                     project_id,
                     worktree_id: remote_worktree_id.to_proto(),
                     path: path_string,
@@ -3887,9 +3887,9 @@ impl Project {
         hasher.finalize().as_slice().try_into().unwrap()
     }
 
-    async fn handle_open_buffer(
+    async fn handle_open_buffer_by_path(
         this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::OpenBuffer>,
+        envelope: TypedEnvelope<proto::OpenBufferByPath>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::OpenBufferResponse> {

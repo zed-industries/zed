@@ -40,8 +40,9 @@ message Envelope {
         StartLanguageServer start_language_server = 33;
         UpdateLanguageServer update_language_server = 34;
 
-        OpenBuffer open_buffer = 35;
-        OpenBufferResponse open_buffer_response = 36;
+        OpenBufferById open_buffer_by_id = 35;
+        OpenBufferByPath open_buffer_by_path = 36;
+        OpenBufferResponse open_buffer_response = 37;
         UpdateBuffer update_buffer = 38;
         UpdateBufferFile update_buffer_file = 39;
         SaveBuffer save_buffer = 40;
@@ -79,6 +80,10 @@ message Envelope {
 
         GetUsers get_users = 70;
         GetUsersResponse get_users_response = 71;
+
+        Follow follow = 72;
+        FollowResponse follow_response = 73;
+        UpdateFollower update_follower = 74;
     }
 }
 
@@ -241,10 +246,15 @@ message OpenBufferForSymbolResponse {
     Buffer buffer = 1;
 }
 
-message OpenBuffer {
+message OpenBufferByPath {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     string path = 3;
+}
+
+message OpenBufferById {
+    uint64 project_id = 1;
+    uint64 id = 2;
 }
 
 message OpenBufferResponse {
@@ -521,7 +531,48 @@ message UpdateContacts {
     repeated Contact contacts = 1;
 }
 
+message UpdateDiagnostics {
+    uint32 replica_id = 1;
+    uint32 lamport_timestamp = 2;
+    repeated Diagnostic diagnostics = 3;
+}
+
+message Follow {}
+
+message FollowResponse {
+    uint64 current_view_id = 1;
+    repeated View views = 2;
+}
+
+message UpdateFollower {
+    uint64 current_view_id = 1;
+    repeated ViewUpdate view_updates = 2;
+}
+
 // Entities
+
+message View {
+    uint64 id = 1;
+    oneof variant {
+        Editor editor = 2;
+    }
+
+    message Editor {
+        uint64 buffer_id = 1;
+        Selection newest_selection = 2;
+    }
+}
+
+message ViewUpdate {
+    uint64 id = 1;
+    oneof variant {
+        Editor editor = 2;
+    }
+
+    message Editor {
+        Selection newest_selection = 1;
+    }
+}
 
 message Collaborator {
     uint32 peer_id = 1;
@@ -578,17 +629,6 @@ message BufferState {
     repeated string completion_triggers = 8;
 }
 
-message BufferFragment {
-    uint32 replica_id = 1;
-    uint32 local_timestamp = 2;
-    uint32 lamport_timestamp = 3;
-    uint32 insertion_offset = 4;
-    uint32 len = 5;
-    bool visible = 6;
-    repeated VectorClockEntry deletions = 7;
-    repeated VectorClockEntry max_undos = 8;
-}
-
 message SelectionSet {
     uint32 replica_id = 1;
     repeated Selection selections = 2;
@@ -612,12 +652,6 @@ message Anchor {
 enum Bias {
     Left = 0;
     Right = 1;
-}
-
-message UpdateDiagnostics {
-    uint32 replica_id = 1;
-    uint32 lamport_timestamp = 2;
-    repeated Diagnostic diagnostics = 3;
 }
 
 message Diagnostic {

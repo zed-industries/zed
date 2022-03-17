@@ -92,7 +92,7 @@ impl Server {
             .add_request_handler(Server::forward_project_request::<proto::GetDocumentHighlights>)
             .add_request_handler(Server::forward_project_request::<proto::GetProjectSymbols>)
             .add_request_handler(Server::forward_project_request::<proto::OpenBufferForSymbol>)
-            .add_request_handler(Server::forward_project_request::<proto::OpenBuffer>)
+            .add_request_handler(Server::forward_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(Server::forward_project_request::<proto::GetCompletions>)
             .add_request_handler(
                 Server::forward_project_request::<proto::ApplyCompletionAdditionalEdits>,
