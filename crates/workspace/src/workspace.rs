@@ -430,7 +430,6 @@ pub struct Workspace {
     active_pane: ViewHandle<Pane>,
     status_bar: ViewHandle<StatusBar>,
     project: ModelHandle<Project>,
-    // items: BTreeMap<Reverse<usize>, Box<dyn WeakItemHandle>>,
     _observe_current_user: Task<()>,
 }
 

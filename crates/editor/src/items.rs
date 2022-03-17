@@ -1,28 +1,16 @@
-use crate::{Autoscroll, Editor, Event, MultiBuffer, NavigationData, ToOffset, ToPoint as _};
+use crate::{Autoscroll, Editor, Event, NavigationData, ToOffset, ToPoint as _};
 use anyhow::Result;
 use gpui::{
     elements::*, AppContext, Entity, ModelHandle, RenderContext, Subscription, Task, View,
-    ViewContext, ViewHandle, WeakModelHandle,
+    ViewContext, ViewHandle,
 };
-use language::{Bias, Buffer, Diagnostic, File as _};
+use language::{Bias, Diagnostic, File as _};
 use project::{File, Project, ProjectPath};
 use std::fmt::Write;
 use std::path::PathBuf;
 use text::{Point, Selection};
 use util::ResultExt;
 use workspace::{Item, ItemHandle, ItemNavHistory, Settings, StatusItemView};
-
-#[derive(Clone)]
-pub struct BufferItemHandle(pub ModelHandle<Buffer>);
-
-#[derive(Clone)]
-struct WeakBufferItemHandle(WeakModelHandle<Buffer>);
-
-#[derive(Clone)]
-pub struct MultiBufferItemHandle(pub ModelHandle<MultiBuffer>);
-
-#[derive(Clone)]
-struct WeakMultiBufferItemHandle(WeakModelHandle<MultiBuffer>);
 
 impl Item for Editor {
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) {
