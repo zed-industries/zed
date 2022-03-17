@@ -646,16 +646,6 @@ impl Workspace {
         }
     }
 
-    pub fn item_for_entry(
-        &self,
-        entry_id: ProjectEntryId,
-        cx: &AppContext,
-    ) -> Option<Box<dyn ItemHandle>> {
-        self.panes()
-            .iter()
-            .find_map(|pane| pane.read(cx).item_for_entry(entry_id))
-    }
-
     pub fn item_of_type<T: Item>(&self, cx: &AppContext) -> Option<ViewHandle<T>> {
         self.items_of_type(cx).max_by_key(|item| item.id())
     }

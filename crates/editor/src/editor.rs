@@ -848,9 +848,10 @@ impl Editor {
 
         if let Some(item) = project::File::from_dyn(buffer.read(cx).file())
             .and_then(|file| file.project_entry_id(cx))
-            .and_then(|entry_id| workspace.item_for_entry(entry_id, cx))
+            .and_then(|entry_id| workspace.active_pane().read(cx).item_for_entry(entry_id))
             .and_then(|item| item.downcast())
         {
+            workspace.activate_item(&item, cx);
             return item;
         }
 
