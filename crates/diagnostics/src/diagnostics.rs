@@ -144,7 +144,7 @@ impl ProjectDiagnosticsEditor {
             let diagnostics = cx.add_view(|cx| {
                 ProjectDiagnosticsEditor::new(workspace.project().clone(), workspace_handle, cx)
             });
-            workspace.open_item(Box::new(diagnostics), cx);
+            workspace.add_item(Box::new(diagnostics), cx);
         }
     }
 

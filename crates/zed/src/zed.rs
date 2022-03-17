@@ -111,7 +111,6 @@ pub fn build_workspace(
         languages: app_state.languages.clone(),
         user_store: app_state.user_store.clone(),
         channel_list: app_state.channel_list.clone(),
-        path_openers: app_state.path_openers.clone(),
     };
     let mut workspace = Workspace::new(&workspace_params, cx);
     let project = workspace.project().clone();

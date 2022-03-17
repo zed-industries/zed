@@ -1,8 +1,8 @@
 use crate::{Autoscroll, Editor, Event, MultiBuffer, NavigationData, ToOffset, ToPoint as _};
 use anyhow::Result;
 use gpui::{
-    elements::*, AppContext, Entity, ModelContext, ModelHandle, RenderContext, Subscription, Task,
-    View, ViewContext, ViewHandle, WeakModelHandle,
+    elements::*, AppContext, Entity, ModelHandle, RenderContext, Subscription, Task, View,
+    ViewContext, ViewHandle, WeakModelHandle,
 };
 use language::{Bias, Buffer, Diagnostic, File as _};
 use project::{File, Project, ProjectPath};
@@ -10,9 +10,7 @@ use std::fmt::Write;
 use std::path::PathBuf;
 use text::{Point, Selection};
 use util::ResultExt;
-use workspace::{ItemNavHistory, ItemView, ItemViewHandle, PathOpener, Settings, StatusItemView};
-
-pub struct BufferOpener;
+use workspace::{ItemNavHistory, ItemView, ItemViewHandle, Settings, StatusItemView};
 
 #[derive(Clone)]
 pub struct BufferItemHandle(pub ModelHandle<Buffer>);
@@ -25,26 +23,6 @@ pub struct MultiBufferItemHandle(pub ModelHandle<MultiBuffer>);
 
 #[derive(Clone)]
 struct WeakMultiBufferItemHandle(WeakModelHandle<MultiBuffer>);
-
-impl PathOpener for BufferOpener {
-    fn open(
-        &self,
-        project: &mut Project,
-        project_path: ProjectPath,
-        window_id: usize,
-        cx: &mut ModelContext<Project>,
-    ) -> Option<Task<Result<Box<dyn ItemViewHandle>>>> {
-        let buffer = project.open_buffer_for_path(project_path, cx);
-        Some(cx.spawn(|project, mut cx| async move {
-            let buffer = buffer.await?;
-            let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-            let editor = cx.add_view(window_id, |cx| {
-                Editor::for_buffer(multibuffer, Some(project), cx)
-            });
-            Ok(Box::new(editor) as Box<dyn ItemViewHandle>)
-        }))
-    }
-}
 
 impl ItemView for Editor {
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) {

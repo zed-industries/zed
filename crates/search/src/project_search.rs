@@ -391,7 +391,7 @@ impl ProjectSearchView {
             workspace.activate_item(&existing, cx);
         } else {
             let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
-            workspace.open_item(
+            workspace.add_item(
                 Box::new(cx.add_view(|cx| ProjectSearchView::new(model, cx))),
                 cx,
             );
@@ -429,7 +429,7 @@ impl ProjectSearchView {
                     model.search(new_query, cx);
                     model
                 });
-                workspace.open_item(
+                workspace.add_item(
                     Box::new(cx.add_view(|cx| ProjectSearchView::new(model, cx))),
                     cx,
                 );

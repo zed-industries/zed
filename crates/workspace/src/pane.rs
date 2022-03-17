@@ -253,12 +253,12 @@ impl Pane {
             let pane = pane.downgrade();
             let task = workspace.load_path(project_path, cx);
             cx.spawn(|workspace, mut cx| async move {
-                let item = task.await;
+                let task = task.await;
                 if let Some(pane) = pane.upgrade(&cx) {
-                    if let Some(item) = item.log_err() {
+                    if let Some((project_entry_id, build_item)) = task.log_err() {
                         pane.update(&mut cx, |pane, cx| {
                             pane.nav_history.borrow_mut().set_mode(mode);
-                            pane.open_item(item, cx);
+                            let item = pane.open_item(project_entry_id, cx, build_item);
                             pane.nav_history
                                 .borrow_mut()
                                 .set_mode(NavigationMode::Normal);
@@ -280,7 +280,7 @@ impl Pane {
         }
     }
 
-    pub(crate) fn open_editor(
+    pub(crate) fn open_item(
         &mut self,
         project_entry_id: ProjectEntryId,
         cx: &mut ViewContext<Self>,
@@ -297,14 +297,6 @@ impl Pane {
         let item_view = build_editor(cx);
         self.add_item(Some(project_entry_id), item_view.boxed_clone(), cx);
         item_view
-    }
-
-    pub fn open_item(
-        &mut self,
-        item_view_to_open: Box<dyn ItemViewHandle>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.add_item(None, item_view_to_open.boxed_clone(), cx);
     }
 
     pub(crate) fn add_item(

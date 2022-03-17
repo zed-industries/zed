@@ -3201,8 +3201,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
-        let mut path_openers_b = Vec::new();
-        cx_b.update(|cx| editor::init(cx, &mut path_openers_b));
+        cx_b.update(|cx| editor::init(cx));
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
@@ -3271,7 +3270,6 @@ mod tests {
         params.client = client_b.client.clone();
         params.user_store = client_b.user_store.clone();
         params.project = project_b;
-        params.path_openers = path_openers_b.into();
 
         let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
         let editor_b = workspace_b
@@ -3437,8 +3435,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
-        let mut path_openers_b = Vec::new();
-        cx_b.update(|cx| editor::init(cx, &mut path_openers_b));
+        cx_b.update(|cx| editor::init(cx));
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
@@ -3507,7 +3504,6 @@ mod tests {
         params.client = client_b.client.clone();
         params.user_store = client_b.user_store.clone();
         params.project = project_b;
-        params.path_openers = path_openers_b.into();
 
         let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
         let editor_b = workspace_b

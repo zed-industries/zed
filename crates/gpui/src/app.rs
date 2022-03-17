@@ -3473,6 +3473,12 @@ impl<T> PartialEq<WeakViewHandle<T>> for ViewHandle<T> {
     }
 }
 
+impl<T> PartialEq<ViewHandle<T>> for WeakViewHandle<T> {
+    fn eq(&self, other: &ViewHandle<T>) -> bool {
+        self.window_id == other.window_id && self.view_id == other.view_id
+    }
+}
+
 impl<T> Eq for ViewHandle<T> {}
 
 impl<T> Debug for ViewHandle<T> {

@@ -57,7 +57,7 @@ pub use sum_tree::Bias;
 use text::rope::TextDimension;
 use theme::DiagnosticStyle;
 use util::{post_inc, ResultExt, TryFutureExt};
-use workspace::{settings, ItemNavHistory, PathOpener, Settings, Workspace};
+use workspace::{settings, ItemNavHistory, Settings, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -141,8 +141,7 @@ pub enum Direction {
     Next,
 }
 
-pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpener>>) {
-    path_openers.push(Box::new(items::BufferOpener));
+pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings(vec![
         Binding::new("escape", Cancel, Some("Editor")),
         Binding::new("backspace", Backspace, Some("Editor")),
@@ -340,6 +339,11 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_async_action(Editor::rename);
     cx.add_async_action(Editor::confirm_rename);
     cx.add_async_action(Editor::find_all_references);
+
+    workspace::register_editor_builder(cx, |project, buffer, cx| {
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        Editor::for_buffer(buffer, Some(project), cx)
+    });
 }
 
 trait SelectionExt {
@@ -842,18 +846,17 @@ impl Editor {
     ) -> ViewHandle<Editor> {
         let project = workspace.project().clone();
 
-        if let Some(project_entry) = project::File::from_dyn(buffer.read(cx).file())
+        if let Some(item) = project::File::from_dyn(buffer.read(cx).file())
             .and_then(|file| file.project_entry_id(cx))
+            .and_then(|entry_id| workspace.item_for_entry(entry_id, cx))
+            .and_then(|item| item.downcast())
         {
-            return workspace
-                .open_editor(project_entry, cx)
-                .downcast::<Editor>()
-                .unwrap();
+            return item;
         }
 
         let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let editor = cx.add_view(|cx| Editor::for_buffer(multibuffer, Some(project.clone()), cx));
-        workspace.open_item(Box::new(editor.clone()), cx);
+        workspace.add_item(Box::new(editor.clone()), cx);
         editor
     }
 
@@ -966,7 +969,7 @@ impl Editor {
             .log_err()
         {
             let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-            workspace.open_item(
+            workspace.add_item(
                 Box::new(
                     cx.add_view(|cx| Editor::for_buffer(multibuffer, Some(project.clone()), cx)),
                 ),
@@ -2376,16 +2379,12 @@ impl Editor {
 
         workspace.update(&mut cx, |workspace, cx| {
             let project = workspace.project().clone();
-            let editor = workspace.open_item(
-                Box::new(cx.add_view(|cx| Editor::for_buffer(excerpt_buffer, Some(project), cx))),
-                cx,
-            );
-            if let Some(editor) = editor.act_as::<Self>(cx) {
-                editor.update(cx, |editor, cx| {
-                    let color = editor.style(cx).highlighted_line_background;
-                    editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
-                });
-            }
+            let editor = cx.add_view(|cx| Editor::for_buffer(excerpt_buffer, Some(project), cx));
+            workspace.add_item(Box::new(editor.clone()), cx);
+            editor.update(cx, |editor, cx| {
+                let color = editor.style(cx).highlighted_line_background;
+                editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
+            });
         });
 
         Ok(())
@@ -4402,7 +4401,7 @@ impl Editor {
                     let color = editor.style(cx).highlighted_line_background;
                     editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
                 });
-                workspace.open_item(Box::new(editor), cx);
+                workspace.add_item(Box::new(editor), cx);
             });
 
             Ok(())

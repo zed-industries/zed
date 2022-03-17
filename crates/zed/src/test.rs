@@ -17,8 +17,7 @@ fn init_logger() {
 
 pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
     let settings = Settings::test(cx);
-    let mut path_openers = Vec::new();
-    editor::init(cx, &mut path_openers);
+    editor::init(cx);
     cx.add_app_state(settings);
     let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
     let http = FakeHttpClient::with_404_response();
@@ -40,7 +39,6 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
         client,
         user_store,
         fs: FakeFs::new(cx.background().clone()),
-        path_openers: Arc::from(path_openers),
         build_window_options: &build_window_options,
         build_workspace: &build_workspace,
     })

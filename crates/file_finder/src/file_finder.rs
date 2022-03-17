@@ -409,14 +409,12 @@ mod tests {
 
     #[gpui::test]
     async fn test_matching_paths(cx: &mut gpui::TestAppContext) {
-        let mut path_openers = Vec::new();
         cx.update(|cx| {
             super::init(cx);
-            editor::init(cx, &mut path_openers);
+            editor::init(cx);
         });
 
-        let mut params = cx.update(WorkspaceParams::test);
-        params.path_openers = Arc::from(path_openers);
+        let params = cx.update(WorkspaceParams::test);
         params
             .fs
             .as_fake()
