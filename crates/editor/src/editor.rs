@@ -340,7 +340,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(Editor::confirm_rename);
     cx.add_async_action(Editor::find_all_references);
 
-    workspace::register_editor_builder(cx, |project, buffer, cx| {
+    workspace::register_project_item(cx, |project, buffer, cx| {
         Editor::for_buffer(buffer, Some(project), cx)
     });
 }

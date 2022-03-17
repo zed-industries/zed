@@ -11,8 +11,8 @@ use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{future::Shared, Future, FutureExt, StreamExt, TryFutureExt};
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
-    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
-    UpgradeModelHandle, WeakModelHandle,
+    AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
+    MutableAppContext, Task, UpgradeModelHandle, WeakModelHandle,
 };
 use language::{
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
@@ -820,6 +820,23 @@ impl Project {
         });
         self.register_buffer(&buffer, cx)?;
         Ok(buffer)
+    }
+
+    pub fn open_path(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<(ProjectEntryId, AnyModelHandle)>> {
+        let task = self.open_buffer(path, cx);
+        cx.spawn_weak(|_, cx| async move {
+            let buffer = task.await?;
+            let project_entry_id = buffer
+                .read_with(&cx, |buffer, cx| {
+                    File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx))
+                })
+                .ok_or_else(|| anyhow!("no project entry"))?;
+            Ok((project_entry_id, buffer.into()))
+        })
     }
 
     pub fn open_buffer(

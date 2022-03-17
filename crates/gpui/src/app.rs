@@ -1364,12 +1364,22 @@ impl MutableAppContext {
         Ok(pending)
     }
 
+    pub fn default_global<T: 'static + Default>(&mut self) -> &T {
+        self.cx
+            .globals
+            .entry(TypeId::of::<T>())
+            .or_insert_with(|| Box::new(T::default()))
+            .downcast_ref()
+            .unwrap()
+    }
+
     pub fn set_global<T: 'static>(&mut self, state: T) {
         self.cx.globals.insert(TypeId::of::<T>(), Box::new(state));
     }
 
-    pub fn update_global<T: 'static, F, U>(&mut self, update: F) -> U
+    pub fn update_default_global<T, F, U>(&mut self, update: F) -> U
     where
+        T: 'static + Default,
         F: FnOnce(&mut T, &mut MutableAppContext) -> U,
     {
         let type_id = TypeId::of::<T>();
@@ -1377,7 +1387,23 @@ impl MutableAppContext {
             .cx
             .globals
             .remove(&type_id)
-            .expect("no app state has been added for this type");
+            .unwrap_or_else(|| Box::new(T::default()));
+        let result = update(state.downcast_mut().unwrap(), self);
+        self.cx.globals.insert(type_id, state);
+        result
+    }
+
+    pub fn update_global<T, F, U>(&mut self, update: F) -> U
+    where
+        T: 'static,
+        F: FnOnce(&mut T, &mut MutableAppContext) -> U,
+    {
+        let type_id = TypeId::of::<T>();
+        let mut state = self
+            .cx
+            .globals
+            .remove(&type_id)
+            .expect("no global has been added for this type");
         let result = update(state.downcast_mut().unwrap(), self);
         self.cx.globals.insert(type_id, state);
         result
@@ -3714,6 +3740,10 @@ impl AnyModelHandle {
 
     pub fn is<T: Entity>(&self) -> bool {
         self.model_type == TypeId::of::<T>()
+    }
+
+    pub fn model_type(&self) -> TypeId {
+        self.model_type
     }
 }
 

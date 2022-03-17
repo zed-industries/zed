@@ -9,6 +9,7 @@ mod status_bar;
 use anyhow::{anyhow, Result};
 use client::{Authenticate, ChannelList, Client, User, UserStore};
 use clock::ReplicaId;
+use collections::HashMap;
 use gpui::{
     action,
     color::Color,
@@ -17,11 +18,11 @@ use gpui::{
     json::{self, to_string_pretty, ToJson},
     keymap::Binding,
     platform::{CursorStyle, WindowOptions},
-    AnyViewHandle, AppContext, ClipboardItem, Entity, ImageData, ModelHandle, MutableAppContext,
-    PathPromptOptions, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    AnyModelHandle, AnyViewHandle, AppContext, ClipboardItem, Entity, ImageData, ModelHandle,
+    MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
-use language::{Buffer, LanguageRegistry};
+use language::LanguageRegistry;
 use log::error;
 pub use pane::*;
 pub use pane_group::*;
@@ -41,13 +42,16 @@ use std::{
 };
 use theme::{Theme, ThemeRegistry};
 
-pub type BuildEditor = Arc<
-    dyn Fn(
-        usize,
-        ModelHandle<Project>,
-        ModelHandle<Buffer>,
-        &mut MutableAppContext,
-    ) -> Box<dyn ItemHandle>,
+type ItemBuilders = HashMap<
+    TypeId,
+    Arc<
+        dyn Fn(
+            usize,
+            ModelHandle<Project>,
+            AnyModelHandle,
+            &mut MutableAppContext,
+        ) -> Box<dyn ItemHandle>,
+    >,
 >;
 
 action!(Open, Arc<AppState>);
@@ -104,14 +108,20 @@ pub fn init(cx: &mut MutableAppContext) {
     ]);
 }
 
-pub fn register_editor_builder<F, V>(cx: &mut MutableAppContext, build_editor: F)
+pub fn register_project_item<F, V>(cx: &mut MutableAppContext, build_item: F)
 where
-    V: Item,
-    F: 'static + Fn(ModelHandle<Project>, ModelHandle<Buffer>, &mut ViewContext<V>) -> V,
+    V: ProjectItem,
+    F: 'static + Fn(ModelHandle<Project>, ModelHandle<V::Item>, &mut ViewContext<V>) -> V,
 {
-    cx.set_global::<BuildEditor>(Arc::new(move |window_id, project, model, cx| {
-        Box::new(cx.add_view(window_id, |cx| build_editor(project, model, cx)))
-    }));
+    cx.update_default_global(|builders: &mut ItemBuilders, _| {
+        builders.insert(
+            TypeId::of::<V::Item>(),
+            Arc::new(move |window_id, project, model, cx| {
+                let model = model.downcast::<V::Item>().unwrap();
+                Box::new(cx.add_view(window_id, |cx| build_item(project, model, cx)))
+            }),
+        );
+    });
 }
 
 pub struct AppState {
@@ -826,20 +836,19 @@ impl Workspace {
         )>,
     > {
         let project = self.project().clone();
-        let buffer = project.update(cx, |project, cx| project.open_buffer(path, cx));
-        cx.spawn(|this, mut cx| async move {
-            let buffer = buffer.await?;
-            let project_entry_id = buffer.read_with(&cx, |buffer, cx| {
-                project::File::from_dyn(buffer.file())
-                    .and_then(|file| file.project_entry_id(cx))
-                    .ok_or_else(|| anyhow!("buffer has no entry"))
+        let project_item = project.update(cx, |project, cx| project.open_path(path, cx));
+        let window_id = cx.window_id();
+        cx.as_mut().spawn(|mut cx| async move {
+            let (project_entry_id, project_item) = project_item.await?;
+            let build_item = cx.update(|cx| {
+                cx.default_global::<ItemBuilders>()
+                    .get(&project_item.model_type())
+                    .ok_or_else(|| anyhow!("no item builder for project item"))
+                    .cloned()
             })?;
-            let (window_id, build_editor) = this.update(&mut cx, |_, cx| {
-                (cx.window_id(), cx.global::<BuildEditor>().clone())
-            });
-            let build_editor =
-                move |cx: &mut MutableAppContext| build_editor(window_id, project, buffer, cx);
-            Ok((project_entry_id, build_editor))
+            let build_item =
+                move |cx: &mut MutableAppContext| build_item(window_id, project, project_item, cx);
+            Ok((project_entry_id, build_item))
         })
     }
 
