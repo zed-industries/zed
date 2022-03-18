@@ -1,7 +1,5 @@
 use super::{ItemHandle, SplitDirection};
 use crate::{Item, Settings, WeakItemHandle, Workspace};
-use anyhow::{anyhow, Result};
-use client::PeerId;
 use collections::{HashMap, VecDeque};
 use gpui::{
     action,
@@ -258,7 +256,7 @@ impl Pane {
                 let task = task.await;
                 if let Some(pane) = pane.upgrade(&cx) {
                     if let Some((project_entry_id, build_item)) = task.log_err() {
-                        pane.update(&mut cx, |pane, cx| {
+                        pane.update(&mut cx, |pane, _| {
                             pane.nav_history.borrow_mut().set_mode(mode);
                         });
                         let item = workspace.update(&mut cx, |workspace, cx| {

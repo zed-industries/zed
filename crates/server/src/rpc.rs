@@ -4252,7 +4252,7 @@ mod tests {
             })
             .await
             .unwrap();
-        let editor_a2 = workspace_a
+        let _editor_a2 = workspace_a
             .update(cx_a, |workspace, cx| {
                 workspace.open_path((worktree_id, "2.txt"), cx)
             })
@@ -4261,6 +4261,9 @@ mod tests {
 
         // Client B opens an editor.
         let workspace_b = client_b.build_workspace(&project_b, cx_b);
+        workspace_b.update(cx_b, |workspace, cx| {
+            workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
+        });
         let editor_b1 = workspace_b
             .update(cx_b, |workspace, cx| {
                 workspace.open_path((worktree_id, "1.txt"), cx)
@@ -4271,7 +4274,6 @@ mod tests {
         // Client B starts following client A.
         workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
                 let leader_id = *project_b.read(cx).collaborators().keys().next().unwrap();
                 workspace.follow(&leader_id.into(), cx).unwrap()
             })
@@ -4776,7 +4778,7 @@ mod tests {
             project: &ModelHandle<Project>,
             cx: &mut TestAppContext,
         ) -> ViewHandle<Workspace> {
-            let (window_id, _) = cx.add_window(|cx| EmptyView);
+            let (window_id, _) = cx.add_window(|_| EmptyView);
             cx.add_view(window_id, |cx| {
                 let fs = project.read(cx).fs().clone();
                 Workspace::new(

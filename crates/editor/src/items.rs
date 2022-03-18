@@ -64,7 +64,7 @@ impl FollowableItem for Editor {
     fn to_update_message(
         &self,
         event: &Self::Event,
-        cx: &AppContext,
+        _: &AppContext,
     ) -> Option<update_view::Variant> {
         match event {
             Event::ScrollPositionChanged => {
