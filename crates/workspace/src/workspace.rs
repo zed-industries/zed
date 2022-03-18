@@ -247,7 +247,7 @@ pub trait FollowableItem: Item {
         state: &mut Option<proto::view::Variant>,
         cx: &mut MutableAppContext,
     ) -> Option<Task<Result<ViewHandle<Self>>>>;
-    fn to_state_message(&self, cx: &AppContext) -> proto::view::Variant;
+    fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant>;
     fn to_update_message(
         &self,
         event: &Self::Event,
@@ -261,7 +261,7 @@ pub trait FollowableItem: Item {
 }
 
 pub trait FollowableItemHandle: ItemHandle {
-    fn to_state_message(&self, cx: &AppContext) -> proto::view::Variant;
+    fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant>;
     fn to_update_message(
         &self,
         event: &dyn Any,
@@ -275,7 +275,7 @@ pub trait FollowableItemHandle: ItemHandle {
 }
 
 impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
-    fn to_state_message(&self, cx: &AppContext) -> proto::view::Variant {
+    fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant> {
         self.read(cx).to_state_message(cx)
     }
 
@@ -381,13 +381,15 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         cx: &mut ViewContext<Workspace>,
     ) {
         if let Some(followed_item) = self.to_followable_item_handle(cx) {
-            workspace.update_followers(
-                proto::update_followers::Variant::CreateView(proto::View {
-                    id: followed_item.id() as u64,
-                    variant: Some(followed_item.to_state_message(cx)),
-                }),
-                cx,
-            );
+            if let Some(message) = followed_item.to_state_message(cx) {
+                workspace.update_followers(
+                    proto::update_followers::Variant::CreateView(proto::View {
+                        id: followed_item.id() as u64,
+                        variant: Some(message),
+                    }),
+                    cx,
+                );
+            }
         }
 
         let pane = pane.downgrade();
@@ -1523,7 +1525,7 @@ impl Workspace {
                     .filter_map(|item| {
                         let id = item.id() as u64;
                         let item = item.to_followable_item_handle(cx)?;
-                        let variant = item.to_state_message(cx);
+                        let variant = item.to_state_message(cx)?;
                         Some(proto::View {
                             id,
                             variant: Some(variant),

@@ -50,21 +50,15 @@ impl FollowableItem for Editor {
         }))
     }
 
-    fn to_state_message(&self, cx: &AppContext) -> proto::view::Variant {
-        let buffer_id = self
-            .buffer
-            .read(cx)
-            .as_singleton()
-            .unwrap()
-            .read(cx)
-            .remote_id();
-        proto::view::Variant::Editor(proto::view::Editor {
+    fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant> {
+        let buffer_id = self.buffer.read(cx).as_singleton()?.read(cx).remote_id();
+        Some(proto::view::Variant::Editor(proto::view::Editor {
             buffer_id,
             scroll_top: self
                 .scroll_top_anchor
                 .as_ref()
                 .map(|anchor| language::proto::serialize_anchor(&anchor.text_anchor)),
-        })
+        }))
     }
 
     fn to_update_message(
