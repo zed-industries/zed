@@ -267,21 +267,22 @@ impl Project {
         client.add_model_message_handler(Self::handle_update_buffer);
         client.add_model_message_handler(Self::handle_update_diagnostic_summary);
         client.add_model_message_handler(Self::handle_update_worktree);
-        client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
-        client.add_entity_request_handler(Self::handle_apply_code_action);
-        client.add_entity_request_handler(Self::handle_format_buffers);
-        client.add_entity_request_handler(Self::handle_get_code_actions);
-        client.add_entity_request_handler(Self::handle_get_completions);
-        client.add_entity_request_handler(Self::handle_lsp_command::<GetDefinition>);
-        client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
-        client.add_entity_request_handler(Self::handle_lsp_command::<GetReferences>);
-        client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
-        client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
-        client.add_entity_request_handler(Self::handle_search_project);
-        client.add_entity_request_handler(Self::handle_get_project_symbols);
-        client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
-        client.add_entity_request_handler(Self::handle_open_buffer_by_path);
-        client.add_entity_request_handler(Self::handle_save_buffer);
+        client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
+        client.add_model_request_handler(Self::handle_apply_code_action);
+        client.add_model_request_handler(Self::handle_format_buffers);
+        client.add_model_request_handler(Self::handle_get_code_actions);
+        client.add_model_request_handler(Self::handle_get_completions);
+        client.add_model_request_handler(Self::handle_lsp_command::<GetDefinition>);
+        client.add_model_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
+        client.add_model_request_handler(Self::handle_lsp_command::<GetReferences>);
+        client.add_model_request_handler(Self::handle_lsp_command::<PrepareRename>);
+        client.add_model_request_handler(Self::handle_lsp_command::<PerformRename>);
+        client.add_model_request_handler(Self::handle_search_project);
+        client.add_model_request_handler(Self::handle_get_project_symbols);
+        client.add_model_request_handler(Self::handle_open_buffer_for_symbol);
+        client.add_model_request_handler(Self::handle_open_buffer_by_id);
+        client.add_model_request_handler(Self::handle_open_buffer_by_path);
+        client.add_model_request_handler(Self::handle_save_buffer);
     }
 
     pub fn local(
@@ -488,7 +489,6 @@ impl Project {
         cx.update(|cx| Project::local(client, user_store, languages, fs, cx))
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn buffer_for_id(&self, remote_id: u64, cx: &AppContext) -> Option<ModelHandle<Buffer>> {
         self.opened_buffers
             .get(&remote_id)
@@ -979,6 +979,32 @@ impl Project {
             this.update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
                 .await
         })
+    }
+
+    pub fn open_buffer_by_id(
+        &mut self,
+        id: u64,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<Buffer>>> {
+        if let Some(buffer) = self.buffer_for_id(id, cx) {
+            Task::ready(Ok(buffer))
+        } else if self.is_local() {
+            Task::ready(Err(anyhow!("buffer {} does not exist", id)))
+        } else if let Some(project_id) = self.remote_id() {
+            let request = self
+                .client
+                .request(proto::OpenBufferById { project_id, id });
+            cx.spawn(|this, mut cx| async move {
+                let buffer = request
+                    .await?
+                    .buffer
+                    .ok_or_else(|| anyhow!("invalid buffer"))?;
+                this.update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
+                    .await
+            })
+        } else {
+            Task::ready(Err(anyhow!("cannot open buffer while disconnected")))
+        }
     }
 
     pub fn save_buffer_as(
@@ -3887,6 +3913,25 @@ impl Project {
         hasher.update(path.to_string_lossy().as_bytes());
         hasher.update(self.nonce.to_be_bytes());
         hasher.finalize().as_slice().try_into().unwrap()
+    }
+
+    async fn handle_open_buffer_by_id(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::OpenBufferById>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::OpenBufferResponse> {
+        let peer_id = envelope.original_sender_id()?;
+        let buffer = this
+            .update(&mut cx, |this, cx| {
+                this.open_buffer_by_id(envelope.payload.id, cx)
+            })
+            .await?;
+        this.update(&mut cx, |this, cx| {
+            Ok(proto::OpenBufferResponse {
+                buffer: Some(this.serialize_buffer_for_peer(&buffer, peer_id, cx)),
+            })
+        })
     }
 
     async fn handle_open_buffer_by_path(

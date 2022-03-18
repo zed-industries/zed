@@ -111,8 +111,8 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
         ),
     ]);
 
-    client.add_entity_request_handler(Workspace::handle_follow);
-    client.add_model_message_handler(Workspace::handle_unfollow);
+    client.add_view_request_handler(Workspace::handle_follow);
+    client.add_view_message_handler(Workspace::handle_unfollow);
 }
 
 pub fn register_project_item<I: ProjectItem>(cx: &mut MutableAppContext) {
@@ -235,7 +235,7 @@ pub trait FollowedItem {
     where
         Self: Sized;
 
-    fn to_state_message(&self, cx: &mut MutableAppContext) -> proto::view::Variant;
+    fn to_state_message(&self, cx: &AppContext) -> proto::view::Variant;
 }
 
 pub trait ItemHandle: 'static {
@@ -262,6 +262,8 @@ pub trait ItemHandle: 'static {
         cx: &mut MutableAppContext,
     ) -> Task<Result<()>>;
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle>;
+    fn can_be_followed(&self, cx: &AppContext) -> bool;
+    fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant>;
 }
 
 pub trait WeakItemHandle {
@@ -297,11 +299,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         Box::new(self.clone())
     }
 
-    fn clone_on_split(
-        &self,
-        // nav_history: Rc<RefCell<NavHistory>>,
-        cx: &mut MutableAppContext,
-    ) -> Option<Box<dyn ItemHandle>> {
+    fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemHandle>> {
         self.update(cx, |item, cx| {
             cx.add_option_view(|cx| item.clone_on_split(cx))
         })
@@ -380,6 +378,16 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle> {
         self.read(cx).act_as_type(type_id, self, cx)
+    }
+
+    fn can_be_followed(&self, cx: &AppContext) -> bool {
+        self.read(cx).as_followed().is_some()
+    }
+
+    fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant> {
+        self.read(cx)
+            .as_followed()
+            .map(|item| item.to_state_message(cx))
     }
 }
 
@@ -709,6 +717,13 @@ impl Workspace {
         }
     }
 
+    pub fn items<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = &Box<dyn ItemHandle>> {
+        self.panes.iter().flat_map(|pane| pane.read(cx).items())
+    }
+
     pub fn item_of_type<T: Item>(&self, cx: &AppContext) -> Option<ViewHandle<T>> {
         self.items_of_type(cx).max_by_key(|item| item.id())
     }
@@ -717,11 +732,9 @@ impl Workspace {
         &'a self,
         cx: &'a AppContext,
     ) -> impl 'a + Iterator<Item = ViewHandle<T>> {
-        self.panes.iter().flat_map(|pane| {
-            pane.read(cx)
-                .items()
-                .filter_map(|item| item.to_any().downcast())
-        })
+        self.panes
+            .iter()
+            .flat_map(|pane| pane.read(cx).items_of_type())
     }
 
     pub fn active_item(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
@@ -1085,7 +1098,7 @@ impl Workspace {
                         pane.set_follow_state(
                             FollowerState {
                                 leader_id,
-                                current_view_id: response.current_view_id as usize,
+                                current_view_id: response.current_view_id.map(|id| id as usize),
                                 items_by_leader_view_id,
                             },
                             cx,
@@ -1310,13 +1323,33 @@ impl Workspace {
 
     async fn handle_follow(
         this: ViewHandle<Self>,
-        envelope: TypedEnvelope<proto::Follow>,
+        _: TypedEnvelope<proto::Follow>,
         _: Arc<Client>,
         cx: AsyncAppContext,
     ) -> Result<proto::FollowResponse> {
-        Ok(proto::FollowResponse {
-            current_view_id: 0,
-            views: Default::default(),
+        this.read_with(&cx, |this, cx| {
+            let current_view_id = if let Some(active_item) = this.active_item(cx) {
+                if active_item.can_be_followed(cx) {
+                    Some(active_item.id() as u64)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            Ok(proto::FollowResponse {
+                current_view_id,
+                views: this
+                    .items(cx)
+                    .filter_map(|item| {
+                        let variant = item.to_state_message(cx)?;
+                        Some(proto::View {
+                            id: item.id() as u64,
+                            variant: Some(variant),
+                        })
+                    })
+                    .collect(),
+            })
         })
     }
 

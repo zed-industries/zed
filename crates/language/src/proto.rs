@@ -100,15 +100,16 @@ pub fn serialize_undo_map_entry(
 }
 
 pub fn serialize_selections(selections: &Arc<[Selection<Anchor>]>) -> Vec<proto::Selection> {
-    selections
-        .iter()
-        .map(|selection| proto::Selection {
-            id: selection.id as u64,
-            start: Some(serialize_anchor(&selection.start)),
-            end: Some(serialize_anchor(&selection.end)),
-            reversed: selection.reversed,
-        })
-        .collect()
+    selections.iter().map(serialize_selection).collect()
+}
+
+pub fn serialize_selection(selection: &Selection<Anchor>) -> proto::Selection {
+    proto::Selection {
+        id: selection.id as u64,
+        start: Some(serialize_anchor(&selection.start)),
+        end: Some(serialize_anchor(&selection.end)),
+        reversed: selection.reversed,
+    }
 }
 
 pub fn serialize_diagnostics<'a>(

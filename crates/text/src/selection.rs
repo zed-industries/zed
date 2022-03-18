@@ -18,6 +18,12 @@ pub struct Selection<T> {
     pub goal: SelectionGoal,
 }
 
+impl Default for SelectionGoal {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 impl<T: Clone> Selection<T> {
     pub fn head(&self) -> T {
         if self.reversed {

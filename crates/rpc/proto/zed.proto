@@ -544,7 +544,7 @@ message Follow {
 }
 
 message FollowResponse {
-    uint64 current_view_id = 1;
+    optional uint64 current_view_id = 1;
     repeated View views = 2;
 }
 

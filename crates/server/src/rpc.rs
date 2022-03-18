@@ -92,6 +92,7 @@ impl Server {
             .add_request_handler(Server::forward_project_request::<proto::GetDocumentHighlights>)
             .add_request_handler(Server::forward_project_request::<proto::GetProjectSymbols>)
             .add_request_handler(Server::forward_project_request::<proto::OpenBufferForSymbol>)
+            .add_request_handler(Server::forward_project_request::<proto::OpenBufferById>)
             .add_request_handler(Server::forward_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(Server::forward_project_request::<proto::GetCompletions>)
             .add_request_handler(
@@ -4240,6 +4241,13 @@ mod tests {
             })
             .await
             .unwrap();
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, cx| workspace
+                .active_item(cx)
+                .unwrap()
+                .project_path(cx)),
+            Some((worktree_id, "2.txt").into())
+        );
     }
 
     #[gpui::test(iterations = 100)]

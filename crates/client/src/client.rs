@@ -494,14 +494,13 @@ impl Client {
             message_type_id,
             Arc::new(move |handle, envelope, cx| {
                 if let Some(client) = client.upgrade() {
-                    let model = handle.downcast::<E>().unwrap();
-                    let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
                     let handle = if let AnyEntityHandle::Model(handle) = handle {
                         handle
                     } else {
                         unreachable!();
                     };
-
+                    let model = handle.downcast::<E>().unwrap();
+                    let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
                     handler(model, *envelope, client.clone(), cx).boxed_local()
                 } else {
                     async move { Ok(()) }.boxed_local()
@@ -513,7 +512,7 @@ impl Client {
         }
     }
 
-    pub fn add_entity_request_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
+    pub fn add_model_request_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
     where
         M: EntityMessage + RequestMessage,
         E: Entity,
@@ -526,6 +525,39 @@ impl Client {
         self.add_model_message_handler(move |model, envelope, client, cx| {
             let receipt = envelope.receipt();
             let response = handler(model, envelope, client.clone(), cx);
+            async move {
+                match response.await {
+                    Ok(response) => {
+                        client.respond(receipt, response)?;
+                        Ok(())
+                    }
+                    Err(error) => {
+                        client.respond_with_error(
+                            receipt,
+                            proto::Error {
+                                message: error.to_string(),
+                            },
+                        )?;
+                        Err(error)
+                    }
+                }
+            }
+        })
+    }
+
+    pub fn add_view_request_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
+    where
+        M: EntityMessage + RequestMessage,
+        E: View,
+        H: 'static
+            + Send
+            + Sync
+            + Fn(ViewHandle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        F: 'static + Future<Output = Result<M::Response>>,
+    {
+        self.add_view_message_handler(move |view, envelope, client, cx| {
+            let receipt = envelope.receipt();
+            let response = handler(view, envelope, client.clone(), cx);
             async move {
                 match response.await {
                     Ok(response) => {

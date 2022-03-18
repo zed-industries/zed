@@ -109,7 +109,7 @@ pub struct Pane {
 
 pub(crate) struct FollowerState {
     pub(crate) leader_id: PeerId,
-    pub(crate) current_view_id: usize,
+    pub(crate) current_view_id: Option<usize>,
     pub(crate) items_by_leader_view_id: HashMap<usize, Box<dyn ItemHandle>>,
 }
 
@@ -308,6 +308,11 @@ impl Pane {
     }
 
     pub(crate) fn add_item(&mut self, mut item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+        // Prevent adding the same item to the pane more than once.
+        if self.items.iter().any(|i| i.id() == item.id()) {
+            return;
+        }
+
         item.set_nav_history(self.nav_history.clone(), cx);
         item.added_to_pane(cx);
         let item_idx = cmp::min(self.active_item_index + 1, self.items.len());
@@ -321,18 +326,25 @@ impl Pane {
         follower_state: FollowerState,
         cx: &mut ViewContext<Self>,
     ) -> Result<()> {
-        let current_view_id = follower_state.current_view_id as usize;
-        let item = follower_state
-            .items_by_leader_view_id
-            .get(&current_view_id)
-            .ok_or_else(|| anyhow!("invalid current view id"))?
-            .clone();
-        self.add_item(item, cx);
+        if let Some(current_view_id) = follower_state.current_view_id {
+            let item = follower_state
+                .items_by_leader_view_id
+                .get(&current_view_id)
+                .ok_or_else(|| anyhow!("invalid current view id"))?
+                .clone();
+            self.add_item(item, cx);
+        }
         Ok(())
     }
 
     pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> {
         self.items.iter()
+    }
+
+    pub fn items_of_type<'a, T: View>(&'a self) -> impl 'a + Iterator<Item = ViewHandle<T>> {
+        self.items
+            .iter()
+            .filter_map(|item| item.to_any().downcast())
     }
 
     pub fn active_item(&self) -> Option<Box<dyn ItemHandle>> {

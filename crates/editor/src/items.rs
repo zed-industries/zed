@@ -1,8 +1,8 @@
 use crate::{Autoscroll, Editor, Event, NavigationData, ToOffset, ToPoint as _};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use gpui::{
-    elements::*, AppContext, Entity, ModelHandle, RenderContext, Subscription, Task, View,
-    ViewContext, ViewHandle,
+    elements::*, AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Subscription,
+    Task, View, ViewContext, ViewHandle,
 };
 use language::{Bias, Buffer, Diagnostic, File as _};
 use project::{File, Project, ProjectEntryId, ProjectPath};
@@ -19,13 +19,58 @@ impl FollowedItem for Editor {
         pane: ViewHandle<workspace::Pane>,
         project: ModelHandle<Project>,
         state: &mut Option<proto::view::Variant>,
-        cx: &mut gpui::MutableAppContext,
+        cx: &mut MutableAppContext,
     ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
-        todo!()
+        let state = if matches!(state, Some(proto::view::Variant::Editor(_))) {
+            if let Some(proto::view::Variant::Editor(state)) = state.take() {
+                state
+            } else {
+                unreachable!()
+            }
+        } else {
+            return None;
+        };
+
+        let buffer = project.update(cx, |project, cx| {
+            project.open_buffer_by_id(state.buffer_id, cx)
+        });
+        Some(cx.spawn(|mut cx| async move {
+            let buffer = buffer.await?;
+            let editor = pane
+                .read_with(&cx, |pane, cx| {
+                    pane.items_of_type::<Self>().find(|editor| {
+                        editor.read(cx).buffer.read(cx).as_singleton().as_ref() == Some(&buffer)
+                    })
+                })
+                .unwrap_or_else(|| {
+                    cx.add_view(pane.window_id(), |cx| {
+                        Editor::for_buffer(buffer, Some(project), cx)
+                    })
+                });
+            Ok(Box::new(editor) as Box<_>)
+        }))
     }
 
-    fn to_state_message(&self, cx: &mut gpui::MutableAppContext) -> proto::view::Variant {
-        todo!()
+    fn to_state_message(&self, cx: &AppContext) -> proto::view::Variant {
+        let buffer_id = self
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .read(cx)
+            .remote_id();
+        let selection = self.newest_anchor_selection();
+        let selection = Selection {
+            id: selection.id,
+            start: selection.start.text_anchor.clone(),
+            end: selection.end.text_anchor.clone(),
+            reversed: selection.reversed,
+            goal: Default::default(),
+        };
+        proto::view::Variant::Editor(proto::view::Editor {
+            buffer_id,
+            newest_selection: Some(language::proto::serialize_selection(&selection)),
+        })
     }
 }
 
