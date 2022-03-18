@@ -1033,6 +1033,14 @@ impl Editor {
             self.scroll_top_anchor = Some(anchor);
         }
 
+        cx.emit(Event::ScrollPositionChanged);
+        cx.notify();
+    }
+
+    fn set_scroll_top_anchor(&mut self, anchor: Anchor, cx: &mut ViewContext<Self>) {
+        self.scroll_position = Vector2F::zero();
+        self.scroll_top_anchor = Some(anchor);
+        cx.emit(Event::ScrollPositionChanged);
         cx.notify();
     }
 
@@ -5634,6 +5642,7 @@ pub enum Event {
     Saved,
     TitleChanged,
     SelectionsChanged,
+    ScrollPositionChanged,
     Closed,
 }
 

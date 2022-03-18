@@ -275,17 +275,19 @@ pub fn deserialize_selections(selections: Vec<proto::Selection>) -> Arc<[Selecti
     Arc::from(
         selections
             .into_iter()
-            .filter_map(|selection| {
-                Some(Selection {
-                    id: selection.id as usize,
-                    start: deserialize_anchor(selection.start?)?,
-                    end: deserialize_anchor(selection.end?)?,
-                    reversed: selection.reversed,
-                    goal: SelectionGoal::None,
-                })
-            })
+            .filter_map(deserialize_selection)
             .collect::<Vec<_>>(),
     )
+}
+
+pub fn deserialize_selection(selection: proto::Selection) -> Option<Selection<Anchor>> {
+    Some(Selection {
+        id: selection.id as usize,
+        start: deserialize_anchor(selection.start?)?,
+        end: deserialize_anchor(selection.end?)?,
+        reversed: selection.reversed,
+        goal: SelectionGoal::None,
+    })
 }
 
 pub fn deserialize_diagnostics(

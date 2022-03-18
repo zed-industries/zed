@@ -6,7 +6,7 @@ use gpui::{
 };
 use language::{Bias, Buffer, Diagnostic, File as _};
 use project::{File, Project, ProjectEntryId, ProjectPath};
-use rpc::proto;
+use rpc::proto::{self, update_followers::update_view};
 use std::{fmt::Write, path::PathBuf};
 use text::{Point, Selection};
 use util::ResultExt;
@@ -20,7 +20,7 @@ impl FollowableItem for Editor {
         project: ModelHandle<Project>,
         state: &mut Option<proto::view::Variant>,
         cx: &mut MutableAppContext,
-    ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
+    ) -> Option<Task<Result<ViewHandle<Self>>>> {
         let state = if matches!(state, Some(proto::view::Variant::Editor(_))) {
             if let Some(proto::view::Variant::Editor(state)) = state.take() {
                 state
@@ -36,7 +36,7 @@ impl FollowableItem for Editor {
         });
         Some(cx.spawn(|mut cx| async move {
             let buffer = buffer.await?;
-            let editor = pane
+            Ok(pane
                 .read_with(&cx, |pane, cx| {
                     pane.items_of_type::<Self>().find(|editor| {
                         editor.read(cx).buffer.read(cx).as_singleton().as_ref() == Some(&buffer)
@@ -46,8 +46,7 @@ impl FollowableItem for Editor {
                     cx.add_view(pane.window_id(), |cx| {
                         Editor::for_buffer(buffer, Some(project), cx)
                     })
-                });
-            Ok(Box::new(editor) as Box<_>)
+                }))
         }))
     }
 
@@ -59,17 +58,12 @@ impl FollowableItem for Editor {
             .unwrap()
             .read(cx)
             .remote_id();
-        let selection = self.newest_anchor_selection();
-        let selection = Selection {
-            id: selection.id,
-            start: selection.start.text_anchor.clone(),
-            end: selection.end.text_anchor.clone(),
-            reversed: selection.reversed,
-            goal: Default::default(),
-        };
         proto::view::Variant::Editor(proto::view::Editor {
             buffer_id,
-            newest_selection: Some(language::proto::serialize_selection(&selection)),
+            scroll_top: self
+                .scroll_top_anchor
+                .as_ref()
+                .map(|anchor| language::proto::serialize_anchor(&anchor.text_anchor)),
         })
     }
 
@@ -77,25 +71,41 @@ impl FollowableItem for Editor {
         &self,
         event: &Self::Event,
         cx: &AppContext,
-    ) -> Option<proto::update_followers::update_view::Variant> {
+    ) -> Option<update_view::Variant> {
         match event {
-            Event::SelectionsChanged => {
-                let selection = self.newest_anchor_selection();
-                let selection = Selection {
-                    id: selection.id,
-                    start: selection.start.text_anchor.clone(),
-                    end: selection.end.text_anchor.clone(),
-                    reversed: selection.reversed,
-                    goal: Default::default(),
-                };
-                Some(proto::update_followers::update_view::Variant::Editor(
-                    proto::update_followers::update_view::Editor {
-                        newest_selection: Some(language::proto::serialize_selection(&selection)),
-                    },
-                ))
+            Event::ScrollPositionChanged => {
+                Some(update_view::Variant::Editor(update_view::Editor {
+                    scroll_top: self
+                        .scroll_top_anchor
+                        .as_ref()
+                        .map(|anchor| language::proto::serialize_anchor(&anchor.text_anchor)),
+                }))
             }
             _ => None,
         }
+    }
+
+    fn apply_update_message(
+        &mut self,
+        message: update_view::Variant,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<()> {
+        match message {
+            update_view::Variant::Editor(message) => {
+                if let Some(anchor) = message.scroll_top {
+                    let anchor = language::proto::deserialize_anchor(anchor)
+                        .ok_or_else(|| anyhow!("invalid scroll top"))?;
+                    let anchor = {
+                        let buffer = self.buffer.read(cx);
+                        let buffer = buffer.read(cx);
+                        let (excerpt_id, _, _) = buffer.as_singleton().unwrap();
+                        buffer.anchor_in_excerpt(excerpt_id.clone(), anchor)
+                    };
+                    self.set_scroll_top_anchor(anchor, cx);
+                }
+            }
+        }
+        Ok(())
     }
 }
 

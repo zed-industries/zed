@@ -6,7 +6,7 @@ pub mod settings;
 pub mod sidebar;
 mod status_bar;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use client::{
     proto, Authenticate, ChannelList, Client, PeerId, Subscription, TypedEnvelope, User, UserStore,
 };
@@ -43,7 +43,7 @@ use std::{
     sync::Arc,
 };
 use theme::{Theme, ThemeRegistry};
-use util::ResultExt;
+use util::{ResultExt, TryFutureExt};
 
 type ProjectItemBuilders = HashMap<
     TypeId,
@@ -55,7 +55,7 @@ type FollowableItemBuilder = fn(
     ModelHandle<Project>,
     &mut Option<proto::view::Variant>,
     &mut MutableAppContext,
-) -> Option<Task<Result<Box<dyn ItemHandle>>>>;
+) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>>;
 type FollowableItemBuilders = HashMap<
     TypeId,
     (
@@ -135,9 +135,15 @@ pub fn register_followable_item<I: FollowableItem>(cx: &mut MutableAppContext) {
     cx.update_default_global(|builders: &mut FollowableItemBuilders, _| {
         builders.insert(
             TypeId::of::<I>(),
-            (I::for_state_message, |this| {
-                Box::new(this.downcast::<I>().unwrap())
-            }),
+            (
+                |pane, project, state, cx| {
+                    I::for_state_message(pane, project, state, cx).map(|task| {
+                        cx.foreground()
+                            .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
+                    })
+                },
+                |this| Box::new(this.downcast::<I>().unwrap()),
+            ),
         );
     });
 }
@@ -240,32 +246,35 @@ pub trait FollowableItem: Item {
         project: ModelHandle<Project>,
         state: &mut Option<proto::view::Variant>,
         cx: &mut MutableAppContext,
-    ) -> Option<Task<Result<Box<dyn ItemHandle>>>>
-    where
-        Self: Sized;
+    ) -> Option<Task<Result<ViewHandle<Self>>>>;
     fn to_state_message(&self, cx: &AppContext) -> proto::view::Variant;
     fn to_update_message(
         &self,
         event: &Self::Event,
         cx: &AppContext,
     ) -> Option<proto::update_followers::update_view::Variant>;
+    fn apply_update_message(
+        &mut self,
+        message: proto::update_followers::update_view::Variant,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<()>;
 }
 
-pub trait FollowableItemHandle {
-    fn id(&self) -> usize;
+pub trait FollowableItemHandle: ItemHandle {
     fn to_state_message(&self, cx: &AppContext) -> proto::view::Variant;
     fn to_update_message(
         &self,
         event: &dyn Any,
         cx: &AppContext,
     ) -> Option<proto::update_followers::update_view::Variant>;
+    fn apply_update_message(
+        &self,
+        message: proto::update_followers::update_view::Variant,
+        cx: &mut MutableAppContext,
+    ) -> Result<()>;
 }
 
 impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
-    fn id(&self) -> usize {
-        self.id()
-    }
-
     fn to_state_message(&self, cx: &AppContext) -> proto::view::Variant {
         self.read(cx).to_state_message(cx)
     }
@@ -276,6 +285,14 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
         cx: &AppContext,
     ) -> Option<proto::update_followers::update_view::Variant> {
         self.read(cx).to_update_message(event.downcast_ref()?, cx)
+    }
+
+    fn apply_update_message(
+        &self,
+        message: proto::update_followers::update_view::Variant,
+        cx: &mut MutableAppContext,
+    ) -> Result<()> {
+        self.update(cx, |this, cx| this.apply_update_message(message, cx))
     }
 }
 
@@ -584,14 +601,15 @@ struct LeaderState {
     followers: HashSet<PeerId>,
 }
 
+#[derive(Default)]
 struct FollowerState {
     active_view_id: Option<usize>,
     items_by_leader_view_id: HashMap<usize, FollowerItem>,
 }
 
 enum FollowerItem {
-    Loading(Vec<proto::update_followers::Variant>),
-    Loaded(Box<dyn FollowedItemHandle>),
+    Loading(Vec<proto::update_followers::update_view::Variant>),
+    Loaded(Box<dyn FollowableItemHandle>),
 }
 
 impl Workspace {
@@ -1212,21 +1230,40 @@ impl Workspace {
                         });
                     }
 
-                    let items = futures::future::try_join_all(item_tasks).await?;
-                    let follower_state = FollowerState {
-                        active_view_id: response.active_view_id.map(|id| id as usize),
-                        items_by_leader_view_id: response
-                            .views
-                            .iter()
-                            .map(|v| v.id as usize)
-                            .zip(items)
-                            .collect(),
-                    };
                     this.update(&mut cx, |this, cx| {
                         this.follower_states_by_leader
                             .entry(leader_id)
                             .or_default()
-                            .insert(pane.downgrade(), follower_state);
+                            .insert(
+                                pane.downgrade(),
+                                FollowerState {
+                                    active_view_id: response.active_view_id.map(|id| id as usize),
+                                    items_by_leader_view_id: Default::default(),
+                                },
+                            );
+                    });
+
+                    let items = futures::future::try_join_all(item_tasks).await?;
+                    this.update(&mut cx, |this, cx| {
+                        let follower_state = this
+                            .follower_states_by_leader
+                            .entry(leader_id)
+                            .or_default()
+                            .entry(pane.downgrade())
+                            .or_default();
+                        for (id, item) in response.views.iter().map(|v| v.id as usize).zip(items) {
+                            let prev_state = follower_state.items_by_leader_view_id.remove(&id);
+                            if let Some(FollowerItem::Loading(updates)) = prev_state {
+                                for update in updates {
+                                    item.apply_update_message(update, cx)
+                                        .context("failed to apply view update")
+                                        .log_err();
+                                }
+                            }
+                            follower_state
+                                .items_by_leader_view_id
+                                .insert(id, FollowerItem::Loaded(item));
+                        }
                         this.leader_updated(leader_id, cx);
                     });
                 }
@@ -1535,7 +1572,7 @@ impl Workspace {
                 }
                 proto::update_followers::Variant::UpdateView(update_view) => {
                     for state in follower_states.values_mut() {
-                        state.items_by_leader_view_id.get(k)
+                        // state.items_by_leader_view_id.get(k)
                     }
                 }
                 proto::update_followers::Variant::CreateView(_) => todo!(),
@@ -1550,8 +1587,10 @@ impl Workspace {
         let mut items_to_add = Vec::new();
         for (pane, state) in self.follower_states_by_leader.get(&leader_id)? {
             if let Some((pane, active_view_id)) = pane.upgrade(cx).zip(state.active_view_id) {
-                if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
-                    items_to_add.push((pane, item.clone()));
+                if let Some(FollowerItem::Loaded(item)) =
+                    state.items_by_leader_view_id.get(&active_view_id)
+                {
+                    items_to_add.push((pane, item.boxed_clone()));
                 }
             }
         }

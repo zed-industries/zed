@@ -568,7 +568,7 @@ message UpdateFollowers {
         }
 
         message Editor {
-            Selection newest_selection = 1;
+            Anchor scroll_top = 1;
         }
     }
 }
@@ -588,7 +588,7 @@ message View {
 
     message Editor {
         uint64 buffer_id = 1;
-        Selection newest_selection = 2;
+        Anchor scroll_top = 2;
     }
 }
 
