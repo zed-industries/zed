@@ -72,13 +72,34 @@ impl FollowedItem for Editor {
             newest_selection: Some(language::proto::serialize_selection(&selection)),
         })
     }
+
+    fn to_update_message(
+        &self,
+        event: &Self::Event,
+        cx: &AppContext,
+    ) -> Option<proto::view_update::Variant> {
+        match event {
+            Event::SelectionsChanged => {
+                let selection = self.newest_anchor_selection();
+                let selection = Selection {
+                    id: selection.id,
+                    start: selection.start.text_anchor.clone(),
+                    end: selection.end.text_anchor.clone(),
+                    reversed: selection.reversed,
+                    goal: Default::default(),
+                };
+                Some(proto::view_update::Variant::Editor(
+                    proto::view_update::Editor {
+                        newest_selection: Some(language::proto::serialize_selection(&selection)),
+                    },
+                ))
+            }
+            _ => None,
+        }
+    }
 }
 
 impl Item for Editor {
-    fn as_followed(&self) -> Option<&dyn FollowedItem> {
-        Some(self)
-    }
-
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) {
         if let Some(data) = data.downcast_ref::<NavigationData>() {
             let buffer = self.buffer.read(cx).read(cx);

@@ -11,7 +11,7 @@ use client::{
     proto, Authenticate, ChannelList, Client, PeerId, Subscription, TypedEnvelope, User, UserStore,
 };
 use clock::ReplicaId;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use gpui::{
     action,
     color::Color,
@@ -49,13 +49,18 @@ type ProjectItemBuilders = HashMap<
     fn(usize, ModelHandle<Project>, AnyModelHandle, &mut MutableAppContext) -> Box<dyn ItemHandle>,
 >;
 
-type FollowedItemBuilders = Vec<
-    fn(
-        ViewHandle<Pane>,
-        ModelHandle<Project>,
-        &mut Option<proto::view::Variant>,
-        &mut MutableAppContext,
-    ) -> Option<Task<Result<Box<dyn ItemHandle>>>>,
+type FollowedItemBuilder = fn(
+    ViewHandle<Pane>,
+    ModelHandle<Project>,
+    &mut Option<proto::view::Variant>,
+    &mut MutableAppContext,
+) -> Option<Task<Result<Box<dyn ItemHandle>>>>;
+type FollowedItemBuilders = HashMap<
+    TypeId,
+    (
+        FollowedItemBuilder,
+        fn(AnyViewHandle) -> Box<dyn FollowedItemHandle>,
+    ),
 >;
 
 action!(Open, Arc<AppState>);
@@ -124,9 +129,14 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut MutableAppContext) {
     });
 }
 
-pub fn register_followed_item<I: FollowedItem + Item>(cx: &mut MutableAppContext) {
+pub fn register_followed_item<I: FollowedItem>(cx: &mut MutableAppContext) {
     cx.update_default_global(|builders: &mut FollowedItemBuilders, _| {
-        builders.push(I::for_state_message)
+        builders.insert(
+            TypeId::of::<I>(),
+            (I::for_state_message, |this| {
+                Box::new(this.downcast::<I>().unwrap())
+            }),
+        );
     });
 }
 
@@ -158,9 +168,6 @@ pub struct JoinProjectParams {
 }
 
 pub trait Item: View {
-    fn as_followed(&self) -> Option<&dyn FollowedItem> {
-        None
-    }
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) {}
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
@@ -225,7 +232,7 @@ pub trait ProjectItem: Item {
     ) -> Self;
 }
 
-pub trait FollowedItem {
+pub trait FollowedItem: Item {
     fn for_state_message(
         pane: ViewHandle<Pane>,
         project: ModelHandle<Project>,
@@ -234,8 +241,40 @@ pub trait FollowedItem {
     ) -> Option<Task<Result<Box<dyn ItemHandle>>>>
     where
         Self: Sized;
-
     fn to_state_message(&self, cx: &AppContext) -> proto::view::Variant;
+    fn to_update_message(
+        &self,
+        event: &Self::Event,
+        cx: &AppContext,
+    ) -> Option<proto::view_update::Variant>;
+}
+
+pub trait FollowedItemHandle {
+    fn id(&self) -> usize;
+    fn to_state_message(&self, cx: &AppContext) -> proto::view::Variant;
+    fn to_update_message(
+        &self,
+        event: &dyn Any,
+        cx: &AppContext,
+    ) -> Option<proto::view_update::Variant>;
+}
+
+impl<T: FollowedItem> FollowedItemHandle for ViewHandle<T> {
+    fn id(&self) -> usize {
+        self.id()
+    }
+
+    fn to_state_message(&self, cx: &AppContext) -> proto::view::Variant {
+        self.read(cx).to_state_message(cx)
+    }
+
+    fn to_update_message(
+        &self,
+        event: &dyn Any,
+        cx: &AppContext,
+    ) -> Option<proto::view_update::Variant> {
+        self.read(cx).to_update_message(event.downcast_ref()?, cx)
+    }
 }
 
 pub trait ItemHandle: 'static {
@@ -262,8 +301,7 @@ pub trait ItemHandle: 'static {
         cx: &mut MutableAppContext,
     ) -> Task<Result<()>>;
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle>;
-    fn can_be_followed(&self, cx: &AppContext) -> bool;
-    fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant>;
+    fn to_followed_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowedItemHandle>>;
 }
 
 pub trait WeakItemHandle {
@@ -318,15 +356,22 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                 pane.close_item(item.id(), cx);
                 return;
             }
+
             if T::should_activate_item_on_event(event) {
                 if let Some(ix) = pane.index_for_item(&item) {
                     pane.activate_item(ix, cx);
                     pane.activate(cx);
                 }
             }
+
             if T::should_update_tab_on_event(event) {
                 cx.notify()
             }
+
+            if let Some(message) = item
+                .to_followed_item_handle(cx)
+                .and_then(|i| i.to_update_message(event, cx))
+            {}
         })
         .detach();
     }
@@ -380,14 +425,14 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.read(cx).act_as_type(type_id, self, cx)
     }
 
-    fn can_be_followed(&self, cx: &AppContext) -> bool {
-        self.read(cx).as_followed().is_some()
-    }
-
-    fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant> {
-        self.read(cx)
-            .as_followed()
-            .map(|item| item.to_state_message(cx))
+    fn to_followed_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowedItemHandle>> {
+        if cx.has_global::<FollowedItemBuilders>() {
+            let builders = cx.global::<FollowedItemBuilders>();
+            let item = self.to_any();
+            Some(builders.get(&item.view_type())?.1(item))
+        } else {
+            None
+        }
     }
 }
 
@@ -487,7 +532,14 @@ pub struct Workspace {
     active_pane: ViewHandle<Pane>,
     status_bar: ViewHandle<StatusBar>,
     project: ModelHandle<Project>,
+    leader_state: LeaderState,
     _observe_current_user: Task<()>,
+}
+
+#[derive(Default)]
+struct LeaderState {
+    followers: HashSet<PeerId>,
+    subscriptions: Vec<Subscription>,
 }
 
 impl Workspace {
@@ -561,6 +613,7 @@ impl Workspace {
             left_sidebar: Sidebar::new(Side::Left),
             right_sidebar: Sidebar::new(Side::Right),
             project: params.project.clone(),
+            leader_state: Default::default(),
             _observe_current_user,
         };
         this.project_remote_id_changed(this.project.read(cx).remote_id(), cx);
@@ -1068,6 +1121,13 @@ impl Workspace {
                     let (project, pane) = this.read_with(&cx, |this, _| {
                         (this.project.clone(), this.active_pane().clone())
                     });
+                    let item_builders = cx.update(|cx| {
+                        cx.default_global::<FollowedItemBuilders>()
+                            .values()
+                            .map(|b| b.0)
+                            .collect::<Vec<_>>()
+                            .clone()
+                    });
                     for view in &mut response.views {
                         let variant = view
                             .variant
@@ -1075,7 +1135,7 @@ impl Workspace {
                             .ok_or_else(|| anyhow!("missing variant"))?;
                         cx.update(|cx| {
                             let mut variant = Some(variant);
-                            for build_item in cx.default_global::<FollowedItemBuilders>().clone() {
+                            for build_item in &item_builders {
                                 if let Some(task) =
                                     build_item(pane.clone(), project.clone(), &mut variant, cx)
                                 {
@@ -1323,28 +1383,29 @@ impl Workspace {
 
     async fn handle_follow(
         this: ViewHandle<Self>,
-        _: TypedEnvelope<proto::Follow>,
+        envelope: TypedEnvelope<proto::Follow>,
         _: Arc<Client>,
-        cx: AsyncAppContext,
+        mut cx: AsyncAppContext,
     ) -> Result<proto::FollowResponse> {
-        this.read_with(&cx, |this, cx| {
-            let current_view_id = if let Some(active_item) = this.active_item(cx) {
-                if active_item.can_be_followed(cx) {
-                    Some(active_item.id() as u64)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
+        this.update(&mut cx, |this, cx| {
+            this.leader_state
+                .followers
+                .insert(envelope.original_sender_id()?);
+
+            let current_view_id = this
+                .active_item(cx)
+                .and_then(|i| i.to_followed_item_handle(cx))
+                .map(|i| i.id() as u64);
             Ok(proto::FollowResponse {
                 current_view_id,
                 views: this
                     .items(cx)
                     .filter_map(|item| {
-                        let variant = item.to_state_message(cx)?;
+                        let id = item.id() as u64;
+                        let item = item.to_followed_item_handle(cx)?;
+                        let variant = item.to_state_message(cx);
                         Some(proto::View {
-                            id: item.id() as u64,
+                            id,
                             variant: Some(variant),
                         })
                     })

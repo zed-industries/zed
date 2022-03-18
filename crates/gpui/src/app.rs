@@ -2121,6 +2121,10 @@ impl AppContext {
         &self.platform
     }
 
+    pub fn has_global<T: 'static>(&self) -> bool {
+        self.globals.contains_key(&TypeId::of::<T>())
+    }
+
     pub fn global<T: 'static>(&self) -> &T {
         self.globals
             .get(&TypeId::of::<T>())
@@ -3653,6 +3657,10 @@ impl AnyViewHandle {
             view_id: self.view_id,
             view_type: self.view_type,
         }
+    }
+
+    pub fn view_type(&self) -> TypeId {
+        self.view_type
     }
 }
 

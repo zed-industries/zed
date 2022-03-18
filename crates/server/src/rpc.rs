@@ -4248,6 +4248,17 @@ mod tests {
                 .project_path(cx)),
             Some((worktree_id, "2.txt").into())
         );
+
+        // When client A activates a different editor, client B does so as well.
+        workspace_a.update(cx_a, |workspace, cx| {
+            workspace.activate_item(editor_a1.as_ref(), cx)
+        });
+        workspace_b
+            .condition(cx_b, |workspace, cx| {
+                let active_item = workspace.active_item(cx).unwrap();
+                active_item.project_path(cx) == Some((worktree_id, "1.txt").into())
+            })
+            .await;
     }
 
     #[gpui::test(iterations = 100)]
