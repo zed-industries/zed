@@ -107,12 +107,6 @@ pub struct Pane {
     active_toolbar_visible: bool,
 }
 
-pub(crate) struct FollowerState {
-    pub(crate) leader_id: PeerId,
-    pub(crate) current_view_id: Option<usize>,
-    pub(crate) items_by_leader_view_id: HashMap<usize, Box<dyn ItemHandle>>,
-}
-
 pub trait Toolbar: View {
     fn active_item_changed(
         &mut self,
@@ -266,7 +260,17 @@ impl Pane {
                     if let Some((project_entry_id, build_item)) = task.log_err() {
                         pane.update(&mut cx, |pane, cx| {
                             pane.nav_history.borrow_mut().set_mode(mode);
-                            let item = pane.open_item(project_entry_id, cx, build_item);
+                        });
+                        let item = workspace.update(&mut cx, |workspace, cx| {
+                            Self::open_item(
+                                workspace,
+                                pane.clone(),
+                                project_entry_id,
+                                cx,
+                                build_item,
+                            )
+                        });
+                        pane.update(&mut cx, |pane, cx| {
                             pane.nav_history
                                 .borrow_mut()
                                 .set_mode(NavigationMode::Normal);
@@ -289,52 +293,50 @@ impl Pane {
     }
 
     pub(crate) fn open_item(
-        &mut self,
+        workspace: &mut Workspace,
+        pane: ViewHandle<Pane>,
         project_entry_id: ProjectEntryId,
-        cx: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Workspace>,
         build_item: impl FnOnce(&mut MutableAppContext) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
-        for (ix, item) in self.items.iter().enumerate() {
-            if item.project_entry_id(cx) == Some(project_entry_id) {
-                let item = item.boxed_clone();
-                self.activate_item(ix, cx);
-                return item;
+        let existing_item = pane.update(cx, |pane, cx| {
+            for (ix, item) in pane.items.iter().enumerate() {
+                if item.project_entry_id(cx) == Some(project_entry_id) {
+                    let item = item.boxed_clone();
+                    pane.activate_item(ix, cx);
+                    return Some(item);
+                }
             }
+            None
+        });
+        if let Some(existing_item) = existing_item {
+            existing_item
+        } else {
+            let item = build_item(cx);
+            Self::add_item(workspace, pane, item.boxed_clone(), cx);
+            item
         }
-
-        let item = build_item(cx);
-        self.add_item(item.boxed_clone(), cx);
-        item
     }
 
-    pub(crate) fn add_item(&mut self, mut item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+    pub(crate) fn add_item(
+        workspace: &mut Workspace,
+        pane: ViewHandle<Pane>,
+        mut item: Box<dyn ItemHandle>,
+        cx: &mut ViewContext<Workspace>,
+    ) {
         // Prevent adding the same item to the pane more than once.
-        if self.items.iter().any(|i| i.id() == item.id()) {
+        if pane.read(cx).items.iter().any(|i| i.id() == item.id()) {
             return;
         }
 
-        item.set_nav_history(self.nav_history.clone(), cx);
-        item.added_to_pane(cx);
-        let item_idx = cmp::min(self.active_item_index + 1, self.items.len());
-        self.items.insert(item_idx, item);
-        self.activate_item(item_idx, cx);
-        cx.notify();
-    }
-
-    pub(crate) fn set_follow_state(
-        &mut self,
-        follower_state: FollowerState,
-        cx: &mut ViewContext<Self>,
-    ) -> Result<()> {
-        if let Some(current_view_id) = follower_state.current_view_id {
-            let item = follower_state
-                .items_by_leader_view_id
-                .get(&current_view_id)
-                .ok_or_else(|| anyhow!("invalid current view id"))?
-                .clone();
-            self.add_item(item, cx);
-        }
-        Ok(())
+        item.set_nav_history(pane.read(cx).nav_history.clone(), cx);
+        item.added_to_pane(workspace, pane.clone(), cx);
+        pane.update(cx, |pane, cx| {
+            let item_idx = cmp::min(pane.active_item_index + 1, pane.items.len());
+            pane.items.insert(item_idx, item);
+            pane.activate_item(item_idx, cx);
+            cx.notify();
+        });
     }
 
     pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> {

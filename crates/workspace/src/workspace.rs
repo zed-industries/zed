@@ -284,7 +284,12 @@ pub trait ItemHandle: 'static {
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn set_nav_history(&self, nav_history: Rc<RefCell<NavHistory>>, cx: &mut MutableAppContext);
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemHandle>>;
-    fn added_to_pane(&mut self, cx: &mut ViewContext<Pane>);
+    fn added_to_pane(
+        &self,
+        workspace: &mut Workspace,
+        pane: ViewHandle<Pane>,
+        cx: &mut ViewContext<Workspace>,
+    );
     fn deactivated(&self, cx: &mut MutableAppContext);
     fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext);
     fn id(&self) -> usize;
@@ -350,22 +355,37 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         })
     }
 
-    fn added_to_pane(&mut self, cx: &mut ViewContext<Pane>) {
-        cx.subscribe(self, |pane, item, event, cx| {
+    fn added_to_pane(
+        &self,
+        workspace: &mut Workspace,
+        pane: ViewHandle<Pane>,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let pane = pane.downgrade();
+        cx.subscribe(self, move |workspace, item, event, cx| {
+            let pane = if let Some(pane) = pane.upgrade(cx) {
+                pane
+            } else {
+                log::error!("unexpected item event after pane was dropped");
+                return;
+            };
+
             if T::should_close_item_on_event(event) {
-                pane.close_item(item.id(), cx);
+                pane.update(cx, |pane, cx| pane.close_item(item.id(), cx));
                 return;
             }
 
             if T::should_activate_item_on_event(event) {
-                if let Some(ix) = pane.index_for_item(&item) {
-                    pane.activate_item(ix, cx);
-                    pane.activate(cx);
-                }
+                pane.update(cx, |pane, cx| {
+                    if let Some(ix) = pane.index_for_item(&item) {
+                        pane.activate_item(ix, cx);
+                        pane.activate(cx);
+                    }
+                });
             }
 
             if T::should_update_tab_on_event(event) {
-                cx.notify()
+                pane.update(cx, |_, cx| cx.notify());
             }
 
             if let Some(message) = item
@@ -533,6 +553,7 @@ pub struct Workspace {
     status_bar: ViewHandle<StatusBar>,
     project: ModelHandle<Project>,
     leader_state: LeaderState,
+    follower_states_by_leader: HashMap<PeerId, FollowerState>,
     _observe_current_user: Task<()>,
 }
 
@@ -540,6 +561,11 @@ pub struct Workspace {
 struct LeaderState {
     followers: HashSet<PeerId>,
     subscriptions: Vec<Subscription>,
+}
+
+struct FollowerState {
+    current_view_id: Option<usize>,
+    items_by_leader_view_id: HashMap<usize, Box<dyn ItemHandle>>,
 }
 
 impl Workspace {
@@ -614,6 +640,7 @@ impl Workspace {
             right_sidebar: Sidebar::new(Side::Right),
             project: params.project.clone(),
             leader_state: Default::default(),
+            follower_states_by_leader: Default::default(),
             _observe_current_user,
         };
         this.project_remote_id_changed(this.project.read(cx).remote_id(), cx);
@@ -910,8 +937,8 @@ impl Workspace {
     }
 
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
-        self.active_pane()
-            .update(cx, |pane, cx| pane.add_item(item, cx))
+        let pane = self.active_pane().clone();
+        Pane::add_item(self, pane, item, cx);
     }
 
     pub fn open_path(
@@ -926,10 +953,14 @@ impl Workspace {
             let pane = pane
                 .upgrade(&cx)
                 .ok_or_else(|| anyhow!("pane was closed"))?;
-            this.update(&mut cx, |_, cx| {
-                pane.update(cx, |pane, cx| {
-                    Ok(pane.open_item(project_entry_id, cx, build_item))
-                })
+            this.update(&mut cx, |this, cx| {
+                Ok(Pane::open_item(
+                    this,
+                    pane,
+                    project_entry_id,
+                    cx,
+                    build_item,
+                ))
             })
         })
     }
@@ -1057,9 +1088,7 @@ impl Workspace {
         self.activate_pane(new_pane.clone(), cx);
         if let Some(item) = pane.read(cx).active_item() {
             if let Some(clone) = item.clone_on_split(cx.as_mut()) {
-                new_pane.update(cx, |new_pane, cx| {
-                    new_pane.add_item(clone, cx);
-                });
+                Pane::add_item(self, new_pane.clone(), clone, cx);
             }
         }
         self.center.split(&pane, &new_pane, direction).unwrap();
@@ -1149,21 +1178,32 @@ impl Workspace {
                     }
 
                     let items = futures::future::try_join_all(item_tasks).await?;
-                    let mut items_by_leader_view_id = HashMap::default();
-                    for (view, item) in response.views.into_iter().zip(items) {
-                        items_by_leader_view_id.insert(view.id as usize, item);
-                    }
-
-                    pane.update(&mut cx, |pane, cx| {
-                        pane.set_follow_state(
-                            FollowerState {
-                                leader_id,
-                                current_view_id: response.current_view_id.map(|id| id as usize),
-                                items_by_leader_view_id,
-                            },
-                            cx,
+                    let follower_state = FollowerState {
+                        current_view_id: response.current_view_id.map(|id| id as usize),
+                        items_by_leader_view_id: response
+                            .views
+                            .iter()
+                            .map(|v| v.id as usize)
+                            .zip(items)
+                            .collect(),
+                    };
+                    let current_item = if let Some(current_view_id) = follower_state.current_view_id
+                    {
+                        Some(
+                            follower_state
+                                .items_by_leader_view_id
+                                .get(&current_view_id)
+                                .ok_or_else(|| anyhow!("invalid current view id"))?
+                                .clone(),
                         )
-                    })?;
+                    } else {
+                        None
+                    };
+                    this.update(&mut cx, |this, cx| {
+                        if let Some(item) = current_item {
+                            Pane::add_item(this, pane, item, cx);
+                        }
+                    });
                 }
                 Ok(())
             })
