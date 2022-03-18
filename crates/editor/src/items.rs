@@ -11,10 +11,10 @@ use std::{fmt::Write, path::PathBuf};
 use text::{Point, Selection};
 use util::ResultExt;
 use workspace::{
-    FollowedItem, Item, ItemHandle, ItemNavHistory, ProjectItem, Settings, StatusItemView,
+    FollowableItem, Item, ItemHandle, ItemNavHistory, ProjectItem, Settings, StatusItemView,
 };
 
-impl FollowedItem for Editor {
+impl FollowableItem for Editor {
     fn for_state_message(
         pane: ViewHandle<workspace::Pane>,
         project: ModelHandle<Project>,

@@ -341,7 +341,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(Editor::find_all_references);
 
     workspace::register_project_item::<Editor>(cx);
-    workspace::register_followed_item::<Editor>(cx);
+    workspace::register_followable_item::<Editor>(cx);
 }
 
 trait SelectionExt {

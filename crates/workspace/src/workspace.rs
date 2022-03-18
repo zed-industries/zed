@@ -131,7 +131,7 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut MutableAppContext) {
     });
 }
 
-pub fn register_followed_item<I: FollowedItem>(cx: &mut MutableAppContext) {
+pub fn register_followable_item<I: FollowableItem>(cx: &mut MutableAppContext) {
     cx.update_default_global(|builders: &mut FollowedItemBuilders, _| {
         builders.insert(
             TypeId::of::<I>(),
@@ -234,7 +234,7 @@ pub trait ProjectItem: Item {
     ) -> Self;
 }
 
-pub trait FollowedItem: Item {
+pub trait FollowableItem: Item {
     fn for_state_message(
         pane: ViewHandle<Pane>,
         project: ModelHandle<Project>,
@@ -261,7 +261,7 @@ pub trait FollowedItemHandle {
     ) -> Option<proto::update_followers::update_view::Variant>;
 }
 
-impl<T: FollowedItem> FollowedItemHandle for ViewHandle<T> {
+impl<T: FollowableItem> FollowedItemHandle for ViewHandle<T> {
     fn id(&self) -> usize {
         self.id()
     }
@@ -586,7 +586,12 @@ struct LeaderState {
 
 struct FollowerState {
     active_view_id: Option<usize>,
-    items_by_leader_view_id: HashMap<usize, Box<dyn ItemHandle>>,
+    items_by_leader_view_id: HashMap<usize, FollowerItem>,
+}
+
+enum FollowerItem {
+    Loading(Vec<proto::update_followers::Variant>),
+    Loaded(Box<dyn FollowedItemHandle>),
 }
 
 impl Workspace {
@@ -1524,12 +1529,16 @@ impl Workspace {
                 .ok_or_else(|| anyhow!("invalid update"))?
             {
                 proto::update_followers::Variant::UpdateActiveView(update_active_view) => {
-                    for (pane, state) in follower_states {
+                    for state in follower_states.values_mut() {
                         state.active_view_id = update_active_view.id.map(|id| id as usize);
                     }
                 }
+                proto::update_followers::Variant::UpdateView(update_view) => {
+                    for state in follower_states.values_mut() {
+                        state.items_by_leader_view_id.get(k)
+                    }
+                }
                 proto::update_followers::Variant::CreateView(_) => todo!(),
-                proto::update_followers::Variant::UpdateView(_) => todo!(),
             }
 
             this.leader_updated(leader_id, cx);
