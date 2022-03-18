@@ -93,6 +93,8 @@ pub trait UpgradeModelHandle {
 
 pub trait UpgradeViewHandle {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>>;
+
+    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle>;
 }
 
 pub trait ReadView {
@@ -646,6 +648,10 @@ impl UpgradeModelHandle for AsyncAppContext {
 impl UpgradeViewHandle for AsyncAppContext {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
         self.0.borrow_mut().upgrade_view_handle(handle)
+    }
+
+    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
+        self.0.borrow_mut().upgrade_any_view_handle(handle)
     }
 }
 
@@ -2017,6 +2023,10 @@ impl UpgradeViewHandle for MutableAppContext {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
         self.cx.upgrade_view_handle(handle)
     }
+
+    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
+        self.cx.upgrade_any_view_handle(handle)
+    }
 }
 
 impl ReadView for MutableAppContext {
@@ -2169,6 +2179,19 @@ impl UpgradeViewHandle for AppContext {
                 handle.window_id,
                 handle.view_id,
                 &self.ref_counts,
+            ))
+        } else {
+            None
+        }
+    }
+
+    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
+        if self.ref_counts.lock().is_entity_alive(handle.view_id) {
+            Some(AnyViewHandle::new(
+                handle.window_id,
+                handle.view_id,
+                handle.view_type,
+                self.ref_counts.clone(),
             ))
         } else {
             None
@@ -2931,6 +2954,10 @@ impl<V> UpgradeViewHandle for ViewContext<'_, V> {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
         self.cx.upgrade_view_handle(handle)
     }
+
+    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
+        self.cx.upgrade_any_view_handle(handle)
+    }
 }
 
 impl<V: View> UpdateModel for ViewContext<'_, V> {
@@ -3619,6 +3646,14 @@ impl AnyViewHandle {
             None
         }
     }
+
+    pub fn downgrade(&self) -> AnyWeakViewHandle {
+        AnyWeakViewHandle {
+            window_id: self.window_id,
+            view_id: self.view_id,
+            view_type: self.view_type,
+        }
+    }
 }
 
 impl Clone for AnyViewHandle {
@@ -3842,6 +3877,28 @@ impl<T> Hash for WeakViewHandle<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.window_id.hash(state);
         self.view_id.hash(state);
+    }
+}
+
+pub struct AnyWeakViewHandle {
+    window_id: usize,
+    view_id: usize,
+    view_type: TypeId,
+}
+
+impl AnyWeakViewHandle {
+    pub fn upgrade(&self, cx: &impl UpgradeViewHandle) -> Option<AnyViewHandle> {
+        cx.upgrade_any_view_handle(self)
+    }
+}
+
+impl<T: View> From<WeakViewHandle<T>> for AnyWeakViewHandle {
+    fn from(handle: WeakViewHandle<T>) -> Self {
+        AnyWeakViewHandle {
+            window_id: handle.window_id,
+            view_id: handle.view_id,
+            view_type: TypeId::of::<T>(),
+        }
     }
 }
 

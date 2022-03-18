@@ -299,6 +299,10 @@ impl<'a> UpgradeViewHandle for LayoutContext<'a> {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
         self.app.upgrade_view_handle(handle)
     }
+
+    fn upgrade_any_view_handle(&self, handle: &crate::AnyWeakViewHandle) -> Option<AnyViewHandle> {
+        self.app.upgrade_any_view_handle(handle)
+    }
 }
 
 impl<'a> ElementStateContext for LayoutContext<'a> {
