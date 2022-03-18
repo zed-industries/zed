@@ -6,13 +6,34 @@ use gpui::{
 };
 use language::{Bias, Buffer, Diagnostic, File as _};
 use project::{File, Project, ProjectEntryId, ProjectPath};
-use std::fmt::Write;
-use std::path::PathBuf;
+use rpc::proto;
+use std::{fmt::Write, path::PathBuf};
 use text::{Point, Selection};
 use util::ResultExt;
-use workspace::{Item, ItemHandle, ItemNavHistory, ProjectItem, Settings, StatusItemView};
+use workspace::{
+    FollowedItem, Item, ItemHandle, ItemNavHistory, ProjectItem, Settings, StatusItemView,
+};
+
+impl FollowedItem for Editor {
+    fn for_state_message(
+        pane: ViewHandle<workspace::Pane>,
+        project: ModelHandle<Project>,
+        state: &mut Option<proto::view::Variant>,
+        cx: &mut gpui::MutableAppContext,
+    ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
+        todo!()
+    }
+
+    fn to_state_message(&self, cx: &mut gpui::MutableAppContext) -> proto::view::Variant {
+        todo!()
+    }
+}
 
 impl Item for Editor {
+    fn as_followed(&self) -> Option<&dyn FollowedItem> {
+        Some(self)
+    }
+
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) {
         if let Some(data) = data.downcast_ref::<NavigationData>() {
             let buffer = self.buffer.read(cx).read(cx);

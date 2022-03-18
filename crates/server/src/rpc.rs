@@ -4563,6 +4563,9 @@ mod tests {
 
             Channel::init(&client);
             Project::init(&client);
+            cx.update(|cx| {
+                workspace::init(&client, cx);
+            });
 
             let peer_id = PeerId(connection_id_rx.next().await.unwrap().0);
             let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));

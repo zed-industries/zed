@@ -1629,6 +1629,7 @@ dependencies = [
  "postage",
  "project",
  "rand 0.8.3",
+ "rpc",
  "serde",
  "smallvec",
  "smol",

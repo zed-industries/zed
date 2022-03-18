@@ -7,7 +7,9 @@ pub mod sidebar;
 mod status_bar;
 
 use anyhow::{anyhow, Result};
-use client::{proto, Authenticate, ChannelList, Client, PeerId, User, UserStore};
+use client::{
+    proto, Authenticate, ChannelList, Client, PeerId, Subscription, TypedEnvelope, User, UserStore,
+};
 use clock::ReplicaId;
 use collections::HashMap;
 use gpui::{
@@ -18,9 +20,9 @@ use gpui::{
     json::{self, to_string_pretty, ToJson},
     keymap::Binding,
     platform::{CursorStyle, WindowOptions},
-    AnyModelHandle, AnyViewHandle, AppContext, ClipboardItem, Entity, ImageData, ModelHandle,
-    MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Entity, ImageData,
+    ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::LanguageRegistry;
 use log::error;
@@ -64,7 +66,7 @@ action!(JoinProject, JoinProjectParams);
 action!(Save);
 action!(DebugElements);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     pane::init(cx);
     menu::init(cx);
 
@@ -108,6 +110,9 @@ pub fn init(cx: &mut MutableAppContext) {
             None,
         ),
     ]);
+
+    client.add_entity_request_handler(Workspace::handle_follow);
+    client.add_model_message_handler(Workspace::handle_unfollow);
 }
 
 pub fn register_project_item<I: ProjectItem>(cx: &mut MutableAppContext) {
@@ -119,7 +124,7 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut MutableAppContext) {
     });
 }
 
-pub fn register_followed_item<I: FollowedItem>(cx: &mut MutableAppContext) {
+pub fn register_followed_item<I: FollowedItem + Item>(cx: &mut MutableAppContext) {
     cx.update_default_global(|builders: &mut FollowedItemBuilders, _| {
         builders.push(I::for_state_message)
     });
@@ -153,6 +158,9 @@ pub struct JoinProjectParams {
 }
 
 pub trait Item: View {
+    fn as_followed(&self) -> Option<&dyn FollowedItem> {
+        None
+    }
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) {}
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
@@ -217,15 +225,17 @@ pub trait ProjectItem: Item {
     ) -> Self;
 }
 
-pub trait FollowedItem: Item {
-    type UpdateMessage;
-
+pub trait FollowedItem {
     fn for_state_message(
         pane: ViewHandle<Pane>,
         project: ModelHandle<Project>,
         state: &mut Option<proto::view::Variant>,
         cx: &mut MutableAppContext,
-    ) -> Option<Task<Result<Box<dyn ItemHandle>>>>;
+    ) -> Option<Task<Result<Box<dyn ItemHandle>>>>
+    where
+        Self: Sized;
+
+    fn to_state_message(&self, cx: &mut MutableAppContext) -> proto::view::Variant;
 }
 
 pub trait ItemHandle: 'static {
@@ -459,6 +469,7 @@ pub struct Workspace {
     weak_self: WeakViewHandle<Self>,
     client: Arc<Client>,
     user_store: ModelHandle<client::UserStore>,
+    remote_entity_subscription: Option<Subscription>,
     fs: Arc<dyn Fs>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
@@ -474,6 +485,17 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(params: &WorkspaceParams, cx: &mut ViewContext<Self>) -> Self {
         cx.observe(&params.project, |_, project, cx| {
+            if project.read(cx).is_read_only() {
+                cx.blur();
+            }
+            cx.notify()
+        })
+        .detach();
+
+        cx.subscribe(&params.project, move |this, project, event, cx| {
+            if let project::Event::RemoteIdChanged(remote_id) = event {
+                this.project_remote_id_changed(*remote_id, cx);
+            }
             if project.read(cx).is_read_only() {
                 cx.blur();
             }
@@ -517,7 +539,7 @@ impl Workspace {
 
         cx.emit_global(WorkspaceCreated(weak_self.clone()));
 
-        Workspace {
+        let mut this = Workspace {
             modal: None,
             weak_self,
             center: PaneGroup::new(pane.clone()),
@@ -525,13 +547,16 @@ impl Workspace {
             active_pane: pane.clone(),
             status_bar,
             client: params.client.clone(),
+            remote_entity_subscription: None,
             user_store: params.user_store.clone(),
             fs: params.fs.clone(),
             left_sidebar: Sidebar::new(Side::Left),
             right_sidebar: Sidebar::new(Side::Right),
             project: params.project.clone(),
             _observe_current_user,
-        }
+        };
+        this.project_remote_id_changed(this.project.read(cx).remote_id(), cx);
+        this
     }
 
     pub fn weak_handle(&self) -> WeakViewHandle<Self> {
@@ -1008,6 +1033,15 @@ impl Workspace {
         });
     }
 
+    fn project_remote_id_changed(&mut self, remote_id: Option<u64>, cx: &mut ViewContext<Self>) {
+        if let Some(remote_id) = remote_id {
+            self.remote_entity_subscription =
+                Some(self.client.add_view_for_remote_entity(remote_id, cx));
+        } else {
+            self.remote_entity_subscription.take();
+        }
+    }
+
     pub fn follow(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         if let Some(project_id) = self.project.read(cx).remote_id() {
             let request = self.client.request(proto::Follow {
@@ -1270,6 +1304,29 @@ impl Workspace {
         } else {
             None
         }
+    }
+
+    // RPC handlers
+
+    async fn handle_follow(
+        this: ViewHandle<Self>,
+        envelope: TypedEnvelope<proto::Follow>,
+        _: Arc<Client>,
+        cx: AsyncAppContext,
+    ) -> Result<proto::FollowResponse> {
+        Ok(proto::FollowResponse {
+            current_view_id: 0,
+            views: Default::default(),
+        })
+    }
+
+    async fn handle_unfollow(
+        this: ViewHandle<Self>,
+        envelope: TypedEnvelope<proto::Unfollow>,
+        _: Arc<Client>,
+        cx: AsyncAppContext,
+    ) -> Result<()> {
+        Ok(())
     }
 }
 

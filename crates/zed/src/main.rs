@@ -69,7 +69,7 @@ fn main() {
         project::Project::init(&client);
         client::Channel::init(&client);
         client::init(client.clone(), cx);
-        workspace::init(cx);
+        workspace::init(&client, cx);
         editor::init(cx);
         go_to_line::init(cx);
         file_finder::init(cx);

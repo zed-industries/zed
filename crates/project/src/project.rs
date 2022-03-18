@@ -124,6 +124,7 @@ pub enum Event {
     DiskBasedDiagnosticsUpdated,
     DiskBasedDiagnosticsFinished,
     DiagnosticsUpdated(ProjectPath),
+    RemoteIdChanged(Option<u64>),
 }
 
 enum LanguageServerEvent {
@@ -253,19 +254,19 @@ impl ProjectEntryId {
 
 impl Project {
     pub fn init(client: &Arc<Client>) {
-        client.add_entity_message_handler(Self::handle_add_collaborator);
-        client.add_entity_message_handler(Self::handle_buffer_reloaded);
-        client.add_entity_message_handler(Self::handle_buffer_saved);
-        client.add_entity_message_handler(Self::handle_start_language_server);
-        client.add_entity_message_handler(Self::handle_update_language_server);
-        client.add_entity_message_handler(Self::handle_remove_collaborator);
-        client.add_entity_message_handler(Self::handle_register_worktree);
-        client.add_entity_message_handler(Self::handle_unregister_worktree);
-        client.add_entity_message_handler(Self::handle_unshare_project);
-        client.add_entity_message_handler(Self::handle_update_buffer_file);
-        client.add_entity_message_handler(Self::handle_update_buffer);
-        client.add_entity_message_handler(Self::handle_update_diagnostic_summary);
-        client.add_entity_message_handler(Self::handle_update_worktree);
+        client.add_model_message_handler(Self::handle_add_collaborator);
+        client.add_model_message_handler(Self::handle_buffer_reloaded);
+        client.add_model_message_handler(Self::handle_buffer_saved);
+        client.add_model_message_handler(Self::handle_start_language_server);
+        client.add_model_message_handler(Self::handle_update_language_server);
+        client.add_model_message_handler(Self::handle_remove_collaborator);
+        client.add_model_message_handler(Self::handle_register_worktree);
+        client.add_model_message_handler(Self::handle_unregister_worktree);
+        client.add_model_message_handler(Self::handle_unshare_project);
+        client.add_model_message_handler(Self::handle_update_buffer_file);
+        client.add_model_message_handler(Self::handle_update_buffer);
+        client.add_model_message_handler(Self::handle_update_diagnostic_summary);
+        client.add_model_message_handler(Self::handle_update_worktree);
         client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_entity_request_handler(Self::handle_apply_code_action);
         client.add_entity_request_handler(Self::handle_format_buffers);
@@ -566,6 +567,7 @@ impl Project {
             self.subscriptions
                 .push(self.client.add_model_for_remote_entity(remote_id, cx));
         }
+        cx.emit(Event::RemoteIdChanged(remote_id))
     }
 
     pub fn remote_id(&self) -> Option<u64> {

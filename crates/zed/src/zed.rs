@@ -252,7 +252,7 @@ mod tests {
     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
         let app_state = cx.update(test_app_state);
         cx.update(|cx| {
-            workspace::init(cx);
+            workspace::init(&app_state.client, cx);
         });
         cx.dispatch_global_action(workspace::OpenNew(app_state.clone()));
         let window_id = *cx.window_ids().first().unwrap();

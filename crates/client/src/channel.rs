@@ -181,7 +181,7 @@ impl Entity for Channel {
 
 impl Channel {
     pub fn init(rpc: &Arc<Client>) {
-        rpc.add_entity_message_handler(Self::handle_message_sent);
+        rpc.add_model_message_handler(Self::handle_message_sent);
     }
 
     pub fn new(
