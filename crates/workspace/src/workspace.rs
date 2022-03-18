@@ -43,7 +43,7 @@ use std::{
     sync::Arc,
 };
 use theme::{Theme, ThemeRegistry};
-use util::{ResultExt, TryFutureExt};
+use util::ResultExt;
 
 type ProjectItemBuilders = HashMap<
     TypeId,
@@ -68,6 +68,7 @@ action!(Open, Arc<AppState>);
 action!(OpenNew, Arc<AppState>);
 action!(OpenPaths, OpenParams);
 action!(ToggleShare);
+action!(FollowCollaborator, PeerId);
 action!(JoinProject, JoinProjectParams);
 action!(Save);
 action!(DebugElements);
@@ -88,6 +89,7 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     });
 
     cx.add_action(Workspace::toggle_share);
+    cx.add_async_action(Workspace::follow);
     cx.add_action(
         |workspace: &mut Workspace, _: &Save, cx: &mut ViewContext<Workspace>| {
             workspace.save_active_item(cx).detach_and_log_err(cx);
@@ -1192,88 +1194,90 @@ impl Workspace {
         }
     }
 
-    pub fn follow(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        if let Some(project_id) = self.project.read(cx).remote_id() {
-            let request = self.client.request(proto::Follow {
-                project_id,
-                leader_id: leader_id.0,
-            });
-            cx.spawn_weak(|this, mut cx| async move {
-                let mut response = request.await?;
-                if let Some(this) = this.upgrade(&cx) {
-                    let mut item_tasks = Vec::new();
-                    let (project, pane) = this.read_with(&cx, |this, _| {
-                        (this.project.clone(), this.active_pane().clone())
-                    });
-                    let item_builders = cx.update(|cx| {
-                        cx.default_global::<FollowableItemBuilders>()
-                            .values()
-                            .map(|b| b.0)
-                            .collect::<Vec<_>>()
-                            .clone()
-                    });
-                    for view in &mut response.views {
-                        let variant = view
-                            .variant
-                            .take()
-                            .ok_or_else(|| anyhow!("missing variant"))?;
-                        cx.update(|cx| {
-                            let mut variant = Some(variant);
-                            for build_item in &item_builders {
-                                if let Some(task) =
-                                    build_item(pane.clone(), project.clone(), &mut variant, cx)
-                                {
-                                    item_tasks.push(task);
-                                    break;
-                                } else {
-                                    assert!(variant.is_some());
-                                }
+    pub fn follow(
+        &mut self,
+        FollowCollaborator(leader_id): &FollowCollaborator,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let leader_id = *leader_id;
+        let project_id = self.project.read(cx).remote_id()?;
+        let request = self.client.request(proto::Follow {
+            project_id,
+            leader_id: leader_id.0,
+        });
+        Some(cx.spawn_weak(|this, mut cx| async move {
+            let mut response = request.await?;
+            if let Some(this) = this.upgrade(&cx) {
+                let mut item_tasks = Vec::new();
+                let (project, pane) = this.read_with(&cx, |this, _| {
+                    (this.project.clone(), this.active_pane().clone())
+                });
+                let item_builders = cx.update(|cx| {
+                    cx.default_global::<FollowableItemBuilders>()
+                        .values()
+                        .map(|b| b.0)
+                        .collect::<Vec<_>>()
+                        .clone()
+                });
+                for view in &mut response.views {
+                    let variant = view
+                        .variant
+                        .take()
+                        .ok_or_else(|| anyhow!("missing variant"))?;
+                    cx.update(|cx| {
+                        let mut variant = Some(variant);
+                        for build_item in &item_builders {
+                            if let Some(task) =
+                                build_item(pane.clone(), project.clone(), &mut variant, cx)
+                            {
+                                item_tasks.push(task);
+                                break;
+                            } else {
+                                assert!(variant.is_some());
                             }
-                        });
-                    }
-
-                    this.update(&mut cx, |this, cx| {
-                        this.follower_states_by_leader
-                            .entry(leader_id)
-                            .or_default()
-                            .insert(
-                                pane.downgrade(),
-                                FollowerState {
-                                    active_view_id: response.active_view_id.map(|id| id as usize),
-                                    items_by_leader_view_id: Default::default(),
-                                },
-                            );
-                    });
-
-                    let items = futures::future::try_join_all(item_tasks).await?;
-                    this.update(&mut cx, |this, cx| {
-                        let follower_state = this
-                            .follower_states_by_leader
-                            .entry(leader_id)
-                            .or_default()
-                            .entry(pane.downgrade())
-                            .or_default();
-                        for (id, item) in response.views.iter().map(|v| v.id as usize).zip(items) {
-                            let prev_state = follower_state.items_by_leader_view_id.remove(&id);
-                            if let Some(FollowerItem::Loading(updates)) = prev_state {
-                                for update in updates {
-                                    item.apply_update_message(update, cx)
-                                        .context("failed to apply view update")
-                                        .log_err();
-                                }
-                            }
-                            follower_state
-                                .items_by_leader_view_id
-                                .insert(id, FollowerItem::Loaded(item));
                         }
-                        this.leader_updated(leader_id, cx);
                     });
                 }
-                Ok(())
-            })
-        } else {
-            Task::ready(Err(anyhow!("project is not remote")))
-        }
+
+                this.update(&mut cx, |this, cx| {
+                    this.follower_states_by_leader
+                        .entry(leader_id)
+                        .or_default()
+                        .insert(
+                            pane.downgrade(),
+                            FollowerState {
+                                active_view_id: response.active_view_id.map(|id| id as usize),
+                                items_by_leader_view_id: Default::default(),
+                            },
+                        );
+                });
+
+                let items = futures::future::try_join_all(item_tasks).await?;
+                this.update(&mut cx, |this, cx| {
+                    let follower_state = this
+                        .follower_states_by_leader
+                        .entry(leader_id)
+                        .or_default()
+                        .entry(pane.downgrade())
+                        .or_default();
+                    for (id, item) in response.views.iter().map(|v| v.id as usize).zip(items) {
+                        let prev_state = follower_state.items_by_leader_view_id.remove(&id);
+                        if let Some(FollowerItem::Loading(updates)) = prev_state {
+                            for update in updates {
+                                item.apply_update_message(update, cx)
+                                    .context("failed to apply view update")
+                                    .log_err();
+                            }
+                        }
+                        follower_state
+                            .items_by_leader_view_id
+                            .insert(id, FollowerItem::Loaded(item));
+                    }
+                    this.leader_updated(leader_id, cx);
+                });
+            }
+            Ok(())
+        }))
     }
 
     fn update_followers(
@@ -1383,7 +1387,9 @@ impl Workspace {
                 Some(self.render_avatar(
                     collaborator.user.avatar.clone()?,
                     collaborator.replica_id,
+                    Some(collaborator.peer_id),
                     theme,
+                    cx,
                 ))
             })
             .collect()
@@ -1397,7 +1403,7 @@ impl Workspace {
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         if let Some(avatar) = user.and_then(|user| user.avatar.clone()) {
-            self.render_avatar(avatar, replica_id, theme)
+            self.render_avatar(avatar, replica_id, None, theme, cx)
         } else {
             MouseEventHandler::new::<Authenticate, _, _>(0, cx, |state, _| {
                 let style = if state.hovered {
@@ -1421,52 +1427,61 @@ impl Workspace {
         &self,
         avatar: Arc<ImageData>,
         replica_id: ReplicaId,
+        peer_id: Option<PeerId>,
         theme: &Theme,
+        cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        ConstrainedBox::new(
-            Stack::new()
-                .with_child(
-                    ConstrainedBox::new(
-                        Image::new(avatar)
-                            .with_style(theme.workspace.titlebar.avatar)
-                            .boxed(),
-                    )
+        let content = Stack::new()
+            .with_child(
+                Image::new(avatar)
+                    .with_style(theme.workspace.titlebar.avatar)
+                    .constrained()
                     .with_width(theme.workspace.titlebar.avatar_width)
                     .aligned()
                     .boxed(),
-                )
-                .with_child(
-                    AvatarRibbon::new(theme.editor.replica_selection_style(replica_id).cursor)
-                        .constrained()
-                        .with_width(theme.workspace.titlebar.avatar_ribbon.width)
-                        .with_height(theme.workspace.titlebar.avatar_ribbon.height)
-                        .aligned()
-                        .bottom()
-                        .boxed(),
-                )
-                .boxed(),
-        )
-        .with_width(theme.workspace.right_sidebar.width)
-        .boxed()
+            )
+            .with_child(
+                AvatarRibbon::new(theme.editor.replica_selection_style(replica_id).cursor)
+                    .constrained()
+                    .with_width(theme.workspace.titlebar.avatar_ribbon.width)
+                    .with_height(theme.workspace.titlebar.avatar_ribbon.height)
+                    .aligned()
+                    .bottom()
+                    .boxed(),
+            )
+            .constrained()
+            .with_width(theme.workspace.right_sidebar.width)
+            .boxed();
+
+        if let Some(peer_id) = peer_id {
+            MouseEventHandler::new::<FollowCollaborator, _, _>(
+                replica_id.into(),
+                cx,
+                move |_, _| content,
+            )
+            .with_cursor_style(CursorStyle::PointingHand)
+            .on_click(move |cx| cx.dispatch_action(FollowCollaborator(peer_id)))
+            .boxed()
+        } else {
+            content
+        }
     }
 
     fn render_share_icon(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
         if self.project().read(cx).is_local() && self.client.user_id().is_some() {
-            enum Share {}
-
             let color = if self.project().read(cx).is_shared() {
                 theme.workspace.titlebar.share_icon_active_color
             } else {
                 theme.workspace.titlebar.share_icon_color
             };
             Some(
-                MouseEventHandler::new::<Share, _, _>(0, cx, |_, _| {
+                MouseEventHandler::new::<ToggleShare, _, _>(0, cx, |_, _| {
                     Align::new(
-                        ConstrainedBox::new(
-                            Svg::new("icons/broadcast-24.svg").with_color(color).boxed(),
-                        )
-                        .with_width(24.)
-                        .boxed(),
+                        Svg::new("icons/broadcast-24.svg")
+                            .with_color(color)
+                            .constrained()
+                            .with_width(24.)
+                            .boxed(),
                     )
                     .boxed()
                 })

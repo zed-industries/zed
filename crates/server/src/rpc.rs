@@ -4272,8 +4272,8 @@ mod tests {
         workspace_b
             .update(cx_b, |workspace, cx| {
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
-                let leader_id = project_b.read(cx).collaborators().keys().next().unwrap();
-                workspace.follow(*leader_id, cx)
+                let leader_id = *project_b.read(cx).collaborators().keys().next().unwrap();
+                workspace.follow(&leader_id.into(), cx).unwrap()
             })
             .await
             .unwrap();
@@ -4291,8 +4291,7 @@ mod tests {
         });
         workspace_b
             .condition(cx_b, |workspace, cx| {
-                let active_item = workspace.active_item(cx).unwrap();
-                active_item.project_path(cx) == Some((worktree_id, "1.txt").into())
+                workspace.active_item(cx).unwrap().id() == editor_b1.id()
             })
             .await;
     }

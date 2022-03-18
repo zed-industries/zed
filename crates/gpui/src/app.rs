@@ -184,6 +184,12 @@ macro_rules! action {
                 Box::new(self.clone())
             }
         }
+
+        impl From<$arg> for $name {
+            fn from(arg: $arg) -> Self {
+                Self(arg)
+            }
+        }
     };
 
     ($name:ident) => {
