@@ -114,6 +114,8 @@ impl Server {
             .add_message_handler(Server::leave_channel)
             .add_request_handler(Server::send_channel_message)
             .add_request_handler(Server::follow)
+            .add_message_handler(Server::unfollow)
+            .add_message_handler(Server::update_followers)
             .add_request_handler(Server::get_channel_messages);
 
         Arc::new(server)
@@ -688,6 +690,40 @@ impl Server {
             .forward_request(request.sender_id, leader_id, request.payload)
             .await?;
         Ok(response)
+    }
+
+    async fn unfollow(
+        self: Arc<Self>,
+        request: TypedEnvelope<proto::Unfollow>,
+    ) -> tide::Result<()> {
+        let leader_id = ConnectionId(request.payload.leader_id);
+        if !self
+            .state()
+            .project_connection_ids(request.payload.project_id, request.sender_id)?
+            .contains(&leader_id)
+        {
+            Err(anyhow!("no such peer"))?;
+        }
+        self.peer
+            .forward_send(request.sender_id, leader_id, request.payload)?;
+        Ok(())
+    }
+
+    async fn update_followers(
+        self: Arc<Self>,
+        request: TypedEnvelope<proto::UpdateFollowers>,
+    ) -> tide::Result<()> {
+        let connection_ids = self
+            .state()
+            .project_connection_ids(request.payload.project_id, request.sender_id)?;
+        for follower_id in &request.payload.follower_ids {
+            let follower_id = ConnectionId(*follower_id);
+            if connection_ids.contains(&follower_id) {
+                self.peer
+                    .forward_send(request.sender_id, follower_id, request.payload.clone())?;
+            }
+        }
+        Ok(())
     }
 
     async fn get_channels(

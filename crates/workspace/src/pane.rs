@@ -321,11 +321,12 @@ impl Pane {
     pub(crate) fn add_item(
         workspace: &mut Workspace,
         pane: ViewHandle<Pane>,
-        mut item: Box<dyn ItemHandle>,
+        item: Box<dyn ItemHandle>,
         cx: &mut ViewContext<Workspace>,
     ) {
         // Prevent adding the same item to the pane more than once.
-        if pane.read(cx).items.iter().any(|i| i.id() == item.id()) {
+        if let Some(item_ix) = pane.read(cx).items.iter().position(|i| i.id() == item.id()) {
+            pane.update(cx, |pane, cx| pane.activate_item(item_ix, cx));
             return;
         }
 

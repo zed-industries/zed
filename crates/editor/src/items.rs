@@ -77,7 +77,7 @@ impl FollowedItem for Editor {
         &self,
         event: &Self::Event,
         cx: &AppContext,
-    ) -> Option<proto::view_update::Variant> {
+    ) -> Option<proto::update_followers::update_view::Variant> {
         match event {
             Event::SelectionsChanged => {
                 let selection = self.newest_anchor_selection();
@@ -88,8 +88,8 @@ impl FollowedItem for Editor {
                     reversed: selection.reversed,
                     goal: Default::default(),
                 };
-                Some(proto::view_update::Variant::Editor(
-                    proto::view_update::Editor {
+                Some(proto::update_followers::update_view::Variant::Editor(
+                    proto::update_followers::update_view::Editor {
                         newest_selection: Some(language::proto::serialize_selection(&selection)),
                     },
                 ))
