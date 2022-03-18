@@ -50,17 +50,17 @@ type ProjectItemBuilders = HashMap<
     fn(usize, ModelHandle<Project>, AnyModelHandle, &mut MutableAppContext) -> Box<dyn ItemHandle>,
 >;
 
-type FollowedItemBuilder = fn(
+type FollowableItemBuilder = fn(
     ViewHandle<Pane>,
     ModelHandle<Project>,
     &mut Option<proto::view::Variant>,
     &mut MutableAppContext,
 ) -> Option<Task<Result<Box<dyn ItemHandle>>>>;
-type FollowedItemBuilders = HashMap<
+type FollowableItemBuilders = HashMap<
     TypeId,
     (
-        FollowedItemBuilder,
-        fn(AnyViewHandle) -> Box<dyn FollowedItemHandle>,
+        FollowableItemBuilder,
+        fn(AnyViewHandle) -> Box<dyn FollowableItemHandle>,
     ),
 >;
 
@@ -132,7 +132,7 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut MutableAppContext) {
 }
 
 pub fn register_followable_item<I: FollowableItem>(cx: &mut MutableAppContext) {
-    cx.update_default_global(|builders: &mut FollowedItemBuilders, _| {
+    cx.update_default_global(|builders: &mut FollowableItemBuilders, _| {
         builders.insert(
             TypeId::of::<I>(),
             (I::for_state_message, |this| {
@@ -251,7 +251,7 @@ pub trait FollowableItem: Item {
     ) -> Option<proto::update_followers::update_view::Variant>;
 }
 
-pub trait FollowedItemHandle {
+pub trait FollowableItemHandle {
     fn id(&self) -> usize;
     fn to_state_message(&self, cx: &AppContext) -> proto::view::Variant;
     fn to_update_message(
@@ -261,7 +261,7 @@ pub trait FollowedItemHandle {
     ) -> Option<proto::update_followers::update_view::Variant>;
 }
 
-impl<T: FollowableItem> FollowedItemHandle for ViewHandle<T> {
+impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
     fn id(&self) -> usize {
         self.id()
     }
@@ -308,7 +308,7 @@ pub trait ItemHandle: 'static {
         cx: &mut MutableAppContext,
     ) -> Task<Result<()>>;
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle>;
-    fn to_followed_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowedItemHandle>>;
+    fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
 }
 
 pub trait WeakItemHandle {
@@ -363,7 +363,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         pane: ViewHandle<Pane>,
         cx: &mut ViewContext<Workspace>,
     ) {
-        if let Some(followed_item) = self.to_followed_item_handle(cx) {
+        if let Some(followed_item) = self.to_followable_item_handle(cx) {
             workspace.update_followers(
                 proto::update_followers::Variant::CreateView(proto::View {
                     id: followed_item.id() as u64,
@@ -401,7 +401,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             }
 
             if let Some(message) = item
-                .to_followed_item_handle(cx)
+                .to_followable_item_handle(cx)
                 .and_then(|i| i.to_update_message(event, cx))
             {
                 workspace.update_followers(
@@ -467,9 +467,9 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.read(cx).act_as_type(type_id, self, cx)
     }
 
-    fn to_followed_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowedItemHandle>> {
-        if cx.has_global::<FollowedItemBuilders>() {
-            let builders = cx.global::<FollowedItemBuilders>();
+    fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>> {
+        if cx.has_global::<FollowableItemBuilders>() {
+            let builders = cx.global::<FollowableItemBuilders>();
             let item = self.to_any();
             Some(builders.get(&item.view_type())?.1(item))
         } else {
@@ -1186,7 +1186,7 @@ impl Workspace {
                         (this.project.clone(), this.active_pane().clone())
                     });
                     let item_builders = cx.update(|cx| {
-                        cx.default_global::<FollowedItemBuilders>()
+                        cx.default_global::<FollowableItemBuilders>()
                             .values()
                             .map(|b| b.0)
                             .collect::<Vec<_>>()
@@ -1477,7 +1477,7 @@ impl Workspace {
 
             let active_view_id = this
                 .active_item(cx)
-                .and_then(|i| i.to_followed_item_handle(cx))
+                .and_then(|i| i.to_followable_item_handle(cx))
                 .map(|i| i.id() as u64);
             Ok(proto::FollowResponse {
                 active_view_id,
@@ -1485,7 +1485,7 @@ impl Workspace {
                     .items(cx)
                     .filter_map(|item| {
                         let id = item.id() as u64;
-                        let item = item.to_followed_item_handle(cx)?;
+                        let item = item.to_followable_item_handle(cx)?;
                         let variant = item.to_state_message(cx);
                         Some(proto::View {
                             id,
