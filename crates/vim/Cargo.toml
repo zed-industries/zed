@@ -1,0 +1,16 @@
+[package]
+name = "vim"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/vim.rs"
+doctest = false
+
+[dependencies]
+collections = { path = "../collections" }
+editor = { path = "../editor" }
+gpui = { path = "../gpui" }
+language = { path = "../language" }
+workspace = { path = "../workspace" }
+log = "0.4"

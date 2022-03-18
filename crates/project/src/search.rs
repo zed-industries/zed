@@ -149,10 +149,22 @@ impl SearchQuery {
 
                     let mat = mat.unwrap();
                     if *whole_word {
-                        let prev_kind = rope.reversed_chars_at(mat.start()).next().map(char_kind);
-                        let start_kind = char_kind(rope.chars_at(mat.start()).next().unwrap());
-                        let end_kind = char_kind(rope.reversed_chars_at(mat.end()).next().unwrap());
-                        let next_kind = rope.chars_at(mat.end()).next().map(char_kind);
+                        let prev_kind = rope
+                            .reversed_chars_at(mat.start())
+                            .next()
+                            .map(|c| char_kind(c, Default::default()));
+                        let start_kind = char_kind(
+                            rope.chars_at(mat.start()).next().unwrap(),
+                            Default::default(),
+                        );
+                        let end_kind = char_kind(
+                            rope.reversed_chars_at(mat.end()).next().unwrap(),
+                            Default::default(),
+                        );
+                        let next_kind = rope
+                            .chars_at(mat.end())
+                            .next()
+                            .map(|c| char_kind(c, Default::default()));
                         if Some(start_kind) == prev_kind || Some(end_kind) == next_kind {
                             continue;
                         }

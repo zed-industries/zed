@@ -2258,12 +2258,27 @@ pub fn contiguous_ranges(
     })
 }
 
-pub fn char_kind(c: char) -> CharKind {
-    if c == '\n' {
+#[derive(Clone, Copy, Default)]
+pub struct CharKindOptions {
+    pub punctuation_as_word: bool,
+    pub newline_as_whitespace: bool,
+}
+
+impl CharKindOptions {
+    pub fn new(punctuation_as_word: bool, newline_as_whitespace: bool) -> Self {
+        Self {
+            punctuation_as_word,
+            newline_as_whitespace,
+        }
+    }
+}
+
+pub fn char_kind(c: char, options: CharKindOptions) -> CharKind {
+    if c == '\n' && !options.newline_as_whitespace {
         CharKind::Newline
     } else if c.is_whitespace() {
         CharKind::Whitespace
-    } else if c.is_alphanumeric() || c == '_' {
+    } else if c.is_alphanumeric() || c == '_' || options.punctuation_as_word {
         CharKind::Word
     } else {
         CharKind::Punctuation

@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use std::{
     any::Any,
     collections::{HashMap, HashSet},
-    fmt::Debug,
+    fmt::{Debug, Display},
 };
 use tree_sitter::{Language, Node, Parser};
 
@@ -223,6 +223,24 @@ impl Keystroke {
             cmd,
             key: key.unwrap(),
         })
+    }
+}
+
+impl Display for Keystroke {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.ctrl {
+            f.write_str("ctrl-")?;
+        }
+        if self.alt {
+            f.write_str("alt-")?;
+        }
+        if self.cmd {
+            f.write_str("cmd-")?;
+        }
+        if self.shift {
+            f.write_str("shift-")?;
+        }
+        f.write_str(&self.key)
     }
 }
 

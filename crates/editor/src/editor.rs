@@ -345,14 +345,6 @@ pub fn init(cx: &mut MutableAppContext) {
     });
 }
 
-trait SelectionExt {
-    fn offset_range(&self, buffer: &MultiBufferSnapshot) -> Range<usize>;
-    fn point_range(&self, buffer: &MultiBufferSnapshot) -> Range<Point>;
-    fn display_range(&self, map: &DisplaySnapshot) -> Range<DisplayPoint>;
-    fn spanned_rows(&self, include_end_if_at_line_start: bool, map: &DisplaySnapshot)
-        -> Range<u32>;
-}
-
 trait InvalidationRegion {
     fn ranges(&self) -> &[Range<Anchor>];
 }
@@ -804,6 +796,8 @@ pub struct NavigationData {
     offset: usize,
 }
 
+pub struct EditorCreated(pub ViewHandle<Editor>);
+
 impl Editor {
     pub fn single_line(
         field_editor_style: Option<GetFieldEditorTheme>,
@@ -940,6 +934,10 @@ impl Editor {
             cursor_shape: Default::default(),
         };
         this.end_selection(cx);
+
+        let editor_created_event = EditorCreated(cx.handle());
+        cx.emit_global(editor_created_event);
+
         this
     }
 
@@ -972,6 +970,10 @@ impl Editor {
 
     pub fn title(&self, cx: &AppContext) -> String {
         self.buffer().read(cx).title(cx)
+    }
+
+    pub fn mode(&self) -> EditorMode {
+        self.mode
     }
 
     pub fn snapshot(&mut self, cx: &mut MutableAppContext) -> EditorSnapshot {
@@ -2662,8 +2664,7 @@ impl Editor {
             if selection.is_empty() {
                 let old_head = selection.head();
                 let mut new_head =
-                    movement::left(&display_map, old_head.to_display_point(&display_map))
-                        .unwrap()
+                    movement::left(&display_map, old_head.to_display_point(&display_map), true)
                         .to_point(&display_map);
                 if let Some((buffer, line_buffer_range)) = display_map
                     .buffer_snapshot
@@ -2679,8 +2680,7 @@ impl Editor {
                     }
                 }
 
-                selection.set_head(new_head);
-                selection.goal = SelectionGoal::None;
+                selection.set_head(new_head, SelectionGoal::None);
             }
         }
         self.update_selections(selections, Some(Autoscroll::Fit), cx);
@@ -2690,19 +2690,12 @@ impl Editor {
 
     pub fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
-        for selection in &mut selections {
+        self.move_selections(cx, |map, selection| {
             if selection.is_empty() {
-                let head = selection.head().to_display_point(&display_map);
-                let cursor = movement::right(&display_map, head)
-                    .unwrap()
-                    .to_point(&display_map);
-                selection.set_head(cursor);
-                selection.goal = SelectionGoal::None;
+                let cursor = movement::right(map, selection.head(), true);
+                selection.set_head(cursor, SelectionGoal::None);
             }
-        }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        });
         self.insert(&"", cx);
         self.end_transaction(cx);
     }
@@ -3305,76 +3298,117 @@ impl Editor {
             .update(cx, |buffer, cx| buffer.finalize_last_transaction(cx));
     }
 
-    pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
+    pub fn move_selections(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        update_selection: impl Fn(&DisplaySnapshot, &mut Selection<DisplayPoint>),
+    ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
-        for selection in &mut selections {
-            let start = selection.start.to_display_point(&display_map);
-            let end = selection.end.to_display_point(&display_map);
-
-            if start != end {
-                selection.end = selection.start.clone();
-            } else {
-                let cursor = movement::left(&display_map, start)
-                    .unwrap()
-                    .to_point(&display_map);
-                selection.start = cursor.clone();
-                selection.end = cursor;
-            }
-            selection.reversed = false;
-            selection.goal = SelectionGoal::None;
-        }
+        let selections = self
+            .local_selections::<Point>(cx)
+            .into_iter()
+            .map(|selection| {
+                let mut selection = Selection {
+                    id: selection.id,
+                    start: selection.start.to_display_point(&display_map),
+                    end: selection.end.to_display_point(&display_map),
+                    reversed: selection.reversed,
+                    goal: selection.goal,
+                };
+                update_selection(&display_map, &mut selection);
+                Selection {
+                    id: selection.id,
+                    start: selection.start.to_point(&display_map),
+                    end: selection.end.to_point(&display_map),
+                    reversed: selection.reversed,
+                    goal: selection.goal,
+                }
+            })
+            .collect();
         self.update_selections(selections, Some(Autoscroll::Fit), cx);
+    }
+
+    pub fn move_selection_heads(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        update_head: impl Fn(
+            &DisplaySnapshot,
+            DisplayPoint,
+            SelectionGoal,
+        ) -> (DisplayPoint, SelectionGoal),
+    ) {
+        self.move_selections(cx, |map, selection| {
+            let (new_head, new_goal) = update_head(map, selection.head(), selection.goal);
+            selection.set_head(new_head, new_goal);
+        });
+    }
+
+    pub fn move_and_delete(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        update_head: impl Fn(
+            &DisplaySnapshot,
+            DisplayPoint,
+            SelectionGoal,
+        ) -> (DisplayPoint, SelectionGoal),
+    ) {
+        self.start_transaction(cx);
+        self.move_selection_heads(cx, update_head);
+        self.insert("", cx);
+        self.end_transaction(cx);
+    }
+
+    pub fn move_cursors(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        update_cursor_position: impl Fn(
+            &DisplaySnapshot,
+            DisplayPoint,
+            SelectionGoal,
+        ) -> (DisplayPoint, SelectionGoal),
+    ) {
+        self.move_selections(cx, |map, selection| {
+            let (cursor, new_goal) = update_cursor_position(map, selection.head(), selection.goal);
+            selection.collapse_to(cursor, new_goal)
+        });
+    }
+
+    pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
+        self.move_selections(cx, |map, selection| {
+            let cursor = if selection.is_empty() {
+                movement::left(&map, selection.start, true)
+            } else {
+                selection.start
+            };
+            selection.collapse_to(cursor, SelectionGoal::None);
+        });
     }
 
     pub fn select_left(&mut self, _: &SelectLeft, cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
-        for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map);
-            let cursor = movement::left(&display_map, head)
-                .unwrap()
-                .to_point(&display_map);
-            selection.set_head(cursor);
-            selection.goal = SelectionGoal::None;
-        }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        self.move_selection_heads(cx, |map, head, _| {
+            (movement::left(map, head, true), SelectionGoal::None)
+        })
     }
 
     pub fn move_right(&mut self, _: &MoveRight, cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
-        for selection in &mut selections {
-            let start = selection.start.to_display_point(&display_map);
-            let end = selection.end.to_display_point(&display_map);
-
-            if start != end {
-                selection.start = selection.end.clone();
+        self.move_selections(cx, |map, selection| {
+            if !selection.is_empty() {
+                selection.start = selection.end;
             } else {
-                let cursor = movement::right(&display_map, end)
-                    .unwrap()
-                    .to_point(&display_map);
+                let cursor = movement::right(map, selection.head(), true);
                 selection.start = cursor;
                 selection.end = cursor;
             }
+
             selection.reversed = false;
             selection.goal = SelectionGoal::None;
-        }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        });
     }
 
     pub fn select_right(&mut self, _: &SelectRight, cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
-        for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map);
-            let cursor = movement::right(&display_map, head)
-                .unwrap()
-                .to_point(&display_map);
-            selection.set_head(cursor);
-            selection.goal = SelectionGoal::None;
-        }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        self.move_selection_heads(cx, |map, head, _| {
+            (movement::right(map, head, true), SelectionGoal::None)
+        });
     }
 
     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
@@ -3393,36 +3427,18 @@ impl Editor {
             return;
         }
 
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
-        for selection in &mut selections {
-            let start = selection.start.to_display_point(&display_map);
-            let end = selection.end.to_display_point(&display_map);
-            if start != end {
+        self.move_selections(cx, |map, selection| {
+            if !selection.is_empty() {
                 selection.goal = SelectionGoal::None;
             }
 
-            let (start, goal) = movement::up(&display_map, start, selection.goal).unwrap();
-            let cursor = start.to_point(&display_map);
-            selection.start = cursor;
-            selection.end = cursor;
-            selection.goal = goal;
-            selection.reversed = false;
-        }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+            let (cursor, goal) = movement::up(&map, selection.start, selection.goal);
+            selection.collapse_to(cursor, goal);
+        });
     }
 
     pub fn select_up(&mut self, _: &SelectUp, cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
-        for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map);
-            let (head, goal) = movement::up(&display_map, head, selection.goal).unwrap();
-            let cursor = head.to_point(&display_map);
-            selection.set_head(cursor);
-            selection.goal = goal;
-        }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        self.move_selection_heads(cx, movement::up)
     }
 
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
@@ -3439,36 +3455,18 @@ impl Editor {
             return;
         }
 
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
-        for selection in &mut selections {
-            let start = selection.start.to_display_point(&display_map);
-            let end = selection.end.to_display_point(&display_map);
-            if start != end {
+        self.move_selections(cx, |map, selection| {
+            if !selection.is_empty() {
                 selection.goal = SelectionGoal::None;
             }
 
-            let (start, goal) = movement::down(&display_map, end, selection.goal).unwrap();
-            let cursor = start.to_point(&display_map);
-            selection.start = cursor;
-            selection.end = cursor;
-            selection.goal = goal;
-            selection.reversed = false;
-        }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+            let (cursor, goal) = movement::down(&map, selection.end, selection.goal);
+            selection.collapse_to(cursor, goal);
+        });
     }
 
     pub fn select_down(&mut self, _: &SelectDown, cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
-        for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map);
-            let (head, goal) = movement::down(&display_map, head, selection.goal).unwrap();
-            let cursor = head.to_point(&display_map);
-            selection.set_head(cursor);
-            selection.goal = goal;
-        }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        self.move_selection_heads(cx, movement::down);
     }
 
     pub fn move_to_previous_word_boundary(
@@ -3476,17 +3474,12 @@ impl Editor {
         _: &MoveToPreviousWordBoundary,
         cx: &mut ViewContext<Self>,
     ) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
-        for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map);
-            let cursor = movement::prev_word_boundary(&display_map, head).to_point(&display_map);
-            selection.start = cursor.clone();
-            selection.end = cursor;
-            selection.reversed = false;
-            selection.goal = SelectionGoal::None;
-        }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        self.move_cursors(cx, |map, head, _| {
+            (
+                movement::previous_word_start(map, head, Default::default()),
+                SelectionGoal::None,
+            )
+        });
     }
 
     pub fn select_to_previous_word_boundary(
@@ -3494,15 +3487,12 @@ impl Editor {
         _: &SelectToPreviousWordBoundary,
         cx: &mut ViewContext<Self>,
     ) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
-        for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map);
-            let cursor = movement::prev_word_boundary(&display_map, head).to_point(&display_map);
-            selection.set_head(cursor);
-            selection.goal = SelectionGoal::None;
-        }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        self.move_selection_heads(cx, |map, head, _| {
+            (
+                movement::previous_word_start(map, head, Default::default()),
+                SelectionGoal::None,
+            )
+        });
     }
 
     pub fn delete_to_previous_word_boundary(
@@ -3516,10 +3506,9 @@ impl Editor {
         for selection in &mut selections {
             if selection.is_empty() {
                 let head = selection.head().to_display_point(&display_map);
-                let cursor =
-                    movement::prev_word_boundary(&display_map, head).to_point(&display_map);
-                selection.set_head(cursor);
-                selection.goal = SelectionGoal::None;
+                let cursor = movement::previous_word_start(&display_map, head, Default::default())
+                    .to_point(&display_map);
+                selection.set_head(cursor, SelectionGoal::None);
             }
         }
         self.update_selections(selections, Some(Autoscroll::Fit), cx);
@@ -3532,17 +3521,12 @@ impl Editor {
         _: &MoveToNextWordBoundary,
         cx: &mut ViewContext<Self>,
     ) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
-        for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map);
-            let cursor = movement::next_word_boundary(&display_map, head).to_point(&display_map);
-            selection.start = cursor;
-            selection.end = cursor;
-            selection.reversed = false;
-            selection.goal = SelectionGoal::None;
-        }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        self.move_cursors(cx, |map, head, _| {
+            (
+                movement::next_word_end(map, head, Default::default()),
+                SelectionGoal::None,
+            )
+        });
     }
 
     pub fn select_to_next_word_boundary(
@@ -3550,15 +3534,12 @@ impl Editor {
         _: &SelectToNextWordBoundary,
         cx: &mut ViewContext<Self>,
     ) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
-        for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map);
-            let cursor = movement::next_word_boundary(&display_map, head).to_point(&display_map);
-            selection.set_head(cursor);
-            selection.goal = SelectionGoal::None;
-        }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        self.move_selection_heads(cx, |map, head, _| {
+            (
+                movement::next_word_end(map, head, Default::default()),
+                SelectionGoal::None,
+            )
+        });
     }
 
     pub fn delete_to_next_word_boundary(
@@ -3572,10 +3553,9 @@ impl Editor {
         for selection in &mut selections {
             if selection.is_empty() {
                 let head = selection.head().to_display_point(&display_map);
-                let cursor =
-                    movement::next_word_boundary(&display_map, head).to_point(&display_map);
-                selection.set_head(cursor);
-                selection.goal = SelectionGoal::None;
+                let cursor = movement::next_word_end(&display_map, head, Default::default())
+                    .to_point(&display_map);
+                selection.set_head(cursor, SelectionGoal::None);
             }
         }
         self.update_selections(selections, Some(Autoscroll::Fit), cx);
@@ -3588,18 +3568,12 @@ impl Editor {
         _: &MoveToBeginningOfLine,
         cx: &mut ViewContext<Self>,
     ) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
-        for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map);
-            let new_head = movement::line_beginning(&display_map, head, true);
-            let cursor = new_head.to_point(&display_map);
-            selection.start = cursor;
-            selection.end = cursor;
-            selection.reversed = false;
-            selection.goal = SelectionGoal::None;
-        }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        self.move_cursors(cx, |map, head, _| {
+            (
+                movement::line_beginning(map, head, true),
+                SelectionGoal::None,
+            )
+        });
     }
 
     pub fn select_to_beginning_of_line(
@@ -3607,15 +3581,12 @@ impl Editor {
         SelectToBeginningOfLine(stop_at_soft_boundaries): &SelectToBeginningOfLine,
         cx: &mut ViewContext<Self>,
     ) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
-        for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map);
-            let new_head = movement::line_beginning(&display_map, head, *stop_at_soft_boundaries);
-            selection.set_head(new_head.to_point(&display_map));
-            selection.goal = SelectionGoal::None;
-        }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        self.move_selection_heads(cx, |map, head, _| {
+            (
+                movement::line_beginning(map, head, *stop_at_soft_boundaries),
+                SelectionGoal::None,
+            )
+        });
     }
 
     pub fn delete_to_beginning_of_line(
@@ -3630,20 +3601,9 @@ impl Editor {
     }
 
     pub fn move_to_end_of_line(&mut self, _: &MoveToEndOfLine, cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
-        {
-            for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map);
-                let new_head = movement::line_end(&display_map, head, true);
-                let anchor = new_head.to_point(&display_map);
-                selection.start = anchor.clone();
-                selection.end = anchor;
-                selection.reversed = false;
-                selection.goal = SelectionGoal::None;
-            }
-        }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        self.move_cursors(cx, |map, head, _| {
+            (movement::line_end(map, head, true), SelectionGoal::None)
+        });
     }
 
     pub fn select_to_end_of_line(
@@ -3651,15 +3611,12 @@ impl Editor {
         SelectToEndOfLine(stop_at_soft_boundaries): &SelectToEndOfLine,
         cx: &mut ViewContext<Self>,
     ) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
-        for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map);
-            let new_head = movement::line_end(&display_map, head, *stop_at_soft_boundaries);
-            selection.set_head(new_head.to_point(&display_map));
-            selection.goal = SelectionGoal::None;
-        }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        self.move_selection_heads(cx, |map, head, _| {
+            (
+                movement::line_end(map, head, *stop_at_soft_boundaries),
+                SelectionGoal::None,
+            )
+        });
     }
 
     pub fn delete_to_end_of_line(&mut self, _: &DeleteToEndOfLine, cx: &mut ViewContext<Self>) {
@@ -3694,7 +3651,7 @@ impl Editor {
 
     pub fn select_to_beginning(&mut self, _: &SelectToBeginning, cx: &mut ViewContext<Self>) {
         let mut selection = self.local_selections::<Point>(cx).last().unwrap().clone();
-        selection.set_head(Point::zero());
+        selection.set_head(Point::zero(), SelectionGoal::None);
         self.update_selections(vec![selection], Some(Autoscroll::Fit), cx);
     }
 
@@ -3751,7 +3708,7 @@ impl Editor {
 
     pub fn select_to_end(&mut self, _: &SelectToEnd, cx: &mut ViewContext<Self>) {
         let mut selection = self.local_selections::<usize>(cx).first().unwrap().clone();
-        selection.set_head(self.buffer.read(cx).read(cx).len());
+        selection.set_head(self.buffer.read(cx).read(cx).len(), SelectionGoal::None);
         self.update_selections(vec![selection], Some(Autoscroll::Fit), cx);
     }
 
@@ -5638,8 +5595,16 @@ pub enum Event {
     Closed,
 }
 
+pub struct EditorFocused(pub ViewHandle<Editor>);
+pub struct EditorBlurred(pub ViewHandle<Editor>);
+pub struct EditorReleased(pub WeakViewHandle<Editor>);
+
 impl Entity for Editor {
     type Event = Event;
+
+    fn release(&mut self, cx: &mut MutableAppContext) {
+        cx.emit_global(EditorReleased(self.handle.clone()));
+    }
 }
 
 impl View for Editor {
@@ -5656,6 +5621,8 @@ impl View for Editor {
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+        let focused_event = EditorFocused(cx.handle());
+        cx.emit_global(focused_event);
         if let Some(rename) = self.pending_rename.as_ref() {
             cx.focus(&rename.editor);
         } else {
@@ -5669,6 +5636,8 @@ impl View for Editor {
     }
 
     fn on_blur(&mut self, cx: &mut ViewContext<Self>) {
+        let blurred_event = EditorBlurred(cx.handle());
+        cx.emit_global(blurred_event);
         self.focused = false;
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
@@ -5760,7 +5729,17 @@ fn build_style(
     style
 }
 
-impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
+trait SelectionExt {
+    fn offset_range(&self, buffer: &MultiBufferSnapshot) -> Range<usize>;
+    fn point_range(&self, buffer: &MultiBufferSnapshot) -> Range<Point>;
+    fn display_range(&self, map: &DisplaySnapshot) -> Range<DisplayPoint>;
+    fn spanned_rows(&self, include_end_if_at_line_start: bool, map: &DisplaySnapshot)
+        -> Range<u32>;
+}
+
+impl<T: Clone + PartialEq + Ord + ToPoint + ToOffset + ToDisplayPoint> SelectionExt
+    for Selection<T>
+{
     fn point_range(&self, buffer: &MultiBufferSnapshot) -> Range<Point> {
         let start = self.start.to_point(buffer);
         let end = self.end.to_point(buffer);
@@ -6794,6 +6773,9 @@ mod tests {
         populate_settings(cx);
         let buffer = MultiBuffer::build_simple("use std::str::{foo, bar}\n\n  {baz.qux()}", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
+
+        // "use std::str::{foo, bar}\n\n  {baz.qux()}"
+        //             ^                    ^
         view.update(cx, |view, cx| {
             view.select_display_ranges(
                 &[
@@ -6804,6 +6786,8 @@ mod tests {
             );
         });
 
+        // "use std::str::{foo, bar}\n\n  {baz.qux()}"
+        //           ^                     ^
         view.update(cx, |view, cx| {
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
@@ -6815,6 +6799,8 @@ mod tests {
             );
         });
 
+        // "use std::str::{foo, bar}\n\n  {baz.qux()}"
+        //         ^                      ^
         view.update(cx, |view, cx| {
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
@@ -6826,6 +6812,8 @@ mod tests {
             );
         });
 
+        // "use std::str::{foo, bar}\n\n  {baz.qux()}"
+        //      ^                       ^
         view.update(cx, |view, cx| {
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
@@ -6837,6 +6825,8 @@ mod tests {
             );
         });
 
+        // "use std::str::{foo, bar}\n\n  {baz.qux()}"
+        //  ^                         ^
         view.update(cx, |view, cx| {
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
@@ -6848,6 +6838,8 @@ mod tests {
             );
         });
 
+        // "use std::str::{foo, bar}\n\n  {baz.qux()}"
+        //  ^                      ^
         view.update(cx, |view, cx| {
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
@@ -6859,6 +6851,8 @@ mod tests {
             );
         });
 
+        // "use std::str::{foo, bar}\n\n  {baz.qux()}"
+        //     ^                    ^
         view.update(cx, |view, cx| {
             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
@@ -6870,6 +6864,8 @@ mod tests {
             );
         });
 
+        // "use std::str::{foo, bar}\n\n  {baz.qux()}"
+        //         ^                  ^
         view.update(cx, |view, cx| {
             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
@@ -6881,6 +6877,8 @@ mod tests {
             );
         });
 
+        // "use std::str::{foo, bar}\n\n  {baz.qux()}"
+        //           ^                     ^
         view.update(cx, |view, cx| {
             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
@@ -6892,6 +6890,8 @@ mod tests {
             );
         });
 
+        // "use std::str::{foo, bar}\n\n  {baz.qux()}"
+        //           ^^                    ^^
         view.update(cx, |view, cx| {
             view.move_right(&MoveRight, cx);
             view.select_to_previous_word_boundary(&SelectToPreviousWordBoundary, cx);
@@ -6904,6 +6904,8 @@ mod tests {
             );
         });
 
+        // "use std::str::{foo, bar}\n\n  {baz.qux()}"
+        //         ^  ^                   ^ ^
         view.update(cx, |view, cx| {
             view.select_to_previous_word_boundary(&SelectToPreviousWordBoundary, cx);
             assert_eq!(
@@ -6915,6 +6917,8 @@ mod tests {
             );
         });
 
+        // "use std::str::{foo, bar}\n\n  {baz.qux()}"
+        //           ^^                    ^^
         view.update(cx, |view, cx| {
             view.select_to_next_word_boundary(&SelectToNextWordBoundary, cx);
             assert_eq!(

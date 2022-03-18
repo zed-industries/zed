@@ -1369,7 +1369,7 @@ fn open(action: &Open, cx: &mut MutableAppContext) {
     .detach();
 }
 
-pub struct WorkspaceCreated(WeakViewHandle<Workspace>);
+pub struct WorkspaceCreated(pub WeakViewHandle<Workspace>);
 
 pub fn open_paths(
     abs_paths: &[PathBuf],

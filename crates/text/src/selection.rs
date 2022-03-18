@@ -1,5 +1,5 @@
 use crate::Anchor;
-use crate::{rope::TextDimension, BufferSnapshot, ToOffset, ToPoint};
+use crate::{rope::TextDimension, BufferSnapshot};
 use std::cmp::Ordering;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -34,14 +34,21 @@ impl<T: Clone> Selection<T> {
             self.start.clone()
         }
     }
+
+    pub fn collapse_to(&mut self, cursor: T, new_goal: SelectionGoal) {
+        self.start = cursor.clone();
+        self.end = cursor;
+        self.goal = new_goal;
+        self.reversed = false;
+    }
 }
 
-impl<T: ToOffset + ToPoint + Copy + Ord> Selection<T> {
+impl<T: Copy + Ord> Selection<T> {
     pub fn is_empty(&self) -> bool {
         self.start == self.end
     }
 
-    pub fn set_head(&mut self, head: T) {
+    pub fn set_head(&mut self, head: T, new_goal: SelectionGoal) {
         if head.cmp(&self.tail()) < Ordering::Equal {
             if !self.reversed {
                 self.end = self.start;
@@ -55,6 +62,8 @@ impl<T: ToOffset + ToPoint + Copy + Ord> Selection<T> {
             }
             self.end = head;
         }
+
+        self.goal = new_goal
     }
 }
 

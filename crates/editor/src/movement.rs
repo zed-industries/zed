@@ -1,35 +1,33 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{char_kind, CharKind, ToPoint};
-use anyhow::Result;
-use language::Point;
+use language::{CharKindOptions, Point};
 use std::ops::Range;
 
-pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> Result<DisplayPoint> {
+pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint, wrap: bool) -> DisplayPoint {
     if point.column() > 0 {
         *point.column_mut() -= 1;
-    } else if point.row() > 0 {
+    } else if wrap && point.row() > 0 {
         *point.row_mut() -= 1;
         *point.column_mut() = map.line_len(point.row());
     }
-    Ok(map.clip_point(point, Bias::Left))
+    map.clip_point(point, Bias::Left)
 }
 
-pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> Result<DisplayPoint> {
-    let max_column = map.line_len(point.row());
-    if point.column() < max_column {
+pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint, wrap: bool) -> DisplayPoint {
+    if point.column() < map.line_len(point.row()) {
         *point.column_mut() += 1;
-    } else if point.row() < map.max_point().row() {
+    } else if wrap && point.row() < map.max_point().row() {
         *point.row_mut() += 1;
         *point.column_mut() = 0;
     }
-    Ok(map.clip_point(point, Bias::Right))
+    map.clip_point(point, Bias::Right)
 }
 
 pub fn up(
     map: &DisplaySnapshot,
     start: DisplayPoint,
     goal: SelectionGoal,
-) -> Result<(DisplayPoint, SelectionGoal)> {
+) -> (DisplayPoint, SelectionGoal) {
     let mut goal_column = if let SelectionGoal::Column(column) = goal {
         column
     } else {
@@ -54,17 +52,17 @@ pub fn up(
         Bias::Right
     };
 
-    Ok((
+    (
         map.clip_point(point, clip_bias),
         SelectionGoal::Column(goal_column),
-    ))
+    )
 }
 
 pub fn down(
     map: &DisplaySnapshot,
     start: DisplayPoint,
     goal: SelectionGoal,
-) -> Result<(DisplayPoint, SelectionGoal)> {
+) -> (DisplayPoint, SelectionGoal) {
     let mut goal_column = if let SelectionGoal::Column(column) = goal {
         column
     } else {
@@ -86,10 +84,10 @@ pub fn down(
         Bias::Right
     };
 
-    Ok((
+    (
         map.clip_point(point, clip_bias),
         SelectionGoal::Column(goal_column),
-    ))
+    )
 }
 
 pub fn line_beginning(
@@ -132,7 +130,13 @@ pub fn line_end(
     }
 }
 
-pub fn prev_word_boundary(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
+pub fn previous_word_start(
+    map: &DisplaySnapshot,
+    mut point: DisplayPoint,
+    classify_punctuation_as_word: bool,
+    // Linewrap not supported when seeking backwards
+) -> DisplayPoint {
+    let options = CharKindOptions::new(classify_punctuation_as_word, false);
     let mut line_start = 0;
     if point.row() > 0 {
         if let Some(indent) = map.soft_wrap_indent(point.row() - 1) {
@@ -157,11 +161,8 @@ pub fn prev_word_boundary(map: &DisplaySnapshot, mut point: DisplayPoint) -> Dis
             break;
         }
 
-        let char_kind = char_kind(c);
-        if char_kind != prev_char_kind
-            && char_kind != CharKind::Whitespace
-            && char_kind != CharKind::Newline
-        {
+        let char_kind = char_kind(c, options);
+        if char_kind != prev_char_kind && char_kind != CharKind::Whitespace {
             *boundary.column_mut() = column;
         }
 
@@ -171,14 +172,19 @@ pub fn prev_word_boundary(map: &DisplaySnapshot, mut point: DisplayPoint) -> Dis
     boundary
 }
 
-pub fn next_word_boundary(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
-    let mut prev_char_kind = None;
+pub fn next_word_end(
+    map: &DisplaySnapshot,
+    mut point: DisplayPoint,
+    options: CharKindOptions,
+) -> DisplayPoint {
+    let mut prev_char_kind: Option<CharKind> = None;
     for c in map.chars_at(point) {
-        let char_kind = char_kind(c);
+        let char_kind = char_kind(c, options);
         if let Some(prev_char_kind) = prev_char_kind {
-            if c == '\n' {
+            if matches!(char_kind, CharKind::Newline) {
                 break;
             }
+
             if prev_char_kind != char_kind
                 && prev_char_kind != CharKind::Whitespace
                 && prev_char_kind != CharKind::Newline
@@ -198,11 +204,46 @@ pub fn next_word_boundary(map: &DisplaySnapshot, mut point: DisplayPoint) -> Dis
     map.clip_point(point, Bias::Right)
 }
 
+pub fn next_word_start(
+    map: &DisplaySnapshot,
+    mut point: DisplayPoint,
+    options: CharKindOptions,
+) -> DisplayPoint {
+    let mut prev_char_kind: Option<CharKind> = None;
+    for c in map.chars_at(point) {
+        let char_kind = char_kind(c, options);
+        if let Some(prev_char_kind) = prev_char_kind {
+            if matches!(char_kind, CharKind::Newline) {
+                break;
+            }
+
+            if prev_char_kind != char_kind && char_kind != CharKind::Whitespace {
+                break;
+            }
+        }
+
+        if c == '\n' {
+            *point.row_mut() += 1;
+            *point.column_mut() = 0;
+        } else {
+            *point.column_mut() += c.len_utf8() as u32;
+        }
+        prev_char_kind = Some(char_kind);
+    }
+    map.clip_point(point, Bias::Right)
+}
+
 pub fn is_inside_word(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
     let ix = map.clip_point(point, Bias::Left).to_offset(map, Bias::Left);
     let text = &map.buffer_snapshot;
-    let next_char_kind = text.chars_at(ix).next().map(char_kind);
-    let prev_char_kind = text.reversed_chars_at(ix).next().map(char_kind);
+    let next_char_kind = text
+        .chars_at(ix)
+        .next()
+        .map(|c| char_kind(c, Default::default()));
+    let prev_char_kind = text
+        .reversed_chars_at(ix)
+        .next()
+        .map(|c| char_kind(c, Default::default()));
     prev_char_kind.zip(next_char_kind) == Some((CharKind::Word, CharKind::Word))
 }
 
@@ -258,47 +299,47 @@ mod tests {
 
         // Can't move up into the first excerpt's header
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(2, 2), SelectionGoal::Column(2)).unwrap(),
+            up(&snapshot, DisplayPoint::new(2, 2), SelectionGoal::Column(2)),
             (DisplayPoint::new(2, 0), SelectionGoal::Column(0)),
         );
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(2, 0), SelectionGoal::None).unwrap(),
+            up(&snapshot, DisplayPoint::new(2, 0), SelectionGoal::None),
             (DisplayPoint::new(2, 0), SelectionGoal::Column(0)),
         );
 
         // Move up and down within first excerpt
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(4)).unwrap(),
+            up(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(4)),
             (DisplayPoint::new(2, 3), SelectionGoal::Column(4)),
         );
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(2, 3), SelectionGoal::Column(4)).unwrap(),
+            down(&snapshot, DisplayPoint::new(2, 3), SelectionGoal::Column(4)),
             (DisplayPoint::new(3, 4), SelectionGoal::Column(4)),
         );
 
         // Move up and down across second excerpt's header
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(6, 5), SelectionGoal::Column(5)).unwrap(),
+            up(&snapshot, DisplayPoint::new(6, 5), SelectionGoal::Column(5)),
             (DisplayPoint::new(3, 4), SelectionGoal::Column(5)),
         );
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(5)).unwrap(),
+            down(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(5)),
             (DisplayPoint::new(6, 5), SelectionGoal::Column(5)),
         );
 
         // Can't move down off the end
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(7, 0), SelectionGoal::Column(0)).unwrap(),
+            down(&snapshot, DisplayPoint::new(7, 0), SelectionGoal::Column(0)),
             (DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
         );
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(7, 2), SelectionGoal::Column(2)).unwrap(),
+            down(&snapshot, DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
             (DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
         );
     }
 
     #[gpui::test]
-    fn test_prev_next_word_boundary_multibyte(cx: &mut gpui::MutableAppContext) {
+    fn test_prev_next_word_end_multibyte(cx: &mut gpui::MutableAppContext) {
         let tab_size = 4;
         let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
         let font_id = cx
@@ -312,44 +353,44 @@ mod tests {
             .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 12)),
+            previous_word_start(&snapshot, DisplayPoint::new(0, 12), Default::default()),
             DisplayPoint::new(0, 7)
         );
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 7)),
+            previous_word_start(&snapshot, DisplayPoint::new(0, 7), Default::default()),
             DisplayPoint::new(0, 2)
         );
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 6)),
+            previous_word_start(&snapshot, DisplayPoint::new(0, 6), Default::default()),
             DisplayPoint::new(0, 2)
         );
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 2)),
+            previous_word_start(&snapshot, DisplayPoint::new(0, 2), Default::default()),
             DisplayPoint::new(0, 0)
         );
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 1)),
+            previous_word_start(&snapshot, DisplayPoint::new(0, 1), Default::default()),
             DisplayPoint::new(0, 0)
         );
 
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 0)),
+            next_word_end(&snapshot, DisplayPoint::new(0, 0), Default::default()),
             DisplayPoint::new(0, 1)
         );
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 1)),
+            next_word_end(&snapshot, DisplayPoint::new(0, 1), Default::default()),
             DisplayPoint::new(0, 6)
         );
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 2)),
+            next_word_end(&snapshot, DisplayPoint::new(0, 2), Default::default()),
             DisplayPoint::new(0, 6)
         );
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 6)),
+            next_word_end(&snapshot, DisplayPoint::new(0, 6), Default::default()),
             DisplayPoint::new(0, 12)
         );
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 7)),
+            next_word_end(&snapshot, DisplayPoint::new(0, 7), Default::default()),
             DisplayPoint::new(0, 12)
         );
     }
@@ -423,6 +464,151 @@ mod tests {
         assert_eq!(
             surrounding_word(&snapshot, DisplayPoint::new(1, 7)),
             DisplayPoint::new(1, 4)..DisplayPoint::new(1, 7),
+        );
+    }
+
+    #[gpui::test]
+    fn test_word_movement_ignoring_punctuation(cx: &mut gpui::MutableAppContext) {
+        let tab_size = 4;
+        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let font_id = cx
+            .font_cache()
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 14.0;
+
+        let buffer = MultiBuffer::build_simple("The quick-brown-fox jumped", cx);
+        let display_map = cx
+            .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
+        let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+
+        // Classify punctuation as word characters
+        let char_kind_options = CharKindOptions::new(true, false);
+
+        // The quick-brown-fox jumped
+        // ^  <
+        assert_eq!(
+            previous_word_start(&snapshot, DisplayPoint::new(0, 3), true),
+            DisplayPoint::new(0, 0)
+        );
+        // The quick-brown-fox jumped
+        //     ^   <
+        assert_eq!(
+            previous_word_start(&snapshot, DisplayPoint::new(0, 8), true),
+            DisplayPoint::new(0, 4)
+        );
+        // The quick-brown-fox jumped
+        //     ^             <
+        assert_eq!(
+            previous_word_start(&snapshot, DisplayPoint::new(0, 18), true),
+            DisplayPoint::new(0, 4)
+        );
+        // The quick-brown-fox jumped
+        //                     ^  <
+        assert_eq!(
+            previous_word_start(&snapshot, DisplayPoint::new(0, 23), true),
+            DisplayPoint::new(0, 20)
+        );
+        // The quick-brown-fox jumped
+        //                     ^    <
+        assert_eq!(
+            previous_word_start(&snapshot, DisplayPoint::new(0, 25), true),
+            DisplayPoint::new(0, 20)
+        );
+
+        // The quick-brown-fox jumped
+        // >   ^
+        assert_eq!(
+            next_word_start(&snapshot, DisplayPoint::new(0, 0), char_kind_options),
+            DisplayPoint::new(0, 4)
+        );
+        // The quick-brown-fox jumped
+        //     >               ^
+        assert_eq!(
+            next_word_start(&snapshot, DisplayPoint::new(0, 4), char_kind_options),
+            DisplayPoint::new(0, 20)
+        );
+        // The quick-brown-fox jumped
+        //          >          ^
+        assert_eq!(
+            next_word_start(&snapshot, DisplayPoint::new(0, 9), char_kind_options),
+            DisplayPoint::new(0, 20)
+        );
+
+        // The quick-brown-fox jumped
+        // >  ^
+        assert_eq!(
+            next_word_end(&snapshot, DisplayPoint::new(0, 0), char_kind_options),
+            DisplayPoint::new(0, 3)
+        );
+        // The quick-brown-fox jumped
+        //     >              ^
+        assert_eq!(
+            next_word_end(&snapshot, DisplayPoint::new(0, 4), char_kind_options),
+            DisplayPoint::new(0, 19)
+        );
+        // The quick-brown-fox jumped
+        //          >         ^
+        assert_eq!(
+            next_word_end(&snapshot, DisplayPoint::new(0, 9), char_kind_options),
+            DisplayPoint::new(0, 19)
+        );
+        // The quick-brown-fox jumped
+        //                    >      ^
+        assert_eq!(
+            next_word_end(&snapshot, DisplayPoint::new(0, 19), char_kind_options),
+            DisplayPoint::new(0, 26)
+        );
+    }
+
+    #[gpui::test]
+    fn test_word_movement_linewrap(cx: &mut gpui::MutableAppContext) {
+        let tab_size = 4;
+        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let font_id = cx
+            .font_cache()
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 14.0;
+
+        let buffer = MultiBuffer::build_simple("Test \n\n  Test", cx);
+        let display_map = cx
+            .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
+        let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+
+        // Classify newlines as whitespace
+        let char_kind_options = CharKindOptions::new(false, true);
+
+        // Test \n\n  Test
+        //   >        ^
+        assert_eq!(
+            next_word_start(&snapshot, DisplayPoint::new(0, 2), char_kind_options),
+            DisplayPoint::new(2, 2)
+        );
+        // Test \n\n  Test
+        //      >     ^
+        assert_eq!(
+            next_word_start(&snapshot, DisplayPoint::new(0, 5), char_kind_options),
+            DisplayPoint::new(2, 2)
+        );
+        // Test \n\n  Test
+        //        >   ^
+        assert_eq!(
+            next_word_start(&snapshot, DisplayPoint::new(1, 0), char_kind_options),
+            DisplayPoint::new(2, 2)
+        );
+
+        // Test \n\n  Test
+        //     >          ^
+        assert_eq!(
+            next_word_end(&snapshot, DisplayPoint::new(0, 4), char_kind_options),
+            DisplayPoint::new(2, 6)
+        );
+        // Test \n\n  Test
+        //        >       ^
+        assert_eq!(
+            next_word_end(&snapshot, DisplayPoint::new(1, 0), char_kind_options),
+            DisplayPoint::new(2, 6)
         );
     }
 }

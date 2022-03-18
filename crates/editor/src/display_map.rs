@@ -705,7 +705,7 @@ mod tests {
 
                 log::info!("Moving from point {:?}", point);
 
-                let moved_right = movement::right(&snapshot, point).unwrap();
+                let moved_right = movement::right(&snapshot, point, true);
                 log::info!("Right {:?}", moved_right);
                 if point < max_point {
                     assert!(moved_right > point);
@@ -719,7 +719,7 @@ mod tests {
                     assert_eq!(moved_right, point);
                 }
 
-                let moved_left = movement::left(&snapshot, point).unwrap();
+                let moved_left = movement::left(&snapshot, point, true);
                 log::info!("Left {:?}", moved_left);
                 if point > min_point {
                     assert!(moved_left < point);
@@ -777,15 +777,15 @@ mod tests {
             DisplayPoint::new(1, 0)
         );
         assert_eq!(
-            movement::right(&snapshot, DisplayPoint::new(0, 7)).unwrap(),
+            movement::right(&snapshot, DisplayPoint::new(0, 7), true),
             DisplayPoint::new(1, 0)
         );
         assert_eq!(
-            movement::left(&snapshot, DisplayPoint::new(1, 0)).unwrap(),
+            movement::left(&snapshot, DisplayPoint::new(1, 0), true),
             DisplayPoint::new(0, 7)
         );
         assert_eq!(
-            movement::up(&snapshot, DisplayPoint::new(1, 10), SelectionGoal::None).unwrap(),
+            movement::up(&snapshot, DisplayPoint::new(1, 10), SelectionGoal::None),
             (DisplayPoint::new(0, 7), SelectionGoal::Column(10))
         );
         assert_eq!(
@@ -793,8 +793,7 @@ mod tests {
                 &snapshot,
                 DisplayPoint::new(0, 7),
                 SelectionGoal::Column(10)
-            )
-            .unwrap(),
+            ),
             (DisplayPoint::new(1, 10), SelectionGoal::Column(10))
         );
         assert_eq!(
@@ -802,8 +801,7 @@ mod tests {
                 &snapshot,
                 DisplayPoint::new(1, 10),
                 SelectionGoal::Column(10)
-            )
-            .unwrap(),
+            ),
             (DisplayPoint::new(2, 4), SelectionGoal::Column(10))
         );
 

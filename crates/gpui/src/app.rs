@@ -750,7 +750,10 @@ type GlobalActionCallback = dyn FnMut(&dyn AnyAction, &mut MutableAppContext);
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
 type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
+type GlobalObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
+
+type KeystrokeHookCallback = dyn FnMut(usize, &Keystroke, &mut MutableAppContext) -> bool;
 
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
@@ -761,6 +764,7 @@ pub struct MutableAppContext {
     actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     global_actions: HashMap<TypeId, Box<GlobalActionCallback>>,
     keystroke_matcher: keymap::Matcher,
+    keystroke_hooks: Vec<Box<KeystrokeHookCallback>>,
     next_entity_id: usize,
     next_window_id: usize,
     next_subscription_id: usize,
@@ -769,12 +773,15 @@ pub struct MutableAppContext {
     global_subscriptions:
         Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalSubscriptionCallback>>>>>,
     observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>,
+    global_observations:
+        Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalObservationCallback>>>>>,
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
     presenters_and_platform_windows:
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
     foreground: Rc<executor::Foreground>,
     pending_effects: VecDeque<Effect>,
     pending_notifications: HashSet<usize>,
+    pending_global_notifications: HashSet<TypeId>,
     pending_flushes: usize,
     flushing_effects: bool,
     next_cursor_style_handle_id: Arc<AtomicUsize>,
@@ -810,6 +817,7 @@ impl MutableAppContext {
             actions: HashMap::new(),
             global_actions: HashMap::new(),
             keystroke_matcher: keymap::Matcher::default(),
+            keystroke_hooks: Default::default(),
             next_entity_id: 0,
             next_window_id: 0,
             next_subscription_id: 0,
@@ -818,10 +826,12 @@ impl MutableAppContext {
             global_subscriptions: Default::default(),
             observations: Default::default(),
             release_observations: Default::default(),
+            global_observations: Default::default(),
             presenters_and_platform_windows: HashMap::new(),
             foreground,
             pending_effects: VecDeque::new(),
             pending_notifications: HashSet::new(),
+            pending_global_notifications: HashSet::new(),
             pending_flushes: 0,
             flushing_effects: false,
             next_cursor_style_handle_id: Default::default(),
@@ -880,6 +890,10 @@ impl MutableAppContext {
 
     pub fn background(&self) -> &Arc<executor::Background> {
         &self.cx.background
+    }
+
+    pub fn propagate_action(&mut self) {
+        self.halt_action_dispatch = false;
     }
 
     pub fn debug_elements(&self, window_id: usize) -> Option<crate::json::Value> {
@@ -1192,6 +1206,27 @@ impl MutableAppContext {
         }
     }
 
+    pub fn observe_global<G, F>(&mut self, observe: F) -> Subscription
+    where
+        G: Any,
+        F: 'static + FnMut(&mut MutableAppContext) -> bool,
+    {
+        let type_id = TypeId::of::<G>();
+        let id = post_inc(&mut self.next_subscription_id);
+
+        self.global_observations
+            .lock()
+            .entry(type_id)
+            .or_default()
+            .insert(id, Some(Box::new(observe)));
+
+        Subscription::GlobalObservation {
+            id,
+            type_id,
+            observations: Some(Arc::downgrade(&self.global_observations)),
+        }
+    }
+
     pub fn observe_release<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
     where
         E: Entity,
@@ -1218,8 +1253,9 @@ impl MutableAppContext {
         }
     }
 
-    fn defer(&mut self, callback: Box<dyn FnOnce(&mut MutableAppContext)>) {
-        self.pending_effects.push_back(Effect::Deferred(callback))
+    pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut MutableAppContext)) {
+        self.pending_effects
+            .push_back(Effect::Deferred(Box::new(callback)))
     }
 
     pub(crate) fn notify_model(&mut self, model_id: usize) {
@@ -1236,6 +1272,13 @@ impl MutableAppContext {
         }
     }
 
+    pub(crate) fn notify_global(&mut self, type_id: TypeId) {
+        if self.pending_global_notifications.insert(type_id) {
+            self.pending_effects
+                .push_back(Effect::GlobalNotification { type_id });
+        }
+    }
+
     pub fn dispatch_action<A: Action>(
         &mut self,
         window_id: usize,
@@ -1245,7 +1288,7 @@ impl MutableAppContext {
         self.dispatch_action_any(window_id, &responder_chain, action);
     }
 
-    pub(crate) fn dispatch_action_any(
+    pub fn dispatch_action_any(
         &mut self,
         window_id: usize,
         path: &[usize],
@@ -1321,6 +1364,13 @@ impl MutableAppContext {
         })
     }
 
+    pub fn hook_keystrokes(
+        &mut self,
+        callback: impl 'static + FnMut(usize, &Keystroke, &mut Self) -> bool,
+    ) {
+        self.keystroke_hooks.push(Box::new(callback));
+    }
+
     pub fn add_bindings<T: IntoIterator<Item = keymap::Binding>>(&mut self, bindings: T) {
         self.keystroke_matcher.add_bindings(bindings);
     }
@@ -1341,6 +1391,21 @@ impl MutableAppContext {
                     view_id
                 ));
             }
+        }
+
+        let mut keystroke_hooks = Vec::new();
+        std::mem::swap(&mut keystroke_hooks, &mut self.keystroke_hooks);
+        let mut hook_captured = false;
+        for keystroke_hook in keystroke_hooks.iter_mut() {
+            if keystroke_hook(window_id, keystroke, self) {
+                hook_captured = true;
+                break;
+            }
+        }
+        std::mem::swap(&mut keystroke_hooks, &mut self.keystroke_hooks);
+        // Hook consumed the keystroke. Consume the underlying event
+        if hook_captured {
+            return Ok(true);
         }
 
         let mut pending = false;
@@ -1365,16 +1430,22 @@ impl MutableAppContext {
     }
 
     pub fn default_global<T: 'static + Default>(&mut self) -> &T {
+        let type_id = TypeId::of::<T>();
+        if !self.cx.globals.contains_key(&type_id) {
+            self.notify_global(type_id);
+        }
         self.cx
             .globals
-            .entry(TypeId::of::<T>())
+            .entry(type_id)
             .or_insert_with(|| Box::new(T::default()))
             .downcast_ref()
             .unwrap()
     }
 
     pub fn set_global<T: 'static>(&mut self, state: T) {
-        self.cx.globals.insert(TypeId::of::<T>(), Box::new(state));
+        let type_id = TypeId::of::<T>();
+        self.cx.globals.insert(type_id, Box::new(state));
+        self.notify_global(type_id);
     }
 
     pub fn update_default_global<T, F, U>(&mut self, update: F) -> U
@@ -1390,6 +1461,7 @@ impl MutableAppContext {
             .unwrap_or_else(|| Box::new(T::default()));
         let result = update(state.downcast_mut().unwrap(), self);
         self.cx.globals.insert(type_id, state);
+        self.notify_global(type_id);
         result
     }
 
@@ -1406,6 +1478,7 @@ impl MutableAppContext {
             .expect("no global has been added for this type");
         let result = update(state.downcast_mut().unwrap(), self);
         self.cx.globals.insert(type_id, state);
+        self.notify_global(type_id);
         result
     }
 
@@ -1651,6 +1724,9 @@ impl MutableAppContext {
                         Effect::ViewNotification { window_id, view_id } => {
                             self.notify_view_observers(window_id, view_id)
                         }
+                        Effect::GlobalNotification { type_id } => {
+                            self.notify_global_observers(type_id)
+                        }
                         Effect::Deferred(callback) => callback(self),
                         Effect::ModelRelease { model_id, model } => {
                             self.notify_release_observers(model_id, model.as_any())
@@ -1685,6 +1761,7 @@ impl MutableAppContext {
                     if self.pending_effects.is_empty() {
                         self.flushing_effects = false;
                         self.pending_notifications.clear();
+                        self.pending_global_notifications.clear();
                         break;
                     } else {
                         refreshing = false;
@@ -1865,6 +1942,35 @@ impl MutableAppContext {
                                 .observations
                                 .lock()
                                 .entry(observed_view_id)
+                                .or_default()
+                                .entry(id)
+                            {
+                                collections::btree_map::Entry::Vacant(entry) => {
+                                    entry.insert(Some(callback));
+                                }
+                                collections::btree_map::Entry::Occupied(entry) => {
+                                    entry.remove();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn notify_global_observers(&mut self, observed_type_id: TypeId) {
+        let callbacks = self.global_observations.lock().remove(&observed_type_id);
+        if let Some(callbacks) = callbacks {
+            if self.cx.globals.contains_key(&observed_type_id) {
+                for (id, callback) in callbacks {
+                    if let Some(mut callback) = callback {
+                        let alive = callback(self);
+                        if alive {
+                            match self
+                                .global_observations
+                                .lock()
+                                .entry(observed_type_id)
                                 .or_default()
                                 .entry(id)
                             {
@@ -2215,6 +2321,9 @@ pub enum Effect {
         window_id: usize,
         view_id: usize,
     },
+    GlobalNotification {
+        type_id: TypeId,
+    },
     Deferred(Box<dyn FnOnce(&mut MutableAppContext)>),
     ModelRelease {
         model_id: usize,
@@ -2253,6 +2362,10 @@ impl Debug for Effect {
                 .debug_struct("Effect::ViewNotification")
                 .field("window_id", window_id)
                 .field("view_id", view_id)
+                .finish(),
+            Effect::GlobalNotification { type_id } => f
+                .debug_struct("Effect::GlobalNotification")
+                .field("type_id", type_id)
                 .finish(),
             Effect::Deferred(_) => f.debug_struct("Effect::Deferred").finish(),
             Effect::ModelRelease { model_id, .. } => f
@@ -2433,6 +2546,15 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         self.app.add_model(build_model)
     }
 
+    pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut T, &mut ModelContext<T>)) {
+        let handle = self.handle();
+        self.app.defer(move |cx| {
+            handle.update(cx, |model, cx| {
+                callback(model, cx);
+            })
+        })
+    }
+
     pub fn emit(&mut self, payload: T::Event) {
         self.app.pending_effects.push_back(Effect::Event {
             entity_id: self.model_id,
@@ -2575,6 +2697,25 @@ impl<M> UpgradeModelHandle for ModelContext<'_, M> {
 
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
         self.cx.upgrade_any_model_handle(handle)
+    }
+}
+
+impl<M> UpdateView for ModelContext<'_, M> {
+    fn update_view<T, S>(
+        &mut self,
+        handle: &ViewHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
+    ) -> S
+    where
+        T: View,
+    {
+        self.app.update_view(handle, update)
+    }
+}
+
+impl<M> UpgradeViewHandle for ModelContext<'_, M> {
+    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
+        self.cx.upgrade_view_handle(handle)
     }
 }
 
@@ -2779,15 +2920,11 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut T, &mut ViewContext<T>)) {
         let handle = self.handle();
-        self.app.defer(Box::new(move |cx| {
+        self.app.defer(move |cx| {
             handle.update(cx, |view, cx| {
                 callback(view, cx);
             })
-        }))
-    }
-
-    pub fn propagate_action(&mut self) {
-        self.app.halt_action_dispatch = false;
+        })
     }
 
     pub fn spawn<F, Fut, S>(&self, f: F) -> Task<S>
@@ -2970,6 +3107,7 @@ impl<V: View> ElementStateContext for ViewContext<'_, V> {
 
 pub trait Handle<T> {
     type Weak: 'static;
+
     fn id(&self) -> usize;
     fn location(&self) -> EntityLocation;
     fn downgrade(&self) -> Self::Weak;
@@ -3377,9 +3515,9 @@ impl<T: View> ViewHandle<T> {
         F: 'static + FnOnce(&mut T, &mut ViewContext<T>),
     {
         let this = self.clone();
-        cx.as_mut().defer(Box::new(move |cx| {
+        cx.as_mut().defer(move |cx| {
             this.update(cx, |view, cx| update(view, cx));
-        }));
+        });
     }
 
     pub fn is_focused(&self, cx: &AppContext) -> bool {
@@ -3933,6 +4071,13 @@ pub enum Subscription {
         observations:
             Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>>,
     },
+    GlobalObservation {
+        id: usize,
+        type_id: TypeId,
+        observations: Option<
+            Weak<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalObservationCallback>>>>>,
+        >,
+    },
     ReleaseObservation {
         id: usize,
         entity_id: usize,
@@ -3951,6 +4096,9 @@ impl Subscription {
                 subscriptions.take();
             }
             Subscription::Observation { observations, .. } => {
+                observations.take();
+            }
+            Subscription::GlobalObservation { observations, .. } => {
                 observations.take();
             }
             Subscription::ReleaseObservation { observations, .. } => {
@@ -4012,6 +4160,22 @@ impl Drop for Subscription {
                         .or_default()
                         .entry(*id)
                     {
+                        collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(None);
+                        }
+                        collections::btree_map::Entry::Occupied(entry) => {
+                            entry.remove();
+                        }
+                    }
+                }
+            }
+            Subscription::GlobalObservation {
+                id,
+                type_id,
+                observations,
+            } => {
+                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
+                    match observations.lock().entry(*type_id).or_default().entry(*id) {
                         collections::btree_map::Entry::Vacant(entry) => {
                             entry.insert(None);
                         }
@@ -5260,6 +5424,95 @@ mod tests {
         .unwrap();
 
         assert_eq!(&*actions.borrow(), &["3 b", "2 b", "1 b", "global b"]);
+    }
+
+    #[crate::test(self)]
+    fn test_dispatch_keystroke_hooks(cx: &mut MutableAppContext) {
+        action!(Action, &'static str);
+
+        struct View {
+            keymap_context: keymap::Context,
+        }
+
+        impl Entity for View {
+            type Event = ();
+        }
+
+        impl super::View for View {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+                Empty::new().boxed()
+            }
+
+            fn ui_name() -> &'static str {
+                "View"
+            }
+
+            fn keymap_context(&self, _: &AppContext) -> keymap::Context {
+                self.keymap_context.clone()
+            }
+        }
+
+        impl View {
+            fn new() -> Self {
+                View {
+                    keymap_context: keymap::Context::default(),
+                }
+            }
+        }
+
+        let mut view = View::new();
+        view.keymap_context.set.insert("a".into());
+
+        let (window_id, view) = cx.add_window(Default::default(), |_| view);
+
+        cx.add_bindings(vec![keymap::Binding::new("a", Action("a"), Some("a"))]);
+
+        let actions = Rc::new(RefCell::new(Vec::new()));
+        {
+            let actions = actions.clone();
+            cx.add_action(move |_: &mut View, _: &Action, _| {
+                actions.borrow_mut().push("view 1".to_owned());
+            });
+        }
+
+        // Hook passes on normally
+        {
+            let actions = actions.clone();
+            cx.hook_keystrokes(move |_, _, _| {
+                actions.borrow_mut().push("hook 1".to_owned());
+                false // Don't consume
+            });
+        }
+
+        cx.dispatch_keystroke(window_id, vec![view.id()], &Keystroke::parse("a").unwrap())
+            .unwrap();
+
+        assert_eq!(&*actions.borrow(), &["hook 1", "view 1"]);
+
+        // Hook captures and prevents action from hitting view and subsequent hooks
+        actions.borrow_mut().clear();
+        {
+            let actions = actions.clone();
+            cx.hook_keystrokes(move |_, _, _| {
+                actions.borrow_mut().push("hook 2".to_owned());
+                true // Consume
+            });
+        }
+
+        actions.borrow_mut().clear();
+        {
+            let actions = actions.clone();
+            cx.hook_keystrokes(move |_, _, _| {
+                actions.borrow_mut().push("hook 3".to_owned());
+                false // Don't consume
+            });
+        }
+
+        cx.dispatch_keystroke(window_id, vec![view.id()], &Keystroke::parse("a").unwrap())
+            .unwrap();
+
+        // Subsequent hooks
+        assert_eq!(&*actions.borrow(), &["hook 1", "hook 2"]);
     }
 
     #[crate::test(self)]
