@@ -95,7 +95,9 @@ impl FollowableItem for Editor {
                         let (excerpt_id, _, _) = buffer.as_singleton().unwrap();
                         buffer.anchor_in_excerpt(excerpt_id.clone(), anchor)
                     };
-                    self.set_scroll_top_anchor(anchor, cx);
+                    self.set_scroll_top_anchor(Some(anchor), cx);
+                } else {
+                    self.set_scroll_top_anchor(None, cx);
                 }
             }
         }
