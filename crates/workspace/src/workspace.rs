@@ -862,10 +862,9 @@ impl Workspace {
     {
         use project::Item as _;
 
-        if let Some(item) = project_item
-            .read(cx)
-            .entry_id(cx)
-            .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(entry_id))
+        let entry_id = project_item.read(cx).entry_id(cx);
+        if let Some(item) = entry_id
+            .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(dbg!(entry_id)))
             .and_then(|item| item.downcast())
         {
             self.activate_item(&item, cx);
@@ -873,7 +872,9 @@ impl Workspace {
         }
 
         let item = cx.add_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
-        self.add_item(Box::new(item.clone()), cx);
+        self.active_pane().update(cx, |pane, cx| {
+            pane.add_item(entry_id, Box::new(item.clone()), cx)
+        });
         item
     }
 
