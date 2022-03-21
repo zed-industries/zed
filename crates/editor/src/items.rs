@@ -1,4 +1,4 @@
-use crate::{Autoscroll, Editor, Event, NavigationData, ToOffset, ToPoint as _};
+use crate::{Anchor, Autoscroll, Editor, Event, NavigationData, ToOffset, ToPoint as _};
 use anyhow::{anyhow, Result};
 use gpui::{
     elements::*, AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Subscription,
@@ -50,20 +50,43 @@ impl FollowableItem for Editor {
         }))
     }
 
-    fn set_following(&mut self, following: bool, cx: &mut ViewContext<Self>) {
-        self.following = following;
-        if self.following {
+    fn set_leader_replica_id(
+        &mut self,
+        leader_replica_id: Option<u16>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let prev_leader_replica_id = self.leader_replica_id;
+        self.leader_replica_id = leader_replica_id;
+        if self.leader_replica_id.is_some() {
             self.show_local_selections = false;
             self.buffer.update(cx, |buffer, cx| {
                 buffer.remove_active_selections(cx);
             });
         } else {
             self.show_local_selections = true;
-            if self.focused {
-                self.buffer.update(cx, |buffer, cx| {
-                    buffer.set_active_selections(&self.selections, cx);
-                });
+            if let Some(leader_replica_id) = prev_leader_replica_id {
+                let selections = self
+                    .buffer
+                    .read(cx)
+                    .snapshot(cx)
+                    .remote_selections_in_range(&(Anchor::min()..Anchor::max()))
+                    .filter_map(|(replica_id, selections)| {
+                        if replica_id == leader_replica_id {
+                            Some(selections)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                if !selections.is_empty() {
+                    self.set_selections(selections.into(), None, cx);
+                }
             }
+            self.buffer.update(cx, |buffer, cx| {
+                if self.focused {
+                    buffer.set_active_selections(&self.selections, cx);
+                }
+            });
         }
         cx.notify();
     }

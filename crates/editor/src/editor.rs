@@ -464,7 +464,7 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
-    following: bool,
+    leader_replica_id: Option<u16>,
 }
 
 pub struct EditorSnapshot {
@@ -938,7 +938,7 @@ impl Editor {
             searchable: true,
             override_text_style: None,
             cursor_shape: Default::default(),
-            following: false,
+            leader_replica_id: None,
         };
         this.end_selection(cx);
         this
@@ -5038,7 +5038,7 @@ impl Editor {
 
         self.selections = selections;
         self.pending_selection = pending_selection;
-        if self.focused && !self.following {
+        if self.focused && self.leader_replica_id.is_none() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.set_active_selections(&self.selections, cx)
             });
@@ -5673,7 +5673,7 @@ impl View for Editor {
             self.blink_cursors(self.blink_epoch, cx);
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
-                if !self.following {
+                if self.leader_replica_id.is_none() {
                     buffer.set_active_selections(&self.selections, cx);
                 }
             });

@@ -258,7 +258,7 @@ pub trait FollowableItem: Item {
         state: &mut Option<proto::view::Variant>,
         cx: &mut MutableAppContext,
     ) -> Option<Task<Result<ViewHandle<Self>>>>;
-    fn set_following(&mut self, following: bool, cx: &mut ViewContext<Self>);
+    fn set_leader_replica_id(&mut self, leader_replica_id: Option<u16>, cx: &mut ViewContext<Self>);
     fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant>;
     fn to_update_message(
         &self,
@@ -273,7 +273,7 @@ pub trait FollowableItem: Item {
 }
 
 pub trait FollowableItemHandle: ItemHandle {
-    fn set_following(&self, following: bool, cx: &mut MutableAppContext);
+    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut MutableAppContext);
     fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant>;
     fn to_update_message(
         &self,
@@ -288,8 +288,10 @@ pub trait FollowableItemHandle: ItemHandle {
 }
 
 impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
-    fn set_following(&self, following: bool, cx: &mut MutableAppContext) {
-        self.update(cx, |this, cx| this.set_following(following, cx))
+    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut MutableAppContext) {
+        self.update(cx, |this, cx| {
+            this.set_leader_replica_id(leader_replica_id, cx)
+        })
     }
 
     fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant> {
@@ -1263,7 +1265,7 @@ impl Workspace {
             if let Some(state) = states_by_pane.remove(&pane) {
                 for (_, item) in state.items_by_leader_view_id {
                     if let FollowerItem::Loaded(item) = item {
-                        item.set_following(false, cx);
+                        item.set_leader_replica_id(None, cx);
                     }
                 }
 
@@ -1624,6 +1626,14 @@ impl Workspace {
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
         let project = this.read_with(cx, |this, _| this.project.clone());
+        let replica_id = project
+            .read_with(cx, |project, _| {
+                project
+                    .collaborators()
+                    .get(&leader_id)
+                    .map(|c| c.replica_id)
+            })
+            .ok_or_else(|| anyhow!("no such collaborator {}", leader_id))?;
 
         let item_builders = cx.update(|cx| {
             cx.default_global::<FollowableItemBuilders>()
@@ -1667,7 +1677,7 @@ impl Workspace {
                     .get_mut(&pane)?;
 
                 for (id, item) in leader_view_ids.into_iter().zip(items) {
-                    item.set_following(true, cx);
+                    item.set_leader_replica_id(Some(replica_id), cx);
                     match state.items_by_leader_view_id.entry(id) {
                         hash_map::Entry::Occupied(e) => {
                             let e = e.into_mut();

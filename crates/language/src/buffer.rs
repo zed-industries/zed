@@ -1801,12 +1801,6 @@ impl BufferSnapshot {
             .min_by_key(|(open_range, close_range)| close_range.end - open_range.start)
     }
 
-    /*
-    impl BufferSnapshot
-      pub fn remote_selections_in_range(&self, Range<Anchor>) -> impl Iterator<Item = (ReplicaId, impl Iterator<Item = &Selection<Anchor>>)>
-      pub fn remote_selections_in_range(&self, Range<Anchor>) -> impl Iterator<Item = (ReplicaId, i
-    */
-
     pub fn remote_selections_in_range<'a>(
         &'a self,
         range: Range<Anchor>,
