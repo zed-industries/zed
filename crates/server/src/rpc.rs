@@ -4281,7 +4281,7 @@ mod tests {
         workspace_b
             .update(cx_b, |workspace, cx| {
                 let leader_id = *project_b.read(cx).collaborators().keys().next().unwrap();
-                workspace.follow(&leader_id.into(), cx).unwrap()
+                workspace.toggle_follow(&leader_id.into(), cx).unwrap()
             })
             .await
             .unwrap();

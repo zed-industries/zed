@@ -69,7 +69,7 @@ action!(Open, Arc<AppState>);
 action!(OpenNew, Arc<AppState>);
 action!(OpenPaths, OpenParams);
 action!(ToggleShare);
-action!(FollowCollaborator, PeerId);
+action!(ToggleFollow, PeerId);
 action!(Unfollow);
 action!(JoinProject, JoinProjectParams);
 action!(Save);
@@ -91,7 +91,7 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     });
 
     cx.add_action(Workspace::toggle_share);
-    cx.add_async_action(Workspace::follow);
+    cx.add_async_action(Workspace::toggle_follow);
     cx.add_action(
         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
             let pane = workspace.active_pane().clone();
@@ -1211,15 +1211,21 @@ impl Workspace {
         }
     }
 
-    pub fn follow(
+    pub fn toggle_follow(
         &mut self,
-        FollowCollaborator(leader_id): &FollowCollaborator,
+        ToggleFollow(leader_id): &ToggleFollow,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let leader_id = *leader_id;
         let pane = self.active_pane().clone();
 
-        self.unfollow(&pane, cx);
+        if let Some(prev_leader_id) = self.unfollow(&pane, cx) {
+            if leader_id == prev_leader_id {
+                cx.notify();
+                return None;
+            }
+        }
+
         self.follower_states_by_leader
             .entry(leader_id)
             .or_default()
@@ -1255,7 +1261,11 @@ impl Workspace {
         }))
     }
 
-    pub fn unfollow(&mut self, pane: &ViewHandle<Pane>, cx: &mut ViewContext<Self>) -> Option<()> {
+    pub fn unfollow(
+        &mut self,
+        pane: &ViewHandle<Pane>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<PeerId> {
         for (leader_id, states_by_pane) in &mut self.follower_states_by_leader {
             if let Some(state) = states_by_pane.remove(&pane) {
                 for (_, item) in state.items_by_leader_view_id {
@@ -1276,6 +1286,7 @@ impl Workspace {
                 }
 
                 cx.notify();
+                return Some(*leader_id);
             }
         }
         None
@@ -1437,14 +1448,10 @@ impl Workspace {
             .boxed();
 
         if let Some(peer_id) = peer_id {
-            MouseEventHandler::new::<FollowCollaborator, _, _>(
-                replica_id.into(),
-                cx,
-                move |_, _| content,
-            )
-            .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(move |cx| cx.dispatch_action(FollowCollaborator(peer_id)))
-            .boxed()
+            MouseEventHandler::new::<ToggleFollow, _, _>(replica_id.into(), cx, move |_, _| content)
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(move |cx| cx.dispatch_action(ToggleFollow(peer_id)))
+                .boxed()
         } else {
             content
         }
