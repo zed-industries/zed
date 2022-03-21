@@ -1248,14 +1248,8 @@ impl Workspace {
                     state.active_view_id = response.active_view_id;
                     Ok::<_, anyhow::Error>(())
                 })?;
-                Self::add_views_from_leader(
-                    this,
-                    leader_id,
-                    vec![pane.clone()],
-                    response.views,
-                    &mut cx,
-                )
-                .await?;
+                Self::add_views_from_leader(this, leader_id, vec![pane], response.views, &mut cx)
+                    .await?;
             }
             Ok(())
         }))
