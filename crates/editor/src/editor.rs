@@ -3343,21 +3343,6 @@ impl Editor {
         });
     }
 
-    pub fn move_and_delete(
-        &mut self,
-        cx: &mut ViewContext<Self>,
-        update_head: impl Fn(
-            &DisplaySnapshot,
-            DisplayPoint,
-            SelectionGoal,
-        ) -> (DisplayPoint, SelectionGoal),
-    ) {
-        self.start_transaction(cx);
-        self.move_selection_heads(cx, update_head);
-        self.insert("", cx);
-        self.end_transaction(cx);
-    }
-
     pub fn move_cursors(
         &mut self,
         cx: &mut ViewContext<Self>,
@@ -5081,6 +5066,16 @@ impl Editor {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
         }
+    }
+
+    pub fn transact(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        update: impl FnOnce(&mut Self, &mut ViewContext<Self>),
+    ) {
+        self.start_transaction(cx);
+        update(self, cx);
+        self.end_transaction(cx);
     }
 
     pub fn page_up(&mut self, _: &PageUp, _: &mut ViewContext<Self>) {

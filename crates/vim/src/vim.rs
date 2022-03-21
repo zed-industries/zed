@@ -145,22 +145,30 @@ impl VimState {
                 }),
                 Effect::Delete(region) => editor.update(cx, |editor, cx| match region {
                     Region::Selection | Region::SelectionLines => {
-                        editor.move_and_delete(cx, |map, head, goal| {
-                            Self::apply_motion_to_point(map, head, goal, Motion::Right)
+                        editor.transact(cx, |editor, cx| {
+                            editor.move_selection_heads(cx, |map, head, goal| {
+                                Self::apply_motion_to_point(map, head, goal, Motion::Right)
+                            });
+                            editor.insert("", cx);
                         })
                     }
-                    Region::FromCursor(motion) => editor.move_and_delete(cx, |map, head, goal| {
-                        Self::apply_motion_to_point(map, head, goal, motion)
+                    Region::FromCursor(motion) => editor.transact(cx, |editor, cx| {
+                        editor.move_selection_heads(cx, |map, head, goal| {
+                            Self::apply_motion_to_point(map, head, goal, motion)
+                        });
+                        editor.insert("", cx);
                     }),
                     Region::CurrentLine => editor.delete_line(&DeleteLine, cx),
                 }),
                 Effect::ReplaceWithCharacter(character) => editor.update(cx, |editor, cx| {
                     // TODO: This currently ignores replacing all characters in selection
                     // and just replaces all selections with a single character
-                    editor.move_and_delete(cx, |map, head, goal| {
-                        Self::apply_motion_to_point(map, head, goal, Motion::Right)
-                    });
-                    editor.insert(&character, cx);
+                    editor.transact(cx, |editor, cx| {
+                        editor.move_selection_heads(cx, |map, head, goal| {
+                            Self::apply_motion_to_point(map, head, goal, Motion::Right)
+                        });
+                        editor.insert(&character, cx);
+                    })
                 }),
                 Effect::NewLine { above: false } => editor.update(cx, |editor, cx| {
                     editor.move_cursors(cx, |map, cursor, goal| {
