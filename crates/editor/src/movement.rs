@@ -138,40 +138,22 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
     })
 }
 
+pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    find_boundary_reversed(map, point, |left, right| {
+        (char_kind(left) != char_kind(right)
+            || left == '_' && right != '_'
+            || left.is_lowercase() && right.is_uppercase())
+            && !right.is_whitespace()
+    })
+}
+
 pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     find_boundary(map, point, |left, right| {
         char_kind(left) != char_kind(right) && !left.is_whitespace()
     })
 }
 
-fn find_boundary(
-    map: &DisplaySnapshot,
-    mut start: DisplayPoint,
-    is_boundary: impl Fn(char, char) -> bool,
-) -> DisplayPoint {
-    let mut prev_ch = None;
-    for ch in map.chars_at(start) {
-        if let Some(prev_ch) = prev_ch {
-            if ch == '\n' {
-                break;
-            }
-            if is_boundary(prev_ch, ch) {
-                break;
-            }
-        }
-
-        if ch == '\n' {
-            *start.row_mut() += 1;
-            *start.column_mut() = 0;
-        } else {
-            *start.column_mut() += ch.len_utf8() as u32;
-        }
-        prev_ch = Some(ch);
-    }
-    map.clip_point(start, Bias::Right)
-}
-
-fn find_boundary_reversed(
+pub fn find_boundary_reversed(
     map: &DisplaySnapshot,
     mut start: DisplayPoint,
     is_boundary: impl Fn(char, char) -> bool,
@@ -210,6 +192,33 @@ fn find_boundary_reversed(
         column += ch.len_utf8() as u32;
     }
     boundary
+}
+
+pub fn find_boundary(
+    map: &DisplaySnapshot,
+    mut start: DisplayPoint,
+    is_boundary: impl Fn(char, char) -> bool,
+) -> DisplayPoint {
+    let mut prev_ch = None;
+    for ch in map.chars_at(start) {
+        if let Some(prev_ch) = prev_ch {
+            if ch == '\n' {
+                break;
+            }
+            if is_boundary(prev_ch, ch) {
+                break;
+            }
+        }
+
+        if ch == '\n' {
+            *start.row_mut() += 1;
+            *start.column_mut() = 0;
+        } else {
+            *start.column_mut() += ch.len_utf8() as u32;
+        }
+        prev_ch = Some(ch);
+    }
+    map.clip_point(start, Bias::Right)
 }
 
 pub fn is_inside_word(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
@@ -263,6 +272,39 @@ mod tests {
         assert("|lorem_|ipsum", cx);
         assert(" |defγ|", cx);
         assert(" |bcΔ|", cx);
+        assert(" ab|——|cd", cx);
+    }
+
+    #[gpui::test]
+    fn test_previous_subword_start(cx: &mut gpui::MutableAppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
+            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            assert_eq!(
+                previous_subword_start(&snapshot, display_points[1]),
+                display_points[0]
+            );
+        }
+
+        // Subword boundaries are respected
+        assert("lorem_|ip|sum", cx);
+        assert("lorem_|ipsum|", cx);
+        assert("|lorem_|ipsum", cx);
+        assert("lorem_|ipsum_|dolor", cx);
+        assert("lorem|Ip|sum", cx);
+        assert("lorem|Ipsum|", cx);
+
+        // Word boundaries are still respected
+        assert("\n|   |lorem", cx);
+        assert("    |lorem|", cx);
+        assert("    |lor|em", cx);
+        assert("\nlorem\n|   |ipsum", cx);
+        assert("\n\n|\n|", cx);
+        assert("    |lorem  |ipsum", cx);
+        assert("lorem|-|ipsum", cx);
+        assert("lorem|-#$@|ipsum", cx);
+        assert(" |defγ|", cx);
+        assert(" bc|Δ|", cx);
+        assert(" |bcδ|", cx);
         assert(" ab|——|cd", cx);
     }
 
