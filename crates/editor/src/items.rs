@@ -50,6 +50,24 @@ impl FollowableItem for Editor {
         }))
     }
 
+    fn set_following(&mut self, following: bool, cx: &mut ViewContext<Self>) {
+        self.following = following;
+        if self.following {
+            self.show_local_selections = false;
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.remove_active_selections(cx);
+            });
+        } else {
+            self.show_local_selections = true;
+            if self.focused {
+                self.buffer.update(cx, |buffer, cx| {
+                    buffer.set_active_selections(&self.selections, cx);
+                });
+            }
+        }
+        cx.notify();
+    }
+
     fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant> {
         let buffer_id = self.buffer.read(cx).as_singleton()?.read(cx).remote_id();
         Some(proto::view::Variant::Editor(proto::view::Editor {

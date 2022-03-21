@@ -250,6 +250,7 @@ pub trait FollowableItem: Item {
         state: &mut Option<proto::view::Variant>,
         cx: &mut MutableAppContext,
     ) -> Option<Task<Result<ViewHandle<Self>>>>;
+    fn set_following(&mut self, following: bool, cx: &mut ViewContext<Self>);
     fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant>;
     fn to_update_message(
         &self,
@@ -264,6 +265,7 @@ pub trait FollowableItem: Item {
 }
 
 pub trait FollowableItemHandle: ItemHandle {
+    fn set_following(&self, following: bool, cx: &mut MutableAppContext);
     fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant>;
     fn to_update_message(
         &self,
@@ -278,6 +280,10 @@ pub trait FollowableItemHandle: ItemHandle {
 }
 
 impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
+    fn set_following(&self, following: bool, cx: &mut MutableAppContext) {
+        self.update(cx, |this, cx| this.set_following(following, cx))
+    }
+
     fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant> {
         self.read(cx).to_state_message(cx)
     }
@@ -1267,6 +1273,7 @@ impl Workspace {
             let state = this.follower_states_by_leader.entry(leader_id).or_default();
             state.panes.insert(pane);
             for (id, item) in leader_view_ids.into_iter().zip(items) {
+                item.set_following(true, cx);
                 match state.items_by_leader_view_id.entry(id) {
                     hash_map::Entry::Occupied(e) => {
                         let e = e.into_mut();
