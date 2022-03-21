@@ -151,17 +151,14 @@ pub fn previous_word_start(map: &DisplaySnapshot, mut point: DisplayPoint) -> Di
 
     let mut boundary = DisplayPoint::new(point.row(), 0);
     let mut column = 0;
-    let mut prev_char_kind = CharKind::Newline;
+    let mut prev_char_kind = CharKind::Whitespace;
     for c in map.chars_at(DisplayPoint::new(point.row(), 0)) {
         if column >= point.column() {
             break;
         }
 
         let char_kind = char_kind(c);
-        if char_kind != prev_char_kind
-            && char_kind != CharKind::Whitespace
-            && char_kind != CharKind::Newline
-        {
+        if char_kind != prev_char_kind && char_kind != CharKind::Whitespace && c != '\n' {
             *boundary.column_mut() = column;
         }
 
@@ -179,10 +176,7 @@ pub fn next_word_end(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayP
             if c == '\n' {
                 break;
             }
-            if prev_char_kind != char_kind
-                && prev_char_kind != CharKind::Whitespace
-                && prev_char_kind != CharKind::Newline
-            {
+            if prev_char_kind != char_kind && prev_char_kind != CharKind::Whitespace {
                 break;
             }
         }
@@ -441,7 +435,7 @@ mod tests {
             .select_font(family_id, &Default::default())
             .unwrap();
         let font_size = 14.0;
-        let buffer = MultiBuffer::build_simple("lorem ipsum   dolor\n    sit", cx);
+        let buffer = MultiBuffer::build_simple("lorem ipsum   dolor\n    sit\n\n\n\n", cx);
         let display_map = cx
             .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -501,6 +495,12 @@ mod tests {
         assert_eq!(
             surrounding_word(&snapshot, DisplayPoint::new(1, 7)),
             DisplayPoint::new(1, 4)..DisplayPoint::new(1, 7),
+        );
+
+        // Don't consider runs of multiple newlines to be a "word"
+        assert_eq!(
+            surrounding_word(&snapshot, DisplayPoint::new(3, 0)),
+            DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
         );
     }
 }

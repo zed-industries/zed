@@ -271,7 +271,6 @@ pub(crate) struct DiagnosticEndpoint {
 
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug)]
 pub enum CharKind {
-    Newline,
     Punctuation,
     Whitespace,
     Word,
@@ -2259,9 +2258,7 @@ pub fn contiguous_ranges(
 }
 
 pub fn char_kind(c: char) -> CharKind {
-    if c == '\n' {
-        CharKind::Newline
-    } else if c.is_whitespace() {
+    if c.is_whitespace() {
         CharKind::Whitespace
     } else if c.is_alphanumeric() || c == '_' {
         CharKind::Word
