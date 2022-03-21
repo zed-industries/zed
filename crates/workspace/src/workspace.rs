@@ -264,10 +264,10 @@ pub trait FollowableItem: Item {
         &self,
         event: &Self::Event,
         cx: &AppContext,
-    ) -> Option<proto::update_followers::update_view::Variant>;
+    ) -> Option<proto::update_view::Variant>;
     fn apply_update_message(
         &mut self,
-        message: proto::update_followers::update_view::Variant,
+        message: proto::update_view::Variant,
         cx: &mut ViewContext<Self>,
     ) -> Result<()>;
 }
@@ -279,10 +279,10 @@ pub trait FollowableItemHandle: ItemHandle {
         &self,
         event: &dyn Any,
         cx: &AppContext,
-    ) -> Option<proto::update_followers::update_view::Variant>;
+    ) -> Option<proto::update_view::Variant>;
     fn apply_update_message(
         &self,
-        message: proto::update_followers::update_view::Variant,
+        message: proto::update_view::Variant,
         cx: &mut MutableAppContext,
     ) -> Result<()>;
 }
@@ -300,13 +300,13 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
         &self,
         event: &dyn Any,
         cx: &AppContext,
-    ) -> Option<proto::update_followers::update_view::Variant> {
+    ) -> Option<proto::update_view::Variant> {
         self.read(cx).to_update_message(event.downcast_ref()?, cx)
     }
 
     fn apply_update_message(
         &self,
-        message: proto::update_followers::update_view::Variant,
+        message: proto::update_view::Variant,
         cx: &mut MutableAppContext,
     ) -> Result<()> {
         self.update(cx, |this, cx| this.apply_update_message(message, cx))
@@ -403,6 +403,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                     proto::update_followers::Variant::CreateView(proto::View {
                         id: followed_item.id() as u64,
                         variant: Some(message),
+                        leader_id: workspace.leader_for_pane(&pane).map(|id| id.0),
                     }),
                     cx,
                 );
@@ -441,12 +442,11 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                 .and_then(|i| i.to_update_message(event, cx))
             {
                 workspace.update_followers(
-                    proto::update_followers::Variant::UpdateView(
-                        proto::update_followers::UpdateView {
-                            id: item.id() as u64,
-                            variant: Some(message),
-                        },
-                    ),
+                    proto::update_followers::Variant::UpdateView(proto::UpdateView {
+                        id: item.id() as u64,
+                        variant: Some(message),
+                        leader_id: workspace.leader_for_pane(&pane).map(|id| id.0),
+                    }),
                     cx,
                 );
             }
@@ -628,7 +628,7 @@ struct FollowerState {
 
 #[derive(Debug)]
 enum FollowerItem {
-    Loading(Vec<proto::update_followers::update_view::Variant>),
+    Loading(Vec<proto::update_view::Variant>),
     Loaded(Box<dyn FollowableItemHandle>),
 }
 
@@ -1110,7 +1110,7 @@ impl Workspace {
 
     fn activate_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
         if self.active_pane != pane {
-            self.active_pane = pane;
+            self.active_pane = pane.clone();
             self.status_bar.update(cx, |status_bar, cx| {
                 status_bar.set_active_pane(&self.active_pane, cx);
             });
@@ -1119,11 +1119,10 @@ impl Workspace {
         }
 
         self.update_followers(
-            proto::update_followers::Variant::UpdateActiveView(
-                proto::update_followers::UpdateActiveView {
-                    id: self.active_item(cx).map(|item| item.id() as u64),
-                },
-            ),
+            proto::update_followers::Variant::UpdateActiveView(proto::UpdateActiveView {
+                id: self.active_item(cx).map(|item| item.id() as u64),
+                leader_id: self.leader_for_pane(&pane).map(|id| id.0),
+            }),
             cx,
         );
     }
@@ -1520,14 +1519,22 @@ impl Workspace {
             Ok(proto::FollowResponse {
                 active_view_id,
                 views: this
-                    .items(cx)
-                    .filter_map(|item| {
-                        let id = item.id() as u64;
-                        let item = item.to_followable_item_handle(cx)?;
-                        let variant = item.to_state_message(cx)?;
-                        Some(proto::View {
-                            id,
-                            variant: Some(variant),
+                    .panes()
+                    .iter()
+                    .flat_map(|pane| {
+                        let leader_id = this.leader_for_pane(pane).map(|id| id.0);
+                        pane.read(cx).items().filter_map({
+                            let cx = &cx;
+                            move |item| {
+                                let id = item.id() as u64;
+                                let item = item.to_followable_item_handle(cx)?;
+                                let variant = item.to_state_message(cx)?;
+                                Some(proto::View {
+                                    id,
+                                    leader_id,
+                                    variant: Some(variant),
+                                })
+                            }
                         })
                     })
                     .collect(),
@@ -1703,6 +1710,18 @@ impl Workspace {
                 .log_err();
         }
         None
+    }
+
+    fn leader_for_pane(&self, pane: &ViewHandle<Pane>) -> Option<PeerId> {
+        self.follower_states_by_leader
+            .iter()
+            .find_map(|(leader_id, state)| {
+                if state.contains_key(pane) {
+                    Some(*leader_id)
+                } else {
+                    None
+                }
+            })
     }
 
     fn update_leader_state(

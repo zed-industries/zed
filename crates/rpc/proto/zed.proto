@@ -556,21 +556,6 @@ message UpdateFollowers {
         View create_view = 4;
         UpdateView update_view = 5;
     }
-
-    message UpdateActiveView {
-        optional uint64 id = 1;
-    }
-
-    message UpdateView {
-        uint64 id = 1;
-        oneof variant {
-            Editor editor = 2;
-        }
-
-        message Editor {
-            Anchor scroll_top = 1;
-        }
-    }
 }
 
 message Unfollow {
@@ -580,10 +565,30 @@ message Unfollow {
 
 // Entities
 
+message UpdateActiveView {
+    optional uint64 id = 1;
+    optional uint32 leader_id = 2;
+}
+
+message UpdateView {
+    uint64 id = 1;
+    optional uint32 leader_id = 2;
+
+    oneof variant {
+        Editor editor = 3;
+    }
+
+    message Editor {
+        Anchor scroll_top = 1;
+    }
+}
+
 message View {
     uint64 id = 1;
+    optional uint32 leader_id = 2;
+
     oneof variant {
-        Editor editor = 2;
+        Editor editor = 3;
     }
 
     message Editor {

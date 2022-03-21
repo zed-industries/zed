@@ -6,7 +6,7 @@ use gpui::{
 };
 use language::{Bias, Buffer, Diagnostic, File as _};
 use project::{File, Project, ProjectEntryId, ProjectPath};
-use rpc::proto::{self, update_followers::update_view};
+use rpc::proto::{self, update_view};
 use std::{fmt::Write, path::PathBuf};
 use text::{Point, Selection};
 use util::ResultExt;

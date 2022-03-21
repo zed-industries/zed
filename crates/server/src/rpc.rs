@@ -678,17 +678,21 @@ impl Server {
         request: TypedEnvelope<proto::Follow>,
     ) -> tide::Result<proto::FollowResponse> {
         let leader_id = ConnectionId(request.payload.leader_id);
+        let follower_id = request.sender_id;
         if !self
             .state()
-            .project_connection_ids(request.payload.project_id, request.sender_id)?
+            .project_connection_ids(request.payload.project_id, follower_id)?
             .contains(&leader_id)
         {
             Err(anyhow!("no such peer"))?;
         }
-        let response = self
+        let mut response = self
             .peer
             .forward_request(request.sender_id, leader_id, request.payload)
             .await?;
+        response
+            .views
+            .retain(|view| view.leader_id != Some(follower_id.0));
         Ok(response)
     }
 
@@ -716,9 +720,18 @@ impl Server {
         let connection_ids = self
             .state()
             .project_connection_ids(request.payload.project_id, request.sender_id)?;
+        let leader_id = request
+            .payload
+            .variant
+            .as_ref()
+            .and_then(|variant| match variant {
+                proto::update_followers::Variant::CreateView(payload) => payload.leader_id,
+                proto::update_followers::Variant::UpdateView(payload) => payload.leader_id,
+                proto::update_followers::Variant::UpdateActiveView(payload) => payload.leader_id,
+            });
         for follower_id in &request.payload.follower_ids {
             let follower_id = ConnectionId(*follower_id);
-            if connection_ids.contains(&follower_id) {
+            if connection_ids.contains(&follower_id) && Some(follower_id.0) != leader_id {
                 self.peer
                     .forward_send(request.sender_id, follower_id, request.payload.clone())?;
             }
@@ -4265,9 +4278,6 @@ mod tests {
 
         // Client B opens an editor.
         let workspace_b = client_b.build_workspace(&project_b, cx_b);
-        workspace_b.update(cx_b, |workspace, cx| {
-            workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
-        });
         let editor_b1 = workspace_b
             .update(cx_b, |workspace, cx| {
                 workspace.open_path((worktree_id, "1.txt"), cx)
@@ -4325,6 +4335,108 @@ mod tests {
                 .unwrap()
                 .id()),
             editor_b1.id()
+        );
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+        cx_a.foreground().forbid_parking();
+        let fs = FakeFs::new(cx_a.background());
+
+        // 2 clients connect to a server.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let mut client_a = server.create_client(cx_a, "user_a").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
+        cx_a.update(editor::init);
+        cx_b.update(editor::init);
+
+        // Client A shares a project.
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "1.txt": "one",
+                "2.txt": "two",
+                "3.txt": "three",
+            }),
+        )
+        .await;
+        let (project_a, worktree_id) = client_a.build_local_project(fs.clone(), "/a", cx_a).await;
+        project_a
+            .update(cx_a, |project, cx| project.share(cx))
+            .await
+            .unwrap();
+
+        // Client B joins the project.
+        let project_b = client_b
+            .build_remote_project(
+                project_a
+                    .read_with(cx_a, |project, _| project.remote_id())
+                    .unwrap(),
+                cx_b,
+            )
+            .await;
+
+        // Client A opens some editors.
+        let workspace_a = client_a.build_workspace(&project_a, cx_a);
+        let _editor_a1 = workspace_a
+            .update(cx_a, |workspace, cx| {
+                workspace.open_path((worktree_id, "1.txt"), cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        // Client B opens an editor.
+        let workspace_b = client_b.build_workspace(&project_b, cx_b);
+        let _editor_b1 = workspace_b
+            .update(cx_b, |workspace, cx| {
+                workspace.open_path((worktree_id, "2.txt"), cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        // Clients A and B follow each other in split panes
+        workspace_a
+            .update(cx_a, |workspace, cx| {
+                workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
+                let leader_id = *project_a.read(cx).collaborators().keys().next().unwrap();
+                workspace
+                    .toggle_follow(&workspace::ToggleFollow(leader_id), cx)
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+        workspace_b
+            .update(cx_b, |workspace, cx| {
+                workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
+                let leader_id = *project_b.read(cx).collaborators().keys().next().unwrap();
+                workspace
+                    .toggle_follow(&workspace::ToggleFollow(leader_id), cx)
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+
+        workspace_a
+            .update(cx_a, |workspace, cx| {
+                workspace.activate_next_pane(cx);
+                workspace.open_path((worktree_id, "3.txt"), cx)
+            })
+            .await
+            .unwrap();
+
+        // Ensure peers following each other doesn't cause an infinite loop.
+        cx_a.foreground().run_until_parked();
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, cx| workspace
+                .active_item(cx)
+                .unwrap()
+                .project_path(cx)),
+            Some((worktree_id, "3.txt").into())
         );
     }
 
