@@ -20,9 +20,9 @@ use gpui::{
     json::{self, to_string_pretty, ToJson},
     keymap::Binding,
     platform::{CursorStyle, WindowOptions},
-    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Entity, ImageData,
-    ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Border, ClipboardItem, Entity,
+    ImageData, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task,
+    View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::LanguageRegistry;
 use log::error;
@@ -613,7 +613,7 @@ pub struct Workspace {
     status_bar: ViewHandle<StatusBar>,
     project: ModelHandle<Project>,
     leader_state: LeaderState,
-    follower_states_by_leader: HashMap<PeerId, HashMap<ViewHandle<Pane>, FollowerState>>,
+    follower_states_by_leader: FollowerStatesByLeader,
     _observe_current_user: Task<()>,
 }
 
@@ -621,6 +621,8 @@ pub struct Workspace {
 struct LeaderState {
     followers: HashSet<PeerId>,
 }
+
+type FollowerStatesByLeader = HashMap<PeerId, HashMap<ViewHandle<Pane>, FollowerState>>;
 
 #[derive(Default)]
 struct FollowerState {
@@ -1262,6 +1264,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Option<PeerId> {
         for (leader_id, states_by_pane) in &mut self.follower_states_by_leader {
+            let leader_id = *leader_id;
             if let Some(state) = states_by_pane.remove(&pane) {
                 for (_, item) in state.items_by_leader_view_id {
                     if let FollowerItem::Loaded(item) = item {
@@ -1270,6 +1273,7 @@ impl Workspace {
                 }
 
                 if states_by_pane.is_empty() {
+                    self.follower_states_by_leader.remove(&leader_id);
                     if let Some(project_id) = self.project.read(cx).remote_id() {
                         self.client
                             .send(proto::Unfollow {
@@ -1281,7 +1285,7 @@ impl Workspace {
                 }
 
                 cx.notify();
-                return Some(*leader_id);
+                return Some(leader_id);
             }
         }
         None
@@ -1420,17 +1424,25 @@ impl Workspace {
         theme: &Theme,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
+        let replica_color = theme.editor.replica_selection_style(replica_id).cursor;
+        let is_followed = peer_id.map_or(false, |peer_id| {
+            self.follower_states_by_leader.contains_key(&peer_id)
+        });
+        let mut avatar_style = theme.workspace.titlebar.avatar;
+        if is_followed {
+            avatar_style.border = Border::all(1.0, replica_color);
+        }
         let content = Stack::new()
             .with_child(
                 Image::new(avatar)
-                    .with_style(theme.workspace.titlebar.avatar)
+                    .with_style(avatar_style)
                     .constrained()
                     .with_width(theme.workspace.titlebar.avatar_width)
                     .aligned()
                     .boxed(),
             )
             .with_child(
-                AvatarRibbon::new(theme.editor.replica_selection_style(replica_id).cursor)
+                AvatarRibbon::new(replica_color)
                     .constrained()
                     .with_width(theme.workspace.titlebar.avatar_ribbon.width)
                     .with_height(theme.workspace.titlebar.avatar_ribbon.height)
@@ -1800,8 +1812,16 @@ impl View for Workspace {
                                 content.add_child(
                                     Flex::column()
                                         .with_child(
-                                            Flexible::new(1., true, self.center.render(&theme))
-                                                .boxed(),
+                                            Flexible::new(
+                                                1.,
+                                                true,
+                                                self.center.render(
+                                                    &theme,
+                                                    &self.follower_states_by_leader,
+                                                    self.project.read(cx).collaborators(),
+                                                ),
+                                            )
+                                            .boxed(),
                                         )
                                         .with_child(ChildView::new(&self.status_bar).boxed())
                                         .flexible(1., true)

@@ -35,6 +35,7 @@ pub struct Workspace {
     pub tab: Tab,
     pub active_tab: Tab,
     pub pane_divider: Border,
+    pub leader_border_opacity: f32,
     pub left_sidebar: Sidebar,
     pub right_sidebar: Sidebar,
     pub status_bar: StatusBar,
