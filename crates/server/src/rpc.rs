@@ -4251,12 +4251,16 @@ mod tests {
                 workspace.open_path((worktree_id, "1.txt"), cx)
             })
             .await
+            .unwrap()
+            .downcast::<Editor>()
             .unwrap();
-        let _editor_a2 = workspace_a
+        let editor_a2 = workspace_a
             .update(cx_a, |workspace, cx| {
                 workspace.open_path((worktree_id, "2.txt"), cx)
             })
             .await
+            .unwrap()
+            .downcast::<Editor>()
             .unwrap();
 
         // Client B opens an editor.
@@ -4269,6 +4273,8 @@ mod tests {
                 workspace.open_path((worktree_id, "1.txt"), cx)
             })
             .await
+            .unwrap()
+            .downcast::<Editor>()
             .unwrap();
 
         // Client B starts following client A.
@@ -4286,16 +4292,40 @@ mod tests {
                 .project_path(cx)),
             Some((worktree_id, "2.txt").into())
         );
+        let editor_b2 = workspace_b
+            .read_with(cx_b, |workspace, cx| workspace.active_item(cx))
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
 
         // When client A activates a different editor, client B does so as well.
         workspace_a.update(cx_a, |workspace, cx| {
-            workspace.activate_item(editor_a1.as_ref(), cx)
+            workspace.activate_item(&editor_a1, cx)
         });
         workspace_b
             .condition(cx_b, |workspace, cx| {
                 workspace.active_item(cx).unwrap().id() == editor_b1.id()
             })
             .await;
+
+        // After unfollowing, client B stops receiving updates from client A.
+        workspace_b.update(cx_b, |workspace, cx| {
+            workspace.unfollow(&workspace.active_pane().clone(), cx)
+        });
+        workspace_a.update(cx_a, |workspace, cx| {
+            workspace.activate_item(&editor_a2, cx);
+            editor_a2.update(cx, |editor, cx| editor.set_text("ONE", cx));
+        });
+        editor_b2
+            .condition(cx_b, |editor, cx| editor.text(cx) == "ONE")
+            .await;
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, cx| workspace
+                .active_item(cx)
+                .unwrap()
+                .id()),
+            editor_b1.id()
+        );
     }
 
     #[gpui::test(iterations = 100)]

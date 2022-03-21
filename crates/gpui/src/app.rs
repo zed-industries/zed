@@ -3542,6 +3542,13 @@ impl<T> PartialEq<ViewHandle<T>> for WeakViewHandle<T> {
 
 impl<T> Eq for ViewHandle<T> {}
 
+impl<T> Hash for ViewHandle<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.window_id.hash(state);
+        self.view_id.hash(state);
+    }
+}
+
 impl<T> Debug for ViewHandle<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct(&format!("ViewHandle<{}>", type_name::<T>()))
