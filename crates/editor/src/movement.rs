@@ -132,64 +132,84 @@ pub fn line_end(
     }
 }
 
-pub fn previous_word_start(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
+pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    find_boundary_reversed(map, point, |left, right| {
+        char_kind(left) != char_kind(right) && !right.is_whitespace()
+    })
+}
+
+pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    find_boundary(map, point, |left, right| {
+        char_kind(left) != char_kind(right) && !left.is_whitespace()
+    })
+}
+
+fn find_boundary(
+    map: &DisplaySnapshot,
+    mut start: DisplayPoint,
+    is_boundary: impl Fn(char, char) -> bool,
+) -> DisplayPoint {
+    let mut prev_ch = None;
+    for ch in map.chars_at(start) {
+        if let Some(prev_ch) = prev_ch {
+            if ch == '\n' {
+                break;
+            }
+            if is_boundary(prev_ch, ch) {
+                break;
+            }
+        }
+
+        if ch == '\n' {
+            *start.row_mut() += 1;
+            *start.column_mut() = 0;
+        } else {
+            *start.column_mut() += ch.len_utf8() as u32;
+        }
+        prev_ch = Some(ch);
+    }
+    map.clip_point(start, Bias::Right)
+}
+
+fn find_boundary_reversed(
+    map: &DisplaySnapshot,
+    mut start: DisplayPoint,
+    is_boundary: impl Fn(char, char) -> bool,
+) -> DisplayPoint {
     let mut line_start = 0;
-    if point.row() > 0 {
-        if let Some(indent) = map.soft_wrap_indent(point.row() - 1) {
+    if start.row() > 0 {
+        if let Some(indent) = map.soft_wrap_indent(start.row() - 1) {
             line_start = indent;
         }
     }
 
-    if point.column() == line_start {
-        if point.row() == 0 {
+    if start.column() == line_start {
+        if start.row() == 0 {
             return DisplayPoint::new(0, 0);
         } else {
-            let row = point.row() - 1;
-            point = map.clip_point(DisplayPoint::new(row, map.line_len(row)), Bias::Left);
+            let row = start.row() - 1;
+            start = map.clip_point(DisplayPoint::new(row, map.line_len(row)), Bias::Left);
         }
     }
 
-    let mut boundary = DisplayPoint::new(point.row(), 0);
+    let mut boundary = DisplayPoint::new(start.row(), 0);
     let mut column = 0;
-    let mut prev_char_kind = CharKind::Whitespace;
-    for c in map.chars_at(DisplayPoint::new(point.row(), 0)) {
-        if column >= point.column() {
+    let mut prev_ch = None;
+    for ch in map.chars_at(DisplayPoint::new(start.row(), 0)) {
+        if column >= start.column() {
             break;
         }
 
-        let char_kind = char_kind(c);
-        if char_kind != prev_char_kind && char_kind != CharKind::Whitespace && c != '\n' {
-            *boundary.column_mut() = column;
+        if let Some(prev_ch) = prev_ch {
+            if is_boundary(prev_ch, ch) {
+                *boundary.column_mut() = column;
+            }
         }
 
-        prev_char_kind = char_kind;
-        column += c.len_utf8() as u32;
+        prev_ch = Some(ch);
+        column += ch.len_utf8() as u32;
     }
     boundary
-}
-
-pub fn next_word_end(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
-    let mut prev_char_kind = None;
-    for c in map.chars_at(point) {
-        let char_kind = char_kind(c);
-        if let Some(prev_char_kind) = prev_char_kind {
-            if c == '\n' {
-                break;
-            }
-            if prev_char_kind != char_kind && prev_char_kind != CharKind::Whitespace {
-                break;
-            }
-        }
-
-        if c == '\n' {
-            *point.row_mut() += 1;
-            *point.column_mut() = 0;
-        } else {
-            *point.column_mut() += c.len_utf8() as u32;
-        }
-        prev_char_kind = Some(char_kind);
-    }
-    map.clip_point(point, Bias::Right)
 }
 
 pub fn is_inside_word(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
@@ -226,7 +246,6 @@ mod tests {
     fn test_previous_word_start(cx: &mut gpui::MutableAppContext) {
         fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
             let (snapshot, display_points) = marked_snapshot(marked_text, cx);
-            dbg!(&display_points);
             assert_eq!(
                 previous_word_start(&snapshot, display_points[1]),
                 display_points[0]
