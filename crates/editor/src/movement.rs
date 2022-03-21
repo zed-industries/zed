@@ -132,7 +132,7 @@ pub fn line_end(
     }
 }
 
-pub fn prev_word_boundary(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
+pub fn previous_word_start(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     let mut line_start = 0;
     if point.row() > 0 {
         if let Some(indent) = map.soft_wrap_indent(point.row() - 1) {
@@ -171,7 +171,7 @@ pub fn prev_word_boundary(map: &DisplaySnapshot, mut point: DisplayPoint) -> Dis
     boundary
 }
 
-pub fn next_word_boundary(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
+pub fn next_word_end(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     let mut prev_char_kind = None;
     for c in map.chars_at(point) {
         let char_kind = char_kind(c);
@@ -298,6 +298,84 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_previous_word_start(cx: &mut gpui::MutableAppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
+            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            dbg!(&display_points);
+            assert_eq!(
+                previous_word_start(&snapshot, display_points[1]),
+                display_points[0]
+            );
+        }
+
+        assert("\n|   |lorem", cx);
+        assert("    |lorem|", cx);
+        assert("    |lor|em", cx);
+        assert("\nlorem\n|   |ipsum", cx);
+        assert("\n\n|\n|", cx);
+        assert("    |lorem  |ipsum", cx);
+        assert("lorem|-|ipsum", cx);
+        assert("lorem|-#$@|ipsum", cx);
+        assert("|lorem_|ipsum", cx);
+    }
+
+    #[gpui::test]
+    fn test_next_word_end(cx: &mut gpui::MutableAppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
+            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            assert_eq!(
+                next_word_end(&snapshot, display_points[0]),
+                display_points[1]
+            );
+        }
+
+        assert("\n|   lorem|", cx);
+        assert("    |lorem|", cx);
+        assert("    lor|em|", cx);
+        assert("    lorem|    |\nipsum\n", cx);
+        assert("\n|\n|\n\n", cx);
+        assert("lorem|    ipsum|   ", cx);
+        assert("lorem|-|ipsum", cx);
+        assert("lorem|#$@-|ipsum", cx);
+        assert("lorem|_ipsum|", cx);
+    }
+
+    // Returns a snapshot from text containing '|' character markers with the markers removed, and DisplayPoints for each one.
+    fn marked_snapshot(
+        text: &str,
+        cx: &mut gpui::MutableAppContext,
+    ) -> (DisplaySnapshot, Vec<DisplayPoint>) {
+        let mut marked_offsets = Vec::new();
+        let chunks = text.split('|');
+        let mut text = String::new();
+
+        for chunk in chunks {
+            text.push_str(chunk);
+            marked_offsets.push(text.len());
+        }
+        marked_offsets.pop();
+
+        let tab_size = 4;
+        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let font_id = cx
+            .font_cache()
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 14.0;
+
+        let buffer = MultiBuffer::build_simple(&text, cx);
+        let display_map = cx
+            .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
+        let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+        let marked_display_points = marked_offsets
+            .into_iter()
+            .map(|offset| offset.to_display_point(&snapshot))
+            .collect();
+
+        (snapshot, marked_display_points)
+    }
+
+    #[gpui::test]
     fn test_prev_next_word_boundary_multibyte(cx: &mut gpui::MutableAppContext) {
         let tab_size = 4;
         let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
@@ -312,44 +390,44 @@ mod tests {
             .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 12)),
+            previous_word_start(&snapshot, DisplayPoint::new(0, 12)),
             DisplayPoint::new(0, 7)
         );
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 7)),
+            previous_word_start(&snapshot, DisplayPoint::new(0, 7)),
             DisplayPoint::new(0, 2)
         );
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 6)),
+            previous_word_start(&snapshot, DisplayPoint::new(0, 6)),
             DisplayPoint::new(0, 2)
         );
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 2)),
+            previous_word_start(&snapshot, DisplayPoint::new(0, 2)),
             DisplayPoint::new(0, 0)
         );
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 1)),
+            previous_word_start(&snapshot, DisplayPoint::new(0, 1)),
             DisplayPoint::new(0, 0)
         );
 
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 0)),
+            next_word_end(&snapshot, DisplayPoint::new(0, 0)),
             DisplayPoint::new(0, 1)
         );
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 1)),
+            next_word_end(&snapshot, DisplayPoint::new(0, 1)),
             DisplayPoint::new(0, 6)
         );
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 2)),
+            next_word_end(&snapshot, DisplayPoint::new(0, 2)),
             DisplayPoint::new(0, 6)
         );
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 6)),
+            next_word_end(&snapshot, DisplayPoint::new(0, 6)),
             DisplayPoint::new(0, 12)
         );
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 7)),
+            next_word_end(&snapshot, DisplayPoint::new(0, 7)),
             DisplayPoint::new(0, 12)
         );
     }

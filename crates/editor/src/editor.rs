@@ -3480,7 +3480,7 @@ impl Editor {
         let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
-            let cursor = movement::prev_word_boundary(&display_map, head).to_point(&display_map);
+            let cursor = movement::previous_word_start(&display_map, head).to_point(&display_map);
             selection.start = cursor.clone();
             selection.end = cursor;
             selection.reversed = false;
@@ -3498,7 +3498,7 @@ impl Editor {
         let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
-            let cursor = movement::prev_word_boundary(&display_map, head).to_point(&display_map);
+            let cursor = movement::previous_word_start(&display_map, head).to_point(&display_map);
             selection.set_head(cursor);
             selection.goal = SelectionGoal::None;
         }
@@ -3517,7 +3517,7 @@ impl Editor {
             if selection.is_empty() {
                 let head = selection.head().to_display_point(&display_map);
                 let cursor =
-                    movement::prev_word_boundary(&display_map, head).to_point(&display_map);
+                    movement::previous_word_start(&display_map, head).to_point(&display_map);
                 selection.set_head(cursor);
                 selection.goal = SelectionGoal::None;
             }
@@ -3536,7 +3536,7 @@ impl Editor {
         let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
-            let cursor = movement::next_word_boundary(&display_map, head).to_point(&display_map);
+            let cursor = movement::next_word_end(&display_map, head).to_point(&display_map);
             selection.start = cursor;
             selection.end = cursor;
             selection.reversed = false;
@@ -3554,7 +3554,7 @@ impl Editor {
         let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
-            let cursor = movement::next_word_boundary(&display_map, head).to_point(&display_map);
+            let cursor = movement::next_word_end(&display_map, head).to_point(&display_map);
             selection.set_head(cursor);
             selection.goal = SelectionGoal::None;
         }
@@ -3572,8 +3572,7 @@ impl Editor {
         for selection in &mut selections {
             if selection.is_empty() {
                 let head = selection.head().to_display_point(&display_map);
-                let cursor =
-                    movement::next_word_boundary(&display_map, head).to_point(&display_map);
+                let cursor = movement::next_word_end(&display_map, head).to_point(&display_map);
                 selection.set_head(cursor);
                 selection.goal = SelectionGoal::None;
             }
