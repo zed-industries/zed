@@ -350,7 +350,7 @@ impl ProjectSearchView {
         cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab))
             .detach();
         cx.subscribe(&results_editor, |this, _, event, cx| {
-            if matches!(event, editor::Event::SelectionsChanged) {
+            if matches!(event, editor::Event::SelectionsChanged { .. }) {
                 this.update_match_index(cx);
             }
         })

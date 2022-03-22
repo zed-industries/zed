@@ -1086,7 +1086,7 @@ mod tests {
         self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Input, Redo, Rename,
         ToOffset, ToggleCodeActions, Undo,
     };
-    use gpui::{executor, ModelHandle, TestAppContext, ViewHandle};
+    use gpui::{executor, geometry::vector::vec2f, ModelHandle, TestAppContext, ViewHandle};
     use language::{
         tree_sitter_rust, Diagnostic, DiagnosticEntry, Language, LanguageConfig, LanguageRegistry,
         LanguageServerConfig, OffsetRangeExt, Point, ToLspPosition,
@@ -4308,11 +4308,6 @@ mod tests {
                 .project_path(cx)),
             Some((worktree_id, "2.txt").into())
         );
-        let editor_b2 = workspace_b
-            .read_with(cx_b, |workspace, cx| workspace.active_item(cx))
-            .unwrap()
-            .downcast::<Editor>()
-            .unwrap();
 
         // When client A activates a different editor, client B does so as well.
         workspace_a.update(cx_a, |workspace, cx| {
@@ -4324,7 +4319,7 @@ mod tests {
             })
             .await;
 
-        // When client A selects something, client B does as well.
+        // Changes to client A's editor are reflected on client B.
         editor_a1.update(cx_a, |editor, cx| {
             editor.select_ranges([1..1, 2..2], None, cx);
         });
@@ -4334,17 +4329,26 @@ mod tests {
             })
             .await;
 
+        editor_a1.update(cx_a, |editor, cx| editor.set_text("TWO", cx));
+        editor_b1
+            .condition(cx_b, |editor, cx| editor.text(cx) == "TWO")
+            .await;
+
+        editor_a1.update(cx_a, |editor, cx| {
+            editor.select_ranges([3..3], None, cx);
+        });
+        editor_b1
+            .condition(cx_b, |editor, cx| editor.selected_ranges(cx) == vec![3..3])
+            .await;
+
         // After unfollowing, client B stops receiving updates from client A.
         workspace_b.update(cx_b, |workspace, cx| {
             workspace.unfollow(&workspace.active_pane().clone(), cx)
         });
         workspace_a.update(cx_a, |workspace, cx| {
-            workspace.activate_item(&editor_a2, cx);
-            editor_a2.update(cx, |editor, cx| editor.set_text("TWO", cx));
+            workspace.activate_item(&editor_a2, cx)
         });
-        editor_b2
-            .condition(cx_b, |editor, cx| editor.text(cx) == "TWO")
-            .await;
+        cx_a.foreground().run_until_parked();
         assert_eq!(
             workspace_b.read_with(cx_b, |workspace, cx| workspace
                 .active_item(cx)
@@ -4453,6 +4457,126 @@ mod tests {
                 .unwrap()
                 .project_path(cx)),
             Some((worktree_id, "3.txt").into())
+        );
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+        cx_a.foreground().forbid_parking();
+        let fs = FakeFs::new(cx_a.background());
+
+        // 2 clients connect to a server.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let mut client_a = server.create_client(cx_a, "user_a").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
+        cx_a.update(editor::init);
+        cx_b.update(editor::init);
+
+        // Client A shares a project.
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "1.txt": "one",
+                "2.txt": "two",
+                "3.txt": "three",
+            }),
+        )
+        .await;
+        let (project_a, worktree_id) = client_a.build_local_project(fs.clone(), "/a", cx_a).await;
+        project_a
+            .update(cx_a, |project, cx| project.share(cx))
+            .await
+            .unwrap();
+
+        // Client B joins the project.
+        let project_b = client_b
+            .build_remote_project(
+                project_a
+                    .read_with(cx_a, |project, _| project.remote_id())
+                    .unwrap(),
+                cx_b,
+            )
+            .await;
+
+        // Client A opens some editors.
+        let workspace_a = client_a.build_workspace(&project_a, cx_a);
+        let _editor_a1 = workspace_a
+            .update(cx_a, |workspace, cx| {
+                workspace.open_path((worktree_id, "1.txt"), cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        // Client B starts following client A.
+        let workspace_b = client_b.build_workspace(&project_b, cx_b);
+        let pane_b = workspace_b.read_with(cx_b, |workspace, _| workspace.active_pane().clone());
+        let leader_id = project_b.read_with(cx_b, |project, _| {
+            project.collaborators().values().next().unwrap().peer_id
+        });
+        workspace_b
+            .update(cx_b, |workspace, cx| {
+                workspace.toggle_follow(&leader_id.into(), cx).unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            Some(leader_id)
+        );
+        let editor_b2 = workspace_b.read_with(cx_b, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap()
+        });
+
+        // When client B moves, it automatically stops following client A.
+        editor_b2.update(cx_b, |editor, cx| editor.move_right(&editor::MoveRight, cx));
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            None
+        );
+
+        workspace_b
+            .update(cx_b, |workspace, cx| {
+                workspace.toggle_follow(&leader_id.into(), cx).unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            Some(leader_id)
+        );
+
+        // When client B edits, it automatically stops following client A.
+        editor_b2.update(cx_b, |editor, cx| editor.insert("X", cx));
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            None
+        );
+
+        workspace_b
+            .update(cx_b, |workspace, cx| {
+                workspace.toggle_follow(&leader_id.into(), cx).unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            Some(leader_id)
+        );
+
+        // When client B scrolls, it automatically stops following client A.
+        editor_b2.update(cx_b, |editor, cx| {
+            editor.set_scroll_position(vec2f(0., 3.), cx)
+        });
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            None
         );
     }
 

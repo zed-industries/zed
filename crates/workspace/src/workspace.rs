@@ -1750,7 +1750,7 @@ impl Workspace {
         None
     }
 
-    fn leader_for_pane(&self, pane: &ViewHandle<Pane>) -> Option<PeerId> {
+    pub fn leader_for_pane(&self, pane: &ViewHandle<Pane>) -> Option<PeerId> {
         self.follower_states_by_leader
             .iter()
             .find_map(|(leader_id, state)| {

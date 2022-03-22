@@ -58,7 +58,7 @@ impl FollowableItem for Editor {
                                 .collect::<Vec<_>>()
                         };
                         if !selections.is_empty() {
-                            editor.set_selections(selections.into(), None, cx);
+                            editor.set_selections(selections.into(), None, false, cx);
                         }
                         editor
                     })
@@ -104,7 +104,7 @@ impl FollowableItem for Editor {
         _: &AppContext,
     ) -> Option<update_view::Variant> {
         match event {
-            Event::ScrollPositionChanged | Event::SelectionsChanged => {
+            Event::ScrollPositionChanged { .. } | Event::SelectionsChanged { .. } => {
                 Some(update_view::Variant::Editor(update_view::Editor {
                     scroll_top: self
                         .scroll_top_anchor
@@ -138,10 +138,11 @@ impl FollowableItem for Editor {
                             text_anchor: language::proto::deserialize_anchor(anchor)
                                 .ok_or_else(|| anyhow!("invalid scroll top"))?,
                         }),
+                        false,
                         cx,
                     );
                 } else {
-                    self.set_scroll_top_anchor(None, cx);
+                    self.set_scroll_top_anchor(None, false, cx);
                 }
 
                 let selections = message
@@ -152,15 +153,20 @@ impl FollowableItem for Editor {
                     })
                     .collect::<Vec<_>>();
                 if !selections.is_empty() {
-                    self.set_selections(selections.into(), None, cx);
+                    self.set_selections(selections.into(), None, false, cx);
                 }
             }
         }
         Ok(())
     }
 
-    fn should_unfollow_on_event(event: &Self::Event, cx: &AppContext) -> bool {
-        false
+    fn should_unfollow_on_event(event: &Self::Event, _: &AppContext) -> bool {
+        match event {
+            Event::Edited { local } => *local,
+            Event::SelectionsChanged { local } => *local,
+            Event::ScrollPositionChanged { local } => *local,
+            _ => false,
+        }
     }
 }
 

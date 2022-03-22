@@ -1035,14 +1035,19 @@ impl Editor {
             self.scroll_top_anchor = Some(anchor);
         }
 
-        cx.emit(Event::ScrollPositionChanged);
+        cx.emit(Event::ScrollPositionChanged { local: true });
         cx.notify();
     }
 
-    fn set_scroll_top_anchor(&mut self, anchor: Option<Anchor>, cx: &mut ViewContext<Self>) {
+    fn set_scroll_top_anchor(
+        &mut self,
+        anchor: Option<Anchor>,
+        local: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.scroll_position = Vector2F::zero();
         self.scroll_top_anchor = anchor;
-        cx.emit(Event::ScrollPositionChanged);
+        cx.emit(Event::ScrollPositionChanged { local });
         cx.notify();
     }
 
@@ -1267,7 +1272,7 @@ impl Editor {
             _ => {}
         }
 
-        self.set_selections(self.selections.clone(), Some(pending), cx);
+        self.set_selections(self.selections.clone(), Some(pending), true, cx);
     }
 
     fn begin_selection(
@@ -1347,7 +1352,12 @@ impl Editor {
         } else {
             selections = Arc::from([]);
         }
-        self.set_selections(selections, Some(PendingSelection { selection, mode }), cx);
+        self.set_selections(
+            selections,
+            Some(PendingSelection { selection, mode }),
+            true,
+            cx,
+        );
 
         cx.notify();
     }
@@ -1461,7 +1471,7 @@ impl Editor {
                 pending.selection.end = buffer.anchor_before(head);
                 pending.selection.reversed = false;
             }
-            self.set_selections(self.selections.clone(), Some(pending), cx);
+            self.set_selections(self.selections.clone(), Some(pending), true, cx);
         } else {
             log::error!("update_selection dispatched with no pending selection");
             return;
@@ -1548,7 +1558,7 @@ impl Editor {
             if selections.is_empty() {
                 selections = Arc::from([pending.selection]);
             }
-            self.set_selections(selections, None, cx);
+            self.set_selections(selections, None, true, cx);
             self.request_autoscroll(Autoscroll::Fit, cx);
         } else {
             let mut oldest_selection = self.oldest_selection::<usize>(&cx);
@@ -1895,7 +1905,7 @@ impl Editor {
                 }
                 drop(snapshot);
 
-                self.set_selections(selections.into(), None, cx);
+                self.set_selections(selections.into(), None, true, cx);
                 true
             }
         } else {
@@ -3294,7 +3304,7 @@ impl Editor {
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
             if let Some((selections, _)) = self.selection_history.get(&tx_id).cloned() {
-                self.set_selections(selections, None, cx);
+                self.set_selections(selections, None, true, cx);
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
         }
@@ -3303,7 +3313,7 @@ impl Editor {
     pub fn redo(&mut self, _: &Redo, cx: &mut ViewContext<Self>) {
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
             if let Some((_, Some(selections))) = self.selection_history.get(&tx_id).cloned() {
-                self.set_selections(selections, None, cx);
+                self.set_selections(selections, None, true, cx);
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
         }
@@ -4967,6 +4977,7 @@ impl Editor {
                 }
             })),
             None,
+            true,
             cx,
         );
     }
@@ -5027,6 +5038,7 @@ impl Editor {
         &mut self,
         selections: Arc<[Selection<Anchor>]>,
         pending_selection: Option<PendingSelection>,
+        local: bool,
         cx: &mut ViewContext<Self>,
     ) {
         assert!(
@@ -5095,7 +5107,7 @@ impl Editor {
         self.refresh_document_highlights(cx);
 
         self.pause_cursor_blinking(cx);
-        cx.emit(Event::SelectionsChanged);
+        cx.emit(Event::SelectionsChanged { local });
     }
 
     pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
@@ -5508,10 +5520,10 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            language::Event::Edited => {
+            language::Event::Edited { local } => {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
-                cx.emit(Event::Edited);
+                cx.emit(Event::Edited { local: *local });
             }
             language::Event::Dirtied => cx.emit(Event::Dirtied),
             language::Event::Saved => cx.emit(Event::Saved),
@@ -5638,13 +5650,13 @@ fn compute_scroll_position(
 #[derive(Copy, Clone)]
 pub enum Event {
     Activate,
-    Edited,
+    Edited { local: bool },
     Blurred,
     Dirtied,
     Saved,
     TitleChanged,
-    SelectionsChanged,
-    ScrollPositionChanged,
+    SelectionsChanged { local: bool },
+    ScrollPositionChanged { local: bool },
     Closed,
 }
 

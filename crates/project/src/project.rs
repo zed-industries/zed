@@ -1178,7 +1178,7 @@ impl Project {
                 });
                 cx.background().spawn(request).detach_and_log_err(cx);
             }
-            BufferEvent::Edited => {
+            BufferEvent::Edited { .. } => {
                 let language_server = self
                     .language_server_for_buffer(buffer.read(cx), cx)?
                     .clone();
@@ -6227,7 +6227,10 @@ mod tests {
             assert!(buffer.is_dirty());
             assert_eq!(
                 *events.borrow(),
-                &[language::Event::Edited, language::Event::Dirtied]
+                &[
+                    language::Event::Edited { local: true },
+                    language::Event::Dirtied
+                ]
             );
             events.borrow_mut().clear();
             buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), None, cx);
@@ -6250,9 +6253,9 @@ mod tests {
             assert_eq!(
                 *events.borrow(),
                 &[
-                    language::Event::Edited,
+                    language::Event::Edited { local: true },
                     language::Event::Dirtied,
-                    language::Event::Edited,
+                    language::Event::Edited { local: true },
                 ],
             );
             events.borrow_mut().clear();
@@ -6264,7 +6267,7 @@ mod tests {
             assert!(buffer.is_dirty());
         });
 
-        assert_eq!(*events.borrow(), &[language::Event::Edited]);
+        assert_eq!(*events.borrow(), &[language::Event::Edited { local: true }]);
 
         // When a file is deleted, the buffer is considered dirty.
         let events = Rc::new(RefCell::new(Vec::new()));

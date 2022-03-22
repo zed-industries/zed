@@ -328,7 +328,7 @@ impl ProjectSymbolsView {
     ) {
         match event {
             editor::Event::Blurred => cx.emit(Event::Dismissed),
-            editor::Event::Edited => self.update_matches(cx),
+            editor::Event::Edited { .. } => self.update_matches(cx),
             _ => {}
         }
     }
