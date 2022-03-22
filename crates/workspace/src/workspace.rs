@@ -1203,6 +1203,7 @@ impl Workspace {
             self.panes.retain(|p| p != &pane);
             self.activate_pane(self.panes.last().unwrap().clone(), cx);
             self.unfollow(&pane, cx);
+            self.last_leaders_by_pane.remove(&pane.downgrade());
             cx.notify();
         }
     }
