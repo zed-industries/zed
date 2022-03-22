@@ -111,7 +111,7 @@ impl Member {
                         .editor
                         .replica_selection_style(leader.replica_id)
                         .cursor;
-                    border = Border::all(1.0, leader_color);
+                    border = Border::all(theme.workspace.leader_border_width, leader_color);
                     border
                         .color
                         .fade_out(1. - theme.workspace.leader_border_opacity);
