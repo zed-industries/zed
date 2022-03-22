@@ -1111,21 +1111,18 @@ impl MutableAppContext {
         E: Any,
         F: 'static + FnMut(&E, &mut Self),
     {
-        let id = post_inc(&mut self.next_subscription_id);
+        let subscription_id = post_inc(&mut self.next_subscription_id);
         let type_id = TypeId::of::<E>();
-        self.global_subscriptions
-            .lock()
-            .entry(type_id)
-            .or_default()
-            .insert(
-                id,
-                Some(Box::new(move |payload, cx| {
-                    let payload = payload.downcast_ref().expect("downcast is type safe");
-                    callback(payload, cx)
-                })),
-            );
+        self.pending_effects.push_back(Effect::SubscribeGlobal {
+            type_id,
+            subscription_id,
+            callback: Box::new(move |payload, cx| {
+                let payload = payload.downcast_ref().expect("downcast is type safe");
+                callback(payload, cx)
+            }),
+        });
         Subscription::GlobalSubscription {
-            id,
+            id: subscription_id,
             type_id,
             subscriptions: Some(Arc::downgrade(&self.global_subscriptions)),
         }
@@ -1659,6 +1656,13 @@ impl MutableAppContext {
                             callback,
                         } => self.handle_subscribe_effect(entity_id, subscription_id, callback),
                         Effect::Event { entity_id, payload } => self.emit_event(entity_id, payload),
+                        Effect::SubscribeGlobal {
+                            type_id,
+                            subscription_id,
+                            callback,
+                        } => {
+                            self.handle_subscribe_global_effect(type_id, subscription_id, callback)
+                        }
                         Effect::GlobalEvent { payload } => self.emit_global_event(payload),
                         Effect::ModelNotification { model_id } => {
                             self.notify_model_observers(model_id)
@@ -1821,6 +1825,30 @@ impl MutableAppContext {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    fn handle_subscribe_global_effect(
+        &mut self,
+        type_id: TypeId,
+        subscription_id: usize,
+        callback: GlobalSubscriptionCallback,
+    ) {
+        match self
+            .global_subscriptions
+            .lock()
+            .entry(type_id)
+            .or_default()
+            .entry(subscription_id)
+        {
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(Some(callback));
+            }
+            // Subscription was dropped before effect was processed
+            btree_map::Entry::Occupied(entry) => {
+                debug_assert!(entry.get().is_none());
+                entry.remove();
             }
         }
     }
@@ -2270,6 +2298,11 @@ pub enum Effect {
         entity_id: usize,
         payload: Box<dyn Any>,
     },
+    SubscribeGlobal {
+        type_id: TypeId,
+        subscription_id: usize,
+        callback: GlobalSubscriptionCallback,
+    },
     GlobalEvent {
         payload: Box<dyn Any>,
     },
@@ -2302,13 +2335,27 @@ pub enum Effect {
 impl Debug for Effect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Effect::Subscribe { entity_id, .. } => f
+            Effect::Subscribe {
+                entity_id,
+                subscription_id,
+                ..
+            } => f
                 .debug_struct("Effect::Subscribe")
                 .field("entity_id", entity_id)
+                .field("subscription_id", subscription_id)
                 .finish(),
             Effect::Event { entity_id, .. } => f
                 .debug_struct("Effect::Event")
                 .field("entity_id", entity_id)
+                .finish(),
+            Effect::SubscribeGlobal {
+                type_id,
+                subscription_id,
+                ..
+            } => f
+                .debug_struct("Effect::Subscribe")
+                .field("type_id", type_id)
+                .field("subscription_id", subscription_id)
                 .finish(),
             Effect::GlobalEvent { payload, .. } => f
                 .debug_struct("Effect::GlobalEvent")
@@ -4793,6 +4840,39 @@ mod tests {
                 ("Second", GlobalEvent(3)),
             ]
         );
+    }
+
+    #[crate::test(self)]
+    fn test_global_events_emitted_before_subscription(cx: &mut MutableAppContext) {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            {
+                let events = events.clone();
+                drop(cx.subscribe_global(move |_: &(), _| {
+                    events.borrow_mut().push("dropped before emit");
+                }));
+            }
+
+            {
+                let events = events.clone();
+                cx.subscribe_global(move |_: &(), _| {
+                    events.borrow_mut().push("before emit");
+                })
+                .detach();
+            }
+
+            cx.emit_global(());
+
+            {
+                let events = events.clone();
+                cx.subscribe_global(move |_: &(), _| {
+                    events.borrow_mut().push("after emit");
+                })
+                .detach();
+            }
+        });
+
+        assert_eq!(*events.borrow(), ["before emit"]);
     }
 
     #[crate::test(self)]
