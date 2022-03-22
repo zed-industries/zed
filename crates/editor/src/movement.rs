@@ -1,20 +1,19 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{char_kind, CharKind, ToPoint};
-use anyhow::Result;
 use language::Point;
 use std::ops::Range;
 
-pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> Result<DisplayPoint> {
+pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     if point.column() > 0 {
         *point.column_mut() -= 1;
     } else if point.row() > 0 {
         *point.row_mut() -= 1;
         *point.column_mut() = map.line_len(point.row());
     }
-    Ok(map.clip_point(point, Bias::Left))
+    map.clip_point(point, Bias::Left)
 }
 
-pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> Result<DisplayPoint> {
+pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     let max_column = map.line_len(point.row());
     if point.column() < max_column {
         *point.column_mut() += 1;
@@ -22,14 +21,14 @@ pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> Result<DisplayPo
         *point.row_mut() += 1;
         *point.column_mut() = 0;
     }
-    Ok(map.clip_point(point, Bias::Right))
+    map.clip_point(point, Bias::Right)
 }
 
 pub fn up(
     map: &DisplaySnapshot,
     start: DisplayPoint,
     goal: SelectionGoal,
-) -> Result<(DisplayPoint, SelectionGoal)> {
+) -> (DisplayPoint, SelectionGoal) {
     let mut goal_column = if let SelectionGoal::Column(column) = goal {
         column
     } else {
@@ -54,17 +53,17 @@ pub fn up(
         Bias::Right
     };
 
-    Ok((
+    (
         map.clip_point(point, clip_bias),
         SelectionGoal::Column(goal_column),
-    ))
+    )
 }
 
 pub fn down(
     map: &DisplaySnapshot,
     start: DisplayPoint,
     goal: SelectionGoal,
-) -> Result<(DisplayPoint, SelectionGoal)> {
+) -> (DisplayPoint, SelectionGoal) {
     let mut goal_column = if let SelectionGoal::Column(column) = goal {
         column
     } else {
@@ -86,10 +85,10 @@ pub fn down(
         Bias::Right
     };
 
-    Ok((
+    (
         map.clip_point(point, clip_bias),
         SelectionGoal::Column(goal_column),
-    ))
+    )
 }
 
 pub fn line_beginning(
@@ -267,7 +266,7 @@ pub fn surrounding_word(map: &DisplaySnapshot, position: DisplayPoint) -> Range<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Buffer, DisplayMap, MultiBuffer};
+    use crate::{test::marked_text, Buffer, DisplayMap, MultiBuffer};
     use language::Point;
 
     #[gpui::test]
@@ -487,50 +486,49 @@ mod tests {
             );
             multibuffer
         });
-
         let display_map =
             cx.add_model(|cx| DisplayMap::new(multibuffer, 2, font_id, 14.0, None, 2, 2, cx));
-
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+
         assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");
 
         // Can't move up into the first excerpt's header
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(2, 2), SelectionGoal::Column(2)).unwrap(),
+            up(&snapshot, DisplayPoint::new(2, 2), SelectionGoal::Column(2)),
             (DisplayPoint::new(2, 0), SelectionGoal::Column(0)),
         );
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(2, 0), SelectionGoal::None).unwrap(),
+            up(&snapshot, DisplayPoint::new(2, 0), SelectionGoal::None),
             (DisplayPoint::new(2, 0), SelectionGoal::Column(0)),
         );
 
         // Move up and down within first excerpt
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(4)).unwrap(),
+            up(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(4)),
             (DisplayPoint::new(2, 3), SelectionGoal::Column(4)),
         );
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(2, 3), SelectionGoal::Column(4)).unwrap(),
+            down(&snapshot, DisplayPoint::new(2, 3), SelectionGoal::Column(4)),
             (DisplayPoint::new(3, 4), SelectionGoal::Column(4)),
         );
 
         // Move up and down across second excerpt's header
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(6, 5), SelectionGoal::Column(5)).unwrap(),
+            up(&snapshot, DisplayPoint::new(6, 5), SelectionGoal::Column(5)),
             (DisplayPoint::new(3, 4), SelectionGoal::Column(5)),
         );
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(5)).unwrap(),
+            down(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(5)),
             (DisplayPoint::new(6, 5), SelectionGoal::Column(5)),
         );
 
         // Can't move down off the end
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(7, 0), SelectionGoal::Column(0)).unwrap(),
+            down(&snapshot, DisplayPoint::new(7, 0), SelectionGoal::Column(0)),
             (DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
         );
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(7, 2), SelectionGoal::Column(2)).unwrap(),
+            down(&snapshot, DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
             (DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
         );
     }
@@ -540,15 +538,7 @@ mod tests {
         text: &str,
         cx: &mut gpui::MutableAppContext,
     ) -> (DisplaySnapshot, Vec<DisplayPoint>) {
-        let mut marked_offsets = Vec::new();
-        let chunks = text.split('|');
-        let mut text = String::new();
-
-        for chunk in chunks {
-            text.push_str(chunk);
-            marked_offsets.push(text.len());
-        }
-        marked_offsets.pop();
+        let (unmarked_text, markers) = marked_text(text);
 
         let tab_size = 4;
         let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
@@ -558,15 +548,15 @@ mod tests {
             .unwrap();
         let font_size = 14.0;
 
-        let buffer = MultiBuffer::build_simple(&text, cx);
+        let buffer = MultiBuffer::build_simple(&unmarked_text, cx);
         let display_map = cx
             .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
-        let marked_display_points = marked_offsets
+        let markers = markers
             .into_iter()
             .map(|offset| offset.to_display_point(&snapshot))
             .collect();
 
-        (snapshot, marked_display_points)
+        (snapshot, markers)
     }
 }
