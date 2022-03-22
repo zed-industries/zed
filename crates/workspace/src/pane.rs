@@ -396,8 +396,10 @@ impl Pane {
                 cx.emit(Event::ActivateItem { local });
             }
             self.update_active_toolbar(cx);
-            self.focus_active_item(cx);
-            self.activate(cx);
+            if local {
+                self.focus_active_item(cx);
+                self.activate(cx);
+            }
             cx.notify();
         }
     }

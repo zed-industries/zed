@@ -4420,6 +4420,7 @@ mod tests {
                 "1.txt": "one",
                 "2.txt": "two",
                 "3.txt": "three",
+                "4.txt": "four",
             }),
         )
         .await;
@@ -4441,6 +4442,7 @@ mod tests {
 
         // Client A opens some editors.
         let workspace_a = client_a.build_workspace(&project_a, cx_a);
+        let pane_a1 = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
         let _editor_a1 = workspace_a
             .update(cx_a, |workspace, cx| {
                 workspace.open_path((worktree_id, "1.txt"), cx)
@@ -4452,6 +4454,7 @@ mod tests {
 
         // Client B opens an editor.
         let workspace_b = client_b.build_workspace(&project_b, cx_b);
+        let pane_b1 = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
         let _editor_b1 = workspace_b
             .update(cx_b, |workspace, cx| {
                 workspace.open_path((worktree_id, "2.txt"), cx)
@@ -4465,6 +4468,7 @@ mod tests {
         workspace_a
             .update(cx_a, |workspace, cx| {
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
+                assert_ne!(*workspace.active_pane(), pane_a1);
                 let leader_id = *project_a.read(cx).collaborators().keys().next().unwrap();
                 workspace
                     .toggle_follow(&workspace::ToggleFollow(leader_id), cx)
@@ -4475,6 +4479,7 @@ mod tests {
         workspace_b
             .update(cx_b, |workspace, cx| {
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
+                assert_ne!(*workspace.active_pane(), pane_b1);
                 let leader_id = *project_b.read(cx).collaborators().keys().next().unwrap();
                 workspace
                     .toggle_follow(&workspace::ToggleFollow(leader_id), cx)
@@ -4490,9 +4495,24 @@ mod tests {
             })
             .await
             .unwrap();
+        workspace_b
+            .update(cx_a, |workspace, cx| {
+                workspace.activate_next_pane(cx);
+                workspace.open_path((worktree_id, "4.txt"), cx)
+            })
+            .await
+            .unwrap();
+        cx_a.foreground().run_until_parked();
+
+        // Ensure leader updates don't change the active pane of followers
+        workspace_a.read_with(cx_a, |workspace, cx| {
+            assert_ne!(*workspace.active_pane(), pane_a1);
+        });
+        workspace_b.read_with(cx_b, |workspace, cx| {
+            assert_ne!(*workspace.active_pane(), pane_b1);
+        });
 
         // Ensure peers following each other doesn't cause an infinite loop.
-        cx_a.foreground().run_until_parked();
         assert_eq!(
             workspace_b.read_with(cx_b, |workspace, cx| workspace
                 .active_item(cx)
