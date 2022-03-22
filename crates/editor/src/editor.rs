@@ -796,6 +796,8 @@ pub struct NavigationData {
     offset: usize,
 }
 
+pub struct EditorCreated(pub ViewHandle<Editor>);
+
 impl Editor {
     pub fn single_line(
         field_editor_style: Option<GetFieldEditorTheme>,
@@ -932,6 +934,10 @@ impl Editor {
             cursor_shape: Default::default(),
         };
         this.end_selection(cx);
+
+        let editor_created_event = EditorCreated(cx.handle());
+        cx.emit_global(editor_created_event);
+
         this
     }
 
@@ -5554,8 +5560,16 @@ pub enum Event {
     Closed,
 }
 
+pub struct EditorFocused(pub ViewHandle<Editor>);
+pub struct EditorBlurred(pub ViewHandle<Editor>);
+pub struct EditorReleased(pub WeakViewHandle<Editor>);
+
 impl Entity for Editor {
     type Event = Event;
+
+    fn release(&mut self, cx: &mut MutableAppContext) {
+        cx.emit_global(EditorReleased(self.handle.clone()));
+    }
 }
 
 impl View for Editor {
@@ -5572,6 +5586,8 @@ impl View for Editor {
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+        let focused_event = EditorFocused(cx.handle());
+        cx.emit_global(focused_event);
         if let Some(rename) = self.pending_rename.as_ref() {
             cx.focus(&rename.editor);
         } else {
@@ -5585,6 +5601,8 @@ impl View for Editor {
     }
 
     fn on_blur(&mut self, cx: &mut ViewContext<Self>) {
+        let blurred_event = EditorBlurred(cx.handle());
+        cx.emit_global(blurred_event);
         self.focused = false;
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
