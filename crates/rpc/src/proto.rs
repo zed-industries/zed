@@ -202,7 +202,7 @@ messages!(
     (UnregisterProject, Foreground),
     (UnregisterWorktree, Foreground),
     (UnshareProject, Foreground),
-    (UpdateBuffer, Background),
+    (UpdateBuffer, Foreground),
     (UpdateBufferFile, Foreground),
     (UpdateContacts, Foreground),
     (UpdateDiagnosticSummary, Foreground),
