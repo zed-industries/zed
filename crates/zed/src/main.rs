@@ -9,7 +9,6 @@ use gpui::{App, AssetSource, Task};
 use log::LevelFilter;
 use parking_lot::Mutex;
 use project::Fs;
-use simplelog::SimpleLogger;
 use smol::process::Command;
 use std::{env, fs, path::PathBuf, sync::Arc};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
@@ -142,11 +141,10 @@ fn main() {
 }
 
 fn init_logger() {
-    let level = LevelFilter::Info;
-
     if stdout_is_a_pty() {
-        SimpleLogger::init(level, Default::default()).expect("could not initialize logger");
+        env_logger::init();
     } else {
+        let level = LevelFilter::Info;
         let log_dir_path = dirs::home_dir()
             .expect("could not locate home directory for logging")
             .join("Library/Logs/");
