@@ -132,68 +132,110 @@ pub fn line_end(
     }
 }
 
-pub fn prev_word_boundary(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
-    let mut line_start = 0;
-    if point.row() > 0 {
-        if let Some(indent) = map.soft_wrap_indent(point.row() - 1) {
-            line_start = indent;
-        }
-    }
-
-    if point.column() == line_start {
-        if point.row() == 0 {
-            return DisplayPoint::new(0, 0);
-        } else {
-            let row = point.row() - 1;
-            point = map.clip_point(DisplayPoint::new(row, map.line_len(row)), Bias::Left);
-        }
-    }
-
-    let mut boundary = DisplayPoint::new(point.row(), 0);
-    let mut column = 0;
-    let mut prev_char_kind = CharKind::Newline;
-    for c in map.chars_at(DisplayPoint::new(point.row(), 0)) {
-        if column >= point.column() {
-            break;
-        }
-
-        let char_kind = char_kind(c);
-        if char_kind != prev_char_kind
-            && char_kind != CharKind::Whitespace
-            && char_kind != CharKind::Newline
-        {
-            *boundary.column_mut() = column;
-        }
-
-        prev_char_kind = char_kind;
-        column += c.len_utf8() as u32;
-    }
-    boundary
+pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    find_preceding_boundary(map, point, |left, right| {
+        (char_kind(left) != char_kind(right) && !right.is_whitespace()) || left == '\n'
+    })
 }
 
-pub fn next_word_boundary(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
-    let mut prev_char_kind = None;
-    for c in map.chars_at(point) {
-        let char_kind = char_kind(c);
-        if let Some(prev_char_kind) = prev_char_kind {
-            if c == '\n' {
+pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    find_preceding_boundary(map, point, |left, right| {
+        let is_word_start = char_kind(left) != char_kind(right) && !right.is_whitespace();
+        let is_subword_start =
+            left == '_' && right != '_' || left.is_lowercase() && right.is_uppercase();
+        is_word_start || is_subword_start || left == '\n'
+    })
+}
+
+pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    find_boundary(map, point, |left, right| {
+        (char_kind(left) != char_kind(right) && !left.is_whitespace()) || right == '\n'
+    })
+}
+
+pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    find_boundary(map, point, |left, right| {
+        let is_word_end = (char_kind(left) != char_kind(right)) && !left.is_whitespace();
+        let is_subword_end =
+            left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
+        is_word_end || is_subword_end || right == '\n'
+    })
+}
+
+/// Scans for a boundary from the start of each line preceding the given end point until a boundary
+/// is found, indicated by the given predicate returning true. The predicate is called with the
+/// character to the left and right of the candidate boundary location, and will be called with `\n`
+/// characters indicating the start or end of a line. If the predicate returns true multiple times
+/// on a line, the *rightmost* boundary is returned.
+pub fn find_preceding_boundary(
+    map: &DisplaySnapshot,
+    end: DisplayPoint,
+    mut is_boundary: impl FnMut(char, char) -> bool,
+) -> DisplayPoint {
+    let mut point = end;
+    loop {
+        *point.column_mut() = 0;
+        if point.row() > 0 {
+            if let Some(indent) = map.soft_wrap_indent(point.row() - 1) {
+                *point.column_mut() = indent;
+            }
+        }
+
+        let mut boundary = None;
+        let mut prev_ch = if point.is_zero() { None } else { Some('\n') };
+        for ch in map.chars_at(point) {
+            if point >= end {
                 break;
             }
-            if prev_char_kind != char_kind
-                && prev_char_kind != CharKind::Whitespace
-                && prev_char_kind != CharKind::Newline
-            {
+
+            if let Some(prev_ch) = prev_ch {
+                if is_boundary(prev_ch, ch) {
+                    boundary = Some(point);
+                }
+            }
+
+            if ch == '\n' {
+                break;
+            }
+
+            prev_ch = Some(ch);
+            *point.column_mut() += ch.len_utf8() as u32;
+        }
+
+        if let Some(boundary) = boundary {
+            return boundary;
+        } else if point.row() == 0 {
+            return DisplayPoint::zero();
+        } else {
+            *point.row_mut() -= 1;
+        }
+    }
+}
+
+/// Scans for a boundary following the given start point until a boundary is found, indicated by the
+/// given predicate returning true. The predicate is called with the character to the left and right
+/// of the candidate boundary location, and will be called with `\n` characters indicating the start
+/// or end of a line.
+pub fn find_boundary(
+    map: &DisplaySnapshot,
+    mut point: DisplayPoint,
+    mut is_boundary: impl FnMut(char, char) -> bool,
+) -> DisplayPoint {
+    let mut prev_ch = None;
+    for ch in map.chars_at(point) {
+        if let Some(prev_ch) = prev_ch {
+            if is_boundary(prev_ch, ch) {
                 break;
             }
         }
 
-        if c == '\n' {
+        if ch == '\n' {
             *point.row_mut() += 1;
             *point.column_mut() = 0;
         } else {
-            *point.column_mut() += c.len_utf8() as u32;
+            *point.column_mut() += ch.len_utf8() as u32;
         }
-        prev_char_kind = Some(char_kind);
+        prev_ch = Some(ch);
     }
     map.clip_point(point, Bias::Right)
 }
@@ -227,6 +269,202 @@ mod tests {
     use super::*;
     use crate::{Buffer, DisplayMap, MultiBuffer};
     use language::Point;
+
+    #[gpui::test]
+    fn test_previous_word_start(cx: &mut gpui::MutableAppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
+            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            assert_eq!(
+                previous_word_start(&snapshot, display_points[1]),
+                display_points[0]
+            );
+        }
+
+        assert("\n|   |lorem", cx);
+        assert("|\n|   lorem", cx);
+        assert("    |lorem|", cx);
+        assert("|    |lorem", cx);
+        assert("    |lor|em", cx);
+        assert("\nlorem\n|   |ipsum", cx);
+        assert("\n\n|\n|", cx);
+        assert("    |lorem  |ipsum", cx);
+        assert("lorem|-|ipsum", cx);
+        assert("lorem|-#$@|ipsum", cx);
+        assert("|lorem_|ipsum", cx);
+        assert(" |defγ|", cx);
+        assert(" |bcΔ|", cx);
+        assert(" ab|——|cd", cx);
+    }
+
+    #[gpui::test]
+    fn test_previous_subword_start(cx: &mut gpui::MutableAppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
+            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            assert_eq!(
+                previous_subword_start(&snapshot, display_points[1]),
+                display_points[0]
+            );
+        }
+
+        // Subword boundaries are respected
+        assert("lorem_|ip|sum", cx);
+        assert("lorem_|ipsum|", cx);
+        assert("|lorem_|ipsum", cx);
+        assert("lorem_|ipsum_|dolor", cx);
+        assert("lorem|Ip|sum", cx);
+        assert("lorem|Ipsum|", cx);
+
+        // Word boundaries are still respected
+        assert("\n|   |lorem", cx);
+        assert("    |lorem|", cx);
+        assert("    |lor|em", cx);
+        assert("\nlorem\n|   |ipsum", cx);
+        assert("\n\n|\n|", cx);
+        assert("    |lorem  |ipsum", cx);
+        assert("lorem|-|ipsum", cx);
+        assert("lorem|-#$@|ipsum", cx);
+        assert(" |defγ|", cx);
+        assert(" bc|Δ|", cx);
+        assert(" |bcδ|", cx);
+        assert(" ab|——|cd", cx);
+    }
+
+    #[gpui::test]
+    fn test_find_preceding_boundary(cx: &mut gpui::MutableAppContext) {
+        fn assert(
+            marked_text: &str,
+            cx: &mut gpui::MutableAppContext,
+            is_boundary: impl FnMut(char, char) -> bool,
+        ) {
+            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            assert_eq!(
+                find_preceding_boundary(&snapshot, display_points[1], is_boundary),
+                display_points[0]
+            );
+        }
+
+        assert("abc|def\ngh\nij|k", cx, |left, right| {
+            left == 'c' && right == 'd'
+        });
+        assert("abcdef\n|gh\nij|k", cx, |left, right| {
+            left == '\n' && right == 'g'
+        });
+        let mut line_count = 0;
+        assert("abcdef\n|gh\nij|k", cx, |left, _| {
+            if left == '\n' {
+                line_count += 1;
+                line_count == 2
+            } else {
+                false
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn test_next_word_end(cx: &mut gpui::MutableAppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
+            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            assert_eq!(
+                next_word_end(&snapshot, display_points[0]),
+                display_points[1]
+            );
+        }
+
+        assert("\n|   lorem|", cx);
+        assert("    |lorem|", cx);
+        assert("    lor|em|", cx);
+        assert("    lorem|    |\nipsum\n", cx);
+        assert("\n|\n|\n\n", cx);
+        assert("lorem|    ipsum|   ", cx);
+        assert("lorem|-|ipsum", cx);
+        assert("lorem|#$@-|ipsum", cx);
+        assert("lorem|_ipsum|", cx);
+        assert(" |bcΔ|", cx);
+        assert(" ab|——|cd", cx);
+    }
+
+    #[gpui::test]
+    fn test_next_subword_end(cx: &mut gpui::MutableAppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
+            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            assert_eq!(
+                next_subword_end(&snapshot, display_points[0]),
+                display_points[1]
+            );
+        }
+
+        // Subword boundaries are respected
+        assert("lo|rem|_ipsum", cx);
+        assert("|lorem|_ipsum", cx);
+        assert("lorem|_ipsum|", cx);
+        assert("lorem|_ipsum|_dolor", cx);
+        assert("lo|rem|Ipsum", cx);
+        assert("lorem|Ipsum|Dolor", cx);
+
+        // Word boundaries are still respected
+        assert("\n|   lorem|", cx);
+        assert("    |lorem|", cx);
+        assert("    lor|em|", cx);
+        assert("    lorem|    |\nipsum\n", cx);
+        assert("\n|\n|\n\n", cx);
+        assert("lorem|    ipsum|   ", cx);
+        assert("lorem|-|ipsum", cx);
+        assert("lorem|#$@-|ipsum", cx);
+        assert("lorem|_ipsum|", cx);
+        assert(" |bc|Δ", cx);
+        assert(" ab|——|cd", cx);
+    }
+
+    #[gpui::test]
+    fn test_find_boundary(cx: &mut gpui::MutableAppContext) {
+        fn assert(
+            marked_text: &str,
+            cx: &mut gpui::MutableAppContext,
+            is_boundary: impl FnMut(char, char) -> bool,
+        ) {
+            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            assert_eq!(
+                find_boundary(&snapshot, display_points[0], is_boundary),
+                display_points[1]
+            );
+        }
+
+        assert("abc|def\ngh\nij|k", cx, |left, right| {
+            left == 'j' && right == 'k'
+        });
+        assert("ab|cdef\ngh\n|ijk", cx, |left, right| {
+            left == '\n' && right == 'i'
+        });
+        let mut line_count = 0;
+        assert("abc|def\ngh\n|ijk", cx, |left, _| {
+            if left == '\n' {
+                line_count += 1;
+                line_count == 2
+            } else {
+                false
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn test_surrounding_word(cx: &mut gpui::MutableAppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
+            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            assert_eq!(
+                surrounding_word(&snapshot, display_points[1]),
+                display_points[0]..display_points[2]
+            );
+        }
+
+        assert("||lorem|  ipsum", cx);
+        assert("|lo|rem|  ipsum", cx);
+        assert("|lorem||  ipsum", cx);
+        assert("lorem| |  |ipsum", cx);
+        assert("lorem\n|||\nipsum", cx);
+        assert("lorem\n||ipsum|", cx);
+        assert("lorem,|| |ipsum", cx);
+        assert("|lorem||, ipsum", cx);
+    }
 
     #[gpui::test]
     fn test_move_up_and_down_with_excerpts(cx: &mut gpui::MutableAppContext) {
@@ -297,8 +535,21 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    fn test_prev_next_word_boundary_multibyte(cx: &mut gpui::MutableAppContext) {
+    // Returns a snapshot from text containing '|' character markers with the markers removed, and DisplayPoints for each one.
+    fn marked_snapshot(
+        text: &str,
+        cx: &mut gpui::MutableAppContext,
+    ) -> (DisplaySnapshot, Vec<DisplayPoint>) {
+        let mut marked_offsets = Vec::new();
+        let chunks = text.split('|');
+        let mut text = String::new();
+
+        for chunk in chunks {
+            text.push_str(chunk);
+            marked_offsets.push(text.len());
+        }
+        marked_offsets.pop();
+
         let tab_size = 4;
         let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
         let font_id = cx
@@ -307,122 +558,15 @@ mod tests {
             .unwrap();
         let font_size = 14.0;
 
-        let buffer = MultiBuffer::build_simple("a bcΔ defγ hi—jk", cx);
+        let buffer = MultiBuffer::build_simple(&text, cx);
         let display_map = cx
             .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
-        assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 12)),
-            DisplayPoint::new(0, 7)
-        );
-        assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 7)),
-            DisplayPoint::new(0, 2)
-        );
-        assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 6)),
-            DisplayPoint::new(0, 2)
-        );
-        assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 2)),
-            DisplayPoint::new(0, 0)
-        );
-        assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 1)),
-            DisplayPoint::new(0, 0)
-        );
+        let marked_display_points = marked_offsets
+            .into_iter()
+            .map(|offset| offset.to_display_point(&snapshot))
+            .collect();
 
-        assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 0)),
-            DisplayPoint::new(0, 1)
-        );
-        assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 1)),
-            DisplayPoint::new(0, 6)
-        );
-        assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 2)),
-            DisplayPoint::new(0, 6)
-        );
-        assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 6)),
-            DisplayPoint::new(0, 12)
-        );
-        assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 7)),
-            DisplayPoint::new(0, 12)
-        );
-    }
-
-    #[gpui::test]
-    fn test_surrounding_word(cx: &mut gpui::MutableAppContext) {
-        let tab_size = 4;
-        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
-        let font_id = cx
-            .font_cache()
-            .select_font(family_id, &Default::default())
-            .unwrap();
-        let font_size = 14.0;
-        let buffer = MultiBuffer::build_simple("lorem ipsum   dolor\n    sit", cx);
-        let display_map = cx
-            .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
-        let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
-
-        assert_eq!(
-            surrounding_word(&snapshot, DisplayPoint::new(0, 0)),
-            DisplayPoint::new(0, 0)..DisplayPoint::new(0, 5),
-        );
-        assert_eq!(
-            surrounding_word(&snapshot, DisplayPoint::new(0, 2)),
-            DisplayPoint::new(0, 0)..DisplayPoint::new(0, 5),
-        );
-        assert_eq!(
-            surrounding_word(&snapshot, DisplayPoint::new(0, 5)),
-            DisplayPoint::new(0, 0)..DisplayPoint::new(0, 5),
-        );
-        assert_eq!(
-            surrounding_word(&snapshot, DisplayPoint::new(0, 6)),
-            DisplayPoint::new(0, 6)..DisplayPoint::new(0, 11),
-        );
-        assert_eq!(
-            surrounding_word(&snapshot, DisplayPoint::new(0, 7)),
-            DisplayPoint::new(0, 6)..DisplayPoint::new(0, 11),
-        );
-        assert_eq!(
-            surrounding_word(&snapshot, DisplayPoint::new(0, 11)),
-            DisplayPoint::new(0, 6)..DisplayPoint::new(0, 11),
-        );
-        assert_eq!(
-            surrounding_word(&snapshot, DisplayPoint::new(0, 13)),
-            DisplayPoint::new(0, 11)..DisplayPoint::new(0, 14),
-        );
-        assert_eq!(
-            surrounding_word(&snapshot, DisplayPoint::new(0, 14)),
-            DisplayPoint::new(0, 14)..DisplayPoint::new(0, 19),
-        );
-        assert_eq!(
-            surrounding_word(&snapshot, DisplayPoint::new(0, 17)),
-            DisplayPoint::new(0, 14)..DisplayPoint::new(0, 19),
-        );
-        assert_eq!(
-            surrounding_word(&snapshot, DisplayPoint::new(0, 19)),
-            DisplayPoint::new(0, 14)..DisplayPoint::new(0, 19),
-        );
-        assert_eq!(
-            surrounding_word(&snapshot, DisplayPoint::new(1, 0)),
-            DisplayPoint::new(1, 0)..DisplayPoint::new(1, 4),
-        );
-        assert_eq!(
-            surrounding_word(&snapshot, DisplayPoint::new(1, 1)),
-            DisplayPoint::new(1, 0)..DisplayPoint::new(1, 4),
-        );
-        assert_eq!(
-            surrounding_word(&snapshot, DisplayPoint::new(1, 6)),
-            DisplayPoint::new(1, 4)..DisplayPoint::new(1, 7),
-        );
-        assert_eq!(
-            surrounding_word(&snapshot, DisplayPoint::new(1, 7)),
-            DisplayPoint::new(1, 4)..DisplayPoint::new(1, 7),
-        );
+        (snapshot, marked_display_points)
     }
 }

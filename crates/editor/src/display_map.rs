@@ -12,7 +12,7 @@ use gpui::{
     Entity, ModelContext, ModelHandle,
 };
 use language::{Point, Subscription as BufferSubscription};
-use std::{any::TypeId, ops::Range, sync::Arc};
+use std::{any::TypeId, fmt::Debug, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
 use wrap_map::WrapMap;
@@ -414,8 +414,18 @@ impl DisplaySnapshot {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
+#[derive(Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct DisplayPoint(BlockPoint);
+
+impl Debug for DisplayPoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "DisplayPoint({}, {})",
+            self.row(),
+            self.column()
+        ))
+    }
+}
 
 impl DisplayPoint {
     pub fn new(row: u32, column: u32) -> Self {
@@ -426,7 +436,6 @@ impl DisplayPoint {
         Self::new(0, 0)
     }
 
-    #[cfg(test)]
     pub fn is_zero(&self) -> bool {
         self.0.is_zero()
     }

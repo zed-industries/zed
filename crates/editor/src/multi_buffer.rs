@@ -1407,7 +1407,7 @@ impl MultiBufferSnapshot {
         );
 
         for ch in prev_chars {
-            if Some(char_kind(ch)) == word_kind {
+            if Some(char_kind(ch)) == word_kind && ch != '\n' {
                 start -= ch.len_utf8();
             } else {
                 break;
@@ -1415,7 +1415,7 @@ impl MultiBufferSnapshot {
         }
 
         for ch in next_chars {
-            if Some(char_kind(ch)) == word_kind {
+            if Some(char_kind(ch)) == word_kind && ch != '\n' {
                 end += ch.len_utf8();
             } else {
                 break;
