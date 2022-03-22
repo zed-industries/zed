@@ -158,6 +158,10 @@ impl FollowableItem for Editor {
         }
         Ok(())
     }
+
+    fn should_unfollow_on_event(event: &Self::Event, cx: &AppContext) -> bool {
+        false
+    }
 }
 
 fn serialize_selection(selection: &Selection<Anchor>) -> proto::Selection {

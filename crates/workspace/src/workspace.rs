@@ -270,6 +270,7 @@ pub trait FollowableItem: Item {
         message: proto::update_view::Variant,
         cx: &mut ViewContext<Self>,
     ) -> Result<()>;
+    fn should_unfollow_on_event(event: &Self::Event, cx: &AppContext) -> bool;
 }
 
 pub trait FollowableItemHandle: ItemHandle {
@@ -285,6 +286,7 @@ pub trait FollowableItemHandle: ItemHandle {
         message: proto::update_view::Variant,
         cx: &mut MutableAppContext,
     ) -> Result<()>;
+    fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool;
 }
 
 impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
@@ -312,6 +314,14 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
         cx: &mut MutableAppContext,
     ) -> Result<()> {
         self.update(cx, |this, cx| this.apply_update_message(message, cx))
+    }
+
+    fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool {
+        if let Some(event) = event.downcast_ref() {
+            T::should_unfollow_on_event(event, cx)
+        } else {
+            false
+        }
     }
 }
 
@@ -420,6 +430,12 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                 log::error!("unexpected item event after pane was dropped");
                 return;
             };
+
+            if let Some(item) = item.to_followable_item_handle(cx) {
+                if item.should_unfollow_on_event(event, cx) {
+                    workspace.unfollow(&pane, cx);
+                }
+            }
 
             if T::should_close_item_on_event(event) {
                 pane.update(cx, |pane, cx| pane.close_item(item.id(), cx));
