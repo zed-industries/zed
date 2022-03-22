@@ -8,6 +8,7 @@ use crate::{
     AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
 };
 use anyhow::{anyhow, Result};
+use collections::btree_map;
 use keymap::MatchResult;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -1150,25 +1151,22 @@ impl MutableAppContext {
         H: Handle<E>,
         F: 'static + FnMut(H, &E::Event, &mut Self) -> bool,
     {
-        let id = post_inc(&mut self.next_subscription_id);
+        let subscription_id = post_inc(&mut self.next_subscription_id);
         let emitter = handle.downgrade();
-        self.subscriptions
-            .lock()
-            .entry(handle.id())
-            .or_default()
-            .insert(
-                id,
-                Some(Box::new(move |payload, cx| {
-                    if let Some(emitter) = H::upgrade_from(&emitter, cx.as_ref()) {
-                        let payload = payload.downcast_ref().expect("downcast is type safe");
-                        callback(emitter, payload, cx)
-                    } else {
-                        false
-                    }
-                })),
-            );
+        self.pending_effects.push_back(Effect::Subscribe {
+            entity_id: handle.id(),
+            subscription_id,
+            callback: Box::new(move |payload, cx| {
+                if let Some(emitter) = H::upgrade_from(&emitter, cx.as_ref()) {
+                    let payload = payload.downcast_ref().expect("downcast is type safe");
+                    callback(emitter, payload, cx)
+                } else {
+                    false
+                }
+            }),
+        });
         Subscription::Subscription {
-            id,
+            id: subscription_id,
             entity_id: handle.id(),
             subscriptions: Some(Arc::downgrade(&self.subscriptions)),
         }
@@ -1655,6 +1653,11 @@ impl MutableAppContext {
             loop {
                 if let Some(effect) = self.pending_effects.pop_front() {
                     match effect {
+                        Effect::Subscribe {
+                            entity_id,
+                            subscription_id,
+                            callback,
+                        } => self.handle_subscribe_effect(entity_id, subscription_id, callback),
                         Effect::Event { entity_id, payload } => self.emit_event(entity_id, payload),
                         Effect::GlobalEvent { payload } => self.emit_global_event(payload),
                         Effect::ModelNotification { model_id } => {
@@ -1771,6 +1774,30 @@ impl MutableAppContext {
         }
     }
 
+    fn handle_subscribe_effect(
+        &mut self,
+        entity_id: usize,
+        subscription_id: usize,
+        callback: SubscriptionCallback,
+    ) {
+        match self
+            .subscriptions
+            .lock()
+            .entry(entity_id)
+            .or_default()
+            .entry(subscription_id)
+        {
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(Some(callback));
+            }
+            // Subscription was dropped before effect was processed
+            btree_map::Entry::Occupied(entry) => {
+                debug_assert!(entry.get().is_none());
+                entry.remove();
+            }
+        }
+    }
+
     fn emit_event(&mut self, entity_id: usize, payload: Box<dyn Any>) {
         let callbacks = self.subscriptions.lock().remove(&entity_id);
         if let Some(callbacks) = callbacks {
@@ -1785,10 +1812,10 @@ impl MutableAppContext {
                             .or_default()
                             .entry(id)
                         {
-                            collections::btree_map::Entry::Vacant(entry) => {
+                            btree_map::Entry::Vacant(entry) => {
                                 entry.insert(Some(callback));
                             }
-                            collections::btree_map::Entry::Occupied(entry) => {
+                            btree_map::Entry::Occupied(entry) => {
                                 entry.remove();
                             }
                         }
@@ -1812,10 +1839,10 @@ impl MutableAppContext {
                         .or_default()
                         .entry(id)
                     {
-                        collections::btree_map::Entry::Vacant(entry) => {
+                        btree_map::Entry::Vacant(entry) => {
                             entry.insert(Some(callback));
                         }
-                        collections::btree_map::Entry::Occupied(entry) => {
+                        btree_map::Entry::Occupied(entry) => {
                             entry.remove();
                         }
                     }
@@ -1839,10 +1866,10 @@ impl MutableAppContext {
                                 .or_default()
                                 .entry(id)
                             {
-                                collections::btree_map::Entry::Vacant(entry) => {
+                                btree_map::Entry::Vacant(entry) => {
                                     entry.insert(Some(callback));
                                 }
-                                collections::btree_map::Entry::Occupied(entry) => {
+                                btree_map::Entry::Occupied(entry) => {
                                     entry.remove();
                                 }
                             }
@@ -1880,10 +1907,10 @@ impl MutableAppContext {
                                 .or_default()
                                 .entry(id)
                             {
-                                collections::btree_map::Entry::Vacant(entry) => {
+                                btree_map::Entry::Vacant(entry) => {
                                     entry.insert(Some(callback));
                                 }
-                                collections::btree_map::Entry::Occupied(entry) => {
+                                btree_map::Entry::Occupied(entry) => {
                                     entry.remove();
                                 }
                             }
@@ -2234,6 +2261,11 @@ pub struct WindowInvalidation {
 }
 
 pub enum Effect {
+    Subscribe {
+        entity_id: usize,
+        subscription_id: usize,
+        callback: SubscriptionCallback,
+    },
     Event {
         entity_id: usize,
         payload: Box<dyn Any>,
@@ -2270,6 +2302,10 @@ pub enum Effect {
 impl Debug for Effect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Effect::Subscribe { entity_id, .. } => f
+                .debug_struct("Effect::Subscribe")
+                .field("entity_id", entity_id)
+                .finish(),
             Effect::Event { entity_id, .. } => f
                 .debug_struct("Effect::Event")
                 .field("entity_id", entity_id)
@@ -4053,10 +4089,10 @@ impl Drop for Subscription {
                         .or_default()
                         .entry(*id)
                     {
-                        collections::btree_map::Entry::Vacant(entry) => {
+                        btree_map::Entry::Vacant(entry) => {
                             entry.insert(None);
                         }
-                        collections::btree_map::Entry::Occupied(entry) => {
+                        btree_map::Entry::Occupied(entry) => {
                             entry.remove();
                         }
                     }
@@ -4069,10 +4105,10 @@ impl Drop for Subscription {
             } => {
                 if let Some(subscriptions) = subscriptions.as_ref().and_then(Weak::upgrade) {
                     match subscriptions.lock().entry(*type_id).or_default().entry(*id) {
-                        collections::btree_map::Entry::Vacant(entry) => {
+                        btree_map::Entry::Vacant(entry) => {
                             entry.insert(None);
                         }
-                        collections::btree_map::Entry::Occupied(entry) => {
+                        btree_map::Entry::Occupied(entry) => {
                             entry.remove();
                         }
                     }
@@ -4090,10 +4126,10 @@ impl Drop for Subscription {
                         .or_default()
                         .entry(*id)
                     {
-                        collections::btree_map::Entry::Vacant(entry) => {
+                        btree_map::Entry::Vacant(entry) => {
                             entry.insert(None);
                         }
-                        collections::btree_map::Entry::Occupied(entry) => {
+                        btree_map::Entry::Occupied(entry) => {
                             entry.remove();
                         }
                     }
@@ -4375,6 +4411,7 @@ mod tests {
 
         let handle_1 = cx.add_model(|_| Model::default());
         let handle_2 = cx.add_model(|_| Model::default());
+
         handle_1.update(cx, |_, cx| {
             cx.subscribe(&handle_2, move |model: &mut Model, emitter, event, cx| {
                 model.events.push(*event);
@@ -4392,6 +4429,37 @@ mod tests {
 
         handle_2.update(cx, |_, c| c.emit(5));
         assert_eq!(handle_1.read(cx).events, vec![7, 5, 10]);
+    }
+
+    #[crate::test(self)]
+    fn test_model_emit_before_subscribe_in_same_update_cycle(cx: &mut MutableAppContext) {
+        #[derive(Default)]
+        struct Model;
+
+        impl Entity for Model {
+            type Event = ();
+        }
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.add_model(|cx| {
+            drop(cx.subscribe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _, _| events.borrow_mut().push("dropped before flush")
+            }));
+            cx.subscribe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _, _| events.borrow_mut().push("before emit")
+            })
+            .detach();
+            cx.emit(());
+            cx.subscribe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _, _| events.borrow_mut().push("after emit")
+            })
+            .detach();
+            Model
+        });
+        assert_eq!(*events.borrow(), ["before emit"]);
     }
 
     #[crate::test(self)]
@@ -4812,6 +4880,47 @@ mod tests {
 
         emitting_view.update(cx, |_, cx| cx.emit(()));
         observed_model.update(cx, |_, cx| cx.emit(()));
+    }
+
+    #[crate::test(self)]
+    fn test_view_emit_before_subscribe_in_same_update_cycle(cx: &mut MutableAppContext) {
+        #[derive(Default)]
+        struct TestView;
+
+        impl Entity for TestView {
+            type Event = ();
+        }
+
+        impl View for TestView {
+            fn ui_name() -> &'static str {
+                "TestView"
+            }
+
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+                Empty::new().boxed()
+            }
+        }
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.add_window(Default::default(), |cx| {
+            drop(cx.subscribe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _, _| events.borrow_mut().push("dropped before flush")
+            }));
+            cx.subscribe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _, _| events.borrow_mut().push("before emit")
+            })
+            .detach();
+            cx.emit(());
+            cx.subscribe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _, _| events.borrow_mut().push("after emit")
+            })
+            .detach();
+            TestView
+        });
+        assert_eq!(*events.borrow(), ["before emit"]);
     }
 
     #[crate::test(self)]
