@@ -153,6 +153,15 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
     })
 }
 
+pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    find_boundary(map, point, |left, right| {
+        (char_kind(left) != char_kind(right)
+            || left != '_' && right == '_'
+            || left.is_lowercase() && right.is_uppercase())
+            && !left.is_whitespace()
+    })
+}
+
 pub fn find_boundary_reversed(
     map: &DisplaySnapshot,
     mut start: DisplayPoint,
@@ -328,6 +337,38 @@ mod tests {
         assert("lorem|#$@-|ipsum", cx);
         assert("lorem|_ipsum|", cx);
         assert(" |bcΔ|", cx);
+        assert(" ab|——|cd", cx);
+    }
+
+    #[gpui::test]
+    fn test_next_subword_end(cx: &mut gpui::MutableAppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
+            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            assert_eq!(
+                next_subword_end(&snapshot, display_points[0]),
+                display_points[1]
+            );
+        }
+
+        // Subword boundaries are respected
+        assert("lo|rem|_ipsum", cx);
+        assert("|lorem|_ipsum", cx);
+        assert("lorem|_ipsum|", cx);
+        assert("lorem|_ipsum|_dolor", cx);
+        assert("lo|rem|Ipsum", cx);
+        assert("lorem|Ipsum|Dolor", cx);
+
+        // Word boundaries are still respected
+        assert("\n|   lorem|", cx);
+        assert("    |lorem|", cx);
+        assert("    lor|em|", cx);
+        assert("    lorem|    |\nipsum\n", cx);
+        assert("\n|\n|\n\n", cx);
+        assert("lorem|    ipsum|   ", cx);
+        assert("lorem|-|ipsum", cx);
+        assert("lorem|#$@-|ipsum", cx);
+        assert("lorem|_ipsum|", cx);
+        assert(" |bc|Δ", cx);
         assert(" ab|——|cd", cx);
     }
 
