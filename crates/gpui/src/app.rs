@@ -753,6 +753,8 @@ type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type GlobalObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 
+type KeystrokeHookCallback = dyn FnMut(usize, Keystroke, &mut MutableAppContext) -> Vec<Keystroke>;
+
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
     foreground_platform: Rc<dyn platform::ForegroundPlatform>,
@@ -762,6 +764,7 @@ pub struct MutableAppContext {
     actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     global_actions: HashMap<TypeId, Box<GlobalActionCallback>>,
     keystroke_matcher: keymap::Matcher,
+    keystroke_hooks: Vec<Box<KeystrokeHookCallback>>,
     next_entity_id: usize,
     next_window_id: usize,
     next_subscription_id: usize,
@@ -814,6 +817,7 @@ impl MutableAppContext {
             actions: HashMap::new(),
             global_actions: HashMap::new(),
             keystroke_matcher: keymap::Matcher::default(),
+            keystroke_hooks: Default::default(),
             next_entity_id: 0,
             next_window_id: 0,
             next_subscription_id: 0,
@@ -1356,6 +1360,13 @@ impl MutableAppContext {
         })
     }
 
+    pub fn hook_keystrokes(
+        &mut self,
+        callback: impl 'static + FnMut(usize, Keystroke, &mut Self) -> Vec<Keystroke>,
+    ) {
+        self.keystroke_hooks.push(Box::new(callback));
+    }
+
     pub fn add_bindings<T: IntoIterator<Item = keymap::Binding>>(&mut self, bindings: T) {
         self.keystroke_matcher.add_bindings(bindings);
     }
@@ -1377,26 +1388,52 @@ impl MutableAppContext {
                 ));
             }
         }
+        let mut keystroke_hooks = Vec::new();
+        std::mem::swap(&mut keystroke_hooks, &mut self.keystroke_hooks);
 
-        let mut pending = false;
-        for (i, cx) in context_chain.iter().enumerate().rev() {
-            match self
-                .keystroke_matcher
-                .push_keystroke(keystroke.clone(), responder_chain[i], cx)
-            {
-                MatchResult::None => {}
-                MatchResult::Pending => pending = true,
-                MatchResult::Action(action) => {
-                    if self.dispatch_action_any(window_id, &responder_chain[0..=i], action.as_ref())
-                    {
-                        self.keystroke_matcher.clear_pending();
-                        return Ok(true);
+        // Loop over each hook, passing all of the mapped keystrokes from the previous hooks
+        let mapped_keystrokes = keystroke_hooks.iter_mut().fold(
+            vec![keystroke.clone()],
+            |keystrokes, keystroke_hook| {
+                keystrokes
+                    .into_iter()
+                    .flat_map(|keystroke| keystroke_hook(window_id, keystroke, self))
+                    .collect()
+            },
+        );
+
+        std::mem::swap(&mut keystroke_hooks, &mut self.keystroke_hooks);
+        // Hooks consumed the all keystrokes. Consume the underlying event
+        if mapped_keystrokes.is_empty() {
+            return Ok(true);
+        }
+
+        let mut consumed = false;
+        for keystroke in mapped_keystrokes {
+            for (i, cx) in context_chain.iter().enumerate().rev() {
+                match self.keystroke_matcher.push_keystroke(
+                    keystroke.clone(),
+                    responder_chain[i],
+                    cx,
+                ) {
+                    MatchResult::None => {}
+                    MatchResult::Pending => consumed = true,
+                    MatchResult::Action(action) => {
+                        if self.dispatch_action_any(
+                            window_id,
+                            &responder_chain[0..=i],
+                            action.as_ref(),
+                        ) {
+                            self.keystroke_matcher.clear_pending();
+                            consumed = true;
+                            break;
+                        }
                     }
                 }
             }
         }
 
-        Ok(pending)
+        Ok(consumed)
     }
 
     pub fn default_global<T: 'static + Default>(&mut self) -> &T {
@@ -5380,6 +5417,109 @@ mod tests {
         .unwrap();
 
         assert_eq!(&*actions.borrow(), &["3 b", "2 b", "1 b", "global b"]);
+    }
+
+    #[crate::test(self)]
+    fn test_hook_keystrokes(cx: &mut MutableAppContext) {
+        action!(Action, &'static str);
+
+        struct View {
+            keymap_context: keymap::Context,
+        }
+
+        impl Entity for View {
+            type Event = ();
+        }
+
+        impl super::View for View {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+                Empty::new().boxed()
+            }
+
+            fn ui_name() -> &'static str {
+                "View"
+            }
+
+            fn keymap_context(&self, _: &AppContext) -> keymap::Context {
+                self.keymap_context.clone()
+            }
+        }
+
+        impl View {
+            fn new() -> Self {
+                View {
+                    keymap_context: keymap::Context::default(),
+                }
+            }
+        }
+
+        let mut view = View::new();
+        view.keymap_context.set.insert("a".into());
+        view.keymap_context.set.insert("b".into());
+
+        let (window_id, view) = cx.add_window(Default::default(), |_| view);
+
+        cx.add_bindings(vec![keymap::Binding::new("a", Action("a"), Some("a"))]);
+        cx.add_bindings(vec![keymap::Binding::new("b", Action("b"), Some("b"))]);
+
+        let actions = Rc::new(RefCell::new(Vec::new()));
+        {
+            let actions = actions.clone();
+            cx.add_action(move |_: &mut View, Action(binding): &Action, _| {
+                actions.borrow_mut().push(format!("view 1 {binding}"));
+            });
+        }
+
+        // Hook passes on normally
+        {
+            let actions = actions.clone();
+            cx.hook_keystrokes(move |_, keystroke, _| {
+                actions.borrow_mut().push(format!("hook 1 {keystroke}"));
+                vec![keystroke] // Don't consume
+            });
+        }
+
+        cx.dispatch_keystroke(window_id, vec![view.id()], &Keystroke::parse("a").unwrap())
+            .unwrap();
+
+        assert_eq!(&*actions.borrow(), &["hook 1 a", "view 1 a"]);
+
+        // Hook captures and maps the keystroke to b and c
+        actions.borrow_mut().clear();
+        {
+            let actions = actions.clone();
+            cx.hook_keystrokes(move |_, keystroke, _| {
+                actions.borrow_mut().push(format!("hook 2 {keystroke}"));
+                vec![
+                    Keystroke::parse("b").unwrap(),
+                    Keystroke::parse("c").unwrap(),
+                ] // Transform
+            });
+        }
+
+        cx.dispatch_keystroke(window_id, vec![view.id()], &Keystroke::parse("a").unwrap())
+            .unwrap();
+
+        assert_eq!(&*actions.borrow(), &["hook 1 a", "hook 2 a", "view 1 b"]);
+
+        // Hook consumes keybinding
+
+        actions.borrow_mut().clear();
+        {
+            let actions = actions.clone();
+            cx.hook_keystrokes(move |_, keystroke, _| {
+                actions.borrow_mut().push(format!("hook 3 {keystroke}"));
+                vec![] // Consume
+            });
+        }
+
+        cx.dispatch_keystroke(window_id, vec![view.id()], &Keystroke::parse("a").unwrap())
+            .unwrap();
+
+        assert_eq!(
+            &*actions.borrow(),
+            &["hook 1 a", "hook 2 a", "hook 3 b", "hook 3 c"]
+        );
     }
 
     #[crate::test(self)]
