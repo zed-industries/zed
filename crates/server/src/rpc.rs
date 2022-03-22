@@ -4454,7 +4454,7 @@ mod tests {
 
         // Client B opens an editor.
         let workspace_b = client_b.build_workspace(&project_b, cx_b);
-        let pane_b1 = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
+        let pane_b1 = workspace_b.read_with(cx_b, |workspace, _| workspace.active_pane().clone());
         let _editor_b1 = workspace_b
             .update(cx_b, |workspace, cx| {
                 workspace.open_path((worktree_id, "2.txt"), cx)
@@ -4491,13 +4491,15 @@ mod tests {
         workspace_a
             .update(cx_a, |workspace, cx| {
                 workspace.activate_next_pane(cx);
+                assert_eq!(*workspace.active_pane(), pane_a1);
                 workspace.open_path((worktree_id, "3.txt"), cx)
             })
             .await
             .unwrap();
         workspace_b
-            .update(cx_a, |workspace, cx| {
+            .update(cx_b, |workspace, cx| {
                 workspace.activate_next_pane(cx);
+                assert_eq!(*workspace.active_pane(), pane_b1);
                 workspace.open_path((worktree_id, "4.txt"), cx)
             })
             .await
@@ -4506,20 +4508,42 @@ mod tests {
 
         // Ensure leader updates don't change the active pane of followers
         workspace_a.read_with(cx_a, |workspace, _| {
-            assert_ne!(*workspace.active_pane(), pane_a1);
+            assert_eq!(*workspace.active_pane(), pane_a1);
         });
         workspace_b.read_with(cx_b, |workspace, _| {
-            assert_ne!(*workspace.active_pane(), pane_b1);
+            assert_eq!(*workspace.active_pane(), pane_b1);
         });
 
         // Ensure peers following each other doesn't cause an infinite loop.
         assert_eq!(
-            workspace_b.read_with(cx_b, |workspace, cx| workspace
+            workspace_a.read_with(cx_a, |workspace, cx| workspace
                 .active_item(cx)
                 .unwrap()
                 .project_path(cx)),
             Some((worktree_id, "3.txt").into())
         );
+        workspace_a.update(cx_a, |workspace, cx| {
+            assert_eq!(
+                workspace.active_item(cx).unwrap().project_path(cx),
+                Some((worktree_id, "3.txt").into())
+            );
+            workspace.activate_next_pane(cx);
+            assert_eq!(
+                workspace.active_item(cx).unwrap().project_path(cx),
+                Some((worktree_id, "4.txt").into())
+            );
+        });
+        workspace_b.update(cx_b, |workspace, cx| {
+            assert_eq!(
+                workspace.active_item(cx).unwrap().project_path(cx),
+                Some((worktree_id, "4.txt").into())
+            );
+            workspace.activate_next_pane(cx);
+            assert_eq!(
+                workspace.active_item(cx).unwrap().project_path(cx),
+                Some((worktree_id, "3.txt").into())
+            );
+        });
     }
 
     #[gpui::test(iterations = 10)]
