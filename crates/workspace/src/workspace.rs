@@ -41,7 +41,10 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     rc::Rc,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
+    },
 };
 use theme::{Theme, ThemeRegistry};
 use util::ResultExt;
@@ -151,7 +154,7 @@ pub fn register_followable_item<I: FollowableItem>(cx: &mut MutableAppContext) {
             TypeId::of::<I>(),
             (
                 |pane, project, state, cx| {
-                    I::for_state_message(pane, project, state, cx).map(|task| {
+                    I::from_state_proto(pane, project, state, cx).map(|task| {
                         cx.foreground()
                             .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
                     })
@@ -255,36 +258,39 @@ pub trait ProjectItem: Item {
 }
 
 pub trait FollowableItem: Item {
-    fn for_state_message(
+    fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
+    fn from_state_proto(
         pane: ViewHandle<Pane>,
         project: ModelHandle<Project>,
         state: &mut Option<proto::view::Variant>,
         cx: &mut MutableAppContext,
     ) -> Option<Task<Result<ViewHandle<Self>>>>;
-    fn set_leader_replica_id(&mut self, leader_replica_id: Option<u16>, cx: &mut ViewContext<Self>);
-    fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant>;
-    fn to_update_message(
+    fn add_event_to_update_proto(
         &self,
         event: &Self::Event,
+        update: &mut Option<proto::update_view::Variant>,
         cx: &AppContext,
-    ) -> Option<proto::update_view::Variant>;
-    fn apply_update_message(
+    ) -> bool;
+    fn apply_update_proto(
         &mut self,
         message: proto::update_view::Variant,
         cx: &mut ViewContext<Self>,
     ) -> Result<()>;
+
+    fn set_leader_replica_id(&mut self, leader_replica_id: Option<u16>, cx: &mut ViewContext<Self>);
     fn should_unfollow_on_event(event: &Self::Event, cx: &AppContext) -> bool;
 }
 
 pub trait FollowableItemHandle: ItemHandle {
     fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut MutableAppContext);
-    fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant>;
-    fn to_update_message(
+    fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
+    fn add_event_to_update_proto(
         &self,
         event: &dyn Any,
+        update: &mut Option<proto::update_view::Variant>,
         cx: &AppContext,
-    ) -> Option<proto::update_view::Variant>;
-    fn apply_update_message(
+    ) -> bool;
+    fn apply_update_proto(
         &self,
         message: proto::update_view::Variant,
         cx: &mut MutableAppContext,
@@ -299,24 +305,29 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
         })
     }
 
-    fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant> {
-        self.read(cx).to_state_message(cx)
+    fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {
+        self.read(cx).to_state_proto(cx)
     }
 
-    fn to_update_message(
+    fn add_event_to_update_proto(
         &self,
         event: &dyn Any,
+        update: &mut Option<proto::update_view::Variant>,
         cx: &AppContext,
-    ) -> Option<proto::update_view::Variant> {
-        self.read(cx).to_update_message(event.downcast_ref()?, cx)
+    ) -> bool {
+        if let Some(event) = event.downcast_ref() {
+            self.read(cx).add_event_to_update_proto(event, update, cx)
+        } else {
+            false
+        }
     }
 
-    fn apply_update_message(
+    fn apply_update_proto(
         &self,
         message: proto::update_view::Variant,
         cx: &mut MutableAppContext,
     ) -> Result<()> {
-        self.update(cx, |this, cx| this.apply_update_message(message, cx))
+        self.update(cx, |this, cx| this.apply_update_proto(message, cx))
     }
 
     fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool {
@@ -413,7 +424,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         cx: &mut ViewContext<Workspace>,
     ) {
         if let Some(followed_item) = self.to_followable_item_handle(cx) {
-            if let Some(message) = followed_item.to_state_message(cx) {
+            if let Some(message) = followed_item.to_state_proto(cx) {
                 workspace.update_followers(
                     proto::update_followers::Variant::CreateView(proto::View {
                         id: followed_item.id() as u64,
@@ -425,6 +436,8 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             }
         }
 
+        let pending_update = Rc::new(RefCell::new(None));
+        let pending_update_scheduled = Rc::new(AtomicBool::new(false));
         let pane = pane.downgrade();
         cx.subscribe(self, move |workspace, item, event, cx| {
             let pane = if let Some(pane) = pane.upgrade(cx) {
@@ -435,8 +448,36 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             };
 
             if let Some(item) = item.to_followable_item_handle(cx) {
-                if item.should_unfollow_on_event(event, cx) {
+                let leader_id = workspace.leader_for_pane(&pane);
+
+                if leader_id.is_some() && item.should_unfollow_on_event(event, cx) {
                     workspace.unfollow(&pane, cx);
+                }
+
+                if item.add_event_to_update_proto(event, &mut *pending_update.borrow_mut(), cx)
+                    && !pending_update_scheduled.load(SeqCst)
+                {
+                    pending_update_scheduled.store(true, SeqCst);
+                    cx.spawn({
+                        let pending_update = pending_update.clone();
+                        let pending_update_scheduled = pending_update_scheduled.clone();
+                        move |this, mut cx| async move {
+                            this.update(&mut cx, |this, cx| {
+                                pending_update_scheduled.store(false, SeqCst);
+                                this.update_followers(
+                                    proto::update_followers::Variant::UpdateView(
+                                        proto::UpdateView {
+                                            id: item.id() as u64,
+                                            variant: pending_update.borrow_mut().take(),
+                                            leader_id: leader_id.map(|id| id.0),
+                                        },
+                                    ),
+                                    cx,
+                                );
+                            });
+                        }
+                    })
+                    .detach();
                 }
             }
 
@@ -456,20 +497,6 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
             if T::should_update_tab_on_event(event) {
                 pane.update(cx, |_, cx| cx.notify());
-            }
-
-            if let Some(message) = item
-                .to_followable_item_handle(cx)
-                .and_then(|i| i.to_update_message(event, cx))
-            {
-                workspace.update_followers(
-                    proto::update_followers::Variant::UpdateView(proto::UpdateView {
-                        id: item.id() as u64,
-                        variant: Some(message),
-                        leader_id: workspace.leader_for_pane(&pane).map(|id| id.0),
-                    }),
-                    cx,
-                );
             }
         })
         .detach();
@@ -1621,7 +1648,7 @@ impl Workspace {
                             move |item| {
                                 let id = item.id() as u64;
                                 let item = item.to_followable_item_handle(cx)?;
-                                let variant = item.to_state_message(cx)?;
+                                let variant = item.to_state_proto(cx)?;
                                 Some(proto::View {
                                     id,
                                     leader_id,
@@ -1682,7 +1709,7 @@ impl Workspace {
                             .or_insert(FollowerItem::Loading(Vec::new()))
                         {
                             FollowerItem::Loaded(item) => {
-                                item.apply_update_message(variant, cx).log_err();
+                                item.apply_update_proto(variant, cx).log_err();
                             }
                             FollowerItem::Loading(updates) => updates.push(variant),
                         }
@@ -1774,7 +1801,7 @@ impl Workspace {
                             let e = e.into_mut();
                             if let FollowerItem::Loading(updates) = e {
                                 for update in updates.drain(..) {
-                                    item.apply_update_message(update, cx)
+                                    item.apply_update_proto(update, cx)
                                         .context("failed to apply view update")
                                         .log_err();
                                 }

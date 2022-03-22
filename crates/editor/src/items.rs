@@ -15,7 +15,7 @@ use workspace::{
 };
 
 impl FollowableItem for Editor {
-    fn for_state_message(
+    fn from_state_proto(
         pane: ViewHandle<workspace::Pane>,
         project: ModelHandle<Project>,
         state: &mut Option<proto::view::Variant>,
@@ -107,7 +107,7 @@ impl FollowableItem for Editor {
         cx.notify();
     }
 
-    fn to_state_message(&self, cx: &AppContext) -> Option<proto::view::Variant> {
+    fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {
         let buffer_id = self.buffer.read(cx).as_singleton()?.read(cx).remote_id();
         Some(proto::view::Variant::Editor(proto::view::Editor {
             buffer_id,
@@ -118,25 +118,38 @@ impl FollowableItem for Editor {
         }))
     }
 
-    fn to_update_message(
+    fn add_event_to_update_proto(
         &self,
         event: &Self::Event,
+        update: &mut Option<proto::update_view::Variant>,
         _: &AppContext,
-    ) -> Option<update_view::Variant> {
-        match event {
-            Event::ScrollPositionChanged { .. } | Event::SelectionsChanged { .. } => {
-                Some(update_view::Variant::Editor(update_view::Editor {
-                    scroll_top: Some(language::proto::serialize_anchor(
+    ) -> bool {
+        let update =
+            update.get_or_insert_with(|| proto::update_view::Variant::Editor(Default::default()));
+
+        match update {
+            proto::update_view::Variant::Editor(update) => match event {
+                Event::ScrollPositionChanged { .. } => {
+                    update.scroll_top = Some(language::proto::serialize_anchor(
                         &self.scroll_top_anchor.text_anchor,
-                    )),
-                    selections: self.selections.iter().map(serialize_selection).collect(),
-                }))
-            }
-            _ => None,
+                    ));
+                    true
+                }
+                Event::SelectionsChanged { .. } => {
+                    update.selections = self
+                        .selections
+                        .iter()
+                        .chain(self.pending_selection.as_ref().map(|p| &p.selection))
+                        .map(serialize_selection)
+                        .collect();
+                    true
+                }
+                _ => false,
+            },
         }
     }
 
-    fn apply_update_message(
+    fn apply_update_proto(
         &mut self,
         message: update_view::Variant,
         cx: &mut ViewContext<Self>,
