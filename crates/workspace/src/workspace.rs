@@ -70,6 +70,7 @@ action!(OpenNew, Arc<AppState>);
 action!(OpenPaths, OpenParams);
 action!(ToggleShare);
 action!(ToggleFollow, PeerId);
+action!(FollowNextCollaborator);
 action!(Unfollow);
 action!(JoinProject, JoinProjectParams);
 action!(Save);
@@ -92,6 +93,7 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
 
     cx.add_action(Workspace::toggle_share);
     cx.add_async_action(Workspace::toggle_follow);
+    cx.add_async_action(Workspace::follow_next_collaborator);
     cx.add_action(
         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
             let pane = workspace.active_pane().clone();
@@ -107,6 +109,7 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     cx.add_action(Workspace::toggle_sidebar_item);
     cx.add_action(Workspace::toggle_sidebar_item_focus);
     cx.add_bindings(vec![
+        Binding::new("cmd-alt-shift-F", FollowNextCollaborator, None),
         Binding::new("cmd-alt-shift-U", Unfollow, None),
         Binding::new("cmd-s", Save, None),
         Binding::new("cmd-alt-i", DebugElements, None),
@@ -630,6 +633,7 @@ pub struct Workspace {
     project: ModelHandle<Project>,
     leader_state: LeaderState,
     follower_states_by_leader: FollowerStatesByLeader,
+    last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
     _observe_current_user: Task<()>,
 }
 
@@ -725,6 +729,7 @@ impl Workspace {
             project: params.project.clone(),
             leader_state: Default::default(),
             follower_states_by_leader: Default::default(),
+            last_leaders_by_pane: Default::default(),
             _observe_current_user,
         };
         this.project_remote_id_changed(this.project.read(cx).remote_id(), cx);
@@ -1245,15 +1250,17 @@ impl Workspace {
 
         if let Some(prev_leader_id) = self.unfollow(&pane, cx) {
             if leader_id == prev_leader_id {
-                cx.notify();
                 return None;
             }
         }
 
+        self.last_leaders_by_pane
+            .insert(pane.downgrade(), leader_id);
         self.follower_states_by_leader
             .entry(leader_id)
             .or_default()
             .insert(pane.clone(), Default::default());
+        cx.notify();
 
         let project_id = self.project.read(cx).remote_id()?;
         let request = self.client.request(proto::Follow {
@@ -1277,6 +1284,37 @@ impl Workspace {
             }
             Ok(())
         }))
+    }
+
+    pub fn follow_next_collaborator(
+        &mut self,
+        _: &FollowNextCollaborator,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let collaborators = self.project.read(cx).collaborators();
+        let next_leader_id = if let Some(leader_id) = self.leader_for_pane(&self.active_pane) {
+            let mut collaborators = collaborators.keys().copied();
+            while let Some(peer_id) = collaborators.next() {
+                if peer_id == leader_id {
+                    break;
+                }
+            }
+            collaborators.next()
+        } else if let Some(last_leader_id) =
+            self.last_leaders_by_pane.get(&self.active_pane.downgrade())
+        {
+            if collaborators.contains_key(last_leader_id) {
+                Some(*last_leader_id)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        next_leader_id
+            .or_else(|| collaborators.keys().copied().next())
+            .and_then(|leader_id| self.toggle_follow(&ToggleFollow(leader_id), cx))
     }
 
     pub fn unfollow(
