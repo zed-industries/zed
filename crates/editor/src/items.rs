@@ -36,7 +36,7 @@ impl FollowableItem for Editor {
         });
         Some(cx.spawn(|mut cx| async move {
             let buffer = buffer.await?;
-            Ok(pane
+            let editor = pane
                 .read_with(&cx, |pane, cx| {
                     pane.items_of_type::<Self>().find(|editor| {
                         editor.read(cx).buffer.read(cx).as_singleton().as_ref() == Some(&buffer)
@@ -44,25 +44,48 @@ impl FollowableItem for Editor {
                 })
                 .unwrap_or_else(|| {
                     cx.add_view(pane.window_id(), |cx| {
-                        let mut editor = Editor::for_buffer(buffer, Some(project), cx);
-                        let selections = {
-                            let buffer = editor.buffer.read(cx);
-                            let buffer = buffer.read(cx);
-                            let (excerpt_id, buffer_id, _) = buffer.as_singleton().unwrap();
-                            state
-                                .selections
-                                .into_iter()
-                                .filter_map(|selection| {
-                                    deserialize_selection(&excerpt_id, buffer_id, selection)
-                                })
-                                .collect::<Vec<_>>()
-                        };
-                        if !selections.is_empty() {
-                            editor.set_selections(selections.into(), None, false, cx);
-                        }
-                        editor
+                        Editor::for_buffer(buffer, Some(project), cx)
                     })
-                }))
+                });
+            editor.update(&mut cx, |editor, cx| {
+                let excerpt_id;
+                let buffer_id;
+                {
+                    let buffer = editor.buffer.read(cx).read(cx);
+                    let singleton = buffer.as_singleton().unwrap();
+                    excerpt_id = singleton.0.clone();
+                    buffer_id = singleton.1;
+                }
+                let selections = state
+                    .selections
+                    .into_iter()
+                    .map(|selection| {
+                        deserialize_selection(&excerpt_id, buffer_id, selection)
+                            .ok_or_else(|| anyhow!("invalid selection"))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                if !selections.is_empty() {
+                    editor.set_selections(selections.into(), None, false, cx);
+                }
+
+                if let Some(anchor) = state.scroll_top {
+                    editor.set_scroll_top_anchor(
+                        Some(Anchor {
+                            buffer_id: Some(state.buffer_id as usize),
+                            excerpt_id: excerpt_id.clone(),
+                            text_anchor: language::proto::deserialize_anchor(anchor)
+                                .ok_or_else(|| anyhow!("invalid scroll top"))?,
+                        }),
+                        false,
+                        cx,
+                    );
+                } else {
+                    editor.set_scroll_top_anchor(None, false, cx);
+                }
+
+                Ok::<_, anyhow::Error>(())
+            })?;
+            Ok(editor)
         }))
     }
 

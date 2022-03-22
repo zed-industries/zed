@@ -1116,7 +1116,7 @@ mod tests {
         },
         time::Duration,
     };
-    use workspace::{Settings, SplitDirection, Workspace, WorkspaceParams};
+    use workspace::{Item, Settings, SplitDirection, Workspace, WorkspaceParams};
 
     #[cfg(test)]
     #[ctor::ctor]
@@ -4287,7 +4287,9 @@ mod tests {
             .downcast::<Editor>()
             .unwrap();
 
-        // Client B starts following client A.
+        // When client B starts following client A, all visible view states are replicated to client B.
+        editor_a1.update(cx_a, |editor, cx| editor.select_ranges([0..1], None, cx));
+        editor_a2.update(cx_a, |editor, cx| editor.select_ranges([2..3], None, cx));
         workspace_b
             .update(cx_b, |workspace, cx| {
                 let leader_id = project_b
@@ -4301,12 +4303,24 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(
-            workspace_b.read_with(cx_b, |workspace, cx| workspace
+        let editor_b2 = workspace_b.read_with(cx_b, |workspace, cx| {
+            workspace
                 .active_item(cx)
                 .unwrap()
-                .project_path(cx)),
+                .downcast::<Editor>()
+                .unwrap()
+        });
+        assert_eq!(
+            editor_b2.read_with(cx_b, |editor, cx| editor.project_path(cx)),
             Some((worktree_id, "2.txt").into())
+        );
+        assert_eq!(
+            editor_b2.read_with(cx_b, |editor, cx| editor.selected_ranges(cx)),
+            vec![2..3]
+        );
+        assert_eq!(
+            editor_b1.read_with(cx_b, |editor, cx| editor.selected_ranges(cx)),
+            vec![0..1]
         );
 
         // When client A activates a different editor, client B does so as well.
