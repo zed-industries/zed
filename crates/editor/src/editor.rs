@@ -2663,7 +2663,6 @@ impl Editor {
                 let old_head = selection.head();
                 let mut new_head =
                     movement::left(&display_map, old_head.to_display_point(&display_map))
-                        .unwrap()
                         .to_point(&display_map);
                 if let Some((buffer, line_buffer_range)) = display_map
                     .buffer_snapshot
@@ -2695,9 +2694,7 @@ impl Editor {
         for selection in &mut selections {
             if selection.is_empty() {
                 let head = selection.head().to_display_point(&display_map);
-                let cursor = movement::right(&display_map, head)
-                    .unwrap()
-                    .to_point(&display_map);
+                let cursor = movement::right(&display_map, head).to_point(&display_map);
                 selection.set_head(cursor);
                 selection.goal = SelectionGoal::None;
             }
@@ -3315,9 +3312,7 @@ impl Editor {
             if start != end {
                 selection.end = selection.start.clone();
             } else {
-                let cursor = movement::left(&display_map, start)
-                    .unwrap()
-                    .to_point(&display_map);
+                let cursor = movement::left(&display_map, start).to_point(&display_map);
                 selection.start = cursor.clone();
                 selection.end = cursor;
             }
@@ -3332,9 +3327,7 @@ impl Editor {
         let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
-            let cursor = movement::left(&display_map, head)
-                .unwrap()
-                .to_point(&display_map);
+            let cursor = movement::left(&display_map, head).to_point(&display_map);
             selection.set_head(cursor);
             selection.goal = SelectionGoal::None;
         }
@@ -3351,9 +3344,7 @@ impl Editor {
             if start != end {
                 selection.start = selection.end.clone();
             } else {
-                let cursor = movement::right(&display_map, end)
-                    .unwrap()
-                    .to_point(&display_map);
+                let cursor = movement::right(&display_map, end).to_point(&display_map);
                 selection.start = cursor;
                 selection.end = cursor;
             }
@@ -3368,9 +3359,7 @@ impl Editor {
         let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
-            let cursor = movement::right(&display_map, head)
-                .unwrap()
-                .to_point(&display_map);
+            let cursor = movement::right(&display_map, head).to_point(&display_map);
             selection.set_head(cursor);
             selection.goal = SelectionGoal::None;
         }
@@ -3402,7 +3391,7 @@ impl Editor {
                 selection.goal = SelectionGoal::None;
             }
 
-            let (start, goal) = movement::up(&display_map, start, selection.goal).unwrap();
+            let (start, goal) = movement::up(&display_map, start, selection.goal);
             let cursor = start.to_point(&display_map);
             selection.start = cursor;
             selection.end = cursor;
@@ -3417,7 +3406,7 @@ impl Editor {
         let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
-            let (head, goal) = movement::up(&display_map, head, selection.goal).unwrap();
+            let (head, goal) = movement::up(&display_map, head, selection.goal);
             let cursor = head.to_point(&display_map);
             selection.set_head(cursor);
             selection.goal = goal;
@@ -3448,7 +3437,7 @@ impl Editor {
                 selection.goal = SelectionGoal::None;
             }
 
-            let (start, goal) = movement::down(&display_map, end, selection.goal).unwrap();
+            let (start, goal) = movement::down(&display_map, end, selection.goal);
             let cursor = start.to_point(&display_map);
             selection.start = cursor;
             selection.end = cursor;
@@ -3463,7 +3452,7 @@ impl Editor {
         let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
-            let (head, goal) = movement::down(&display_map, head, selection.goal).unwrap();
+            let (head, goal) = movement::down(&display_map, head, selection.goal);
             let cursor = head.to_point(&display_map);
             selection.set_head(cursor);
             selection.goal = goal;
@@ -6149,13 +6138,12 @@ mod tests {
     #[gpui::test]
     fn test_selection_with_mouse(cx: &mut gpui::MutableAppContext) {
         populate_settings(cx);
-        let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
-        let (_, editor) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
 
+        let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\nddddddd\n", cx);
+        let (_, editor) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         editor.update(cx, |view, cx| {
             view.begin_selection(DisplayPoint::new(2, 2), false, 1, cx);
         });
-
         assert_eq!(
             editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
