@@ -445,7 +445,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             if T::should_activate_item_on_event(event) {
                 pane.update(cx, |pane, cx| {
                     if let Some(ix) = pane.index_for_item(&item) {
-                        pane.activate_item(ix, cx);
+                        pane.activate_item(ix, true, cx);
                         pane.activate(cx);
                     }
                 });
@@ -1022,7 +1022,7 @@ impl Workspace {
 
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
         let pane = self.active_pane().clone();
-        Pane::add_item(self, pane, item, cx);
+        Pane::add_item(self, pane, item, true, cx);
     }
 
     pub fn open_path(
@@ -1111,7 +1111,7 @@ impl Workspace {
         });
         if let Some((pane, ix)) = result {
             self.activate_pane(pane.clone(), cx);
-            pane.update(cx, |pane, cx| pane.activate_item(ix, cx));
+            pane.update(cx, |pane, cx| pane.activate_item(ix, true, cx));
             true
         } else {
             false
@@ -1164,6 +1164,11 @@ impl Workspace {
                 pane::Event::Activate => {
                     self.activate_pane(pane, cx);
                 }
+                pane::Event::ActivateItem { local } => {
+                    if *local {
+                        self.unfollow(&pane, cx);
+                    }
+                }
             }
         } else {
             error!("pane {} not found", pane_id);
@@ -1180,7 +1185,7 @@ impl Workspace {
         self.activate_pane(new_pane.clone(), cx);
         if let Some(item) = pane.read(cx).active_item() {
             if let Some(clone) = item.clone_on_split(cx.as_mut()) {
-                Pane::add_item(self, new_pane.clone(), clone, cx);
+                Pane::add_item(self, new_pane.clone(), clone, true, cx);
             }
         }
         self.center.split(&pane, &new_pane, direction).unwrap();
@@ -1793,7 +1798,7 @@ impl Workspace {
         }
 
         for (pane, item) in items_to_add {
-            Pane::add_item(self, pane.clone(), item.boxed_clone(), cx);
+            Pane::add_item(self, pane.clone(), item.boxed_clone(), false, cx);
             cx.notify();
         }
         None

@@ -4578,6 +4578,44 @@ mod tests {
             workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
             None
         );
+
+        workspace_b
+            .update(cx_b, |workspace, cx| {
+                workspace.toggle_follow(&leader_id.into(), cx).unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            Some(leader_id)
+        );
+
+        // When client B activates a different pane, it continues following client A in the original pane.
+        workspace_b.update(cx_b, |workspace, cx| {
+            workspace.split_pane(pane_b.clone(), SplitDirection::Right, cx)
+        });
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            Some(leader_id)
+        );
+
+        workspace_b.update(cx_b, |workspace, cx| workspace.activate_next_pane(cx));
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            Some(leader_id)
+        );
+
+        // When client B activates a different item in the original pane, it automatically stops following client A.
+        workspace_b
+            .update(cx_b, |workspace, cx| {
+                workspace.open_path((worktree_id, "2.txt"), cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            None
+        );
     }
 
     #[gpui::test(iterations = 100)]

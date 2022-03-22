@@ -33,7 +33,7 @@ const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
-        pane.activate_item(action.0, cx);
+        pane.activate_item(action.0, true, cx);
     });
     cx.add_action(|pane: &mut Pane, _: &ActivatePrevItem, cx| {
         pane.activate_prev_item(cx);
@@ -92,6 +92,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
 pub enum Event {
     Activate,
+    ActivateItem { local: bool },
     Remove,
     Split(SplitDirection),
 }
@@ -301,7 +302,7 @@ impl Pane {
             for (ix, item) in pane.items.iter().enumerate() {
                 if item.project_entry_id(cx) == Some(project_entry_id) {
                     let item = item.boxed_clone();
-                    pane.activate_item(ix, cx);
+                    pane.activate_item(ix, true, cx);
                     return Some(item);
                 }
             }
@@ -311,7 +312,7 @@ impl Pane {
             existing_item
         } else {
             let item = build_item(cx);
-            Self::add_item(workspace, pane, item.boxed_clone(), cx);
+            Self::add_item(workspace, pane, item.boxed_clone(), true, cx);
             item
         }
     }
@@ -320,11 +321,12 @@ impl Pane {
         workspace: &mut Workspace,
         pane: ViewHandle<Pane>,
         item: Box<dyn ItemHandle>,
+        local: bool,
         cx: &mut ViewContext<Workspace>,
     ) {
         // Prevent adding the same item to the pane more than once.
         if let Some(item_ix) = pane.read(cx).items.iter().position(|i| i.id() == item.id()) {
-            pane.update(cx, |pane, cx| pane.activate_item(item_ix, cx));
+            pane.update(cx, |pane, cx| pane.activate_item(item_ix, local, cx));
             return;
         }
 
@@ -333,7 +335,7 @@ impl Pane {
         pane.update(cx, |pane, cx| {
             let item_idx = cmp::min(pane.active_item_index + 1, pane.items.len());
             pane.items.insert(item_idx, item);
-            pane.activate_item(item_idx, cx);
+            pane.activate_item(item_idx, local, cx);
             cx.notify();
         });
     }
@@ -384,13 +386,14 @@ impl Pane {
         self.items.iter().position(|i| i.id() == item.id())
     }
 
-    pub fn activate_item(&mut self, index: usize, cx: &mut ViewContext<Self>) {
+    pub fn activate_item(&mut self, index: usize, local: bool, cx: &mut ViewContext<Self>) {
         if index < self.items.len() {
             let prev_active_item_ix = mem::replace(&mut self.active_item_index, index);
             if prev_active_item_ix != self.active_item_index
                 && prev_active_item_ix < self.items.len()
             {
                 self.items[prev_active_item_ix].deactivated(cx);
+                cx.emit(Event::ActivateItem { local });
             }
             self.update_active_toolbar(cx);
             self.focus_active_item(cx);
@@ -406,7 +409,7 @@ impl Pane {
         } else if self.items.len() > 0 {
             index = self.items.len() - 1;
         }
-        self.activate_item(index, cx);
+        self.activate_item(index, true, cx);
     }
 
     pub fn activate_next_item(&mut self, cx: &mut ViewContext<Self>) {
@@ -416,7 +419,7 @@ impl Pane {
         } else {
             index = 0;
         }
-        self.activate_item(index, cx);
+        self.activate_item(index, true, cx);
     }
 
     pub fn close_active_item(&mut self, cx: &mut ViewContext<Self>) {
