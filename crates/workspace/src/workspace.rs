@@ -1097,9 +1097,8 @@ impl Workspace {
     {
         use project::Item as _;
 
-        if let Some(item) = project_item
-            .read(cx)
-            .entry_id(cx)
+        let entry_id = project_item.read(cx).entry_id(cx);
+        if let Some(item) = entry_id
             .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(entry_id, cx))
             .and_then(|item| item.downcast())
         {
