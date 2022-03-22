@@ -438,7 +438,7 @@ pub struct Editor {
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     scroll_position: Vector2F,
-    scroll_top_anchor: Option<Anchor>,
+    scroll_top_anchor: Anchor,
     autoscroll_request: Option<Autoscroll>,
     soft_wrap_mode_override: Option<settings::SoftWrap>,
     get_field_editor_theme: Option<GetFieldEditorTheme>,
@@ -473,7 +473,7 @@ pub struct EditorSnapshot {
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
     scroll_position: Vector2F,
-    scroll_top_anchor: Option<Anchor>,
+    scroll_top_anchor: Anchor,
 }
 
 #[derive(Clone)]
@@ -915,7 +915,7 @@ impl Editor {
             get_field_editor_theme,
             project,
             scroll_position: Vector2F::zero(),
-            scroll_top_anchor: None,
+            scroll_top_anchor: Anchor::min(),
             autoscroll_request: None,
             focused: false,
             show_local_cursors: false,
@@ -1020,7 +1020,7 @@ impl Editor {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if scroll_position.y() == 0. {
-            self.scroll_top_anchor = None;
+            self.scroll_top_anchor = Anchor::min();
             self.scroll_position = scroll_position;
         } else {
             let scroll_top_buffer_offset =
@@ -1032,19 +1032,14 @@ impl Editor {
                 scroll_position.x(),
                 scroll_position.y() - anchor.to_display_point(&map).row() as f32,
             );
-            self.scroll_top_anchor = Some(anchor);
+            self.scroll_top_anchor = anchor;
         }
 
         cx.emit(Event::ScrollPositionChanged { local: true });
         cx.notify();
     }
 
-    fn set_scroll_top_anchor(
-        &mut self,
-        anchor: Option<Anchor>,
-        local: bool,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn set_scroll_top_anchor(&mut self, anchor: Anchor, local: bool, cx: &mut ViewContext<Self>) {
         self.scroll_position = Vector2F::zero();
         self.scroll_top_anchor = anchor;
         cx.emit(Event::ScrollPositionChanged { local });
@@ -5636,10 +5631,10 @@ impl Deref for EditorSnapshot {
 fn compute_scroll_position(
     snapshot: &DisplaySnapshot,
     mut scroll_position: Vector2F,
-    scroll_top_anchor: &Option<Anchor>,
+    scroll_top_anchor: &Anchor,
 ) -> Vector2F {
-    if let Some(anchor) = scroll_top_anchor {
-        let scroll_top = anchor.to_display_point(snapshot).row() as f32;
+    if *scroll_top_anchor != Anchor::min() {
+        let scroll_top = scroll_top_anchor.to_display_point(snapshot).row() as f32;
         scroll_position.set_y(scroll_top + scroll_position.y());
     } else {
         scroll_position.set_y(0.);

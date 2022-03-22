@@ -70,17 +70,15 @@ impl FollowableItem for Editor {
 
                 if let Some(anchor) = state.scroll_top {
                     editor.set_scroll_top_anchor(
-                        Some(Anchor {
+                        Anchor {
                             buffer_id: Some(state.buffer_id as usize),
                             excerpt_id: excerpt_id.clone(),
                             text_anchor: language::proto::deserialize_anchor(anchor)
                                 .ok_or_else(|| anyhow!("invalid scroll top"))?,
-                        }),
+                        },
                         false,
                         cx,
                     );
-                } else {
-                    editor.set_scroll_top_anchor(None, false, cx);
                 }
 
                 Ok::<_, anyhow::Error>(())
@@ -113,10 +111,9 @@ impl FollowableItem for Editor {
         let buffer_id = self.buffer.read(cx).as_singleton()?.read(cx).remote_id();
         Some(proto::view::Variant::Editor(proto::view::Editor {
             buffer_id,
-            scroll_top: self
-                .scroll_top_anchor
-                .as_ref()
-                .map(|anchor| language::proto::serialize_anchor(&anchor.text_anchor)),
+            scroll_top: Some(language::proto::serialize_anchor(
+                &self.scroll_top_anchor.text_anchor,
+            )),
             selections: self.selections.iter().map(serialize_selection).collect(),
         }))
     }
@@ -129,10 +126,9 @@ impl FollowableItem for Editor {
         match event {
             Event::ScrollPositionChanged { .. } | Event::SelectionsChanged { .. } => {
                 Some(update_view::Variant::Editor(update_view::Editor {
-                    scroll_top: self
-                        .scroll_top_anchor
-                        .as_ref()
-                        .map(|anchor| language::proto::serialize_anchor(&anchor.text_anchor)),
+                    scroll_top: Some(language::proto::serialize_anchor(
+                        &self.scroll_top_anchor.text_anchor,
+                    )),
                     selections: self.selections.iter().map(serialize_selection).collect(),
                 }))
             }
@@ -155,17 +151,15 @@ impl FollowableItem for Editor {
 
                 if let Some(anchor) = message.scroll_top {
                     self.set_scroll_top_anchor(
-                        Some(Anchor {
+                        Anchor {
                             buffer_id: Some(buffer_id),
                             excerpt_id: excerpt_id.clone(),
                             text_anchor: language::proto::deserialize_anchor(anchor)
                                 .ok_or_else(|| anyhow!("invalid scroll top"))?,
-                        }),
+                        },
                         false,
                         cx,
                     );
-                } else {
-                    self.set_scroll_top_anchor(None, false, cx);
                 }
 
                 let selections = message
