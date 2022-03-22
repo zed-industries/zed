@@ -763,6 +763,7 @@ type GlobalActionCallback = dyn FnMut(&dyn AnyAction, &mut MutableAppContext);
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
 type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
+type GlobalObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 
 pub struct MutableAppContext {
@@ -782,12 +783,15 @@ pub struct MutableAppContext {
     global_subscriptions:
         Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalSubscriptionCallback>>>>>,
     observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>,
+    global_observations:
+        Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalObservationCallback>>>>>,
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
     presenters_and_platform_windows:
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
     foreground: Rc<executor::Foreground>,
     pending_effects: VecDeque<Effect>,
     pending_notifications: HashSet<usize>,
+    pending_global_notifications: HashSet<TypeId>,
     pending_flushes: usize,
     flushing_effects: bool,
     next_cursor_style_handle_id: Arc<AtomicUsize>,
@@ -831,10 +835,12 @@ impl MutableAppContext {
             global_subscriptions: Default::default(),
             observations: Default::default(),
             release_observations: Default::default(),
+            global_observations: Default::default(),
             presenters_and_platform_windows: HashMap::new(),
             foreground,
             pending_effects: VecDeque::new(),
             pending_notifications: HashSet::new(),
+            pending_global_notifications: HashSet::new(),
             pending_flushes: 0,
             flushing_effects: false,
             next_cursor_style_handle_id: Default::default(),
@@ -1197,6 +1203,27 @@ impl MutableAppContext {
         }
     }
 
+    pub fn observe_global<G, F>(&mut self, observe: F) -> Subscription
+    where
+        G: Any,
+        F: 'static + FnMut(&mut MutableAppContext) -> bool,
+    {
+        let type_id = TypeId::of::<G>();
+        let id = post_inc(&mut self.next_subscription_id);
+
+        self.global_observations
+            .lock()
+            .entry(type_id)
+            .or_default()
+            .insert(id, Some(Box::new(observe)));
+
+        Subscription::GlobalObservation {
+            id,
+            type_id,
+            observations: Some(Arc::downgrade(&self.global_observations)),
+        }
+    }
+
     pub fn observe_release<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
     where
         E: Entity,
@@ -1248,6 +1275,13 @@ impl MutableAppContext {
         if self.pending_notifications.insert(view_id) {
             self.pending_effects
                 .push_back(Effect::ViewNotification { window_id, view_id });
+        }
+    }
+
+    pub(crate) fn notify_global(&mut self, type_id: TypeId) {
+        if self.pending_global_notifications.insert(type_id) {
+            self.pending_effects
+                .push_back(Effect::GlobalNotification { type_id });
         }
     }
 
@@ -1380,16 +1414,22 @@ impl MutableAppContext {
     }
 
     pub fn default_global<T: 'static + Default>(&mut self) -> &T {
+        let type_id = TypeId::of::<T>();
+        if !self.cx.globals.contains_key(&type_id) {
+            self.notify_global(type_id);
+        }
         self.cx
             .globals
-            .entry(TypeId::of::<T>())
+            .entry(type_id)
             .or_insert_with(|| Box::new(T::default()))
             .downcast_ref()
             .unwrap()
     }
 
     pub fn set_global<T: 'static>(&mut self, state: T) {
-        self.cx.globals.insert(TypeId::of::<T>(), Box::new(state));
+        let type_id = TypeId::of::<T>();
+        self.cx.globals.insert(type_id, Box::new(state));
+        self.notify_global(type_id);
     }
 
     pub fn update_default_global<T, F, U>(&mut self, update: F) -> U
@@ -1405,6 +1445,7 @@ impl MutableAppContext {
             .unwrap_or_else(|| Box::new(T::default()));
         let result = update(state.downcast_mut().unwrap(), self);
         self.cx.globals.insert(type_id, state);
+        self.notify_global(type_id);
         result
     }
 
@@ -1421,6 +1462,7 @@ impl MutableAppContext {
             .expect("no global has been added for this type");
         let result = update(state.downcast_mut().unwrap(), self);
         self.cx.globals.insert(type_id, state);
+        self.notify_global(type_id);
         result
     }
 
@@ -1686,6 +1728,9 @@ impl MutableAppContext {
                         Effect::ViewNotification { window_id, view_id } => {
                             self.notify_view_observers(window_id, view_id)
                         }
+                        Effect::GlobalNotification { type_id } => {
+                            self.notify_global_observers(type_id)
+                        }
                         Effect::Deferred {
                             callback,
                             after_window_update,
@@ -1734,6 +1779,7 @@ impl MutableAppContext {
                         if self.pending_effects.is_empty() {
                             self.flushing_effects = false;
                             self.pending_notifications.clear();
+                            self.pending_global_notifications.clear();
                             break;
                         }
                     }
@@ -1994,6 +2040,35 @@ impl MutableAppContext {
                                     entry.insert(Some(callback));
                                 }
                                 btree_map::Entry::Occupied(entry) => {
+                                    entry.remove();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn notify_global_observers(&mut self, observed_type_id: TypeId) {
+        let callbacks = self.global_observations.lock().remove(&observed_type_id);
+        if let Some(callbacks) = callbacks {
+            if self.cx.globals.contains_key(&observed_type_id) {
+                for (id, callback) in callbacks {
+                    if let Some(mut callback) = callback {
+                        let alive = callback(self);
+                        if alive {
+                            match self
+                                .global_observations
+                                .lock()
+                                .entry(observed_type_id)
+                                .or_default()
+                                .entry(id)
+                            {
+                                collections::btree_map::Entry::Vacant(entry) => {
+                                    entry.insert(Some(callback));
+                                }
+                                collections::btree_map::Entry::Occupied(entry) => {
                                     entry.remove();
                                 }
                             }
@@ -2377,6 +2452,9 @@ pub enum Effect {
         callback: Box<dyn FnOnce(&mut MutableAppContext)>,
         after_window_update: bool,
     },
+    GlobalNotification {
+        type_id: TypeId,
+    },
     ModelRelease {
         model_id: usize,
         model: Box<dyn AnyModel>,
@@ -2441,6 +2519,10 @@ impl Debug for Effect {
                 .debug_struct("Effect::ViewNotification")
                 .field("window_id", window_id)
                 .field("view_id", view_id)
+                .finish(),
+            Effect::GlobalNotification { type_id } => f
+                .debug_struct("Effect::GlobalNotification")
+                .field("type_id", type_id)
                 .finish(),
             Effect::Deferred { .. } => f.debug_struct("Effect::Deferred").finish(),
             Effect::ModelRelease { model_id, .. } => f
@@ -2619,6 +2701,15 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         F: FnOnce(&mut ModelContext<S>) -> S,
     {
         self.app.add_model(build_model)
+    }
+
+    pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut T, &mut ModelContext<T>)) {
+        let handle = self.handle();
+        self.app.defer(Box::new(move |cx| {
+            handle.update(cx, |model, cx| {
+                callback(model, cx);
+            })
+        }))
     }
 
     pub fn emit(&mut self, payload: T::Event) {
@@ -4178,6 +4269,13 @@ pub enum Subscription {
         observations:
             Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>>,
     },
+    GlobalObservation {
+        id: usize,
+        type_id: TypeId,
+        observations: Option<
+            Weak<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalObservationCallback>>>>>,
+        >,
+    },
     ReleaseObservation {
         id: usize,
         entity_id: usize,
@@ -4196,6 +4294,9 @@ impl Subscription {
                 subscriptions.take();
             }
             Subscription::Observation { observations, .. } => {
+                observations.take();
+            }
+            Subscription::GlobalObservation { observations, .. } => {
                 observations.take();
             }
             Subscription::ReleaseObservation { observations, .. } => {
@@ -4261,6 +4362,22 @@ impl Drop for Subscription {
                             entry.insert(None);
                         }
                         btree_map::Entry::Occupied(entry) => {
+                            entry.remove();
+                        }
+                    }
+                }
+            }
+            Subscription::GlobalObservation {
+                id,
+                type_id,
+                observations,
+            } => {
+                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
+                    match observations.lock().entry(*type_id).or_default().entry(*id) {
+                        collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(None);
+                        }
+                        collections::btree_map::Entry::Occupied(entry) => {
                             entry.remove();
                         }
                     }
@@ -5437,6 +5554,8 @@ mod tests {
         });
 
         assert_eq!(*observation_count.borrow(), 1);
+
+        // Global Observation
     }
 
     #[crate::test(self)]
