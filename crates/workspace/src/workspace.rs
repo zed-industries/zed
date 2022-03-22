@@ -667,8 +667,14 @@ impl Workspace {
         .detach();
 
         cx.subscribe(&params.project, move |this, project, event, cx| {
-            if let project::Event::RemoteIdChanged(remote_id) = event {
-                this.project_remote_id_changed(*remote_id, cx);
+            match event {
+                project::Event::RemoteIdChanged(remote_id) => {
+                    this.project_remote_id_changed(*remote_id, cx);
+                }
+                project::Event::CollaboratorLeft(peer_id) => {
+                    this.collaborator_left(*peer_id, cx);
+                }
+                _ => {}
             }
             if project.read(cx).is_read_only() {
                 cx.blur();
@@ -1239,6 +1245,20 @@ impl Workspace {
         } else {
             self.remote_entity_subscription.take();
         }
+    }
+
+    fn collaborator_left(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
+        self.leader_state.followers.remove(&peer_id);
+        if let Some(states_by_pane) = self.follower_states_by_leader.remove(&peer_id) {
+            for state in states_by_pane.into_values() {
+                for item in state.items_by_leader_view_id.into_values() {
+                    if let FollowerItem::Loaded(item) = item {
+                        item.set_leader_replica_id(None, cx);
+                    }
+                }
+            }
+        }
+        cx.notify();
     }
 
     pub fn toggle_follow(

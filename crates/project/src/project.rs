@@ -125,6 +125,7 @@ pub enum Event {
     DiskBasedDiagnosticsFinished,
     DiagnosticsUpdated(ProjectPath),
     RemoteIdChanged(Option<u64>),
+    CollaboratorLeft(PeerId),
 }
 
 enum LanguageServerEvent {
@@ -3368,6 +3369,7 @@ impl Project {
                     buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
                 }
             }
+            cx.emit(Event::CollaboratorLeft(peer_id));
             cx.notify();
             Ok(())
         })

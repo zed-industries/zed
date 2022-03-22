@@ -4259,6 +4259,7 @@ mod tests {
 
         // Client A opens some editors.
         let workspace_a = client_a.build_workspace(&project_a, cx_a);
+        let pane_a = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
         let editor_a1 = workspace_a
             .update(cx_a, |workspace, cx| {
                 workspace.open_path((worktree_id, "1.txt"), cx)
@@ -4287,19 +4288,19 @@ mod tests {
             .downcast::<Editor>()
             .unwrap();
 
+        let client_a_id = project_b.read_with(cx_b, |project, _| {
+            project.collaborators().values().next().unwrap().peer_id
+        });
+        let client_b_id = project_a.read_with(cx_a, |project, _| {
+            project.collaborators().values().next().unwrap().peer_id
+        });
+
         // When client B starts following client A, all visible view states are replicated to client B.
         editor_a1.update(cx_a, |editor, cx| editor.select_ranges([0..1], None, cx));
         editor_a2.update(cx_a, |editor, cx| editor.select_ranges([2..3], None, cx));
         workspace_b
             .update(cx_b, |workspace, cx| {
-                let leader_id = project_b
-                    .read(cx)
-                    .collaborators()
-                    .values()
-                    .next()
-                    .unwrap()
-                    .peer_id;
-                workspace.toggle_follow(&leader_id.into(), cx).unwrap()
+                workspace.toggle_follow(&client_a_id.into(), cx).unwrap()
             })
             .await
             .unwrap();
@@ -4369,6 +4370,33 @@ mod tests {
                 .unwrap()
                 .id()),
             editor_b1.id()
+        );
+
+        // Client A starts following client B.
+        workspace_a
+            .update(cx_a, |workspace, cx| {
+                workspace.toggle_follow(&client_b_id.into(), cx).unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            workspace_a.read_with(cx_a, |workspace, _| workspace.leader_for_pane(&pane_a)),
+            Some(client_b_id)
+        );
+        assert_eq!(
+            workspace_a.read_with(cx_a, |workspace, cx| workspace
+                .active_item(cx)
+                .unwrap()
+                .id()),
+            editor_a1.id()
+        );
+
+        // Following interrupts when client B disconnects.
+        client_b.disconnect(&cx_b.to_async()).unwrap();
+        cx_a.foreground().run_until_parked();
+        assert_eq!(
+            workspace_a.read_with(cx_a, |workspace, _| workspace.leader_for_pane(&pane_a)),
+            None
         );
     }
 
