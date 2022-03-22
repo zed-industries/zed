@@ -4505,10 +4505,10 @@ mod tests {
         cx_a.foreground().run_until_parked();
 
         // Ensure leader updates don't change the active pane of followers
-        workspace_a.read_with(cx_a, |workspace, cx| {
+        workspace_a.read_with(cx_a, |workspace, _| {
             assert_ne!(*workspace.active_pane(), pane_a1);
         });
-        workspace_b.read_with(cx_b, |workspace, cx| {
+        workspace_b.read_with(cx_b, |workspace, _| {
             assert_ne!(*workspace.active_pane(), pane_b1);
         });
 

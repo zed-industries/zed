@@ -1113,7 +1113,7 @@ impl MutableAppContext {
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
         let type_id = TypeId::of::<E>();
-        self.pending_effects.push_back(Effect::SubscribeGlobal {
+        self.pending_effects.push_back(Effect::GlobalSubscription {
             type_id,
             subscription_id,
             callback: Box::new(move |payload, cx| {
@@ -1150,7 +1150,7 @@ impl MutableAppContext {
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
         let emitter = handle.downgrade();
-        self.pending_effects.push_back(Effect::Subscribe {
+        self.pending_effects.push_back(Effect::Subscription {
             entity_id: handle.id(),
             subscription_id,
             callback: Box::new(move |payload, cx| {
@@ -1176,25 +1176,23 @@ impl MutableAppContext {
         H: Handle<E>,
         F: 'static + FnMut(H, &mut Self) -> bool,
     {
-        let id = post_inc(&mut self.next_subscription_id);
+        let subscription_id = post_inc(&mut self.next_subscription_id);
         let observed = handle.downgrade();
-        self.observations
-            .lock()
-            .entry(handle.id())
-            .or_default()
-            .insert(
-                id,
-                Some(Box::new(move |cx| {
-                    if let Some(observed) = H::upgrade_from(&observed, cx) {
-                        callback(observed, cx)
-                    } else {
-                        false
-                    }
-                })),
-            );
+        let entity_id = handle.id();
+        self.pending_effects.push_back(Effect::Observation {
+            entity_id,
+            subscription_id,
+            callback: Box::new(move |cx| {
+                if let Some(observed) = H::upgrade_from(&observed, cx) {
+                    callback(observed, cx)
+                } else {
+                    false
+                }
+            }),
+        });
         Subscription::Observation {
-            id,
-            entity_id: handle.id(),
+            id: subscription_id,
+            entity_id,
             observations: Some(Arc::downgrade(&self.observations)),
         }
     }
@@ -1650,20 +1648,27 @@ impl MutableAppContext {
             loop {
                 if let Some(effect) = self.pending_effects.pop_front() {
                     match effect {
-                        Effect::Subscribe {
+                        Effect::Subscription {
                             entity_id,
                             subscription_id,
                             callback,
-                        } => self.handle_subscribe_effect(entity_id, subscription_id, callback),
+                        } => self.handle_subscription_effect(entity_id, subscription_id, callback),
                         Effect::Event { entity_id, payload } => self.emit_event(entity_id, payload),
-                        Effect::SubscribeGlobal {
+                        Effect::GlobalSubscription {
                             type_id,
                             subscription_id,
                             callback,
-                        } => {
-                            self.handle_subscribe_global_effect(type_id, subscription_id, callback)
-                        }
+                        } => self.handle_global_subscription_effect(
+                            type_id,
+                            subscription_id,
+                            callback,
+                        ),
                         Effect::GlobalEvent { payload } => self.emit_global_event(payload),
+                        Effect::Observation {
+                            entity_id,
+                            subscription_id,
+                            callback,
+                        } => self.handle_observation_effect(entity_id, subscription_id, callback),
                         Effect::ModelNotification { model_id } => {
                             self.notify_model_observers(model_id)
                         }
@@ -1778,7 +1783,7 @@ impl MutableAppContext {
         }
     }
 
-    fn handle_subscribe_effect(
+    fn handle_subscription_effect(
         &mut self,
         entity_id: usize,
         subscription_id: usize,
@@ -1829,7 +1834,7 @@ impl MutableAppContext {
         }
     }
 
-    fn handle_subscribe_global_effect(
+    fn handle_global_subscription_effect(
         &mut self,
         type_id: TypeId,
         subscription_id: usize,
@@ -1875,6 +1880,30 @@ impl MutableAppContext {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    fn handle_observation_effect(
+        &mut self,
+        entity_id: usize,
+        subscription_id: usize,
+        callback: ObservationCallback,
+    ) {
+        match self
+            .observations
+            .lock()
+            .entry(entity_id)
+            .or_default()
+            .entry(subscription_id)
+        {
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(Some(callback));
+            }
+            // Observation was dropped before effect was processed
+            btree_map::Entry::Occupied(entry) => {
+                debug_assert!(entry.get().is_none());
+                entry.remove();
             }
         }
     }
@@ -2289,7 +2318,7 @@ pub struct WindowInvalidation {
 }
 
 pub enum Effect {
-    Subscribe {
+    Subscription {
         entity_id: usize,
         subscription_id: usize,
         callback: SubscriptionCallback,
@@ -2298,13 +2327,18 @@ pub enum Effect {
         entity_id: usize,
         payload: Box<dyn Any>,
     },
-    SubscribeGlobal {
+    GlobalSubscription {
         type_id: TypeId,
         subscription_id: usize,
         callback: GlobalSubscriptionCallback,
     },
     GlobalEvent {
         payload: Box<dyn Any>,
+    },
+    Observation {
+        entity_id: usize,
+        subscription_id: usize,
+        callback: ObservationCallback,
     },
     ModelNotification {
         model_id: usize,
@@ -2335,7 +2369,7 @@ pub enum Effect {
 impl Debug for Effect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Effect::Subscribe {
+            Effect::Subscription {
                 entity_id,
                 subscription_id,
                 ..
@@ -2348,7 +2382,7 @@ impl Debug for Effect {
                 .debug_struct("Effect::Event")
                 .field("entity_id", entity_id)
                 .finish(),
-            Effect::SubscribeGlobal {
+            Effect::GlobalSubscription {
                 type_id,
                 subscription_id,
                 ..
@@ -2360,6 +2394,15 @@ impl Debug for Effect {
             Effect::GlobalEvent { payload, .. } => f
                 .debug_struct("Effect::GlobalEvent")
                 .field("type_id", &(&*payload).type_id())
+                .finish(),
+            Effect::Observation {
+                entity_id,
+                subscription_id,
+                ..
+            } => f
+                .debug_struct("Effect::Observation")
+                .field("entity_id", entity_id)
+                .field("subscription_id", subscription_id)
                 .finish(),
             Effect::ModelNotification { model_id } => f
                 .debug_struct("Effect::ModelNotification")
@@ -4549,6 +4592,37 @@ mod tests {
     }
 
     #[crate::test(self)]
+    fn test_model_notify_before_observe_in_same_update_cycle(cx: &mut MutableAppContext) {
+        #[derive(Default)]
+        struct Model;
+
+        impl Entity for Model {
+            type Event = ();
+        }
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.add_model(|cx| {
+            drop(cx.observe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _| events.borrow_mut().push("dropped before flush")
+            }));
+            cx.observe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _| events.borrow_mut().push("before notify")
+            })
+            .detach();
+            cx.notify();
+            cx.observe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _| events.borrow_mut().push("after notify")
+            })
+            .detach();
+            Model
+        });
+        assert_eq!(*events.borrow(), ["before notify"]);
+    }
+
+    #[crate::test(self)]
     fn test_view_handles(cx: &mut MutableAppContext) {
         struct View {
             other: Option<ViewHandle<View>>,
@@ -4843,7 +4917,9 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_global_events_emitted_before_subscription(cx: &mut MutableAppContext) {
+    fn test_global_events_emitted_before_subscription_in_same_update_cycle(
+        cx: &mut MutableAppContext,
+    ) {
         let events = Rc::new(RefCell::new(Vec::new()));
         cx.update(|cx| {
             {
@@ -5048,6 +5124,47 @@ mod tests {
             c.notify();
         });
         assert_eq!(view.read(cx).events, vec![11]);
+    }
+
+    #[crate::test(self)]
+    fn test_view_notify_before_observe_in_same_update_cycle(cx: &mut MutableAppContext) {
+        #[derive(Default)]
+        struct TestView;
+
+        impl Entity for TestView {
+            type Event = ();
+        }
+
+        impl View for TestView {
+            fn ui_name() -> &'static str {
+                "TestView"
+            }
+
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+                Empty::new().boxed()
+            }
+        }
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.add_window(Default::default(), |cx| {
+            drop(cx.observe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _| events.borrow_mut().push("dropped before flush")
+            }));
+            cx.observe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _| events.borrow_mut().push("before notify")
+            })
+            .detach();
+            cx.notify();
+            cx.observe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _| events.borrow_mut().push("after notify")
+            })
+            .detach();
+            TestView
+        });
+        assert_eq!(*events.borrow(), ["before notify"]);
     }
 
     #[crate::test(self)]
