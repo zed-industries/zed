@@ -1568,7 +1568,7 @@ impl Editor {
     #[cfg(any(test, feature = "test-support"))]
     pub fn selected_ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut MutableAppContext,
+        cx: &AppContext,
     ) -> Vec<Range<D>> {
         self.local_selections::<D>(cx)
             .iter()

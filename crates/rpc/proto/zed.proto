@@ -579,7 +579,8 @@ message UpdateView {
     }
 
     message Editor {
-        Anchor scroll_top = 1;
+        repeated Selection selections = 1;
+        Anchor scroll_top = 2;
     }
 }
 
@@ -593,7 +594,8 @@ message View {
 
     message Editor {
         uint64 buffer_id = 1;
-        Anchor scroll_top = 2;
+        repeated Selection selections = 2;
+        Anchor scroll_top = 3;
     }
 }
 

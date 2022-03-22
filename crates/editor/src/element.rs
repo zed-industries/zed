@@ -939,8 +939,12 @@ impl Element for EditorElement {
                         *contains_non_empty_selection |= !is_empty;
                     }
                 }
+
+                // Render the local selections in the leader's color when following.
+                let local_replica_id = view.leader_replica_id.unwrap_or(view.replica_id(cx));
+
                 selections.insert(
-                    view.replica_id(cx),
+                    local_replica_id,
                     local_selections
                         .into_iter()
                         .map(|selection| crate::Selection {
@@ -958,6 +962,11 @@ impl Element for EditorElement {
                 .buffer_snapshot
                 .remote_selections_in_range(&(start_anchor..end_anchor))
             {
+                // The local selections match the leader's selections.
+                if Some(replica_id) == view.leader_replica_id {
+                    continue;
+                }
+
                 selections
                     .entry(replica_id)
                     .or_insert(Vec::new())

@@ -1,10 +1,10 @@
-use crate::{Anchor, Autoscroll, Editor, Event, NavigationData, ToOffset, ToPoint as _};
+use crate::{Anchor, Autoscroll, Editor, Event, ExcerptId, NavigationData, ToOffset, ToPoint as _};
 use anyhow::{anyhow, Result};
 use gpui::{
     elements::*, AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Subscription,
     Task, View, ViewContext, ViewHandle,
 };
-use language::{Bias, Buffer, Diagnostic, File as _};
+use language::{Bias, Buffer, Diagnostic, File as _, SelectionGoal};
 use project::{File, Project, ProjectEntryId, ProjectPath};
 use rpc::proto::{self, update_view};
 use std::{fmt::Write, path::PathBuf};
@@ -44,7 +44,23 @@ impl FollowableItem for Editor {
                 })
                 .unwrap_or_else(|| {
                     cx.add_view(pane.window_id(), |cx| {
-                        Editor::for_buffer(buffer, Some(project), cx)
+                        let mut editor = Editor::for_buffer(buffer, Some(project), cx);
+                        let selections = {
+                            let buffer = editor.buffer.read(cx);
+                            let buffer = buffer.read(cx);
+                            let (excerpt_id, buffer_id, _) = buffer.as_singleton().unwrap();
+                            state
+                                .selections
+                                .into_iter()
+                                .filter_map(|selection| {
+                                    deserialize_selection(&excerpt_id, buffer_id, selection)
+                                })
+                                .collect::<Vec<_>>()
+                        };
+                        if !selections.is_empty() {
+                            editor.set_selections(selections.into(), None, cx);
+                        }
+                        editor
                     })
                 }))
         }))
@@ -55,33 +71,12 @@ impl FollowableItem for Editor {
         leader_replica_id: Option<u16>,
         cx: &mut ViewContext<Self>,
     ) {
-        let prev_leader_replica_id = self.leader_replica_id;
         self.leader_replica_id = leader_replica_id;
         if self.leader_replica_id.is_some() {
-            self.show_local_selections = false;
             self.buffer.update(cx, |buffer, cx| {
                 buffer.remove_active_selections(cx);
             });
         } else {
-            self.show_local_selections = true;
-            if let Some(leader_replica_id) = prev_leader_replica_id {
-                let selections = self
-                    .buffer
-                    .read(cx)
-                    .snapshot(cx)
-                    .remote_selections_in_range(&(Anchor::min()..Anchor::max()))
-                    .filter_map(|(replica_id, selections)| {
-                        if replica_id == leader_replica_id {
-                            Some(selections)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                if !selections.is_empty() {
-                    self.set_selections(selections.into(), None, cx);
-                }
-            }
             self.buffer.update(cx, |buffer, cx| {
                 if self.focused {
                     buffer.set_active_selections(&self.selections, cx);
@@ -99,6 +94,7 @@ impl FollowableItem for Editor {
                 .scroll_top_anchor
                 .as_ref()
                 .map(|anchor| language::proto::serialize_anchor(&anchor.text_anchor)),
+            selections: self.selections.iter().map(serialize_selection).collect(),
         }))
     }
 
@@ -108,12 +104,13 @@ impl FollowableItem for Editor {
         _: &AppContext,
     ) -> Option<update_view::Variant> {
         match event {
-            Event::ScrollPositionChanged => {
+            Event::ScrollPositionChanged | Event::SelectionsChanged => {
                 Some(update_view::Variant::Editor(update_view::Editor {
                     scroll_top: self
                         .scroll_top_anchor
                         .as_ref()
                         .map(|anchor| language::proto::serialize_anchor(&anchor.text_anchor)),
+                    selections: self.selections.iter().map(serialize_selection).collect(),
                 }))
             }
             _ => None,
@@ -127,23 +124,75 @@ impl FollowableItem for Editor {
     ) -> Result<()> {
         match message {
             update_view::Variant::Editor(message) => {
+                let buffer = self.buffer.read(cx);
+                let buffer = buffer.read(cx);
+                let (excerpt_id, buffer_id, _) = buffer.as_singleton().unwrap();
+                let excerpt_id = excerpt_id.clone();
+                drop(buffer);
+
                 if let Some(anchor) = message.scroll_top {
-                    let anchor = language::proto::deserialize_anchor(anchor)
-                        .ok_or_else(|| anyhow!("invalid scroll top"))?;
-                    let anchor = {
-                        let buffer = self.buffer.read(cx);
-                        let buffer = buffer.read(cx);
-                        let (excerpt_id, _, _) = buffer.as_singleton().unwrap();
-                        buffer.anchor_in_excerpt(excerpt_id.clone(), anchor)
-                    };
-                    self.set_scroll_top_anchor(Some(anchor), cx);
+                    self.set_scroll_top_anchor(
+                        Some(Anchor {
+                            buffer_id: Some(buffer_id),
+                            excerpt_id: excerpt_id.clone(),
+                            text_anchor: language::proto::deserialize_anchor(anchor)
+                                .ok_or_else(|| anyhow!("invalid scroll top"))?,
+                        }),
+                        cx,
+                    );
                 } else {
                     self.set_scroll_top_anchor(None, cx);
+                }
+
+                let selections = message
+                    .selections
+                    .into_iter()
+                    .filter_map(|selection| {
+                        deserialize_selection(&excerpt_id, buffer_id, selection)
+                    })
+                    .collect::<Vec<_>>();
+                if !selections.is_empty() {
+                    self.set_selections(selections.into(), None, cx);
                 }
             }
         }
         Ok(())
     }
+}
+
+fn serialize_selection(selection: &Selection<Anchor>) -> proto::Selection {
+    proto::Selection {
+        id: selection.id as u64,
+        start: Some(language::proto::serialize_anchor(
+            &selection.start.text_anchor,
+        )),
+        end: Some(language::proto::serialize_anchor(
+            &selection.end.text_anchor,
+        )),
+        reversed: selection.reversed,
+    }
+}
+
+fn deserialize_selection(
+    excerpt_id: &ExcerptId,
+    buffer_id: usize,
+    selection: proto::Selection,
+) -> Option<Selection<Anchor>> {
+    Some(Selection {
+        id: selection.id as usize,
+        start: Anchor {
+            buffer_id: Some(buffer_id),
+            excerpt_id: excerpt_id.clone(),
+            text_anchor: language::proto::deserialize_anchor(selection.start?)?,
+        },
+        end: Anchor {
+            buffer_id: Some(buffer_id),
+            excerpt_id: excerpt_id.clone(),
+            text_anchor: language::proto::deserialize_anchor(selection.end?)?,
+        },
+        reversed: selection.reversed,
+        goal: SelectionGoal::None,
+    })
 }
 
 impl Item for Editor {

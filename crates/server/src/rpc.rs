@@ -1083,8 +1083,8 @@ mod tests {
     };
     use collections::BTreeMap;
     use editor::{
-        self, Anchor, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Input, Redo,
-        Rename, ToOffset, ToggleCodeActions, Undo,
+        self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Input, Redo, Rename,
+        ToOffset, ToggleCodeActions, Undo,
     };
     use gpui::{executor, ModelHandle, TestAppContext, ViewHandle};
     use language::{
@@ -4324,18 +4324,13 @@ mod tests {
             })
             .await;
 
+        // When client A selects something, client B does as well.
         editor_a1.update(cx_a, |editor, cx| {
-            editor.select_ranges([2..2], None, cx);
+            editor.select_ranges([1..1, 2..2], None, cx);
         });
         editor_b1
             .condition(cx_b, |editor, cx| {
-                let snapshot = editor.buffer().read(cx).snapshot(cx);
-                let selection = snapshot
-                    .remote_selections_in_range(&(Anchor::min()..Anchor::max()))
-                    .next();
-                selection.map_or(false, |selection| {
-                    selection.1.start.to_offset(&snapshot) == 2
-                })
+                editor.selected_ranges(cx) == vec![1..1, 2..2]
             })
             .await;
 
@@ -4343,10 +4338,6 @@ mod tests {
         workspace_b.update(cx_b, |workspace, cx| {
             workspace.unfollow(&workspace.active_pane().clone(), cx)
         });
-        editor_b1.update(cx_b, |editor, cx| {
-            assert_eq!(editor.selected_ranges::<usize>(cx), &[2..2]);
-        });
-
         workspace_a.update(cx_a, |workspace, cx| {
             workspace.activate_item(&editor_a2, cx);
             editor_a2.update(cx, |editor, cx| editor.set_text("TWO", cx));
