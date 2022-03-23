@@ -6093,6 +6093,10 @@ pub fn styled_runs_for_code_label<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{
+        geometry::rect::RectF,
+        platform::{WindowBounds, WindowOptions},
+    };
     use language::{LanguageConfig, LanguageServerConfig};
     use lsp::FakeLanguageServer;
     use project::FakeFs;
@@ -6101,6 +6105,7 @@ mod tests {
     use text::Point;
     use unindent::Unindent;
     use util::test::sample_text;
+    use workspace::FollowableItem;
 
     #[gpui::test]
     fn test_undo_redo_with_selection_restoration(cx: &mut MutableAppContext) {
@@ -9033,6 +9038,47 @@ mod tests {
                 )]
             );
         });
+    }
+
+    #[gpui::test]
+    fn test_following(cx: &mut gpui::MutableAppContext) {
+        let buffer = MultiBuffer::build_simple(&sample_text(16, 8, 'a'), cx);
+        populate_settings(cx);
+
+        let (_, leader) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
+        let (_, follower) = cx.add_window(
+            WindowOptions {
+                bounds: WindowBounds::Fixed(RectF::from_points(vec2f(0., 0.), vec2f(10., 80.))),
+                ..Default::default()
+            },
+            |cx| build_editor(buffer.clone(), cx),
+        );
+
+        follower.update(cx, |_, cx| {
+            cx.subscribe(&leader, |follower, leader, event, cx| {
+                let mut update = None;
+                leader
+                    .read(cx)
+                    .add_event_to_update_proto(event, &mut update, cx);
+                if let Some(update) = update {
+                    follower.apply_update_proto(update, cx).unwrap();
+                }
+            })
+            .detach();
+        });
+
+        leader.update(cx, |leader, cx| {
+            leader.select_ranges([1..1], None, cx);
+        });
+        assert_eq!(follower.read(cx).selected_ranges(cx), vec![1..1]);
+
+        leader.update(cx, |leader, cx| {
+            leader.set_scroll_position(vec2f(1.5, 3.5), cx);
+        });
+        assert_eq!(
+            follower.update(cx, |follower, cx| follower.scroll_position(cx)),
+            vec2f(1.5, 3.5)
+        );
     }
 
     #[test]
