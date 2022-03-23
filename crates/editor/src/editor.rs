@@ -5064,36 +5064,39 @@ impl Editor {
             cx,
         );
 
-        let completion_menu = match self.context_menu.as_mut() {
-            Some(ContextMenu::Completions(menu)) => Some(menu),
-            _ => {
-                self.context_menu.take();
-                None
-            }
-        };
+        if local {
+            let completion_menu = match self.context_menu.as_mut() {
+                Some(ContextMenu::Completions(menu)) => Some(menu),
+                _ => {
+                    self.context_menu.take();
+                    None
+                }
+            };
 
-        if let Some(completion_menu) = completion_menu {
-            let cursor_position = new_cursor_position.to_offset(&buffer);
-            let (word_range, kind) =
-                buffer.surrounding_word(completion_menu.initial_position.clone());
-            if kind == Some(CharKind::Word) && word_range.to_inclusive().contains(&cursor_position)
+            if let Some(completion_menu) = completion_menu {
+                let cursor_position = new_cursor_position.to_offset(&buffer);
+                let (word_range, kind) =
+                    buffer.surrounding_word(completion_menu.initial_position.clone());
+                if kind == Some(CharKind::Word)
+                    && word_range.to_inclusive().contains(&cursor_position)
+                {
+                    let query = Self::completion_query(&buffer, cursor_position);
+                    cx.background()
+                        .block(completion_menu.filter(query.as_deref(), cx.background().clone()));
+                    self.show_completions(&ShowCompletions, cx);
+                } else {
+                    self.hide_context_menu(cx);
+                }
+            }
+
+            if old_cursor_position.to_display_point(&display_map).row()
+                != new_cursor_position.to_display_point(&display_map).row()
             {
-                let query = Self::completion_query(&buffer, cursor_position);
-                cx.background()
-                    .block(completion_menu.filter(query.as_deref(), cx.background().clone()));
-                self.show_completions(&ShowCompletions, cx);
-            } else {
-                self.hide_context_menu(cx);
+                self.available_code_actions.take();
             }
+            self.refresh_code_actions(cx);
+            self.refresh_document_highlights(cx);
         }
-
-        if old_cursor_position.to_display_point(&display_map).row()
-            != new_cursor_position.to_display_point(&display_map).row()
-        {
-            self.available_code_actions.take();
-        }
-        self.refresh_code_actions(cx);
-        self.refresh_document_highlights(cx);
 
         self.pause_cursor_blinking(cx);
         cx.emit(Event::SelectionsChanged { local });
