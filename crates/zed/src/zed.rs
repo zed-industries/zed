@@ -893,6 +893,52 @@ mod tests {
             (file3.clone(), DisplayPoint::new(0, 0))
         );
 
+        // Modify file to remove nav history location, and ensure duplicates are skipped
+        editor1.update(cx, |editor, cx| {
+            editor.select_display_ranges(&[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)], cx)
+        });
+
+        for _ in 0..5 {
+            editor1.update(cx, |editor, cx| {
+                editor
+                    .select_display_ranges(&[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)], cx);
+            });
+            editor1.update(cx, |editor, cx| {
+                editor.select_display_ranges(
+                    &[DisplayPoint::new(13, 0)..DisplayPoint::new(13, 0)],
+                    cx,
+                )
+            });
+        }
+
+        editor1.update(cx, |editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                editor.select_display_ranges(
+                    &[DisplayPoint::new(2, 0)..DisplayPoint::new(14, 0)],
+                    cx,
+                );
+                editor.insert("", cx);
+            })
+        });
+
+        editor1.update(cx, |editor, cx| {
+            editor.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx)
+        });
+        workspace
+            .update(cx, |w, cx| Pane::go_back(w, None, cx))
+            .await;
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file1.clone(), DisplayPoint::new(2, 0))
+        );
+        workspace
+            .update(cx, |w, cx| Pane::go_back(w, None, cx))
+            .await;
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file1.clone(), DisplayPoint::new(3, 0))
+        );
+
         fn active_location(
             workspace: &ViewHandle<Workspace>,
             cx: &mut TestAppContext,

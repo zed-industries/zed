@@ -302,9 +302,9 @@ impl Item for ProjectSearchView {
         });
     }
 
-    fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) {
+    fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) -> bool {
         self.results_editor
-            .update(cx, |editor, cx| editor.navigate(data, cx));
+            .update(cx, |editor, cx| editor.navigate(data, cx))
     }
 
     fn should_update_tab_on_event(event: &ViewEvent) -> bool {

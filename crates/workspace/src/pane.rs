@@ -212,40 +212,47 @@ impl Pane {
         workspace.activate_pane(pane.clone(), cx);
 
         let to_load = pane.update(cx, |pane, cx| {
-            // Retrieve the weak item handle from the history.
-            let entry = pane.nav_history.borrow_mut().pop(mode)?;
+            loop {
+                // Retrieve the weak item handle from the history.
+                let entry = pane.nav_history.borrow_mut().pop(mode)?;
 
-            // If the item is still present in this pane, then activate it.
-            if let Some(index) = entry
-                .item
-                .upgrade(cx)
-                .and_then(|v| pane.index_for_item(v.as_ref()))
-            {
-                if let Some(item) = pane.active_item() {
-                    pane.nav_history.borrow_mut().set_mode(mode);
-                    item.deactivated(cx);
-                    pane.nav_history
+                // If the item is still present in this pane, then activate it.
+                if let Some(index) = entry
+                    .item
+                    .upgrade(cx)
+                    .and_then(|v| pane.index_for_item(v.as_ref()))
+                {
+                    if let Some(item) = pane.active_item() {
+                        pane.nav_history.borrow_mut().set_mode(mode);
+                        item.deactivated(cx);
+                        pane.nav_history
+                            .borrow_mut()
+                            .set_mode(NavigationMode::Normal);
+                    }
+
+                    let prev_active_index = mem::replace(&mut pane.active_item_index, index);
+                    pane.focus_active_item(cx);
+                    let mut navigated = prev_active_index != pane.active_item_index;
+                    if let Some(data) = entry.data {
+                        navigated |= pane.active_item()?.navigate(data, cx);
+                    }
+
+                    if navigated {
+                        cx.notify();
+                        break None;
+                    }
+                }
+                // If the item is no longer present in this pane, then retrieve its
+                // project path in order to reopen it.
+                else {
+                    break pane
+                        .nav_history
                         .borrow_mut()
-                        .set_mode(NavigationMode::Normal);
+                        .paths_by_item
+                        .get(&entry.item.id())
+                        .cloned()
+                        .map(|project_path| (project_path, entry));
                 }
-
-                pane.active_item_index = index;
-                pane.focus_active_item(cx);
-                if let Some(data) = entry.data {
-                    pane.active_item()?.navigate(data, cx);
-                }
-                cx.notify();
-                None
-            }
-            // If the item is no longer present in this pane, then retrieve its
-            // project path in order to reopen it.
-            else {
-                pane.nav_history
-                    .borrow_mut()
-                    .paths_by_item
-                    .get(&entry.item.id())
-                    .cloned()
-                    .map(|project_path| (project_path, entry))
             }
         });
 

@@ -1393,8 +1393,6 @@ impl Editor {
             }
         }
 
-        self.push_to_nav_history(newest_selection.head(), Some(end.to_point(&buffer)), cx);
-
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
             start,
@@ -5111,7 +5109,7 @@ impl Editor {
         cx.notify();
     }
 
-    fn transact(
+    pub fn transact(
         &mut self,
         cx: &mut ViewContext<Self>,
         update: impl FnOnce(&mut Self, &mut ViewContext<Self>),
@@ -6328,6 +6326,7 @@ mod tests {
                 editor.selected_display_ranges(cx),
                 &[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)]
             );
+            assert!(nav_history.borrow_mut().pop_backward().is_none());
 
             // Move the cursor a small distance via the mouse.
             // Nothing is added to the navigation history.
@@ -6354,6 +6353,7 @@ mod tests {
                 editor.selected_display_ranges(cx),
                 &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
             );
+            assert!(nav_history.borrow_mut().pop_backward().is_none());
 
             editor
         });

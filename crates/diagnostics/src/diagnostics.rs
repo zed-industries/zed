@@ -454,9 +454,9 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         None
     }
 
-    fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) {
+    fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) -> bool {
         self.editor
-            .update(cx, |editor, cx| editor.navigate(data, cx));
+            .update(cx, |editor, cx| editor.navigate(data, cx))
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
