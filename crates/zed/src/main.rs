@@ -81,7 +81,7 @@ fn main() {
         cx.spawn({
             let client = client.clone();
             |cx| async move {
-                if client.has_keychain_credentials(&cx) {
+                if !stdout_is_a_pty() && client.has_keychain_credentials(&cx) {
                     client.authenticate_and_connect(true, &cx).await?;
                 }
                 Ok::<_, anyhow::Error>(())
