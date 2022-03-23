@@ -1621,8 +1621,13 @@ impl BufferSnapshot {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut cursor = tree.root_node().walk();
 
-        // Descend to smallest leaf that touches or exceeds the start of the range.
-        while cursor.goto_first_child_for_byte(range.start).is_some() {}
+        // Descend to the first leaf that touches the start of the range,
+        // and if the range is non-empty, extends beyond the start.
+        while cursor.goto_first_child_for_byte(range.start).is_some() {
+            if !range.is_empty() && cursor.node().end_byte() == range.start {
+                cursor.goto_next_sibling();
+            }
+        }
 
         // Ascend to the smallest ancestor that strictly contains the range.
         loop {
@@ -1656,6 +1661,9 @@ impl BufferSnapshot {
                 }
             }
 
+            // If there is a candidate node on both sides of the (empty) range, then
+            // decide between the two by favoring a named node over an anonymous token.
+            // If both nodes are the same in that regard, favor the right one.
             if let Some(right_node) = right_node {
                 if right_node.is_named() || !left_node.is_named() {
                     return Some(right_node.byte_range());
