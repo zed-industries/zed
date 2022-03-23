@@ -1160,27 +1160,29 @@ impl Workspace {
     }
 
     pub fn activate_next_pane(&mut self, cx: &mut ViewContext<Self>) {
-        let ix = self
-            .panes
-            .iter()
-            .position(|pane| pane == &self.active_pane)
-            .unwrap();
-        let next_ix = (ix + 1) % self.panes.len();
-        self.activate_pane(self.panes[next_ix].clone(), cx);
+        let next_pane = {
+            let panes = self.center.panes();
+            let ix = panes
+                .iter()
+                .position(|pane| **pane == self.active_pane)
+                .unwrap();
+            let next_ix = (ix + 1) % panes.len();
+            panes[next_ix].clone()
+        };
+        self.activate_pane(next_pane, cx);
     }
 
     pub fn activate_previous_pane(&mut self, cx: &mut ViewContext<Self>) {
-        let ix = self
-            .panes
-            .iter()
-            .position(|pane| pane == &self.active_pane)
-            .unwrap();
-        let prev_ix = if ix == 0 {
-            self.panes.len() - 1
-        } else {
-            ix - 1
+        let prev_pane = {
+            let panes = self.center.panes();
+            let ix = panes
+                .iter()
+                .position(|pane| **pane == self.active_pane)
+                .unwrap();
+            let prev_ix = if ix == 0 { panes.len() - 1 } else { ix - 1 };
+            panes[prev_ix].clone()
         };
-        self.activate_pane(self.panes[prev_ix].clone(), cx);
+        self.activate_pane(prev_pane, cx);
     }
 
     fn activate_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {

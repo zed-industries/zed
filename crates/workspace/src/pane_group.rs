@@ -57,6 +57,12 @@ impl PaneGroup {
     ) -> ElementBox {
         self.root.render(theme, follower_states, collaborators)
     }
+
+    pub(crate) fn panes(&self) -> Vec<&ViewHandle<Pane>> {
+        let mut panes = Vec::new();
+        self.root.collect_panes(&mut panes);
+        panes
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -120,6 +126,17 @@ impl Member {
                 ChildView::new(pane).contained().with_border(border).boxed()
             }
             Member::Axis(axis) => axis.render(theme, follower_states, collaborators),
+        }
+    }
+
+    fn collect_panes<'a>(&'a self, panes: &mut Vec<&'a ViewHandle<Pane>>) {
+        match self {
+            Member::Axis(axis) => {
+                for member in &axis.members {
+                    member.collect_panes(panes);
+                }
+            }
+            Member::Pane(pane) => panes.push(pane),
         }
     }
 }
