@@ -4911,26 +4911,41 @@ impl Editor {
     /// the id of the new excerpt where the head of the selection has been moved.
     pub fn refresh_selections(&mut self, cx: &mut ViewContext<Self>) -> HashMap<usize, ExcerptId> {
         let snapshot = self.buffer.read(cx).read(cx);
+        let mut selections_with_lost_position = HashMap::default();
+
+        let mut pending_selection = self.pending_selection.take();
+        if let Some(pending) = pending_selection.as_mut() {
+            let anchors =
+                snapshot.refresh_anchors([&pending.selection.start, &pending.selection.end]);
+            let (_, start, kept_start) = anchors[0].clone();
+            let (_, end, kept_end) = anchors[1].clone();
+            let kept_head = if pending.selection.reversed {
+                kept_start
+            } else {
+                kept_end
+            };
+            if !kept_head {
+                selections_with_lost_position.insert(
+                    pending.selection.id,
+                    pending.selection.head().excerpt_id.clone(),
+                );
+            }
+
+            pending.selection.start = start;
+            pending.selection.end = end;
+        }
+
         let anchors_with_status = snapshot.refresh_anchors(
             self.selections
                 .iter()
                 .flat_map(|selection| [&selection.start, &selection.end]),
         );
-        let offsets =
-            snapshot.summaries_for_anchors::<usize, _>(anchors_with_status.iter().map(|a| &a.1));
-        assert_eq!(anchors_with_status.len(), 2 * self.selections.len());
-        assert_eq!(offsets.len(), anchors_with_status.len());
-
-        let offsets = offsets.chunks(2);
-        let statuses = anchors_with_status
+        self.selections = anchors_with_status
             .chunks(2)
-            .map(|a| (a[0].0 / 2, a[0].2, a[1].2));
-
-        let mut selections_with_lost_position = HashMap::default();
-        let new_selections = offsets
-            .zip(statuses)
-            .map(|(offsets, (selection_ix, kept_start, kept_end))| {
-                let selection = &self.selections[selection_ix];
+            .map(|selection_anchors| {
+                let (anchor_ix, start, kept_start) = selection_anchors[0].clone();
+                let (_, end, kept_end) = selection_anchors[1].clone();
+                let selection = &self.selections[anchor_ix / 2];
                 let kept_head = if selection.reversed {
                     kept_start
                 } else {
@@ -4943,15 +4958,21 @@ impl Editor {
 
                 Selection {
                     id: selection.id,
-                    start: offsets[0],
-                    end: offsets[1],
+                    start,
+                    end,
                     reversed: selection.reversed,
                     goal: selection.goal,
                 }
             })
             .collect();
         drop(snapshot);
-        self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+
+        let new_selections = self.local_selections::<usize>(cx);
+        if !new_selections.is_empty() {
+            self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+        }
+        self.pending_selection = pending_selection;
+
         selections_with_lost_position
     }
 
@@ -8769,13 +8790,15 @@ mod tests {
         );
         let (_, editor) = cx.add_window(Default::default(), |cx| {
             let mut editor = build_editor(multibuffer.clone(), cx);
-            editor.select_ranges(
+            let snapshot = editor.snapshot(cx);
+            editor.select_ranges([Point::new(1, 3)..Point::new(1, 3)], None, cx);
+            editor.begin_selection(Point::new(2, 1).to_display_point(&snapshot), true, 1, cx);
+            assert_eq!(
+                editor.selected_ranges(cx),
                 [
                     Point::new(1, 3)..Point::new(1, 3),
                     Point::new(2, 1)..Point::new(2, 1),
-                ],
-                None,
-                cx,
+                ]
             );
             editor
         });
@@ -8815,6 +8838,61 @@ mod tests {
                     Point::new(0, 3)..Point::new(0, 3)
                 ]
             );
+            assert!(editor.pending_selection.is_some());
+        });
+    }
+
+    #[gpui::test]
+    fn test_refresh_selections_while_selecting_with_mouse(cx: &mut gpui::MutableAppContext) {
+        populate_settings(cx);
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
+        let mut excerpt1_id = None;
+        let multibuffer = cx.add_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(0);
+            excerpt1_id = multibuffer
+                .push_excerpts(
+                    buffer.clone(),
+                    [
+                        Point::new(0, 0)..Point::new(1, 4),
+                        Point::new(1, 0)..Point::new(2, 4),
+                    ],
+                    cx,
+                )
+                .into_iter()
+                .next();
+            multibuffer
+        });
+        assert_eq!(
+            multibuffer.read(cx).read(cx).text(),
+            "aaaa\nbbbb\nbbbb\ncccc"
+        );
+        let (_, editor) = cx.add_window(Default::default(), |cx| {
+            let mut editor = build_editor(multibuffer.clone(), cx);
+            let snapshot = editor.snapshot(cx);
+            editor.begin_selection(Point::new(1, 3).to_display_point(&snapshot), false, 1, cx);
+            assert_eq!(
+                editor.selected_ranges(cx),
+                [Point::new(1, 3)..Point::new(1, 3)]
+            );
+            editor
+        });
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.remove_excerpts([&excerpt1_id.unwrap()], cx);
+        });
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.selected_ranges(cx),
+                [Point::new(0, 0)..Point::new(0, 0)]
+            );
+
+            // Ensure we don't panic when selections are refreshed and that the pending selection is finalized.
+            editor.refresh_selections(cx);
+            assert_eq!(
+                editor.selected_ranges(cx),
+                [Point::new(0, 3)..Point::new(0, 3)]
+            );
+            assert!(editor.pending_selection.is_some());
         });
     }
 
