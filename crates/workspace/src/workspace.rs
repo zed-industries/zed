@@ -112,8 +112,7 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     cx.add_action(Workspace::toggle_sidebar_item);
     cx.add_action(Workspace::toggle_sidebar_item_focus);
     cx.add_bindings(vec![
-        Binding::new("cmd-alt-shift-F", FollowNextCollaborator, None),
-        Binding::new("cmd-alt-shift-U", Unfollow, None),
+        Binding::new("ctrl-alt-cmd-f", FollowNextCollaborator, None),
         Binding::new("cmd-s", Save, None),
         Binding::new("cmd-alt-i", DebugElements, None),
         Binding::new(
