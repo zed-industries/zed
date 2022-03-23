@@ -458,26 +458,21 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                     && !pending_update_scheduled.load(SeqCst)
                 {
                     pending_update_scheduled.store(true, SeqCst);
-                    cx.spawn({
+                    cx.after_window_update({
                         let pending_update = pending_update.clone();
                         let pending_update_scheduled = pending_update_scheduled.clone();
-                        move |this, mut cx| async move {
-                            this.update(&mut cx, |this, cx| {
-                                pending_update_scheduled.store(false, SeqCst);
-                                this.update_followers(
-                                    proto::update_followers::Variant::UpdateView(
-                                        proto::UpdateView {
-                                            id: item.id() as u64,
-                                            variant: pending_update.borrow_mut().take(),
-                                            leader_id: leader_id.map(|id| id.0),
-                                        },
-                                    ),
-                                    cx,
-                                );
-                            });
+                        move |this, cx| {
+                            pending_update_scheduled.store(false, SeqCst);
+                            this.update_followers(
+                                proto::update_followers::Variant::UpdateView(proto::UpdateView {
+                                    id: item.id() as u64,
+                                    variant: pending_update.borrow_mut().take(),
+                                    leader_id: leader_id.map(|id| id.0),
+                                }),
+                                cx,
+                            );
                         }
-                    })
-                    .detach();
+                    });
                 }
             }
 

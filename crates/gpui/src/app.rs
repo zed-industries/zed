@@ -1224,7 +1224,17 @@ impl MutableAppContext {
     }
 
     fn defer(&mut self, callback: Box<dyn FnOnce(&mut MutableAppContext)>) {
-        self.pending_effects.push_back(Effect::Deferred(callback))
+        self.pending_effects.push_back(Effect::Deferred {
+            callback,
+            after_window_update: false,
+        })
+    }
+
+    pub fn after_window_update(&mut self, callback: impl 'static + FnOnce(&mut MutableAppContext)) {
+        self.pending_effects.push_back(Effect::Deferred {
+            callback: Box::new(callback),
+            after_window_update: true,
+        })
     }
 
     pub(crate) fn notify_model(&mut self, model_id: usize) {
@@ -1640,6 +1650,7 @@ impl MutableAppContext {
 
     fn flush_effects(&mut self) {
         self.pending_flushes = self.pending_flushes.saturating_sub(1);
+        let mut after_window_update_callbacks = Vec::new();
 
         if !self.flushing_effects && self.pending_flushes == 0 {
             self.flushing_effects = true;
@@ -1675,7 +1686,16 @@ impl MutableAppContext {
                         Effect::ViewNotification { window_id, view_id } => {
                             self.notify_view_observers(window_id, view_id)
                         }
-                        Effect::Deferred(callback) => callback(self),
+                        Effect::Deferred {
+                            callback,
+                            after_window_update,
+                        } => {
+                            if after_window_update {
+                                after_window_update_callbacks.push(callback);
+                            } else {
+                                callback(self)
+                            }
+                        }
                         Effect::ModelRelease { model_id, model } => {
                             self.notify_release_observers(model_id, model.as_any())
                         }
@@ -1707,12 +1727,18 @@ impl MutableAppContext {
                     }
 
                     if self.pending_effects.is_empty() {
-                        self.flushing_effects = false;
-                        self.pending_notifications.clear();
-                        break;
-                    } else {
-                        refreshing = false;
+                        for callback in after_window_update_callbacks.drain(..) {
+                            callback(self);
+                        }
+
+                        if self.pending_effects.is_empty() {
+                            self.flushing_effects = false;
+                            self.pending_notifications.clear();
+                            break;
+                        }
                     }
+
+                    refreshing = false;
                 }
             }
         }
@@ -2347,7 +2373,10 @@ pub enum Effect {
         window_id: usize,
         view_id: usize,
     },
-    Deferred(Box<dyn FnOnce(&mut MutableAppContext)>),
+    Deferred {
+        callback: Box<dyn FnOnce(&mut MutableAppContext)>,
+        after_window_update: bool,
+    },
     ModelRelease {
         model_id: usize,
         model: Box<dyn AnyModel>,
@@ -2413,7 +2442,7 @@ impl Debug for Effect {
                 .field("window_id", window_id)
                 .field("view_id", view_id)
                 .finish(),
-            Effect::Deferred(_) => f.debug_struct("Effect::Deferred").finish(),
+            Effect::Deferred { .. } => f.debug_struct("Effect::Deferred").finish(),
             Effect::ModelRelease { model_id, .. } => f
                 .debug_struct("Effect::ModelRelease")
                 .field("model_id", model_id)
@@ -2943,6 +2972,18 @@ impl<'a, T: View> ViewContext<'a, T> {
                 callback(view, cx);
             })
         }))
+    }
+
+    pub fn after_window_update(
+        &mut self,
+        callback: impl 'static + FnOnce(&mut T, &mut ViewContext<T>),
+    ) {
+        let handle = self.handle();
+        self.app.after_window_update(move |cx| {
+            handle.update(cx, |view, cx| {
+                callback(view, cx);
+            })
+        })
     }
 
     pub fn propagate_action(&mut self) {
@@ -4424,7 +4465,7 @@ mod tests {
     use smol::future::poll_once;
     use std::{
         cell::Cell,
-        sync::atomic::{AtomicUsize, Ordering::SeqCst},
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
     };
 
     #[crate::test(self)]
@@ -4620,6 +4661,58 @@ mod tests {
             Model
         });
         assert_eq!(*events.borrow(), ["before notify"]);
+    }
+
+    #[crate::test(self)]
+    fn test_defer_and_after_window_update(cx: &mut MutableAppContext) {
+        struct View {
+            render_count: usize,
+        }
+
+        impl Entity for View {
+            type Event = usize;
+        }
+
+        impl super::View for View {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+                post_inc(&mut self.render_count);
+                Empty::new().boxed()
+            }
+
+            fn ui_name() -> &'static str {
+                "View"
+            }
+        }
+
+        let (_, view) = cx.add_window(Default::default(), |_| View { render_count: 0 });
+        let called_defer = Rc::new(AtomicBool::new(false));
+        let called_after_window_update = Rc::new(AtomicBool::new(false));
+
+        view.update(cx, |this, cx| {
+            assert_eq!(this.render_count, 1);
+            cx.defer({
+                let called_defer = called_defer.clone();
+                move |this, _| {
+                    assert_eq!(this.render_count, 1);
+                    called_defer.store(true, SeqCst);
+                }
+            });
+            cx.after_window_update({
+                let called_after_window_update = called_after_window_update.clone();
+                move |this, cx| {
+                    assert_eq!(this.render_count, 2);
+                    called_after_window_update.store(true, SeqCst);
+                    cx.notify();
+                }
+            });
+            assert!(!called_defer.load(SeqCst));
+            assert!(!called_after_window_update.load(SeqCst));
+            cx.notify();
+        });
+
+        assert!(called_defer.load(SeqCst));
+        assert!(called_after_window_update.load(SeqCst));
+        assert_eq!(view.read(cx).render_count, 3);
     }
 
     #[crate::test(self)]
