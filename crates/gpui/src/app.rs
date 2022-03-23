@@ -5056,11 +5056,13 @@ mod tests {
             cx.subscribe_global(move |e: &GlobalEvent, cx| {
                 events.borrow_mut().push(("Outer", e.clone()));
 
-                let events = events.clone();
-                cx.subscribe_global(move |e: &GlobalEvent, _| {
-                    events.borrow_mut().push(("Inner", e.clone()));
-                })
-                .detach();
+                if e.0 == 1 {
+                    let events = events.clone();
+                    cx.subscribe_global(move |e: &GlobalEvent, _| {
+                        events.borrow_mut().push(("Inner", e.clone()));
+                    })
+                    .detach();
+                }
             })
             .detach();
         }
@@ -5070,16 +5072,18 @@ mod tests {
             cx.emit_global(GlobalEvent(2));
             cx.emit_global(GlobalEvent(3));
         });
+        cx.update(|cx| {
+            cx.emit_global(GlobalEvent(4));
+        });
 
         assert_eq!(
             &*events.borrow(),
             &[
                 ("Outer", GlobalEvent(1)),
                 ("Outer", GlobalEvent(2)),
-                ("Inner", GlobalEvent(2)),
                 ("Outer", GlobalEvent(3)),
-                ("Inner", GlobalEvent(3)),
-                ("Inner", GlobalEvent(3)),
+                ("Outer", GlobalEvent(4)),
+                ("Inner", GlobalEvent(4)),
             ]
         );
     }
