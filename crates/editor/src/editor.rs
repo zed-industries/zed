@@ -5060,7 +5060,7 @@ impl Editor {
         cx.notify();
     }
 
-    fn transact(
+    pub fn transact(
         &mut self,
         cx: &mut ViewContext<Self>,
         update: impl FnOnce(&mut Self, &mut ViewContext<Self>),
