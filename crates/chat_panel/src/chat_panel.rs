@@ -327,7 +327,12 @@ impl ChatPanel {
                 let rpc = rpc.clone();
                 let this = this.clone();
                 cx.spawn(|mut cx| async move {
-                    if rpc.authenticate_and_connect(&cx).log_err().await.is_some() {
+                    if rpc
+                        .authenticate_and_connect(true, &cx)
+                        .log_err()
+                        .await
+                        .is_some()
+                    {
                         cx.update(|cx| {
                             if let Some(this) = this.upgrade(cx) {
                                 if this.is_focused(cx) {

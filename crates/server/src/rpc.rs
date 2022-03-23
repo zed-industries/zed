@@ -5021,7 +5021,7 @@ mod tests {
                 });
 
             client
-                .authenticate_and_connect(&cx.to_async())
+                .authenticate_and_connect(false, &cx.to_async())
                 .await
                 .unwrap();
 
