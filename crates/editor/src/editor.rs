@@ -4903,6 +4903,55 @@ impl Editor {
         );
     }
 
+    pub fn set_selections_from_remote(
+        &mut self,
+        mut selections: Vec<Selection<Anchor>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let buffer = self.buffer.read(cx);
+        let buffer = buffer.read(cx);
+        selections.sort_by(|a, b| {
+            a.start
+                .cmp(&b.start, &*buffer)
+                .unwrap()
+                .then_with(|| b.end.cmp(&a.end, &*buffer).unwrap())
+        });
+
+        // Merge overlapping selections
+        let mut i = 1;
+        while i < selections.len() {
+            if selections[i - 1]
+                .end
+                .cmp(&selections[i].start, &*buffer)
+                .unwrap()
+                .is_ge()
+            {
+                let removed = selections.remove(i);
+                if removed
+                    .start
+                    .cmp(&selections[i - 1].start, &*buffer)
+                    .unwrap()
+                    .is_lt()
+                {
+                    selections[i - 1].start = removed.start;
+                }
+                if removed
+                    .end
+                    .cmp(&selections[i - 1].end, &*buffer)
+                    .unwrap()
+                    .is_gt()
+                {
+                    selections[i - 1].end = removed.end;
+                }
+            } else {
+                i += 1;
+            }
+        }
+
+        drop(buffer);
+        self.set_selections(selections.into(), None, false, cx);
+    }
+
     /// Compute new ranges for any selections that were located in excerpts that have
     /// since been removed.
     ///
@@ -9109,6 +9158,29 @@ mod tests {
             assert!(follower.autoscroll_request.is_some());
         });
         assert_eq!(follower.read(cx).selected_ranges(cx), vec![0..0]);
+
+        // Creating a pending selection that precedes another selection
+        leader.update(cx, |leader, cx| {
+            leader.select_ranges([1..1], None, cx);
+            leader.begin_selection(DisplayPoint::new(0, 0), true, 1, cx);
+        });
+        follower.update(cx, |follower, cx| {
+            follower
+                .apply_update_proto(pending_update.borrow_mut().take().unwrap(), cx)
+                .unwrap();
+        });
+        assert_eq!(follower.read(cx).selected_ranges(cx), vec![0..0, 1..1]);
+
+        // Extend the pending selection so that it surrounds another selection
+        leader.update(cx, |leader, cx| {
+            leader.extend_selection(DisplayPoint::new(0, 2), 1, cx);
+        });
+        follower.update(cx, |follower, cx| {
+            follower
+                .apply_update_proto(pending_update.borrow_mut().take().unwrap(), cx)
+                .unwrap();
+        });
+        assert_eq!(follower.read(cx).selected_ranges(cx), vec![0..2]);
     }
 
     #[test]
