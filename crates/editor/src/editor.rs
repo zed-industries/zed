@@ -5520,7 +5520,7 @@ impl Editor {
     }
 
     pub fn show_local_cursors(&self) -> bool {
-        self.show_local_cursors
+        self.show_local_cursors && self.focused
     }
 
     fn on_buffer_changed(&mut self, _: ModelHandle<MultiBuffer>, cx: &mut ViewContext<Self>) {
