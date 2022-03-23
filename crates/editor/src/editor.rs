@@ -1039,10 +1039,15 @@ impl Editor {
         cx.notify();
     }
 
-    fn set_scroll_top_anchor(&mut self, anchor: Anchor, local: bool, cx: &mut ViewContext<Self>) {
-        self.scroll_position = Vector2F::zero();
+    fn set_scroll_top_anchor(
+        &mut self,
+        anchor: Anchor,
+        position: Vector2F,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.scroll_top_anchor = anchor;
-        cx.emit(Event::ScrollPositionChanged { local });
+        self.scroll_position = position;
+        cx.emit(Event::ScrollPositionChanged { local: false });
         cx.notify();
     }
 

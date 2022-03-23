@@ -1,8 +1,8 @@
 use crate::{Anchor, Autoscroll, Editor, Event, ExcerptId, NavigationData, ToOffset, ToPoint as _};
 use anyhow::{anyhow, Result};
 use gpui::{
-    elements::*, AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Subscription,
-    Task, View, ViewContext, ViewHandle,
+    elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
+    RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
 };
 use language::{Bias, Buffer, Diagnostic, File as _, SelectionGoal};
 use project::{File, Project, ProjectEntryId, ProjectPath};
@@ -68,7 +68,7 @@ impl FollowableItem for Editor {
                     editor.set_selections(selections.into(), None, false, cx);
                 }
 
-                if let Some(anchor) = state.scroll_top {
+                if let Some(anchor) = state.scroll_top_anchor {
                     editor.set_scroll_top_anchor(
                         Anchor {
                             buffer_id: Some(state.buffer_id as usize),
@@ -76,7 +76,7 @@ impl FollowableItem for Editor {
                             text_anchor: language::proto::deserialize_anchor(anchor)
                                 .ok_or_else(|| anyhow!("invalid scroll top"))?,
                         },
-                        false,
+                        vec2f(state.scroll_x, state.scroll_y),
                         cx,
                     );
                 }
@@ -111,9 +111,11 @@ impl FollowableItem for Editor {
         let buffer_id = self.buffer.read(cx).as_singleton()?.read(cx).remote_id();
         Some(proto::view::Variant::Editor(proto::view::Editor {
             buffer_id,
-            scroll_top: Some(language::proto::serialize_anchor(
+            scroll_top_anchor: Some(language::proto::serialize_anchor(
                 &self.scroll_top_anchor.text_anchor,
             )),
+            scroll_x: self.scroll_position.x(),
+            scroll_y: self.scroll_position.y(),
             selections: self.selections.iter().map(serialize_selection).collect(),
         }))
     }
@@ -130,9 +132,11 @@ impl FollowableItem for Editor {
         match update {
             proto::update_view::Variant::Editor(update) => match event {
                 Event::ScrollPositionChanged { .. } => {
-                    update.scroll_top = Some(language::proto::serialize_anchor(
+                    update.scroll_top_anchor = Some(language::proto::serialize_anchor(
                         &self.scroll_top_anchor.text_anchor,
                     ));
+                    update.scroll_x = self.scroll_position.x();
+                    update.scroll_y = self.scroll_position.y();
                     true
                 }
                 Event::SelectionsChanged { .. } => {
@@ -162,7 +166,7 @@ impl FollowableItem for Editor {
                 let excerpt_id = excerpt_id.clone();
                 drop(buffer);
 
-                if let Some(anchor) = message.scroll_top {
+                if let Some(anchor) = message.scroll_top_anchor {
                     self.set_scroll_top_anchor(
                         Anchor {
                             buffer_id: Some(buffer_id),
@@ -170,7 +174,7 @@ impl FollowableItem for Editor {
                             text_anchor: language::proto::deserialize_anchor(anchor)
                                 .ok_or_else(|| anyhow!("invalid scroll top"))?,
                         },
-                        false,
+                        vec2f(message.scroll_x, message.scroll_y),
                         cx,
                     );
                 }
