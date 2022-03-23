@@ -4878,7 +4878,8 @@ impl Editor {
         let snapshot = self.buffer.read(cx).read(cx);
         let mut selections_with_lost_position = HashMap::default();
 
-        if let Some(pending) = self.pending_selection.as_mut() {
+        let mut pending_selection = self.pending_selection.take();
+        if let Some(pending) = pending_selection.as_mut() {
             let anchors =
                 snapshot.refresh_anchors([&pending.selection.start, &pending.selection.end]);
             let (_, start, kept_start) = anchors[0].clone();
@@ -4932,7 +4933,11 @@ impl Editor {
         drop(snapshot);
 
         let new_selections = self.local_selections::<usize>(cx);
-        self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+        if !new_selections.is_empty() {
+            self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+        }
+        self.pending_selection = pending_selection;
+
         selections_with_lost_position
     }
 
@@ -8772,6 +8777,7 @@ mod tests {
                     Point::new(0, 3)..Point::new(0, 3)
                 ]
             );
+            assert!(editor.pending_selection.is_some());
         });
     }
 
@@ -8825,7 +8831,7 @@ mod tests {
                 editor.selected_ranges(cx),
                 [Point::new(0, 3)..Point::new(0, 3)]
             );
-            assert!(editor.pending_selection.is_none());
+            assert!(editor.pending_selection.is_some());
         });
     }
 
