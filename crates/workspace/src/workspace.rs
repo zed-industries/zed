@@ -78,6 +78,8 @@ action!(Unfollow);
 action!(JoinProject, JoinProjectParams);
 action!(Save);
 action!(DebugElements);
+action!(ActivatePreviousPane);
+action!(ActivateNextPane);
 
 pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     pane::init(cx);
@@ -111,10 +113,18 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     cx.add_action(Workspace::debug_elements);
     cx.add_action(Workspace::toggle_sidebar_item);
     cx.add_action(Workspace::toggle_sidebar_item_focus);
+    cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
+        workspace.activate_previous_pane(cx)
+    });
+    cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
+        workspace.activate_next_pane(cx)
+    });
     cx.add_bindings(vec![
         Binding::new("ctrl-alt-cmd-f", FollowNextCollaborator, None),
         Binding::new("cmd-s", Save, None),
         Binding::new("cmd-alt-i", DebugElements, None),
+        Binding::new("cmd-k cmd-left", ActivatePreviousPane, None),
+        Binding::new("cmd-k cmd-right", ActivateNextPane, None),
         Binding::new(
             "cmd-shift-!",
             ToggleSidebarItem(SidebarItemId {
@@ -1157,6 +1167,20 @@ impl Workspace {
             .unwrap();
         let next_ix = (ix + 1) % self.panes.len();
         self.activate_pane(self.panes[next_ix].clone(), cx);
+    }
+
+    pub fn activate_previous_pane(&mut self, cx: &mut ViewContext<Self>) {
+        let ix = self
+            .panes
+            .iter()
+            .position(|pane| pane == &self.active_pane)
+            .unwrap();
+        let prev_ix = if ix == 0 {
+            self.panes.len() - 1
+        } else {
+            ix - 1
+        };
+        self.activate_pane(self.panes[prev_ix].clone(), cx);
     }
 
     fn activate_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
