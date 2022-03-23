@@ -1902,6 +1902,9 @@ impl Workspace {
 
         for (pane, item) in items_to_add {
             Pane::add_item(self, pane.clone(), item.boxed_clone(), false, cx);
+            if pane == self.active_pane {
+                pane.update(cx, |pane, cx| pane.focus_active_item(cx));
+            }
             cx.notify();
         }
         None

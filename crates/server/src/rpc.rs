@@ -4311,6 +4311,7 @@ mod tests {
                 .downcast::<Editor>()
                 .unwrap()
         });
+        assert!(cx_b.read(|cx| editor_b2.is_focused(cx)));
         assert_eq!(
             editor_b2.read_with(cx_b, |editor, cx| editor.project_path(cx)),
             Some((worktree_id, "2.txt").into())
@@ -4349,12 +4350,10 @@ mod tests {
             .condition(cx_b, |editor, cx| editor.text(cx) == "TWO")
             .await;
 
-        eprintln!("=========================>>>>>>>>");
         editor_a1.update(cx_a, |editor, cx| {
             editor.select_ranges([3..3], None, cx);
             editor.set_scroll_position(vec2f(0., 100.), cx);
         });
-        eprintln!("=========================<<<<<<<<<");
         editor_b1
             .condition(cx_b, |editor, cx| editor.selected_ranges(cx) == vec![3..3])
             .await;
