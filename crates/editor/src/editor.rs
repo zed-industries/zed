@@ -439,7 +439,7 @@ pub struct Editor {
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
-    autoscroll_request: Option<Autoscroll>,
+    autoscroll_request: Option<(Autoscroll, bool)>,
     soft_wrap_mode_override: Option<settings::SoftWrap>,
     get_field_editor_theme: Option<GetFieldEditorTheme>,
     override_text_style: Option<Box<OverrideTextStyle>>,
@@ -1017,6 +1017,15 @@ impl Editor {
     }
 
     pub fn set_scroll_position(&mut self, scroll_position: Vector2F, cx: &mut ViewContext<Self>) {
+        self.set_scroll_position_internal(scroll_position, true, cx);
+    }
+
+    fn set_scroll_position_internal(
+        &mut self,
+        scroll_position: Vector2F,
+        local: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if scroll_position.y() == 0. {
@@ -1035,7 +1044,7 @@ impl Editor {
             self.scroll_top_anchor = anchor;
         }
 
-        cx.emit(Event::ScrollPositionChanged { local: true });
+        cx.emit(Event::ScrollPositionChanged { local });
         cx.notify();
     }
 
@@ -1090,7 +1099,7 @@ impl Editor {
             self.set_scroll_position(scroll_position, cx);
         }
 
-        let autoscroll = if let Some(autoscroll) = self.autoscroll_request.take() {
+        let (autoscroll, local) = if let Some(autoscroll) = self.autoscroll_request.take() {
             autoscroll
         } else {
             return false;
@@ -1142,15 +1151,15 @@ impl Editor {
 
                 if target_top < start_row {
                     scroll_position.set_y(target_top);
-                    self.set_scroll_position(scroll_position, cx);
+                    self.set_scroll_position_internal(scroll_position, local, cx);
                 } else if target_bottom >= end_row {
                     scroll_position.set_y(target_bottom - visible_lines);
-                    self.set_scroll_position(scroll_position, cx);
+                    self.set_scroll_position_internal(scroll_position, local, cx);
                 }
             }
             Autoscroll::Center => {
                 scroll_position.set_y((first_cursor_top - margin).max(0.0));
-                self.set_scroll_position(scroll_position, cx);
+                self.set_scroll_position_internal(scroll_position, local, cx);
             }
         }
 
@@ -5111,7 +5120,12 @@ impl Editor {
     }
 
     pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
-        self.autoscroll_request = Some(autoscroll);
+        self.autoscroll_request = Some((autoscroll, true));
+        cx.notify();
+    }
+
+    fn request_autoscroll_remotely(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
+        self.autoscroll_request = Some((autoscroll, false));
         cx.notify();
     }
 
@@ -9054,31 +9068,59 @@ mod tests {
             |cx| build_editor(buffer.clone(), cx),
         );
 
-        follower.update(cx, |_, cx| {
-            cx.subscribe(&leader, |follower, leader, event, cx| {
-                let mut update = None;
-                leader
-                    .read(cx)
-                    .add_event_to_update_proto(event, &mut update, cx);
-                if let Some(update) = update {
-                    follower.apply_update_proto(update, cx).unwrap();
-                }
-            })
-            .detach();
+        let pending_update = Rc::new(RefCell::new(None));
+        follower.update(cx, {
+            let update = pending_update.clone();
+            |_, cx| {
+                cx.subscribe(&leader, move |_, leader, event, cx| {
+                    leader
+                        .read(cx)
+                        .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
+                })
+                .detach();
+            }
         });
 
+        // Update the selections only
         leader.update(cx, |leader, cx| {
             leader.select_ranges([1..1], None, cx);
         });
+        follower.update(cx, |follower, cx| {
+            follower
+                .apply_update_proto(pending_update.borrow_mut().take().unwrap(), cx)
+                .unwrap();
+        });
         assert_eq!(follower.read(cx).selected_ranges(cx), vec![1..1]);
 
+        // Update the scroll position only
         leader.update(cx, |leader, cx| {
             leader.set_scroll_position(vec2f(1.5, 3.5), cx);
+        });
+        follower.update(cx, |follower, cx| {
+            follower
+                .apply_update_proto(pending_update.borrow_mut().take().unwrap(), cx)
+                .unwrap();
         });
         assert_eq!(
             follower.update(cx, |follower, cx| follower.scroll_position(cx)),
             vec2f(1.5, 3.5)
         );
+
+        // Update the selections and scroll position
+        leader.update(cx, |leader, cx| {
+            leader.select_ranges([0..0], None, cx);
+            leader.request_autoscroll(Autoscroll::Newest, cx);
+            leader.set_scroll_position(vec2f(1.5, 3.5), cx);
+        });
+        follower.update(cx, |follower, cx| {
+            let initial_scroll_position = follower.scroll_position(cx);
+            follower
+                .apply_update_proto(pending_update.borrow_mut().take().unwrap(), cx)
+                .unwrap();
+            assert_eq!(follower.scroll_position(cx), initial_scroll_position);
+            assert!(follower.autoscroll_request.is_some());
+        });
+        assert_eq!(follower.read(cx).selected_ranges(cx), vec![0..0]);
     }
 
     #[test]

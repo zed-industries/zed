@@ -166,19 +166,6 @@ impl FollowableItem for Editor {
                 let excerpt_id = excerpt_id.clone();
                 drop(buffer);
 
-                if let Some(anchor) = message.scroll_top_anchor {
-                    self.set_scroll_top_anchor(
-                        Anchor {
-                            buffer_id: Some(buffer_id),
-                            excerpt_id: excerpt_id.clone(),
-                            text_anchor: language::proto::deserialize_anchor(anchor)
-                                .ok_or_else(|| anyhow!("invalid scroll top"))?,
-                        },
-                        vec2f(message.scroll_x, message.scroll_y),
-                        cx,
-                    );
-                }
-
                 let selections = message
                     .selections
                     .into_iter()
@@ -188,6 +175,20 @@ impl FollowableItem for Editor {
                     .collect::<Vec<_>>();
                 if !selections.is_empty() {
                     self.set_selections(selections.into(), None, false, cx);
+                    self.request_autoscroll_remotely(Autoscroll::Newest, cx);
+                } else {
+                    if let Some(anchor) = message.scroll_top_anchor {
+                        self.set_scroll_top_anchor(
+                            Anchor {
+                                buffer_id: Some(buffer_id),
+                                excerpt_id: excerpt_id.clone(),
+                                text_anchor: language::proto::deserialize_anchor(anchor)
+                                    .ok_or_else(|| anyhow!("invalid scroll top"))?,
+                            },
+                            vec2f(message.scroll_x, message.scroll_y),
+                            cx,
+                        );
+                    }
                 }
             }
         }
