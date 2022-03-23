@@ -65,7 +65,7 @@ impl FollowableItem for Editor {
                     })
                     .collect::<Result<Vec<_>>>()?;
                 if !selections.is_empty() {
-                    editor.set_selections(selections.into(), None, false, cx);
+                    editor.set_selections_from_remote(selections.into(), cx);
                 }
 
                 if let Some(anchor) = state.scroll_top_anchor {
@@ -173,8 +173,9 @@ impl FollowableItem for Editor {
                         deserialize_selection(&excerpt_id, buffer_id, selection)
                     })
                     .collect::<Vec<_>>();
+
                 if !selections.is_empty() {
-                    self.set_selections(selections.into(), None, false, cx);
+                    self.set_selections_from_remote(selections, cx);
                     self.request_autoscroll_remotely(Autoscroll::Newest, cx);
                 } else {
                     if let Some(anchor) = message.scroll_top_anchor {
