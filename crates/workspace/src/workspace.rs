@@ -6,10 +6,12 @@ pub mod settings;
 pub mod sidebar;
 mod status_bar;
 
-use anyhow::{anyhow, Result};
-use client::{Authenticate, ChannelList, Client, User, UserStore};
+use anyhow::{anyhow, Context, Result};
+use client::{
+    proto, Authenticate, ChannelList, Client, PeerId, Subscription, TypedEnvelope, User, UserStore,
+};
 use clock::ReplicaId;
-use collections::HashMap;
+use collections::{hash_map, HashMap, HashSet};
 use gpui::{
     action,
     color::Color,
@@ -18,9 +20,9 @@ use gpui::{
     json::{self, to_string_pretty, ToJson},
     keymap::Binding,
     platform::{CursorStyle, WindowOptions},
-    AnyModelHandle, AnyViewHandle, AppContext, ClipboardItem, Entity, ImageData, ModelHandle,
-    MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Border, ClipboardItem, Entity,
+    ImageData, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task,
+    View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::LanguageRegistry;
 use log::error;
@@ -35,34 +37,51 @@ pub use status_bar::StatusItemView;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
+    fmt,
     future::Future,
     path::{Path, PathBuf},
     rc::Rc,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
+    },
 };
 use theme::{Theme, ThemeRegistry};
+use util::ResultExt;
 
-type ItemBuilders = HashMap<
+type ProjectItemBuilders = HashMap<
     TypeId,
-    Arc<
-        dyn Fn(
-            usize,
-            ModelHandle<Project>,
-            AnyModelHandle,
-            &mut MutableAppContext,
-        ) -> Box<dyn ItemHandle>,
-    >,
+    fn(usize, ModelHandle<Project>, AnyModelHandle, &mut MutableAppContext) -> Box<dyn ItemHandle>,
+>;
+
+type FollowableItemBuilder = fn(
+    ViewHandle<Pane>,
+    ModelHandle<Project>,
+    &mut Option<proto::view::Variant>,
+    &mut MutableAppContext,
+) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>>;
+type FollowableItemBuilders = HashMap<
+    TypeId,
+    (
+        FollowableItemBuilder,
+        fn(AnyViewHandle) -> Box<dyn FollowableItemHandle>,
+    ),
 >;
 
 action!(Open, Arc<AppState>);
 action!(OpenNew, Arc<AppState>);
 action!(OpenPaths, OpenParams);
 action!(ToggleShare);
+action!(ToggleFollow, PeerId);
+action!(FollowNextCollaborator);
+action!(Unfollow);
 action!(JoinProject, JoinProjectParams);
 action!(Save);
 action!(DebugElements);
+action!(ActivatePreviousPane);
+action!(ActivateNextPane);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     pane::init(cx);
     menu::init(cx);
 
@@ -78,6 +97,14 @@ pub fn init(cx: &mut MutableAppContext) {
     });
 
     cx.add_action(Workspace::toggle_share);
+    cx.add_async_action(Workspace::toggle_follow);
+    cx.add_async_action(Workspace::follow_next_collaborator);
+    cx.add_action(
+        |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
+            let pane = workspace.active_pane().clone();
+            workspace.unfollow(&pane, cx);
+        },
+    );
     cx.add_action(
         |workspace: &mut Workspace, _: &Save, cx: &mut ViewContext<Workspace>| {
             workspace.save_active_item(cx).detach_and_log_err(cx);
@@ -86,9 +113,18 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Workspace::debug_elements);
     cx.add_action(Workspace::toggle_sidebar_item);
     cx.add_action(Workspace::toggle_sidebar_item_focus);
+    cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
+        workspace.activate_previous_pane(cx)
+    });
+    cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
+        workspace.activate_next_pane(cx)
+    });
     cx.add_bindings(vec![
+        Binding::new("ctrl-alt-cmd-f", FollowNextCollaborator, None),
         Binding::new("cmd-s", Save, None),
         Binding::new("cmd-alt-i", DebugElements, None),
+        Binding::new("cmd-k cmd-left", ActivatePreviousPane, None),
+        Binding::new("cmd-k cmd-right", ActivateNextPane, None),
         Binding::new(
             "cmd-shift-!",
             ToggleSidebarItem(SidebarItemId {
@@ -106,20 +142,34 @@ pub fn init(cx: &mut MutableAppContext) {
             None,
         ),
     ]);
+
+    client.add_view_request_handler(Workspace::handle_follow);
+    client.add_view_message_handler(Workspace::handle_unfollow);
+    client.add_view_message_handler(Workspace::handle_update_followers);
 }
 
-pub fn register_project_item<F, V>(cx: &mut MutableAppContext, build_item: F)
-where
-    V: ProjectItem,
-    F: 'static + Fn(ModelHandle<Project>, ModelHandle<V::Item>, &mut ViewContext<V>) -> V,
-{
-    cx.update_default_global(|builders: &mut ItemBuilders, _| {
+pub fn register_project_item<I: ProjectItem>(cx: &mut MutableAppContext) {
+    cx.update_default_global(|builders: &mut ProjectItemBuilders, _| {
+        builders.insert(TypeId::of::<I::Item>(), |window_id, project, model, cx| {
+            let item = model.downcast::<I::Item>().unwrap();
+            Box::new(cx.add_view(window_id, |cx| I::for_project_item(project, item, cx)))
+        });
+    });
+}
+
+pub fn register_followable_item<I: FollowableItem>(cx: &mut MutableAppContext) {
+    cx.update_default_global(|builders: &mut FollowableItemBuilders, _| {
         builders.insert(
-            TypeId::of::<V::Item>(),
-            Arc::new(move |window_id, project, model, cx| {
-                let model = model.downcast::<V::Item>().unwrap();
-                Box::new(cx.add_view(window_id, |cx| build_item(project, model, cx)))
-            }),
+            TypeId::of::<I>(),
+            (
+                |pane, project, state, cx| {
+                    I::from_state_proto(pane, project, state, cx).map(|task| {
+                        cx.foreground()
+                            .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
+                    })
+                },
+                |this| Box::new(this.downcast::<I>().unwrap()),
+            ),
         );
     });
 }
@@ -156,6 +206,7 @@ pub trait Item: View {
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) {}
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
+    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
     fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>);
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
     where
@@ -215,13 +266,101 @@ pub trait ProjectItem: Item {
     ) -> Self;
 }
 
-pub trait ItemHandle: 'static {
+pub trait FollowableItem: Item {
+    fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
+    fn from_state_proto(
+        pane: ViewHandle<Pane>,
+        project: ModelHandle<Project>,
+        state: &mut Option<proto::view::Variant>,
+        cx: &mut MutableAppContext,
+    ) -> Option<Task<Result<ViewHandle<Self>>>>;
+    fn add_event_to_update_proto(
+        &self,
+        event: &Self::Event,
+        update: &mut Option<proto::update_view::Variant>,
+        cx: &AppContext,
+    ) -> bool;
+    fn apply_update_proto(
+        &mut self,
+        message: proto::update_view::Variant,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<()>;
+
+    fn set_leader_replica_id(&mut self, leader_replica_id: Option<u16>, cx: &mut ViewContext<Self>);
+    fn should_unfollow_on_event(event: &Self::Event, cx: &AppContext) -> bool;
+}
+
+pub trait FollowableItemHandle: ItemHandle {
+    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut MutableAppContext);
+    fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
+    fn add_event_to_update_proto(
+        &self,
+        event: &dyn Any,
+        update: &mut Option<proto::update_view::Variant>,
+        cx: &AppContext,
+    ) -> bool;
+    fn apply_update_proto(
+        &self,
+        message: proto::update_view::Variant,
+        cx: &mut MutableAppContext,
+    ) -> Result<()>;
+    fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool;
+}
+
+impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
+    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut MutableAppContext) {
+        self.update(cx, |this, cx| {
+            this.set_leader_replica_id(leader_replica_id, cx)
+        })
+    }
+
+    fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {
+        self.read(cx).to_state_proto(cx)
+    }
+
+    fn add_event_to_update_proto(
+        &self,
+        event: &dyn Any,
+        update: &mut Option<proto::update_view::Variant>,
+        cx: &AppContext,
+    ) -> bool {
+        if let Some(event) = event.downcast_ref() {
+            self.read(cx).add_event_to_update_proto(event, update, cx)
+        } else {
+            false
+        }
+    }
+
+    fn apply_update_proto(
+        &self,
+        message: proto::update_view::Variant,
+        cx: &mut MutableAppContext,
+    ) -> Result<()> {
+        self.update(cx, |this, cx| this.apply_update_proto(message, cx))
+    }
+
+    fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool {
+        if let Some(event) = event.downcast_ref() {
+            T::should_unfollow_on_event(event, cx)
+        } else {
+            false
+        }
+    }
+}
+
+pub trait ItemHandle: 'static + fmt::Debug {
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
+    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn set_nav_history(&self, nav_history: Rc<RefCell<NavHistory>>, cx: &mut MutableAppContext);
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemHandle>>;
-    fn added_to_pane(&mut self, cx: &mut ViewContext<Pane>);
+    fn added_to_pane(
+        &self,
+        workspace: &mut Workspace,
+        pane: ViewHandle<Pane>,
+        cx: &mut ViewContext<Workspace>,
+    );
     fn deactivated(&self, cx: &mut MutableAppContext);
     fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext);
     fn id(&self) -> usize;
@@ -238,6 +377,7 @@ pub trait ItemHandle: 'static {
         cx: &mut MutableAppContext,
     ) -> Task<Result<()>>;
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle>;
+    fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
 }
 
 pub trait WeakItemHandle {
@@ -265,15 +405,15 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.read(cx).project_path(cx)
     }
 
+    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId> {
+        self.read(cx).project_entry_id(cx)
+    }
+
     fn boxed_clone(&self) -> Box<dyn ItemHandle> {
         Box::new(self.clone())
     }
 
-    fn clone_on_split(
-        &self,
-        // nav_history: Rc<RefCell<NavHistory>>,
-        cx: &mut MutableAppContext,
-    ) -> Option<Box<dyn ItemHandle>> {
+    fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemHandle>> {
         self.update(cx, |item, cx| {
             cx.add_option_view(|cx| item.clone_on_split(cx))
         })
@@ -286,20 +426,81 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         })
     }
 
-    fn added_to_pane(&mut self, cx: &mut ViewContext<Pane>) {
-        cx.subscribe(self, |pane, item, event, cx| {
-            if T::should_close_item_on_event(event) {
-                pane.close_item(item.id(), cx);
-                return;
+    fn added_to_pane(
+        &self,
+        workspace: &mut Workspace,
+        pane: ViewHandle<Pane>,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        if let Some(followed_item) = self.to_followable_item_handle(cx) {
+            if let Some(message) = followed_item.to_state_proto(cx) {
+                workspace.update_followers(
+                    proto::update_followers::Variant::CreateView(proto::View {
+                        id: followed_item.id() as u64,
+                        variant: Some(message),
+                        leader_id: workspace.leader_for_pane(&pane).map(|id| id.0),
+                    }),
+                    cx,
+                );
             }
-            if T::should_activate_item_on_event(event) {
-                if let Some(ix) = pane.index_for_item(&item) {
-                    pane.activate_item(ix, cx);
-                    pane.activate(cx);
+        }
+
+        let pending_update = Rc::new(RefCell::new(None));
+        let pending_update_scheduled = Rc::new(AtomicBool::new(false));
+        let pane = pane.downgrade();
+        cx.subscribe(self, move |workspace, item, event, cx| {
+            let pane = if let Some(pane) = pane.upgrade(cx) {
+                pane
+            } else {
+                log::error!("unexpected item event after pane was dropped");
+                return;
+            };
+
+            if let Some(item) = item.to_followable_item_handle(cx) {
+                let leader_id = workspace.leader_for_pane(&pane);
+
+                if leader_id.is_some() && item.should_unfollow_on_event(event, cx) {
+                    workspace.unfollow(&pane, cx);
+                }
+
+                if item.add_event_to_update_proto(event, &mut *pending_update.borrow_mut(), cx)
+                    && !pending_update_scheduled.load(SeqCst)
+                {
+                    pending_update_scheduled.store(true, SeqCst);
+                    cx.after_window_update({
+                        let pending_update = pending_update.clone();
+                        let pending_update_scheduled = pending_update_scheduled.clone();
+                        move |this, cx| {
+                            pending_update_scheduled.store(false, SeqCst);
+                            this.update_followers(
+                                proto::update_followers::Variant::UpdateView(proto::UpdateView {
+                                    id: item.id() as u64,
+                                    variant: pending_update.borrow_mut().take(),
+                                    leader_id: leader_id.map(|id| id.0),
+                                }),
+                                cx,
+                            );
+                        }
+                    });
                 }
             }
+
+            if T::should_close_item_on_event(event) {
+                pane.update(cx, |pane, cx| pane.close_item(item.id(), cx));
+                return;
+            }
+
+            if T::should_activate_item_on_event(event) {
+                pane.update(cx, |pane, cx| {
+                    if let Some(ix) = pane.index_for_item(&item) {
+                        pane.activate_item(ix, true, cx);
+                        pane.activate(cx);
+                    }
+                });
+            }
+
             if T::should_update_tab_on_event(event) {
-                cx.notify()
+                pane.update(cx, |_, cx| cx.notify());
             }
         })
         .detach();
@@ -352,6 +553,16 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle> {
         self.read(cx).act_as_type(type_id, self, cx)
+    }
+
+    fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>> {
+        if cx.has_global::<FollowableItemBuilders>() {
+            let builders = cx.global::<FollowableItemBuilders>();
+            let item = self.to_any();
+            Some(builders.get(&item.view_type())?.1(item))
+        } else {
+            None
+        }
     }
 }
 
@@ -441,6 +652,7 @@ pub struct Workspace {
     weak_self: WeakViewHandle<Self>,
     client: Arc<Client>,
     user_store: ModelHandle<client::UserStore>,
+    remote_entity_subscription: Option<Subscription>,
     fs: Arc<dyn Fs>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
@@ -450,12 +662,51 @@ pub struct Workspace {
     active_pane: ViewHandle<Pane>,
     status_bar: ViewHandle<StatusBar>,
     project: ModelHandle<Project>,
+    leader_state: LeaderState,
+    follower_states_by_leader: FollowerStatesByLeader,
+    last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
     _observe_current_user: Task<()>,
+}
+
+#[derive(Default)]
+struct LeaderState {
+    followers: HashSet<PeerId>,
+}
+
+type FollowerStatesByLeader = HashMap<PeerId, HashMap<ViewHandle<Pane>, FollowerState>>;
+
+#[derive(Default)]
+struct FollowerState {
+    active_view_id: Option<u64>,
+    items_by_leader_view_id: HashMap<u64, FollowerItem>,
+}
+
+#[derive(Debug)]
+enum FollowerItem {
+    Loading(Vec<proto::update_view::Variant>),
+    Loaded(Box<dyn FollowableItemHandle>),
 }
 
 impl Workspace {
     pub fn new(params: &WorkspaceParams, cx: &mut ViewContext<Self>) -> Self {
         cx.observe(&params.project, |_, project, cx| {
+            if project.read(cx).is_read_only() {
+                cx.blur();
+            }
+            cx.notify()
+        })
+        .detach();
+
+        cx.subscribe(&params.project, move |this, project, event, cx| {
+            match event {
+                project::Event::RemoteIdChanged(remote_id) => {
+                    this.project_remote_id_changed(*remote_id, cx);
+                }
+                project::Event::CollaboratorLeft(peer_id) => {
+                    this.collaborator_left(*peer_id, cx);
+                }
+                _ => {}
+            }
             if project.read(cx).is_read_only() {
                 cx.blur();
             }
@@ -499,7 +750,7 @@ impl Workspace {
 
         cx.emit_global(WorkspaceCreated(weak_self.clone()));
 
-        Workspace {
+        let mut this = Workspace {
             modal: None,
             weak_self,
             center: PaneGroup::new(pane.clone()),
@@ -507,13 +758,19 @@ impl Workspace {
             active_pane: pane.clone(),
             status_bar,
             client: params.client.clone(),
+            remote_entity_subscription: None,
             user_store: params.user_store.clone(),
             fs: params.fs.clone(),
             left_sidebar: Sidebar::new(Side::Left),
             right_sidebar: Sidebar::new(Side::Right),
             project: params.project.clone(),
+            leader_state: Default::default(),
+            follower_states_by_leader: Default::default(),
+            last_leaders_by_pane: Default::default(),
             _observe_current_user,
-        }
+        };
+        this.project_remote_id_changed(this.project.read(cx).remote_id(), cx);
+        this
     }
 
     pub fn weak_handle(&self) -> WeakViewHandle<Self> {
@@ -666,6 +923,13 @@ impl Workspace {
         }
     }
 
+    pub fn items<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = &Box<dyn ItemHandle>> {
+        self.panes.iter().flat_map(|pane| pane.read(cx).items())
+    }
+
     pub fn item_of_type<T: Item>(&self, cx: &AppContext) -> Option<ViewHandle<T>> {
         self.items_of_type(cx).max_by_key(|item| item.id())
     }
@@ -674,11 +938,9 @@ impl Workspace {
         &'a self,
         cx: &'a AppContext,
     ) -> impl 'a + Iterator<Item = ViewHandle<T>> {
-        self.panes.iter().flat_map(|pane| {
-            pane.read(cx)
-                .items()
-                .filter_map(|item| item.to_any().downcast())
-        })
+        self.panes
+            .iter()
+            .flat_map(|pane| pane.read(cx).items_of_type())
     }
 
     pub fn active_item(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
@@ -801,26 +1063,30 @@ impl Workspace {
     }
 
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
-        self.active_pane()
-            .update(cx, |pane, cx| pane.add_item(None, item, cx))
+        let pane = self.active_pane().clone();
+        Pane::add_item(self, pane, item, true, cx);
     }
 
     pub fn open_path(
         &mut self,
-        path: ProjectPath,
+        path: impl Into<ProjectPath>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>> {
         let pane = self.active_pane().downgrade();
-        let task = self.load_path(path, cx);
+        let task = self.load_path(path.into(), cx);
         cx.spawn(|this, mut cx| async move {
-            let (project_entry_id, build_editor) = task.await?;
+            let (project_entry_id, build_item) = task.await?;
             let pane = pane
                 .upgrade(&cx)
                 .ok_or_else(|| anyhow!("pane was closed"))?;
-            this.update(&mut cx, |_, cx| {
-                pane.update(cx, |pane, cx| {
-                    Ok(pane.open_item(project_entry_id, cx, build_editor))
-                })
+            this.update(&mut cx, |this, cx| {
+                Ok(Pane::open_item(
+                    this,
+                    pane,
+                    project_entry_id,
+                    cx,
+                    build_item,
+                ))
             })
         })
     }
@@ -841,7 +1107,7 @@ impl Workspace {
         cx.as_mut().spawn(|mut cx| async move {
             let (project_entry_id, project_item) = project_item.await?;
             let build_item = cx.update(|cx| {
-                cx.default_global::<ItemBuilders>()
+                cx.default_global::<ProjectItemBuilders>()
                     .get(&project_item.model_type())
                     .ok_or_else(|| anyhow!("no item builder for project item"))
                     .cloned()
@@ -864,7 +1130,7 @@ impl Workspace {
 
         let entry_id = project_item.read(cx).entry_id(cx);
         if let Some(item) = entry_id
-            .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(dbg!(entry_id)))
+            .and_then(|entry_id| self.active_pane().read(cx).item_for_entry(entry_id, cx))
             .and_then(|item| item.downcast())
         {
             self.activate_item(&item, cx);
@@ -872,9 +1138,7 @@ impl Workspace {
         }
 
         let item = cx.add_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
-        self.active_pane().update(cx, |pane, cx| {
-            pane.add_item(entry_id, Box::new(item.clone()), cx)
-        });
+        self.add_item(Box::new(item.clone()), cx);
         item
     }
 
@@ -888,7 +1152,7 @@ impl Workspace {
         });
         if let Some((pane, ix)) = result {
             self.activate_pane(pane.clone(), cx);
-            pane.update(cx, |pane, cx| pane.activate_item(ix, cx));
+            pane.update(cx, |pane, cx| pane.activate_item(ix, true, cx));
             true
         } else {
             false
@@ -896,24 +1160,48 @@ impl Workspace {
     }
 
     pub fn activate_next_pane(&mut self, cx: &mut ViewContext<Self>) {
-        let ix = self
-            .panes
-            .iter()
-            .position(|pane| pane == &self.active_pane)
-            .unwrap();
-        let next_ix = (ix + 1) % self.panes.len();
-        self.activate_pane(self.panes[next_ix].clone(), cx);
+        let next_pane = {
+            let panes = self.center.panes();
+            let ix = panes
+                .iter()
+                .position(|pane| **pane == self.active_pane)
+                .unwrap();
+            let next_ix = (ix + 1) % panes.len();
+            panes[next_ix].clone()
+        };
+        self.activate_pane(next_pane, cx);
+    }
+
+    pub fn activate_previous_pane(&mut self, cx: &mut ViewContext<Self>) {
+        let prev_pane = {
+            let panes = self.center.panes();
+            let ix = panes
+                .iter()
+                .position(|pane| **pane == self.active_pane)
+                .unwrap();
+            let prev_ix = if ix == 0 { panes.len() - 1 } else { ix - 1 };
+            panes[prev_ix].clone()
+        };
+        self.activate_pane(prev_pane, cx);
     }
 
     fn activate_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
         if self.active_pane != pane {
-            self.active_pane = pane;
+            self.active_pane = pane.clone();
             self.status_bar.update(cx, |status_bar, cx| {
                 status_bar.set_active_pane(&self.active_pane, cx);
             });
             cx.focus(&self.active_pane);
             cx.notify();
         }
+
+        self.update_followers(
+            proto::update_followers::Variant::UpdateActiveView(proto::UpdateActiveView {
+                id: self.active_item(cx).map(|item| item.id() as u64),
+                leader_id: self.leader_for_pane(&pane).map(|id| id.0),
+            }),
+            cx,
+        );
     }
 
     fn handle_pane_event(
@@ -933,6 +1221,11 @@ impl Workspace {
                 pane::Event::Activate => {
                     self.activate_pane(pane, cx);
                 }
+                pane::Event::ActivateItem { local } => {
+                    if *local {
+                        self.unfollow(&pane, cx);
+                    }
+                }
             }
         } else {
             error!("pane {} not found", pane_id);
@@ -948,11 +1241,8 @@ impl Workspace {
         let new_pane = self.add_pane(cx);
         self.activate_pane(new_pane.clone(), cx);
         if let Some(item) = pane.read(cx).active_item() {
-            let project_entry_id = pane.read(cx).project_entry_id_for_item(item.as_ref());
             if let Some(clone) = item.clone_on_split(cx.as_mut()) {
-                new_pane.update(cx, |new_pane, cx| {
-                    new_pane.add_item(project_entry_id, clone, cx);
-                });
+                Pane::add_item(self, new_pane.clone(), clone, true, cx);
             }
         }
         self.center.split(&pane, &new_pane, direction).unwrap();
@@ -964,6 +1254,8 @@ impl Workspace {
         if self.center.remove(&pane).unwrap() {
             self.panes.retain(|p| p != &pane);
             self.activate_pane(self.panes.last().unwrap().clone(), cx);
+            self.unfollow(&pane, cx);
+            self.last_leaders_by_pane.remove(&pane.downgrade());
             cx.notify();
         }
     }
@@ -990,6 +1282,139 @@ impl Workspace {
                 }
             }
         });
+    }
+
+    fn project_remote_id_changed(&mut self, remote_id: Option<u64>, cx: &mut ViewContext<Self>) {
+        if let Some(remote_id) = remote_id {
+            self.remote_entity_subscription =
+                Some(self.client.add_view_for_remote_entity(remote_id, cx));
+        } else {
+            self.remote_entity_subscription.take();
+        }
+    }
+
+    fn collaborator_left(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
+        self.leader_state.followers.remove(&peer_id);
+        if let Some(states_by_pane) = self.follower_states_by_leader.remove(&peer_id) {
+            for state in states_by_pane.into_values() {
+                for item in state.items_by_leader_view_id.into_values() {
+                    if let FollowerItem::Loaded(item) = item {
+                        item.set_leader_replica_id(None, cx);
+                    }
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn toggle_follow(
+        &mut self,
+        ToggleFollow(leader_id): &ToggleFollow,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let leader_id = *leader_id;
+        let pane = self.active_pane().clone();
+
+        if let Some(prev_leader_id) = self.unfollow(&pane, cx) {
+            if leader_id == prev_leader_id {
+                return None;
+            }
+        }
+
+        self.last_leaders_by_pane
+            .insert(pane.downgrade(), leader_id);
+        self.follower_states_by_leader
+            .entry(leader_id)
+            .or_default()
+            .insert(pane.clone(), Default::default());
+        cx.notify();
+
+        let project_id = self.project.read(cx).remote_id()?;
+        let request = self.client.request(proto::Follow {
+            project_id,
+            leader_id: leader_id.0,
+        });
+        Some(cx.spawn_weak(|this, mut cx| async move {
+            let response = request.await?;
+            if let Some(this) = this.upgrade(&cx) {
+                this.update(&mut cx, |this, _| {
+                    let state = this
+                        .follower_states_by_leader
+                        .get_mut(&leader_id)
+                        .and_then(|states_by_pane| states_by_pane.get_mut(&pane))
+                        .ok_or_else(|| anyhow!("following interrupted"))?;
+                    state.active_view_id = response.active_view_id;
+                    Ok::<_, anyhow::Error>(())
+                })?;
+                Self::add_views_from_leader(this, leader_id, vec![pane], response.views, &mut cx)
+                    .await?;
+            }
+            Ok(())
+        }))
+    }
+
+    pub fn follow_next_collaborator(
+        &mut self,
+        _: &FollowNextCollaborator,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let collaborators = self.project.read(cx).collaborators();
+        let next_leader_id = if let Some(leader_id) = self.leader_for_pane(&self.active_pane) {
+            let mut collaborators = collaborators.keys().copied();
+            while let Some(peer_id) = collaborators.next() {
+                if peer_id == leader_id {
+                    break;
+                }
+            }
+            collaborators.next()
+        } else if let Some(last_leader_id) =
+            self.last_leaders_by_pane.get(&self.active_pane.downgrade())
+        {
+            if collaborators.contains_key(last_leader_id) {
+                Some(*last_leader_id)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        next_leader_id
+            .or_else(|| collaborators.keys().copied().next())
+            .and_then(|leader_id| self.toggle_follow(&ToggleFollow(leader_id), cx))
+    }
+
+    pub fn unfollow(
+        &mut self,
+        pane: &ViewHandle<Pane>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<PeerId> {
+        for (leader_id, states_by_pane) in &mut self.follower_states_by_leader {
+            let leader_id = *leader_id;
+            if let Some(state) = states_by_pane.remove(&pane) {
+                for (_, item) in state.items_by_leader_view_id {
+                    if let FollowerItem::Loaded(item) = item {
+                        item.set_leader_replica_id(None, cx);
+                    }
+                }
+
+                if states_by_pane.is_empty() {
+                    self.follower_states_by_leader.remove(&leader_id);
+                    if let Some(project_id) = self.project.read(cx).remote_id() {
+                        self.client
+                            .send(proto::Unfollow {
+                                project_id,
+                                leader_id: leader_id.0,
+                            })
+                            .log_err();
+                    }
+                }
+
+                cx.notify();
+                return Some(leader_id);
+            }
+        }
+        None
     }
 
     fn render_connection_status(&self, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
@@ -1081,7 +1506,9 @@ impl Workspace {
                 Some(self.render_avatar(
                     collaborator.user.avatar.clone()?,
                     collaborator.replica_id,
+                    Some(collaborator.peer_id),
                     theme,
+                    cx,
                 ))
             })
             .collect()
@@ -1095,7 +1522,7 @@ impl Workspace {
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         if let Some(avatar) = user.and_then(|user| user.avatar.clone()) {
-            self.render_avatar(avatar, replica_id, theme)
+            self.render_avatar(avatar, replica_id, None, theme, cx)
         } else {
             MouseEventHandler::new::<Authenticate, _, _>(0, cx, |state, _| {
                 let style = if state.hovered {
@@ -1119,52 +1546,65 @@ impl Workspace {
         &self,
         avatar: Arc<ImageData>,
         replica_id: ReplicaId,
+        peer_id: Option<PeerId>,
         theme: &Theme,
+        cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        ConstrainedBox::new(
-            Stack::new()
-                .with_child(
-                    ConstrainedBox::new(
-                        Image::new(avatar)
-                            .with_style(theme.workspace.titlebar.avatar)
-                            .boxed(),
-                    )
+        let replica_color = theme.editor.replica_selection_style(replica_id).cursor;
+        let is_followed = peer_id.map_or(false, |peer_id| {
+            self.follower_states_by_leader.contains_key(&peer_id)
+        });
+        let mut avatar_style = theme.workspace.titlebar.avatar;
+        if is_followed {
+            avatar_style.border = Border::all(1.0, replica_color);
+        }
+        let content = Stack::new()
+            .with_child(
+                Image::new(avatar)
+                    .with_style(avatar_style)
+                    .constrained()
                     .with_width(theme.workspace.titlebar.avatar_width)
                     .aligned()
                     .boxed(),
-                )
-                .with_child(
-                    AvatarRibbon::new(theme.editor.replica_selection_style(replica_id).cursor)
-                        .constrained()
-                        .with_width(theme.workspace.titlebar.avatar_ribbon.width)
-                        .with_height(theme.workspace.titlebar.avatar_ribbon.height)
-                        .aligned()
-                        .bottom()
-                        .boxed(),
-                )
-                .boxed(),
-        )
-        .with_width(theme.workspace.right_sidebar.width)
-        .boxed()
+            )
+            .with_child(
+                AvatarRibbon::new(replica_color)
+                    .constrained()
+                    .with_width(theme.workspace.titlebar.avatar_ribbon.width)
+                    .with_height(theme.workspace.titlebar.avatar_ribbon.height)
+                    .aligned()
+                    .bottom()
+                    .boxed(),
+            )
+            .constrained()
+            .with_width(theme.workspace.right_sidebar.width)
+            .boxed();
+
+        if let Some(peer_id) = peer_id {
+            MouseEventHandler::new::<ToggleFollow, _, _>(replica_id.into(), cx, move |_, _| content)
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(move |cx| cx.dispatch_action(ToggleFollow(peer_id)))
+                .boxed()
+        } else {
+            content
+        }
     }
 
     fn render_share_icon(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
         if self.project().read(cx).is_local() && self.client.user_id().is_some() {
-            enum Share {}
-
             let color = if self.project().read(cx).is_shared() {
                 theme.workspace.titlebar.share_icon_active_color
             } else {
                 theme.workspace.titlebar.share_icon_color
             };
             Some(
-                MouseEventHandler::new::<Share, _, _>(0, cx, |_, _| {
+                MouseEventHandler::new::<ToggleShare, _, _>(0, cx, |_, _| {
                     Align::new(
-                        ConstrainedBox::new(
-                            Svg::new("icons/broadcast-24.svg").with_color(color).boxed(),
-                        )
-                        .with_width(24.)
-                        .boxed(),
+                        Svg::new("icons/broadcast-24.svg")
+                            .with_color(color)
+                            .constrained()
+                            .with_width(24.)
+                            .boxed(),
                     )
                     .boxed()
                 })
@@ -1198,6 +1638,279 @@ impl Workspace {
             None
         }
     }
+
+    // RPC handlers
+
+    async fn handle_follow(
+        this: ViewHandle<Self>,
+        envelope: TypedEnvelope<proto::Follow>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::FollowResponse> {
+        this.update(&mut cx, |this, cx| {
+            this.leader_state
+                .followers
+                .insert(envelope.original_sender_id()?);
+
+            let active_view_id = this
+                .active_item(cx)
+                .and_then(|i| i.to_followable_item_handle(cx))
+                .map(|i| i.id() as u64);
+            Ok(proto::FollowResponse {
+                active_view_id,
+                views: this
+                    .panes()
+                    .iter()
+                    .flat_map(|pane| {
+                        let leader_id = this.leader_for_pane(pane).map(|id| id.0);
+                        pane.read(cx).items().filter_map({
+                            let cx = &cx;
+                            move |item| {
+                                let id = item.id() as u64;
+                                let item = item.to_followable_item_handle(cx)?;
+                                let variant = item.to_state_proto(cx)?;
+                                Some(proto::View {
+                                    id,
+                                    leader_id,
+                                    variant: Some(variant),
+                                })
+                            }
+                        })
+                    })
+                    .collect(),
+            })
+        })
+    }
+
+    async fn handle_unfollow(
+        this: ViewHandle<Self>,
+        envelope: TypedEnvelope<proto::Unfollow>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, _| {
+            this.leader_state
+                .followers
+                .remove(&envelope.original_sender_id()?);
+            Ok(())
+        })
+    }
+
+    async fn handle_update_followers(
+        this: ViewHandle<Self>,
+        envelope: TypedEnvelope<proto::UpdateFollowers>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let leader_id = envelope.original_sender_id()?;
+        match envelope
+            .payload
+            .variant
+            .ok_or_else(|| anyhow!("invalid update"))?
+        {
+            proto::update_followers::Variant::UpdateActiveView(update_active_view) => {
+                this.update(&mut cx, |this, cx| {
+                    this.update_leader_state(leader_id, cx, |state, _| {
+                        state.active_view_id = update_active_view.id;
+                    });
+                    Ok::<_, anyhow::Error>(())
+                })
+            }
+            proto::update_followers::Variant::UpdateView(update_view) => {
+                this.update(&mut cx, |this, cx| {
+                    let variant = update_view
+                        .variant
+                        .ok_or_else(|| anyhow!("missing update view variant"))?;
+                    this.update_leader_state(leader_id, cx, |state, cx| {
+                        let variant = variant.clone();
+                        match state
+                            .items_by_leader_view_id
+                            .entry(update_view.id)
+                            .or_insert(FollowerItem::Loading(Vec::new()))
+                        {
+                            FollowerItem::Loaded(item) => {
+                                item.apply_update_proto(variant, cx).log_err();
+                            }
+                            FollowerItem::Loading(updates) => updates.push(variant),
+                        }
+                    });
+                    Ok(())
+                })
+            }
+            proto::update_followers::Variant::CreateView(view) => {
+                let panes = this.read_with(&cx, |this, _| {
+                    this.follower_states_by_leader
+                        .get(&leader_id)
+                        .into_iter()
+                        .flat_map(|states_by_pane| states_by_pane.keys())
+                        .cloned()
+                        .collect()
+                });
+                Self::add_views_from_leader(this.clone(), leader_id, panes, vec![view], &mut cx)
+                    .await?;
+                Ok(())
+            }
+        }
+        .log_err();
+
+        Ok(())
+    }
+
+    async fn add_views_from_leader(
+        this: ViewHandle<Self>,
+        leader_id: PeerId,
+        panes: Vec<ViewHandle<Pane>>,
+        views: Vec<proto::View>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<()> {
+        let project = this.read_with(cx, |this, _| this.project.clone());
+        let replica_id = project
+            .read_with(cx, |project, _| {
+                project
+                    .collaborators()
+                    .get(&leader_id)
+                    .map(|c| c.replica_id)
+            })
+            .ok_or_else(|| anyhow!("no such collaborator {}", leader_id))?;
+
+        let item_builders = cx.update(|cx| {
+            cx.default_global::<FollowableItemBuilders>()
+                .values()
+                .map(|b| b.0)
+                .collect::<Vec<_>>()
+                .clone()
+        });
+
+        let mut item_tasks_by_pane = HashMap::default();
+        for pane in panes {
+            let mut item_tasks = Vec::new();
+            let mut leader_view_ids = Vec::new();
+            for view in &views {
+                let mut variant = view.variant.clone();
+                if variant.is_none() {
+                    Err(anyhow!("missing variant"))?;
+                }
+                for build_item in &item_builders {
+                    let task =
+                        cx.update(|cx| build_item(pane.clone(), project.clone(), &mut variant, cx));
+                    if let Some(task) = task {
+                        item_tasks.push(task);
+                        leader_view_ids.push(view.id);
+                        break;
+                    } else {
+                        assert!(variant.is_some());
+                    }
+                }
+            }
+
+            item_tasks_by_pane.insert(pane, (item_tasks, leader_view_ids));
+        }
+
+        for (pane, (item_tasks, leader_view_ids)) in item_tasks_by_pane {
+            let items = futures::future::try_join_all(item_tasks).await?;
+            this.update(cx, |this, cx| {
+                let state = this
+                    .follower_states_by_leader
+                    .get_mut(&leader_id)?
+                    .get_mut(&pane)?;
+
+                for (id, item) in leader_view_ids.into_iter().zip(items) {
+                    item.set_leader_replica_id(Some(replica_id), cx);
+                    match state.items_by_leader_view_id.entry(id) {
+                        hash_map::Entry::Occupied(e) => {
+                            let e = e.into_mut();
+                            if let FollowerItem::Loading(updates) = e {
+                                for update in updates.drain(..) {
+                                    item.apply_update_proto(update, cx)
+                                        .context("failed to apply view update")
+                                        .log_err();
+                                }
+                            }
+                            *e = FollowerItem::Loaded(item);
+                        }
+                        hash_map::Entry::Vacant(e) => {
+                            e.insert(FollowerItem::Loaded(item));
+                        }
+                    }
+                }
+
+                Some(())
+            });
+        }
+        this.update(cx, |this, cx| this.leader_updated(leader_id, cx));
+
+        Ok(())
+    }
+
+    fn update_followers(
+        &self,
+        update: proto::update_followers::Variant,
+        cx: &AppContext,
+    ) -> Option<()> {
+        let project_id = self.project.read(cx).remote_id()?;
+        if !self.leader_state.followers.is_empty() {
+            self.client
+                .send(proto::UpdateFollowers {
+                    project_id,
+                    follower_ids: self.leader_state.followers.iter().map(|f| f.0).collect(),
+                    variant: Some(update),
+                })
+                .log_err();
+        }
+        None
+    }
+
+    pub fn leader_for_pane(&self, pane: &ViewHandle<Pane>) -> Option<PeerId> {
+        self.follower_states_by_leader
+            .iter()
+            .find_map(|(leader_id, state)| {
+                if state.contains_key(pane) {
+                    Some(*leader_id)
+                } else {
+                    None
+                }
+            })
+    }
+
+    fn update_leader_state(
+        &mut self,
+        leader_id: PeerId,
+        cx: &mut ViewContext<Self>,
+        mut update_fn: impl FnMut(&mut FollowerState, &mut ViewContext<Self>),
+    ) {
+        for (_, state) in self
+            .follower_states_by_leader
+            .get_mut(&leader_id)
+            .into_iter()
+            .flatten()
+        {
+            update_fn(state, cx);
+        }
+        self.leader_updated(leader_id, cx);
+    }
+
+    fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Option<()> {
+        let mut items_to_add = Vec::new();
+        for (pane, state) in self.follower_states_by_leader.get(&leader_id)? {
+            if let Some(active_item) = state
+                .active_view_id
+                .and_then(|id| state.items_by_leader_view_id.get(&id))
+            {
+                if let FollowerItem::Loaded(item) = active_item {
+                    items_to_add.push((pane.clone(), item.boxed_clone()));
+                }
+            }
+        }
+
+        for (pane, item) in items_to_add {
+            Pane::add_item(self, pane.clone(), item.boxed_clone(), false, cx);
+            if pane == self.active_pane {
+                pane.update(cx, |pane, cx| pane.focus_active_item(cx));
+            }
+            cx.notify();
+        }
+        None
+    }
 }
 
 impl Entity for Workspace {
@@ -1228,8 +1941,16 @@ impl View for Workspace {
                                 content.add_child(
                                     Flex::column()
                                         .with_child(
-                                            Flexible::new(1., true, self.center.render(&theme))
-                                                .boxed(),
+                                            Flexible::new(
+                                                1.,
+                                                true,
+                                                self.center.render(
+                                                    &theme,
+                                                    &self.follower_states_by_leader,
+                                                    self.project.read(cx).collaborators(),
+                                                ),
+                                            )
+                                            .boxed(),
                                         )
                                         .with_child(ChildView::new(&self.status_bar).boxed())
                                         .flexible(1., true)

@@ -204,7 +204,7 @@ impl ThemeSelector {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            editor::Event::Edited => {
+            editor::Event::Edited { .. } => {
                 self.update_matches(cx);
                 self.select_if_matching(&cx.global::<Settings>().theme.name);
                 self.show_selected_theme(cx);

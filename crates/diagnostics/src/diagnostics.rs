@@ -450,6 +450,10 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         None
     }
 
+    fn project_entry_id(&self, _: &AppContext) -> Option<project::ProjectEntryId> {
+        None
+    }
+
     fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, cx));

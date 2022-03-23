@@ -250,6 +250,10 @@ impl Item for ProjectSearchView {
         None
     }
 
+    fn project_entry_id(&self, _: &AppContext) -> Option<project::ProjectEntryId> {
+        None
+    }
+
     fn can_save(&self, _: &gpui::AppContext) -> bool {
         true
     }
@@ -346,7 +350,7 @@ impl ProjectSearchView {
         cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab))
             .detach();
         cx.subscribe(&results_editor, |this, _, event, cx| {
-            if matches!(event, editor::Event::SelectionsChanged) {
+            if matches!(event, editor::Event::SelectionsChanged { .. }) {
                 this.update_match_index(cx);
             }
         })

@@ -821,6 +821,14 @@ impl MultiBuffer {
             .map_or(Vec::new(), |state| state.excerpts.clone())
     }
 
+    pub fn excerpt_ids(&self) -> Vec<ExcerptId> {
+        self.buffers
+            .borrow()
+            .values()
+            .flat_map(|state| state.excerpts.iter().cloned())
+            .collect()
+    }
+
     pub fn excerpt_containing(
         &self,
         position: impl ToOffset,

@@ -92,7 +92,8 @@ impl Server {
             .add_request_handler(Server::forward_project_request::<proto::GetDocumentHighlights>)
             .add_request_handler(Server::forward_project_request::<proto::GetProjectSymbols>)
             .add_request_handler(Server::forward_project_request::<proto::OpenBufferForSymbol>)
-            .add_request_handler(Server::forward_project_request::<proto::OpenBuffer>)
+            .add_request_handler(Server::forward_project_request::<proto::OpenBufferById>)
+            .add_request_handler(Server::forward_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(Server::forward_project_request::<proto::GetCompletions>)
             .add_request_handler(
                 Server::forward_project_request::<proto::ApplyCompletionAdditionalEdits>,
@@ -112,6 +113,9 @@ impl Server {
             .add_request_handler(Server::join_channel)
             .add_message_handler(Server::leave_channel)
             .add_request_handler(Server::send_channel_message)
+            .add_request_handler(Server::follow)
+            .add_message_handler(Server::unfollow)
+            .add_message_handler(Server::update_followers)
             .add_request_handler(Server::get_channel_messages);
 
         Arc::new(server)
@@ -669,6 +673,72 @@ impl Server {
         Ok(())
     }
 
+    async fn follow(
+        self: Arc<Self>,
+        request: TypedEnvelope<proto::Follow>,
+    ) -> tide::Result<proto::FollowResponse> {
+        let leader_id = ConnectionId(request.payload.leader_id);
+        let follower_id = request.sender_id;
+        if !self
+            .state()
+            .project_connection_ids(request.payload.project_id, follower_id)?
+            .contains(&leader_id)
+        {
+            Err(anyhow!("no such peer"))?;
+        }
+        let mut response = self
+            .peer
+            .forward_request(request.sender_id, leader_id, request.payload)
+            .await?;
+        response
+            .views
+            .retain(|view| view.leader_id != Some(follower_id.0));
+        Ok(response)
+    }
+
+    async fn unfollow(
+        self: Arc<Self>,
+        request: TypedEnvelope<proto::Unfollow>,
+    ) -> tide::Result<()> {
+        let leader_id = ConnectionId(request.payload.leader_id);
+        if !self
+            .state()
+            .project_connection_ids(request.payload.project_id, request.sender_id)?
+            .contains(&leader_id)
+        {
+            Err(anyhow!("no such peer"))?;
+        }
+        self.peer
+            .forward_send(request.sender_id, leader_id, request.payload)?;
+        Ok(())
+    }
+
+    async fn update_followers(
+        self: Arc<Self>,
+        request: TypedEnvelope<proto::UpdateFollowers>,
+    ) -> tide::Result<()> {
+        let connection_ids = self
+            .state()
+            .project_connection_ids(request.payload.project_id, request.sender_id)?;
+        let leader_id = request
+            .payload
+            .variant
+            .as_ref()
+            .and_then(|variant| match variant {
+                proto::update_followers::Variant::CreateView(payload) => payload.leader_id,
+                proto::update_followers::Variant::UpdateView(payload) => payload.leader_id,
+                proto::update_followers::Variant::UpdateActiveView(payload) => payload.leader_id,
+            });
+        for follower_id in &request.payload.follower_ids {
+            let follower_id = ConnectionId(*follower_id);
+            if connection_ids.contains(&follower_id) && Some(follower_id.0) != leader_id {
+                self.peer
+                    .forward_send(request.sender_id, follower_id, request.payload.clone())?;
+            }
+        }
+        Ok(())
+    }
+
     async fn get_channels(
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetChannels>,
@@ -1016,7 +1086,7 @@ mod tests {
         self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Input, Redo, Rename,
         ToOffset, ToggleCodeActions, Undo,
     };
-    use gpui::{executor, ModelHandle, TestAppContext};
+    use gpui::{executor, geometry::vector::vec2f, ModelHandle, TestAppContext, ViewHandle};
     use language::{
         tree_sitter_rust, Diagnostic, DiagnosticEntry, Language, LanguageConfig, LanguageRegistry,
         LanguageServerConfig, OffsetRangeExt, Point, ToLspPosition,
@@ -1028,7 +1098,7 @@ mod tests {
         fs::{FakeFs, Fs as _},
         search::SearchQuery,
         worktree::WorktreeHandle,
-        DiagnosticSummary, Project, ProjectPath,
+        DiagnosticSummary, Project, ProjectPath, WorktreeId,
     };
     use rand::prelude::*;
     use rpc::PeerId;
@@ -1046,7 +1116,7 @@ mod tests {
         },
         time::Duration,
     };
-    use workspace::{Settings, Workspace, WorkspaceParams};
+    use workspace::{Item, Settings, SplitDirection, Workspace, WorkspaceParams};
 
     #[cfg(test)]
     #[ctor::ctor]
@@ -3225,7 +3295,7 @@ mod tests {
         let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
         let editor_b = workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.open_path((worktree_id, "main.rs").into(), cx)
+                workspace.open_path((worktree_id, "main.rs"), cx)
             })
             .await
             .unwrap()
@@ -3459,7 +3529,7 @@ mod tests {
         let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
         let editor_b = workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.open_path((worktree_id, "one.rs").into(), cx)
+                workspace.open_path((worktree_id, "one.rs"), cx)
             })
             .await
             .unwrap()
@@ -4148,6 +4218,494 @@ mod tests {
         }
     }
 
+    #[gpui::test(iterations = 10)]
+    async fn test_following(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+        cx_a.foreground().forbid_parking();
+        let fs = FakeFs::new(cx_a.background());
+
+        // 2 clients connect to a server.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let mut client_a = server.create_client(cx_a, "user_a").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
+        cx_a.update(editor::init);
+        cx_b.update(editor::init);
+
+        // Client A shares a project.
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "1.txt": "one",
+                "2.txt": "two",
+                "3.txt": "three",
+            }),
+        )
+        .await;
+        let (project_a, worktree_id) = client_a.build_local_project(fs.clone(), "/a", cx_a).await;
+        project_a
+            .update(cx_a, |project, cx| project.share(cx))
+            .await
+            .unwrap();
+
+        // Client B joins the project.
+        let project_b = client_b
+            .build_remote_project(
+                project_a
+                    .read_with(cx_a, |project, _| project.remote_id())
+                    .unwrap(),
+                cx_b,
+            )
+            .await;
+
+        // Client A opens some editors.
+        let workspace_a = client_a.build_workspace(&project_a, cx_a);
+        let pane_a = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
+        let editor_a1 = workspace_a
+            .update(cx_a, |workspace, cx| {
+                workspace.open_path((worktree_id, "1.txt"), cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        let editor_a2 = workspace_a
+            .update(cx_a, |workspace, cx| {
+                workspace.open_path((worktree_id, "2.txt"), cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        // Client B opens an editor.
+        let workspace_b = client_b.build_workspace(&project_b, cx_b);
+        let editor_b1 = workspace_b
+            .update(cx_b, |workspace, cx| {
+                workspace.open_path((worktree_id, "1.txt"), cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        let client_a_id = project_b.read_with(cx_b, |project, _| {
+            project.collaborators().values().next().unwrap().peer_id
+        });
+        let client_b_id = project_a.read_with(cx_a, |project, _| {
+            project.collaborators().values().next().unwrap().peer_id
+        });
+
+        // When client B starts following client A, all visible view states are replicated to client B.
+        editor_a1.update(cx_a, |editor, cx| editor.select_ranges([0..1], None, cx));
+        editor_a2.update(cx_a, |editor, cx| editor.select_ranges([2..3], None, cx));
+        workspace_b
+            .update(cx_b, |workspace, cx| {
+                workspace.toggle_follow(&client_a_id.into(), cx).unwrap()
+            })
+            .await
+            .unwrap();
+        let editor_b2 = workspace_b.read_with(cx_b, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap()
+        });
+        assert!(cx_b.read(|cx| editor_b2.is_focused(cx)));
+        assert_eq!(
+            editor_b2.read_with(cx_b, |editor, cx| editor.project_path(cx)),
+            Some((worktree_id, "2.txt").into())
+        );
+        assert_eq!(
+            editor_b2.read_with(cx_b, |editor, cx| editor.selected_ranges(cx)),
+            vec![2..3]
+        );
+        assert_eq!(
+            editor_b1.read_with(cx_b, |editor, cx| editor.selected_ranges(cx)),
+            vec![0..1]
+        );
+
+        // When client A activates a different editor, client B does so as well.
+        workspace_a.update(cx_a, |workspace, cx| {
+            workspace.activate_item(&editor_a1, cx)
+        });
+        workspace_b
+            .condition(cx_b, |workspace, cx| {
+                workspace.active_item(cx).unwrap().id() == editor_b1.id()
+            })
+            .await;
+
+        // Changes to client A's editor are reflected on client B.
+        editor_a1.update(cx_a, |editor, cx| {
+            editor.select_ranges([1..1, 2..2], None, cx);
+        });
+        editor_b1
+            .condition(cx_b, |editor, cx| {
+                editor.selected_ranges(cx) == vec![1..1, 2..2]
+            })
+            .await;
+
+        editor_a1.update(cx_a, |editor, cx| editor.set_text("TWO", cx));
+        editor_b1
+            .condition(cx_b, |editor, cx| editor.text(cx) == "TWO")
+            .await;
+
+        editor_a1.update(cx_a, |editor, cx| {
+            editor.select_ranges([3..3], None, cx);
+            editor.set_scroll_position(vec2f(0., 100.), cx);
+        });
+        editor_b1
+            .condition(cx_b, |editor, cx| editor.selected_ranges(cx) == vec![3..3])
+            .await;
+
+        // After unfollowing, client B stops receiving updates from client A.
+        workspace_b.update(cx_b, |workspace, cx| {
+            workspace.unfollow(&workspace.active_pane().clone(), cx)
+        });
+        workspace_a.update(cx_a, |workspace, cx| {
+            workspace.activate_item(&editor_a2, cx)
+        });
+        cx_a.foreground().run_until_parked();
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, cx| workspace
+                .active_item(cx)
+                .unwrap()
+                .id()),
+            editor_b1.id()
+        );
+
+        // Client A starts following client B.
+        workspace_a
+            .update(cx_a, |workspace, cx| {
+                workspace.toggle_follow(&client_b_id.into(), cx).unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            workspace_a.read_with(cx_a, |workspace, _| workspace.leader_for_pane(&pane_a)),
+            Some(client_b_id)
+        );
+        assert_eq!(
+            workspace_a.read_with(cx_a, |workspace, cx| workspace
+                .active_item(cx)
+                .unwrap()
+                .id()),
+            editor_a1.id()
+        );
+
+        // Following interrupts when client B disconnects.
+        client_b.disconnect(&cx_b.to_async()).unwrap();
+        cx_a.foreground().run_until_parked();
+        assert_eq!(
+            workspace_a.read_with(cx_a, |workspace, _| workspace.leader_for_pane(&pane_a)),
+            None
+        );
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+        cx_a.foreground().forbid_parking();
+        let fs = FakeFs::new(cx_a.background());
+
+        // 2 clients connect to a server.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let mut client_a = server.create_client(cx_a, "user_a").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
+        cx_a.update(editor::init);
+        cx_b.update(editor::init);
+
+        // Client A shares a project.
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "1.txt": "one",
+                "2.txt": "two",
+                "3.txt": "three",
+                "4.txt": "four",
+            }),
+        )
+        .await;
+        let (project_a, worktree_id) = client_a.build_local_project(fs.clone(), "/a", cx_a).await;
+        project_a
+            .update(cx_a, |project, cx| project.share(cx))
+            .await
+            .unwrap();
+
+        // Client B joins the project.
+        let project_b = client_b
+            .build_remote_project(
+                project_a
+                    .read_with(cx_a, |project, _| project.remote_id())
+                    .unwrap(),
+                cx_b,
+            )
+            .await;
+
+        // Client A opens some editors.
+        let workspace_a = client_a.build_workspace(&project_a, cx_a);
+        let pane_a1 = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
+        let _editor_a1 = workspace_a
+            .update(cx_a, |workspace, cx| {
+                workspace.open_path((worktree_id, "1.txt"), cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        // Client B opens an editor.
+        let workspace_b = client_b.build_workspace(&project_b, cx_b);
+        let pane_b1 = workspace_b.read_with(cx_b, |workspace, _| workspace.active_pane().clone());
+        let _editor_b1 = workspace_b
+            .update(cx_b, |workspace, cx| {
+                workspace.open_path((worktree_id, "2.txt"), cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        // Clients A and B follow each other in split panes
+        workspace_a
+            .update(cx_a, |workspace, cx| {
+                workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
+                assert_ne!(*workspace.active_pane(), pane_a1);
+                let leader_id = *project_a.read(cx).collaborators().keys().next().unwrap();
+                workspace
+                    .toggle_follow(&workspace::ToggleFollow(leader_id), cx)
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+        workspace_b
+            .update(cx_b, |workspace, cx| {
+                workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
+                assert_ne!(*workspace.active_pane(), pane_b1);
+                let leader_id = *project_b.read(cx).collaborators().keys().next().unwrap();
+                workspace
+                    .toggle_follow(&workspace::ToggleFollow(leader_id), cx)
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+
+        workspace_a
+            .update(cx_a, |workspace, cx| {
+                workspace.activate_next_pane(cx);
+                assert_eq!(*workspace.active_pane(), pane_a1);
+                workspace.open_path((worktree_id, "3.txt"), cx)
+            })
+            .await
+            .unwrap();
+        workspace_b
+            .update(cx_b, |workspace, cx| {
+                workspace.activate_next_pane(cx);
+                assert_eq!(*workspace.active_pane(), pane_b1);
+                workspace.open_path((worktree_id, "4.txt"), cx)
+            })
+            .await
+            .unwrap();
+        cx_a.foreground().run_until_parked();
+
+        // Ensure leader updates don't change the active pane of followers
+        workspace_a.read_with(cx_a, |workspace, _| {
+            assert_eq!(*workspace.active_pane(), pane_a1);
+        });
+        workspace_b.read_with(cx_b, |workspace, _| {
+            assert_eq!(*workspace.active_pane(), pane_b1);
+        });
+
+        // Ensure peers following each other doesn't cause an infinite loop.
+        assert_eq!(
+            workspace_a.read_with(cx_a, |workspace, cx| workspace
+                .active_item(cx)
+                .unwrap()
+                .project_path(cx)),
+            Some((worktree_id, "3.txt").into())
+        );
+        workspace_a.update(cx_a, |workspace, cx| {
+            assert_eq!(
+                workspace.active_item(cx).unwrap().project_path(cx),
+                Some((worktree_id, "3.txt").into())
+            );
+            workspace.activate_next_pane(cx);
+            assert_eq!(
+                workspace.active_item(cx).unwrap().project_path(cx),
+                Some((worktree_id, "4.txt").into())
+            );
+        });
+        workspace_b.update(cx_b, |workspace, cx| {
+            assert_eq!(
+                workspace.active_item(cx).unwrap().project_path(cx),
+                Some((worktree_id, "4.txt").into())
+            );
+            workspace.activate_next_pane(cx);
+            assert_eq!(
+                workspace.active_item(cx).unwrap().project_path(cx),
+                Some((worktree_id, "3.txt").into())
+            );
+        });
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+        cx_a.foreground().forbid_parking();
+        let fs = FakeFs::new(cx_a.background());
+
+        // 2 clients connect to a server.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let mut client_a = server.create_client(cx_a, "user_a").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
+        cx_a.update(editor::init);
+        cx_b.update(editor::init);
+
+        // Client A shares a project.
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "1.txt": "one",
+                "2.txt": "two",
+                "3.txt": "three",
+            }),
+        )
+        .await;
+        let (project_a, worktree_id) = client_a.build_local_project(fs.clone(), "/a", cx_a).await;
+        project_a
+            .update(cx_a, |project, cx| project.share(cx))
+            .await
+            .unwrap();
+
+        // Client B joins the project.
+        let project_b = client_b
+            .build_remote_project(
+                project_a
+                    .read_with(cx_a, |project, _| project.remote_id())
+                    .unwrap(),
+                cx_b,
+            )
+            .await;
+
+        // Client A opens some editors.
+        let workspace_a = client_a.build_workspace(&project_a, cx_a);
+        let _editor_a1 = workspace_a
+            .update(cx_a, |workspace, cx| {
+                workspace.open_path((worktree_id, "1.txt"), cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        // Client B starts following client A.
+        let workspace_b = client_b.build_workspace(&project_b, cx_b);
+        let pane_b = workspace_b.read_with(cx_b, |workspace, _| workspace.active_pane().clone());
+        let leader_id = project_b.read_with(cx_b, |project, _| {
+            project.collaborators().values().next().unwrap().peer_id
+        });
+        workspace_b
+            .update(cx_b, |workspace, cx| {
+                workspace.toggle_follow(&leader_id.into(), cx).unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            Some(leader_id)
+        );
+        let editor_b2 = workspace_b.read_with(cx_b, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap()
+        });
+
+        // When client B moves, it automatically stops following client A.
+        editor_b2.update(cx_b, |editor, cx| editor.move_right(&editor::MoveRight, cx));
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            None
+        );
+
+        workspace_b
+            .update(cx_b, |workspace, cx| {
+                workspace.toggle_follow(&leader_id.into(), cx).unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            Some(leader_id)
+        );
+
+        // When client B edits, it automatically stops following client A.
+        editor_b2.update(cx_b, |editor, cx| editor.insert("X", cx));
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            None
+        );
+
+        workspace_b
+            .update(cx_b, |workspace, cx| {
+                workspace.toggle_follow(&leader_id.into(), cx).unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            Some(leader_id)
+        );
+
+        // When client B scrolls, it automatically stops following client A.
+        editor_b2.update(cx_b, |editor, cx| {
+            editor.set_scroll_position(vec2f(0., 3.), cx)
+        });
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            None
+        );
+
+        workspace_b
+            .update(cx_b, |workspace, cx| {
+                workspace.toggle_follow(&leader_id.into(), cx).unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            Some(leader_id)
+        );
+
+        // When client B activates a different pane, it continues following client A in the original pane.
+        workspace_b.update(cx_b, |workspace, cx| {
+            workspace.split_pane(pane_b.clone(), SplitDirection::Right, cx)
+        });
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            Some(leader_id)
+        );
+
+        workspace_b.update(cx_b, |workspace, cx| workspace.activate_next_pane(cx));
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            Some(leader_id)
+        );
+
+        // When client B activates a different item in the original pane, it automatically stops following client A.
+        workspace_b
+            .update(cx_b, |workspace, cx| {
+                workspace.open_path((worktree_id, "2.txt"), cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            workspace_b.read_with(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
+            None
+        );
+    }
+
     #[gpui::test(iterations = 100)]
     async fn test_random_collaboration(cx: &mut TestAppContext, rng: StdRng) {
         cx.foreground().forbid_parking();
@@ -4469,6 +5027,9 @@ mod tests {
 
             Channel::init(&client);
             Project::init(&client);
+            cx.update(|cx| {
+                workspace::init(&client, cx);
+            });
 
             let peer_id = PeerId(connection_id_rx.next().await.unwrap().0);
             let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
@@ -4477,6 +5038,7 @@ mod tests {
                 client,
                 peer_id,
                 user_store,
+                language_registry: Arc::new(LanguageRegistry::test()),
                 project: Default::default(),
                 buffers: Default::default(),
             };
@@ -4541,6 +5103,7 @@ mod tests {
         client: Arc<Client>,
         pub peer_id: PeerId,
         pub user_store: ModelHandle<UserStore>,
+        language_registry: Arc<LanguageRegistry>,
         project: Option<ModelHandle<Project>>,
         buffers: HashSet<ModelHandle<language::Buffer>>,
     }
@@ -4566,6 +5129,80 @@ mod tests {
                 .user_store
                 .read_with(cx, |user_store, _| user_store.watch_current_user());
             while authed_user.next().await.unwrap().is_none() {}
+        }
+
+        async fn build_local_project(
+            &mut self,
+            fs: Arc<FakeFs>,
+            root_path: impl AsRef<Path>,
+            cx: &mut TestAppContext,
+        ) -> (ModelHandle<Project>, WorktreeId) {
+            let project = cx.update(|cx| {
+                Project::local(
+                    self.client.clone(),
+                    self.user_store.clone(),
+                    self.language_registry.clone(),
+                    fs,
+                    cx,
+                )
+            });
+            self.project = Some(project.clone());
+            let (worktree, _) = project
+                .update(cx, |p, cx| {
+                    p.find_or_create_local_worktree(root_path, true, cx)
+                })
+                .await
+                .unwrap();
+            worktree
+                .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+                .await;
+            project
+                .update(cx, |project, _| project.next_remote_id())
+                .await;
+            (project, worktree.read_with(cx, |tree, _| tree.id()))
+        }
+
+        async fn build_remote_project(
+            &mut self,
+            project_id: u64,
+            cx: &mut TestAppContext,
+        ) -> ModelHandle<Project> {
+            let project = Project::remote(
+                project_id,
+                self.client.clone(),
+                self.user_store.clone(),
+                self.language_registry.clone(),
+                FakeFs::new(cx.background()),
+                &mut cx.to_async(),
+            )
+            .await
+            .unwrap();
+            self.project = Some(project.clone());
+            project
+        }
+
+        fn build_workspace(
+            &self,
+            project: &ModelHandle<Project>,
+            cx: &mut TestAppContext,
+        ) -> ViewHandle<Workspace> {
+            let (window_id, _) = cx.add_window(|_| EmptyView);
+            cx.add_view(window_id, |cx| {
+                let fs = project.read(cx).fs().clone();
+                Workspace::new(
+                    &WorkspaceParams {
+                        fs,
+                        project: project.clone(),
+                        user_store: self.user_store.clone(),
+                        languages: self.language_registry.clone(),
+                        channel_list: cx.add_model(|cx| {
+                            ChannelList::new(self.user_store.clone(), self.client.clone(), cx)
+                        }),
+                        client: self.client.clone(),
+                    },
+                    cx,
+                )
+            })
         }
 
         fn simulate_host(

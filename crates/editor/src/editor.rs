@@ -340,9 +340,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(Editor::confirm_rename);
     cx.add_async_action(Editor::find_all_references);
 
-    workspace::register_project_item(cx, |project, buffer, cx| {
-        Editor::for_buffer(buffer, Some(project), cx)
-    });
+    workspace::register_project_item::<Editor>(cx);
+    workspace::register_followable_item::<Editor>(cx);
 }
 
 trait InvalidationRegion {
@@ -431,8 +430,8 @@ pub struct Editor {
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     scroll_position: Vector2F,
-    scroll_top_anchor: Option<Anchor>,
-    autoscroll_request: Option<Autoscroll>,
+    scroll_top_anchor: Anchor,
+    autoscroll_request: Option<(Autoscroll, bool)>,
     soft_wrap_mode_override: Option<settings::SoftWrap>,
     get_field_editor_theme: Option<GetFieldEditorTheme>,
     override_text_style: Option<Box<OverrideTextStyle>>,
@@ -457,6 +456,7 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
+    leader_replica_id: Option<u16>,
 }
 
 pub struct EditorSnapshot {
@@ -465,7 +465,7 @@ pub struct EditorSnapshot {
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
     scroll_position: Vector2F,
-    scroll_top_anchor: Option<Anchor>,
+    scroll_top_anchor: Anchor,
 }
 
 #[derive(Clone)]
@@ -909,7 +909,7 @@ impl Editor {
             get_field_editor_theme,
             project,
             scroll_position: Vector2F::zero(),
-            scroll_top_anchor: None,
+            scroll_top_anchor: Anchor::min(),
             autoscroll_request: None,
             focused: false,
             show_local_cursors: false,
@@ -932,6 +932,7 @@ impl Editor {
             searchable: true,
             override_text_style: None,
             cursor_shape: Default::default(),
+            leader_replica_id: None,
         };
         this.end_selection(cx);
 
@@ -1014,10 +1015,19 @@ impl Editor {
     }
 
     pub fn set_scroll_position(&mut self, scroll_position: Vector2F, cx: &mut ViewContext<Self>) {
+        self.set_scroll_position_internal(scroll_position, true, cx);
+    }
+
+    fn set_scroll_position_internal(
+        &mut self,
+        scroll_position: Vector2F,
+        local: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if scroll_position.y() == 0. {
-            self.scroll_top_anchor = None;
+            self.scroll_top_anchor = Anchor::min();
             self.scroll_position = scroll_position;
         } else {
             let scroll_top_buffer_offset =
@@ -1029,9 +1039,22 @@ impl Editor {
                 scroll_position.x(),
                 scroll_position.y() - anchor.to_display_point(&map).row() as f32,
             );
-            self.scroll_top_anchor = Some(anchor);
+            self.scroll_top_anchor = anchor;
         }
 
+        cx.emit(Event::ScrollPositionChanged { local });
+        cx.notify();
+    }
+
+    fn set_scroll_top_anchor(
+        &mut self,
+        anchor: Anchor,
+        position: Vector2F,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.scroll_top_anchor = anchor;
+        self.scroll_position = position;
+        cx.emit(Event::ScrollPositionChanged { local: false });
         cx.notify();
     }
 
@@ -1074,7 +1097,7 @@ impl Editor {
             self.set_scroll_position(scroll_position, cx);
         }
 
-        let autoscroll = if let Some(autoscroll) = self.autoscroll_request.take() {
+        let (autoscroll, local) = if let Some(autoscroll) = self.autoscroll_request.take() {
             autoscroll
         } else {
             return false;
@@ -1126,15 +1149,15 @@ impl Editor {
 
                 if target_top < start_row {
                     scroll_position.set_y(target_top);
-                    self.set_scroll_position(scroll_position, cx);
+                    self.set_scroll_position_internal(scroll_position, local, cx);
                 } else if target_bottom >= end_row {
                     scroll_position.set_y(target_bottom - visible_lines);
-                    self.set_scroll_position(scroll_position, cx);
+                    self.set_scroll_position_internal(scroll_position, local, cx);
                 }
             }
             Autoscroll::Center => {
                 scroll_position.set_y((first_cursor_top - margin).max(0.0));
-                self.set_scroll_position(scroll_position, cx);
+                self.set_scroll_position_internal(scroll_position, local, cx);
             }
         }
 
@@ -1316,7 +1339,7 @@ impl Editor {
             _ => {}
         }
 
-        self.set_selections(self.selections.clone(), Some(pending), cx);
+        self.set_selections(self.selections.clone(), Some(pending), true, cx);
     }
 
     fn begin_selection(
@@ -1396,7 +1419,12 @@ impl Editor {
         } else {
             selections = Arc::from([]);
         }
-        self.set_selections(selections, Some(PendingSelection { selection, mode }), cx);
+        self.set_selections(
+            selections,
+            Some(PendingSelection { selection, mode }),
+            true,
+            cx,
+        );
 
         cx.notify();
     }
@@ -1510,7 +1538,7 @@ impl Editor {
                 pending.selection.end = buffer.anchor_before(head);
                 pending.selection.reversed = false;
             }
-            self.set_selections(self.selections.clone(), Some(pending), cx);
+            self.set_selections(self.selections.clone(), Some(pending), true, cx);
         } else {
             log::error!("update_selection dispatched with no pending selection");
             return;
@@ -1597,7 +1625,7 @@ impl Editor {
             if selections.is_empty() {
                 selections = Arc::from([pending.selection]);
             }
-            self.set_selections(selections, None, cx);
+            self.set_selections(selections, None, true, cx);
             self.request_autoscroll(Autoscroll::Fit, cx);
         } else {
             let mut oldest_selection = self.oldest_selection::<usize>(&cx);
@@ -1617,7 +1645,7 @@ impl Editor {
     #[cfg(any(test, feature = "test-support"))]
     pub fn selected_ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut MutableAppContext,
+        cx: &AppContext,
     ) -> Vec<Range<D>> {
         self.local_selections::<D>(cx)
             .iter()
@@ -1944,7 +1972,7 @@ impl Editor {
                 }
                 drop(snapshot);
 
-                self.set_selections(selections.into(), None, cx);
+                self.set_selections(selections.into(), None, true, cx);
                 true
             }
         } else {
@@ -3334,7 +3362,7 @@ impl Editor {
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
             if let Some((selections, _)) = self.selection_history.get(&tx_id).cloned() {
-                self.set_selections(selections, None, cx);
+                self.set_selections(selections, None, true, cx);
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
         }
@@ -3343,7 +3371,7 @@ impl Editor {
     pub fn redo(&mut self, _: &Redo, cx: &mut ViewContext<Self>) {
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
             if let Some((_, Some(selections))) = self.selection_history.get(&tx_id).cloned() {
-                self.set_selections(selections, None, cx);
+                self.set_selections(selections, None, true, cx);
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
         }
@@ -4870,6 +4898,7 @@ impl Editor {
                 }
             })),
             None,
+            true,
             cx,
         );
     }
@@ -4930,6 +4959,7 @@ impl Editor {
         &mut self,
         selections: Arc<[Selection<Anchor>]>,
         pending_selection: Option<PendingSelection>,
+        local: bool,
         cx: &mut ViewContext<Self>,
     ) {
         assert!(
@@ -4941,7 +4971,7 @@ impl Editor {
 
         self.selections = selections;
         self.pending_selection = pending_selection;
-        if self.focused {
+        if self.focused && self.leader_replica_id.is_none() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.set_active_selections(&self.selections, cx)
             });
@@ -4998,11 +5028,16 @@ impl Editor {
         self.refresh_document_highlights(cx);
 
         self.pause_cursor_blinking(cx);
-        cx.emit(Event::SelectionsChanged);
+        cx.emit(Event::SelectionsChanged { local });
     }
 
     pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
-        self.autoscroll_request = Some(autoscroll);
+        self.autoscroll_request = Some((autoscroll, true));
+        cx.notify();
+    }
+
+    fn request_autoscroll_remotely(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
+        self.autoscroll_request = Some((autoscroll, false));
         cx.notify();
     }
 
@@ -5407,7 +5442,7 @@ impl Editor {
     }
 
     pub fn show_local_cursors(&self) -> bool {
-        self.show_local_cursors
+        self.show_local_cursors && self.focused
     }
 
     fn on_buffer_changed(&mut self, _: ModelHandle<MultiBuffer>, cx: &mut ViewContext<Self>) {
@@ -5421,10 +5456,10 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            language::Event::Edited => {
+            language::Event::Edited { local } => {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
-                cx.emit(Event::Edited);
+                cx.emit(Event::Edited { local: *local });
             }
             language::Event::Dirtied => cx.emit(Event::Dirtied),
             language::Event::Saved => cx.emit(Event::Saved),
@@ -5537,10 +5572,10 @@ impl Deref for EditorSnapshot {
 fn compute_scroll_position(
     snapshot: &DisplaySnapshot,
     mut scroll_position: Vector2F,
-    scroll_top_anchor: &Option<Anchor>,
+    scroll_top_anchor: &Anchor,
 ) -> Vector2F {
-    if let Some(anchor) = scroll_top_anchor {
-        let scroll_top = anchor.to_display_point(snapshot).row() as f32;
+    if *scroll_top_anchor != Anchor::min() {
+        let scroll_top = scroll_top_anchor.to_display_point(snapshot).row() as f32;
         scroll_position.set_y(scroll_top + scroll_position.y());
     } else {
         scroll_position.set_y(0.);
@@ -5551,12 +5586,13 @@ fn compute_scroll_position(
 #[derive(Copy, Clone)]
 pub enum Event {
     Activate,
-    Edited,
+    Edited { local: bool },
     Blurred,
     Dirtied,
     Saved,
     TitleChanged,
-    SelectionsChanged,
+    SelectionsChanged { local: bool },
+    ScrollPositionChanged { local: bool },
     Closed,
 }
 
@@ -5595,7 +5631,9 @@ impl View for Editor {
             self.blink_cursors(self.blink_epoch, cx);
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
-                buffer.set_active_selections(&self.selections, cx)
+                if self.leader_replica_id.is_none() {
+                    buffer.set_active_selections(&self.selections, cx);
+                }
             });
         }
     }
@@ -6013,6 +6051,10 @@ mod tests {
     use crate::test::marked_text_by;
 
     use super::*;
+    use gpui::{
+        geometry::rect::RectF,
+        platform::{WindowBounds, WindowOptions},
+    };
     use language::{LanguageConfig, LanguageServerConfig};
     use lsp::FakeLanguageServer;
     use project::FakeFs;
@@ -6021,6 +6063,7 @@ mod tests {
     use text::Point;
     use unindent::Unindent;
     use util::test::sample_text;
+    use workspace::FollowableItem;
 
     #[gpui::test]
     fn test_undo_redo_with_selection_restoration(cx: &mut MutableAppContext) {
@@ -8919,6 +8962,75 @@ mod tests {
                 )]
             );
         });
+    }
+
+    #[gpui::test]
+    fn test_following(cx: &mut gpui::MutableAppContext) {
+        let buffer = MultiBuffer::build_simple(&sample_text(16, 8, 'a'), cx);
+        populate_settings(cx);
+
+        let (_, leader) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
+        let (_, follower) = cx.add_window(
+            WindowOptions {
+                bounds: WindowBounds::Fixed(RectF::from_points(vec2f(0., 0.), vec2f(10., 80.))),
+                ..Default::default()
+            },
+            |cx| build_editor(buffer.clone(), cx),
+        );
+
+        let pending_update = Rc::new(RefCell::new(None));
+        follower.update(cx, {
+            let update = pending_update.clone();
+            |_, cx| {
+                cx.subscribe(&leader, move |_, leader, event, cx| {
+                    leader
+                        .read(cx)
+                        .add_event_to_update_proto(event, &mut *update.borrow_mut(), cx);
+                })
+                .detach();
+            }
+        });
+
+        // Update the selections only
+        leader.update(cx, |leader, cx| {
+            leader.select_ranges([1..1], None, cx);
+        });
+        follower.update(cx, |follower, cx| {
+            follower
+                .apply_update_proto(pending_update.borrow_mut().take().unwrap(), cx)
+                .unwrap();
+        });
+        assert_eq!(follower.read(cx).selected_ranges(cx), vec![1..1]);
+
+        // Update the scroll position only
+        leader.update(cx, |leader, cx| {
+            leader.set_scroll_position(vec2f(1.5, 3.5), cx);
+        });
+        follower.update(cx, |follower, cx| {
+            follower
+                .apply_update_proto(pending_update.borrow_mut().take().unwrap(), cx)
+                .unwrap();
+        });
+        assert_eq!(
+            follower.update(cx, |follower, cx| follower.scroll_position(cx)),
+            vec2f(1.5, 3.5)
+        );
+
+        // Update the selections and scroll position
+        leader.update(cx, |leader, cx| {
+            leader.select_ranges([0..0], None, cx);
+            leader.request_autoscroll(Autoscroll::Newest, cx);
+            leader.set_scroll_position(vec2f(1.5, 3.5), cx);
+        });
+        follower.update(cx, |follower, cx| {
+            let initial_scroll_position = follower.scroll_position(cx);
+            follower
+                .apply_update_proto(pending_update.borrow_mut().take().unwrap(), cx)
+                .unwrap();
+            assert_eq!(follower.scroll_position(cx), initial_scroll_position);
+            assert!(follower.autoscroll_request.is_some());
+        });
+        assert_eq!(follower.read(cx).selected_ranges(cx), vec![0..0]);
     }
 
     #[test]

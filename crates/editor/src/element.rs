@@ -909,7 +909,7 @@ impl Element for EditorElement {
                 .anchor_before(DisplayPoint::new(end_row, 0).to_offset(&snapshot, Bias::Right))
         };
 
-        let mut selections = HashMap::default();
+        let mut selections = Vec::new();
         let mut active_rows = BTreeMap::new();
         let mut highlighted_rows = None;
         let mut highlighted_ranges = Vec::new();
@@ -922,11 +922,32 @@ impl Element for EditorElement {
                 &display_map,
             );
 
+            let mut remote_selections = HashMap::default();
+            for (replica_id, selection) in display_map
+                .buffer_snapshot
+                .remote_selections_in_range(&(start_anchor.clone()..end_anchor.clone()))
+            {
+                // The local selections match the leader's selections.
+                if Some(replica_id) == view.leader_replica_id {
+                    continue;
+                }
+
+                remote_selections
+                    .entry(replica_id)
+                    .or_insert(Vec::new())
+                    .push(crate::Selection {
+                        id: selection.id,
+                        goal: selection.goal,
+                        reversed: selection.reversed,
+                        start: selection.start.to_display_point(&display_map),
+                        end: selection.end.to_display_point(&display_map),
+                    });
+            }
+            selections.extend(remote_selections);
+
             if view.show_local_selections {
-                let local_selections = view.local_selections_in_range(
-                    start_anchor.clone()..end_anchor.clone(),
-                    &display_map,
-                );
+                let local_selections =
+                    view.local_selections_in_range(start_anchor..end_anchor, &display_map);
                 for selection in &local_selections {
                     let is_empty = selection.start == selection.end;
                     let selection_start = snapshot.prev_line_boundary(selection.start).1;
@@ -939,8 +960,12 @@ impl Element for EditorElement {
                         *contains_non_empty_selection |= !is_empty;
                     }
                 }
-                selections.insert(
-                    view.replica_id(cx),
+
+                // Render the local selections in the leader's color when following.
+                let local_replica_id = view.leader_replica_id.unwrap_or(view.replica_id(cx));
+
+                selections.push((
+                    local_replica_id,
                     local_selections
                         .into_iter()
                         .map(|selection| crate::Selection {
@@ -951,23 +976,7 @@ impl Element for EditorElement {
                             end: selection.end.to_display_point(&display_map),
                         })
                         .collect(),
-                );
-            }
-
-            for (replica_id, selection) in display_map
-                .buffer_snapshot
-                .remote_selections_in_range(&(start_anchor..end_anchor))
-            {
-                selections
-                    .entry(replica_id)
-                    .or_insert(Vec::new())
-                    .push(crate::Selection {
-                        id: selection.id,
-                        goal: selection.goal,
-                        reversed: selection.reversed,
-                        start: selection.start.to_display_point(&display_map),
-                        end: selection.end.to_display_point(&display_map),
-                    });
+                ));
             }
         });
 
@@ -1213,7 +1222,7 @@ pub struct LayoutState {
     em_width: f32,
     em_advance: f32,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
-    selections: HashMap<ReplicaId, Vec<text::Selection<DisplayPoint>>>,
+    selections: Vec<(ReplicaId, Vec<text::Selection<DisplayPoint>>)>,
     context_menu: Option<(DisplayPoint, ElementBox)>,
     code_actions_indicator: Option<(u32, ElementBox)>,
 }
