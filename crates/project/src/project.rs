@@ -377,7 +377,7 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
-        client.authenticate_and_connect(&cx).await?;
+        client.authenticate_and_connect(true, &cx).await?;
 
         let response = client
             .request(proto::JoinProject {
