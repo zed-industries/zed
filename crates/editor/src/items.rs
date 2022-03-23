@@ -241,7 +241,7 @@ fn deserialize_selection(
 }
 
 impl Item for Editor {
-    fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) {
+    fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
         if let Some(data) = data.downcast_ref::<NavigationData>() {
             let buffer = self.buffer.read(cx).read(cx);
             let offset = if buffer.can_resolve(&data.anchor) {
@@ -249,11 +249,19 @@ impl Item for Editor {
             } else {
                 buffer.clip_offset(data.offset, Bias::Left)
             };
-
+            let newest_selection = self.newest_selection_with_snapshot::<usize>(&buffer);
             drop(buffer);
-            let nav_history = self.nav_history.take();
-            self.select_ranges([offset..offset], Some(Autoscroll::Fit), cx);
-            self.nav_history = nav_history;
+
+            if newest_selection.head() == offset {
+                false
+            } else {
+                let nav_history = self.nav_history.take();
+                self.select_ranges([offset..offset], Some(Autoscroll::Fit), cx);
+                self.nav_history = nav_history;
+                true
+            }
+        } else {
+            false
         }
     }
 

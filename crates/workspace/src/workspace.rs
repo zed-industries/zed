@@ -203,7 +203,9 @@ pub struct JoinProjectParams {
 
 pub trait Item: View {
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
-    fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) {}
+    fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
+        false
+    }
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
@@ -362,7 +364,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
         cx: &mut ViewContext<Workspace>,
     );
     fn deactivated(&self, cx: &mut MutableAppContext);
-    fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext);
+    fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext) -> bool;
     fn id(&self) -> usize;
     fn to_any(&self) -> AnyViewHandle;
     fn is_dirty(&self, cx: &AppContext) -> bool;
@@ -510,8 +512,8 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.update(cx, |this, cx| this.deactivated(cx));
     }
 
-    fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext) {
-        self.update(cx, |this, cx| this.navigate(data, cx));
+    fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext) -> bool {
+        self.update(cx, |this, cx| this.navigate(data, cx))
     }
 
     fn save(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext) -> Task<Result<()>> {
