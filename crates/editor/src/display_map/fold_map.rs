@@ -1283,9 +1283,14 @@ mod tests {
         assert_eq!(snapshot4.text(), "123a…c123456eee");
 
         let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
-        writer.unfold(Some(Point::new(0, 4)..Point::new(0, 5)), true);
+        writer.unfold(Some(Point::new(0, 4)..Point::new(0, 4)), false);
         let (snapshot5, _) = map.read(buffer_snapshot.clone(), vec![]);
-        assert_eq!(snapshot5.text(), "123aaaaa\nbbbbbb\nccc123456eee");
+        assert_eq!(snapshot5.text(), "123a…c123456eee");
+
+        let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
+        writer.unfold(Some(Point::new(0, 4)..Point::new(0, 4)), true);
+        let (snapshot6, _) = map.read(buffer_snapshot.clone(), vec![]);
+        assert_eq!(snapshot6.text(), "123aaaaa\nbbbbbb\nccc123456eee");
     }
 
     #[gpui::test]
