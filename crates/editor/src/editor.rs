@@ -122,7 +122,7 @@ action!(ConfirmRename);
 action!(PageUp);
 action!(PageDown);
 action!(Fold);
-action!(Unfold);
+action!(UnfoldLines);
 action!(FoldSelectedRanges);
 action!(Scroll, Vector2F);
 action!(Select, SelectPhase);
@@ -263,7 +263,7 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("pageup", PageUp, Some("Editor")),
         Binding::new("pagedown", PageDown, Some("Editor")),
         Binding::new("alt-cmd-[", Fold, Some("Editor")),
-        Binding::new("alt-cmd-]", Unfold, Some("Editor")),
+        Binding::new("alt-cmd-]", UnfoldLines, Some("Editor")),
         Binding::new("alt-cmd-f", FoldSelectedRanges, Some("Editor")),
         Binding::new("ctrl-space", ShowCompletions, Some("Editor")),
         Binding::new("cmd-.", ToggleCodeActions(false), Some("Editor")),
@@ -329,7 +329,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::page_up);
     cx.add_action(Editor::page_down);
     cx.add_action(Editor::fold);
-    cx.add_action(Editor::unfold);
+    cx.add_action(Editor::unfold_lines);
     cx.add_action(Editor::fold_selected_ranges);
     cx.add_action(Editor::show_completions);
     cx.add_action(Editor::toggle_code_actions);
@@ -5187,7 +5187,7 @@ impl Editor {
         self.fold_ranges(fold_ranges, cx);
     }
 
-    pub fn unfold(&mut self, _: &Unfold, cx: &mut ViewContext<Self>) {
+    pub fn unfold_lines(&mut self, _: &UnfoldLines, cx: &mut ViewContext<Self>) {
         let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
@@ -6467,7 +6467,7 @@ mod tests {
                 .unindent(),
             );
 
-            view.unfold(&Unfold, cx);
+            view.unfold_lines(&UnfoldLines, cx);
             assert_eq!(
                 view.display_text(cx),
                 "
@@ -6488,7 +6488,7 @@ mod tests {
                 .unindent(),
             );
 
-            view.unfold(&Unfold, cx);
+            view.unfold_lines(&UnfoldLines, cx);
             assert_eq!(view.display_text(cx), buffer.read(cx).read(cx).text());
         });
     }
