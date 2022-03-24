@@ -360,7 +360,7 @@ impl SearchBar {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            editor::Event::Edited { .. } => {
+            editor::Event::BufferEdited { .. } => {
                 self.query_contains_error = false;
                 self.clear_matches(cx);
                 self.update_matches(true, cx);
@@ -377,7 +377,7 @@ impl SearchBar {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            editor::Event::Edited { .. } => self.update_matches(false, cx),
+            editor::Event::BufferEdited { .. } => self.update_matches(false, cx),
             editor::Event::SelectionsChanged { .. } => self.update_match_index(cx),
             _ => {}
         }

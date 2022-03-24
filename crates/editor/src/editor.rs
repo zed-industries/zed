@@ -5526,10 +5526,10 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            language::Event::Edited { local } => {
+            language::Event::Edited => {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
-                cx.emit(Event::Edited { local: *local });
+                cx.emit(Event::BufferEdited);
             }
             language::Event::Dirtied => cx.emit(Event::Dirtied),
             language::Event::Saved => cx.emit(Event::Saved),
@@ -5656,7 +5656,7 @@ fn compute_scroll_position(
 #[derive(Copy, Clone)]
 pub enum Event {
     Activate,
-    Edited { local: bool },
+    BufferEdited,
     Blurred,
     Dirtied,
     Saved,
