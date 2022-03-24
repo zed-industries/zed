@@ -4,8 +4,6 @@ pub mod items;
 pub mod movement;
 mod multi_buffer;
 
-pub mod repro;
-
 #[cfg(test)]
 mod test;
 
@@ -4422,13 +4420,7 @@ impl Editor {
                                 .into_iter()
                                 .flat_map(|(_, ranges)| ranges),
                         )
-                        .collect::<Vec<_>>();
-
-                    let snapshot = this.buffer.read(cx).snapshot(cx);
-                    let point_ranges = ranges
-                        .iter()
-                        .map(|range| range.to_point(&snapshot))
-                        .collect::<Vec<_>>();
+                        .collect();
 
                     this.highlight_text::<Rename>(
                         ranges,

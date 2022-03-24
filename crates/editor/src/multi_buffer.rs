@@ -211,11 +211,7 @@ impl MultiBuffer {
     pub fn singleton(buffer: ModelHandle<Buffer>, cx: &mut ModelContext<Self>) -> Self {
         let mut this = Self::new(buffer.read(cx).replica_id());
         this.singleton = true;
-        this.push_excerpts(
-            buffer,
-            [text::Anchor::build_min()..text::Anchor::build_max()],
-            cx,
-        );
+        this.push_excerpts(buffer, [text::Anchor::MIN..text::Anchor::MAX], cx);
         this.snapshot.borrow_mut().singleton = true;
         this
     }

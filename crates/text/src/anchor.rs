@@ -12,21 +12,17 @@ pub struct Anchor {
 }
 
 impl Anchor {
-    pub fn build_min() -> Self {
-        Self {
-            timestamp: clock::Local::MIN,
-            offset: usize::MIN,
-            bias: Bias::Left,
-        }
-    }
+    pub const MIN: Self = Self {
+        timestamp: clock::Local::MIN,
+        offset: usize::MIN,
+        bias: Bias::Left,
+    };
 
-    pub fn build_max() -> Self {
-        Self {
-            timestamp: clock::Local::MAX,
-            offset: usize::MAX,
-            bias: Bias::Right,
-        }
-    }
+    pub const MAX: Self = Self {
+        timestamp: clock::Local::MAX,
+        offset: usize::MAX,
+        bias: Bias::Right,
+    };
 
     pub fn cmp(&self, other: &Anchor, buffer: &BufferSnapshot) -> Result<Ordering> {
         let fragment_id_comparison = if self.timestamp == other.timestamp {

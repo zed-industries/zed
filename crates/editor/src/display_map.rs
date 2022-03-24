@@ -491,7 +491,7 @@ mod tests {
     use super::*;
     use crate::{
         movement,
-        test::{marked_text, marked_text_ranges},
+        test::{marked_text_ranges},
     };
     use gpui::{color::Color, elements::*, test::observe, MutableAppContext};
     use language::{Buffer, Language, LanguageConfig, RandomCharIter, SelectionGoal};
@@ -499,7 +499,6 @@ mod tests {
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
-    use unindent::Unindent;
     use util::test::sample_text;
     use Bias::*;
 

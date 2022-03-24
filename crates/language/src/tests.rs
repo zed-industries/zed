@@ -789,7 +789,7 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
     for buffer in &buffers {
         let buffer = buffer.read(cx).snapshot();
         let actual_remote_selections = buffer
-            .remote_selections_in_range(Anchor::build_min()..Anchor::build_max())
+            .remote_selections_in_range(Anchor::MIN..Anchor::MAX)
             .map(|(replica_id, selections)| (replica_id, selections.collect::<Vec<_>>()))
             .collect::<Vec<_>>();
         let expected_remote_selections = active_selections

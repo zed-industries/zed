@@ -187,10 +187,10 @@ impl DiagnosticEntry<Anchor> {
 impl Default for Summary {
     fn default() -> Self {
         Self {
-            start: Anchor::build_min(),
-            end: Anchor::build_max(),
-            min_start: Anchor::build_max(),
-            max_end: Anchor::build_min(),
+            start: Anchor::MIN,
+            end: Anchor::MAX,
+            min_start: Anchor::MAX,
+            max_end: Anchor::MIN,
             count: 0,
         }
     }
