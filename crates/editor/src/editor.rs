@@ -3907,6 +3907,7 @@ impl Editor {
                         reversed: false,
                         goal: SelectionGoal::None,
                     });
+                    self.unfold_ranges([next_selected_range], false, cx);
                     self.update_selections(selections, Some(Autoscroll::Newest), cx);
                 } else {
                     select_next_state.done = true;
@@ -3934,6 +3935,7 @@ impl Editor {
                     wordwise: true,
                     done: false,
                 };
+                self.unfold_ranges([selection.start..selection.end], false, cx);
                 self.update_selections(selections, Some(Autoscroll::Newest), cx);
                 self.select_next_state = Some(select_state);
             } else {
