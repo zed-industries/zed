@@ -211,7 +211,7 @@ impl MultiBuffer {
     pub fn singleton(buffer: ModelHandle<Buffer>, cx: &mut ModelContext<Self>) -> Self {
         let mut this = Self::new(buffer.read(cx).replica_id());
         this.singleton = true;
-        this.push_excerpts(buffer, [text::Anchor::min()..text::Anchor::max()], cx);
+        this.push_excerpts(buffer, [text::Anchor::MIN..text::Anchor::MAX], cx);
         this.snapshot.borrow_mut().singleton = true;
         this
     }
@@ -522,24 +522,14 @@ impl MultiBuffer {
             self.buffers.borrow()[&buffer_id]
                 .buffer
                 .update(cx, |buffer, cx| {
-                    selections.sort_unstable_by(|a, b| a.start.cmp(&b.start, buffer).unwrap());
+                    selections.sort_unstable_by(|a, b| a.start.cmp(&b.start, buffer));
                     let mut selections = selections.into_iter().peekable();
                     let merged_selections = Arc::from_iter(iter::from_fn(|| {
                         let mut selection = selections.next()?;
                         while let Some(next_selection) = selections.peek() {
-                            if selection
-                                .end
-                                .cmp(&next_selection.start, buffer)
-                                .unwrap()
-                                .is_ge()
-                            {
+                            if selection.end.cmp(&next_selection.start, buffer).is_ge() {
                                 let next_selection = selections.next().unwrap();
-                                if next_selection
-                                    .end
-                                    .cmp(&selection.end, buffer)
-                                    .unwrap()
-                                    .is_ge()
-                                {
+                                if next_selection.end.cmp(&selection.end, buffer).is_ge() {
                                     selection.end = next_selection.end;
                                 }
                             } else {
@@ -814,11 +804,30 @@ impl MultiBuffer {
         cx.notify();
     }
 
-    pub fn excerpt_ids_for_buffer(&self, buffer: &ModelHandle<Buffer>) -> Vec<ExcerptId> {
-        self.buffers
-            .borrow()
+    pub fn excerpts_for_buffer(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        cx: &AppContext,
+    ) -> Vec<(ExcerptId, Range<text::Anchor>)> {
+        let mut excerpts = Vec::new();
+        let snapshot = self.read(cx);
+        let buffers = self.buffers.borrow();
+        let mut cursor = snapshot.excerpts.cursor::<Option<&ExcerptId>>();
+        for excerpt_id in buffers
             .get(&buffer.id())
-            .map_or(Vec::new(), |state| state.excerpts.clone())
+            .map(|state| &state.excerpts)
+            .into_iter()
+            .flatten()
+        {
+            cursor.seek_forward(&Some(excerpt_id), Bias::Left, &());
+            if let Some(excerpt) = cursor.item() {
+                if excerpt.id == *excerpt_id {
+                    excerpts.push((excerpt.id.clone(), excerpt.range.clone()));
+                }
+            }
+        }
+
+        excerpts
     }
 
     pub fn excerpt_ids(&self) -> Vec<ExcerptId> {
@@ -1917,11 +1926,7 @@ impl MultiBufferSnapshot {
                             .range
                             .start
                             .bias(anchor.text_anchor.bias, &excerpt.buffer);
-                        if text_anchor
-                            .cmp(&excerpt.range.end, &excerpt.buffer)
-                            .unwrap()
-                            .is_gt()
-                        {
+                        if text_anchor.cmp(&excerpt.range.end, &excerpt.buffer).is_gt() {
                             text_anchor = excerpt.range.end.clone();
                         }
                         Anchor {
@@ -1936,7 +1941,6 @@ impl MultiBufferSnapshot {
                             .bias(anchor.text_anchor.bias, &excerpt.buffer);
                         if text_anchor
                             .cmp(&excerpt.range.start, &excerpt.buffer)
-                            .unwrap()
                             .is_lt()
                         {
                             text_anchor = excerpt.range.start.clone();
@@ -1956,7 +1960,7 @@ impl MultiBufferSnapshot {
                 result.push((anchor_ix, anchor, kept_position));
             }
         }
-        result.sort_unstable_by(|a, b| a.1.cmp(&b.1, self).unwrap());
+        result.sort_unstable_by(|a, b| a.1.cmp(&b.1, self));
         result
     }
 
@@ -2303,10 +2307,10 @@ impl MultiBufferSnapshot {
                                 excerpt_id: excerpt.id.clone(),
                                 text_anchor: selection.end.clone(),
                             };
-                            if range.start.cmp(&start, self).unwrap().is_gt() {
+                            if range.start.cmp(&start, self).is_gt() {
                                 start = range.start.clone();
                             }
-                            if range.end.cmp(&end, self).unwrap().is_lt() {
+                            if range.end.cmp(&end, self).is_lt() {
                                 end = range.end.clone();
                             }
 
@@ -2530,17 +2534,9 @@ impl Excerpt {
     }
 
     fn clip_anchor(&self, text_anchor: text::Anchor) -> text::Anchor {
-        if text_anchor
-            .cmp(&self.range.start, &self.buffer)
-            .unwrap()
-            .is_lt()
-        {
+        if text_anchor.cmp(&self.range.start, &self.buffer).is_lt() {
             self.range.start.clone()
-        } else if text_anchor
-            .cmp(&self.range.end, &self.buffer)
-            .unwrap()
-            .is_gt()
-        {
+        } else if text_anchor.cmp(&self.range.end, &self.buffer).is_gt() {
             self.range.end.clone()
         } else {
             text_anchor
@@ -2553,13 +2549,11 @@ impl Excerpt {
                 .range
                 .start
                 .cmp(&anchor.text_anchor, &self.buffer)
-                .unwrap()
                 .is_le()
             && self
                 .range
                 .end
                 .cmp(&anchor.text_anchor, &self.buffer)
-                .unwrap()
                 .is_ge()
     }
 }
@@ -3070,7 +3064,8 @@ mod tests {
         );
 
         let snapshot = multibuffer.update(cx, |multibuffer, cx| {
-            let buffer_2_excerpt_id = multibuffer.excerpt_ids_for_buffer(&buffer_2)[0].clone();
+            let (buffer_2_excerpt_id, _) =
+                multibuffer.excerpts_for_buffer(&buffer_2, cx)[0].clone();
             multibuffer.remove_excerpts(&[buffer_2_excerpt_id], cx);
             multibuffer.snapshot(cx)
         });
@@ -3365,7 +3360,7 @@ mod tests {
                     let bias = if rng.gen() { Bias::Left } else { Bias::Right };
                     log::info!("Creating anchor at {} with bias {:?}", offset, bias);
                     anchors.push(multibuffer.anchor_at(offset, bias));
-                    anchors.sort_by(|a, b| a.cmp(&b, &multibuffer).unwrap());
+                    anchors.sort_by(|a, b| a.cmp(&b, &multibuffer));
                 }
                 40..=44 if !anchors.is_empty() => {
                     let multibuffer = multibuffer.read(cx).read(cx);

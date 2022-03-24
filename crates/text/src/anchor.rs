@@ -12,23 +12,19 @@ pub struct Anchor {
 }
 
 impl Anchor {
-    pub fn min() -> Self {
-        Self {
-            timestamp: clock::Local::MIN,
-            offset: usize::MIN,
-            bias: Bias::Left,
-        }
-    }
+    pub const MIN: Self = Self {
+        timestamp: clock::Local::MIN,
+        offset: usize::MIN,
+        bias: Bias::Left,
+    };
 
-    pub fn max() -> Self {
-        Self {
-            timestamp: clock::Local::MAX,
-            offset: usize::MAX,
-            bias: Bias::Right,
-        }
-    }
+    pub const MAX: Self = Self {
+        timestamp: clock::Local::MAX,
+        offset: usize::MAX,
+        bias: Bias::Right,
+    };
 
-    pub fn cmp(&self, other: &Anchor, buffer: &BufferSnapshot) -> Result<Ordering> {
+    pub fn cmp(&self, other: &Anchor, buffer: &BufferSnapshot) -> Ordering {
         let fragment_id_comparison = if self.timestamp == other.timestamp {
             Ordering::Equal
         } else {
@@ -37,9 +33,25 @@ impl Anchor {
                 .cmp(&buffer.fragment_id_for_anchor(other))
         };
 
-        Ok(fragment_id_comparison
+        fragment_id_comparison
             .then_with(|| self.offset.cmp(&other.offset))
-            .then_with(|| self.bias.cmp(&other.bias)))
+            .then_with(|| self.bias.cmp(&other.bias))
+    }
+
+    pub fn min(&self, other: &Self, buffer: &BufferSnapshot) -> Self {
+        if self.cmp(other, buffer).is_le() {
+            self.clone()
+        } else {
+            other.clone()
+        }
+    }
+
+    pub fn max(&self, other: &Self, buffer: &BufferSnapshot) -> Self {
+        if self.cmp(other, buffer).is_ge() {
+            self.clone()
+        } else {
+            other.clone()
+        }
     }
 
     pub fn bias(&self, bias: Bias, buffer: &BufferSnapshot) -> Anchor {
@@ -105,8 +117,8 @@ pub trait AnchorRangeExt {
 
 impl AnchorRangeExt for Range<Anchor> {
     fn cmp(&self, other: &Range<Anchor>, buffer: &BufferSnapshot) -> Result<Ordering> {
-        Ok(match self.start.cmp(&other.start, buffer)? {
-            Ordering::Equal => other.end.cmp(&self.end, buffer)?,
+        Ok(match self.start.cmp(&other.start, buffer) {
+            Ordering::Equal => other.end.cmp(&self.end, buffer),
             ord @ _ => ord,
         })
     }
