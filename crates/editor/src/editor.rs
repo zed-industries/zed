@@ -3123,7 +3123,7 @@ impl Editor {
         }
 
         self.start_transaction(cx);
-        self.unfold_ranges(unfold_ranges, cx);
+        self.unfold_ranges(unfold_ranges, true, cx);
         self.buffer.update(cx, |buffer, cx| {
             for (range, text) in edits {
                 buffer.edit([range], text, cx);
@@ -3226,7 +3226,7 @@ impl Editor {
         }
 
         self.start_transaction(cx);
-        self.unfold_ranges(unfold_ranges, cx);
+        self.unfold_ranges(unfold_ranges, true, cx);
         self.buffer.update(cx, |buffer, cx| {
             for (range, text) in edits {
                 buffer.edit([range], text, cx);
@@ -3748,7 +3748,7 @@ impl Editor {
                 to_unfold.push(selection.start..selection.end);
             }
         }
-        self.unfold_ranges(to_unfold, cx);
+        self.unfold_ranges(to_unfold, true, cx);
         self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
     }
 
@@ -5202,7 +5202,7 @@ impl Editor {
                 start..end
             })
             .collect::<Vec<_>>();
-        self.unfold_ranges(ranges, cx);
+        self.unfold_ranges(ranges, true, cx);
     }
 
     fn is_line_foldable(&self, display_map: &DisplaySnapshot, display_row: u32) -> bool {
@@ -5253,7 +5253,7 @@ impl Editor {
         self.fold_ranges(ranges, cx);
     }
 
-    fn fold_ranges<T: ToOffset>(
+    pub fn fold_ranges<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &mut ViewContext<Self>,
@@ -5266,10 +5266,16 @@ impl Editor {
         }
     }
 
-    fn unfold_ranges<T: ToOffset>(&mut self, ranges: Vec<Range<T>>, cx: &mut ViewContext<Self>) {
-        if !ranges.is_empty() {
+    pub fn unfold_ranges<T: ToOffset>(
+        &mut self,
+        ranges: impl IntoIterator<Item = Range<T>>,
+        inclusive: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let mut ranges = ranges.into_iter().peekable();
+        if ranges.peek().is_some() {
             self.display_map
-                .update(cx, |map, cx| map.unfold(ranges, cx));
+                .update(cx, |map, cx| map.unfold(ranges, inclusive, cx));
             self.request_autoscroll(Autoscroll::Fit, cx);
             cx.notify();
         }

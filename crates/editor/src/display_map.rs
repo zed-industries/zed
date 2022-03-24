@@ -114,6 +114,7 @@ impl DisplayMap {
     pub fn unfold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
+        inclusive: bool,
         cx: &mut ModelContext<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -124,7 +125,7 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
-        let (snapshot, edits) = fold_map.unfold(ranges);
+        let (snapshot, edits) = fold_map.unfold(ranges, inclusive);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
@@ -629,7 +630,7 @@ mod tests {
                     if rng.gen() && fold_count > 0 {
                         log::info!("unfolding ranges: {:?}", ranges);
                         map.update(cx, |map, cx| {
-                            map.unfold(ranges, cx);
+                            map.unfold(ranges, true, cx);
                         });
                     } else {
                         log::info!("folding ranges: {:?}", ranges);
