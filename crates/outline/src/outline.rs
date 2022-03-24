@@ -224,7 +224,7 @@ impl OutlineView {
     ) {
         match event {
             editor::Event::Blurred => cx.emit(Event::Dismissed),
-            editor::Event::Edited { .. } => self.update_matches(cx),
+            editor::Event::BufferEdited { .. } => self.update_matches(cx),
             _ => {}
         }
     }

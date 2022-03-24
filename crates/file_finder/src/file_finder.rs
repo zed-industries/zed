@@ -291,7 +291,7 @@ impl FileFinder {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            editor::Event::Edited { .. } => {
+            editor::Event::BufferEdited { .. } => {
                 let query = self.query_editor.update(cx, |buffer, cx| buffer.text(cx));
                 if query.is_empty() {
                     self.latest_search_id = post_inc(&mut self.search_count);

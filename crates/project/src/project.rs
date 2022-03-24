@@ -6229,10 +6229,7 @@ mod tests {
             assert!(buffer.is_dirty());
             assert_eq!(
                 *events.borrow(),
-                &[
-                    language::Event::Edited { local: true },
-                    language::Event::Dirtied
-                ]
+                &[language::Event::Edited, language::Event::Dirtied]
             );
             events.borrow_mut().clear();
             buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), None, cx);
@@ -6255,9 +6252,9 @@ mod tests {
             assert_eq!(
                 *events.borrow(),
                 &[
-                    language::Event::Edited { local: true },
+                    language::Event::Edited,
                     language::Event::Dirtied,
-                    language::Event::Edited { local: true },
+                    language::Event::Edited,
                 ],
             );
             events.borrow_mut().clear();
@@ -6269,7 +6266,7 @@ mod tests {
             assert!(buffer.is_dirty());
         });
 
-        assert_eq!(*events.borrow(), &[language::Event::Edited { local: true }]);
+        assert_eq!(*events.borrow(), &[language::Event::Edited]);
 
         // When a file is deleted, the buffer is considered dirty.
         let events = Rc::new(RefCell::new(Vec::new()));

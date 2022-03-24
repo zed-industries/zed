@@ -1744,133 +1744,134 @@ impl Editor {
     pub fn handle_input(&mut self, action: &Input, cx: &mut ViewContext<Self>) {
         let text = action.0.as_ref();
         if !self.skip_autoclose_end(text, cx) {
-            self.start_transaction(cx);
-            if !self.surround_with_bracket_pair(text, cx) {
-                self.insert(text, cx);
-                self.autoclose_bracket_pairs(cx);
-            }
-            self.end_transaction(cx);
+            self.transact(cx, |this, cx| {
+                if !this.surround_with_bracket_pair(text, cx) {
+                    this.insert(text, cx);
+                    this.autoclose_bracket_pairs(cx);
+                }
+            });
             self.trigger_completion_on_input(text, cx);
         }
     }
 
     pub fn newline(&mut self, _: &Newline, cx: &mut ViewContext<Self>) {
-        self.start_transaction(cx);
-        let mut old_selections = SmallVec::<[_; 32]>::new();
-        {
-            let selections = self.local_selections::<usize>(cx);
-            let buffer = self.buffer.read(cx).snapshot(cx);
-            for selection in selections.iter() {
-                let start_point = selection.start.to_point(&buffer);
-                let indent = buffer
-                    .indent_column_for_line(start_point.row)
-                    .min(start_point.column);
-                let start = selection.start;
-                let end = selection.end;
+        self.transact(cx, |this, cx| {
+            let mut old_selections = SmallVec::<[_; 32]>::new();
+            {
+                let selections = this.local_selections::<usize>(cx);
+                let buffer = this.buffer.read(cx).snapshot(cx);
+                for selection in selections.iter() {
+                    let start_point = selection.start.to_point(&buffer);
+                    let indent = buffer
+                        .indent_column_for_line(start_point.row)
+                        .min(start_point.column);
+                    let start = selection.start;
+                    let end = selection.end;
 
-                let mut insert_extra_newline = false;
-                if let Some(language) = buffer.language() {
-                    let leading_whitespace_len = buffer
-                        .reversed_chars_at(start)
-                        .take_while(|c| c.is_whitespace() && *c != '\n')
-                        .map(|c| c.len_utf8())
-                        .sum::<usize>();
+                    let mut insert_extra_newline = false;
+                    if let Some(language) = buffer.language() {
+                        let leading_whitespace_len = buffer
+                            .reversed_chars_at(start)
+                            .take_while(|c| c.is_whitespace() && *c != '\n')
+                            .map(|c| c.len_utf8())
+                            .sum::<usize>();
 
-                    let trailing_whitespace_len = buffer
-                        .chars_at(end)
-                        .take_while(|c| c.is_whitespace() && *c != '\n')
-                        .map(|c| c.len_utf8())
-                        .sum::<usize>();
+                        let trailing_whitespace_len = buffer
+                            .chars_at(end)
+                            .take_while(|c| c.is_whitespace() && *c != '\n')
+                            .map(|c| c.len_utf8())
+                            .sum::<usize>();
 
-                    insert_extra_newline = language.brackets().iter().any(|pair| {
-                        let pair_start = pair.start.trim_end();
-                        let pair_end = pair.end.trim_start();
+                        insert_extra_newline = language.brackets().iter().any(|pair| {
+                            let pair_start = pair.start.trim_end();
+                            let pair_end = pair.end.trim_start();
 
-                        pair.newline
-                            && buffer.contains_str_at(end + trailing_whitespace_len, pair_end)
-                            && buffer.contains_str_at(
-                                (start - leading_whitespace_len).saturating_sub(pair_start.len()),
-                                pair_start,
-                            )
-                    });
-                }
-
-                old_selections.push((
-                    selection.id,
-                    buffer.anchor_after(end),
-                    start..end,
-                    indent,
-                    insert_extra_newline,
-                ));
-            }
-        }
-
-        self.buffer.update(cx, |buffer, cx| {
-            let mut delta = 0_isize;
-            let mut pending_edit: Option<PendingEdit> = None;
-            for (_, _, range, indent, insert_extra_newline) in &old_selections {
-                if pending_edit.as_ref().map_or(false, |pending| {
-                    pending.indent != *indent
-                        || pending.insert_extra_newline != *insert_extra_newline
-                }) {
-                    let pending = pending_edit.take().unwrap();
-                    let mut new_text = String::with_capacity(1 + pending.indent as usize);
-                    new_text.push('\n');
-                    new_text.extend(iter::repeat(' ').take(pending.indent as usize));
-                    if pending.insert_extra_newline {
-                        new_text = new_text.repeat(2);
+                            pair.newline
+                                && buffer.contains_str_at(end + trailing_whitespace_len, pair_end)
+                                && buffer.contains_str_at(
+                                    (start - leading_whitespace_len)
+                                        .saturating_sub(pair_start.len()),
+                                    pair_start,
+                                )
+                        });
                     }
-                    buffer.edit_with_autoindent(pending.ranges, new_text, cx);
-                    delta += pending.delta;
-                }
 
-                let start = (range.start as isize + delta) as usize;
-                let end = (range.end as isize + delta) as usize;
-                let mut text_len = *indent as usize + 1;
-                if *insert_extra_newline {
-                    text_len *= 2;
+                    old_selections.push((
+                        selection.id,
+                        buffer.anchor_after(end),
+                        start..end,
+                        indent,
+                        insert_extra_newline,
+                    ));
                 }
-
-                let pending = pending_edit.get_or_insert_with(Default::default);
-                pending.delta += text_len as isize - (end - start) as isize;
-                pending.indent = *indent;
-                pending.insert_extra_newline = *insert_extra_newline;
-                pending.ranges.push(start..end);
             }
 
-            let pending = pending_edit.unwrap();
-            let mut new_text = String::with_capacity(1 + pending.indent as usize);
-            new_text.push('\n');
-            new_text.extend(iter::repeat(' ').take(pending.indent as usize));
-            if pending.insert_extra_newline {
-                new_text = new_text.repeat(2);
-            }
-            buffer.edit_with_autoindent(pending.ranges, new_text, cx);
-
-            let buffer = buffer.read(cx);
-            self.selections = self
-                .selections
-                .iter()
-                .cloned()
-                .zip(old_selections)
-                .map(
-                    |(mut new_selection, (_, end_anchor, _, _, insert_extra_newline))| {
-                        let mut cursor = end_anchor.to_point(&buffer);
-                        if insert_extra_newline {
-                            cursor.row -= 1;
-                            cursor.column = buffer.line_len(cursor.row);
+            this.buffer.update(cx, |buffer, cx| {
+                let mut delta = 0_isize;
+                let mut pending_edit: Option<PendingEdit> = None;
+                for (_, _, range, indent, insert_extra_newline) in &old_selections {
+                    if pending_edit.as_ref().map_or(false, |pending| {
+                        pending.indent != *indent
+                            || pending.insert_extra_newline != *insert_extra_newline
+                    }) {
+                        let pending = pending_edit.take().unwrap();
+                        let mut new_text = String::with_capacity(1 + pending.indent as usize);
+                        new_text.push('\n');
+                        new_text.extend(iter::repeat(' ').take(pending.indent as usize));
+                        if pending.insert_extra_newline {
+                            new_text = new_text.repeat(2);
                         }
-                        let anchor = buffer.anchor_after(cursor);
-                        new_selection.start = anchor.clone();
-                        new_selection.end = anchor;
-                        new_selection
-                    },
-                )
-                .collect();
-        });
+                        buffer.edit_with_autoindent(pending.ranges, new_text, cx);
+                        delta += pending.delta;
+                    }
 
-        self.request_autoscroll(Autoscroll::Fit, cx);
-        self.end_transaction(cx);
+                    let start = (range.start as isize + delta) as usize;
+                    let end = (range.end as isize + delta) as usize;
+                    let mut text_len = *indent as usize + 1;
+                    if *insert_extra_newline {
+                        text_len *= 2;
+                    }
+
+                    let pending = pending_edit.get_or_insert_with(Default::default);
+                    pending.delta += text_len as isize - (end - start) as isize;
+                    pending.indent = *indent;
+                    pending.insert_extra_newline = *insert_extra_newline;
+                    pending.ranges.push(start..end);
+                }
+
+                let pending = pending_edit.unwrap();
+                let mut new_text = String::with_capacity(1 + pending.indent as usize);
+                new_text.push('\n');
+                new_text.extend(iter::repeat(' ').take(pending.indent as usize));
+                if pending.insert_extra_newline {
+                    new_text = new_text.repeat(2);
+                }
+                buffer.edit_with_autoindent(pending.ranges, new_text, cx);
+
+                let buffer = buffer.read(cx);
+                this.selections = this
+                    .selections
+                    .iter()
+                    .cloned()
+                    .zip(old_selections)
+                    .map(
+                        |(mut new_selection, (_, end_anchor, _, _, insert_extra_newline))| {
+                            let mut cursor = end_anchor.to_point(&buffer);
+                            if insert_extra_newline {
+                                cursor.row -= 1;
+                                cursor.column = buffer.line_len(cursor.row);
+                            }
+                            let anchor = buffer.anchor_after(cursor);
+                            new_selection.start = anchor.clone();
+                            new_selection.end = anchor;
+                            new_selection
+                        },
+                    )
+                    .collect();
+            });
+
+            this.request_autoscroll(Autoscroll::Fit, cx);
+        });
 
         #[derive(Default)]
         struct PendingEdit {
@@ -1882,40 +1883,39 @@ impl Editor {
     }
 
     pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
-        self.start_transaction(cx);
+        self.transact(cx, |this, cx| {
+            let old_selections = this.local_selections::<usize>(cx);
+            let selection_anchors = this.buffer.update(cx, |buffer, cx| {
+                let anchors = {
+                    let snapshot = buffer.read(cx);
+                    old_selections
+                        .iter()
+                        .map(|s| (s.id, s.goal, snapshot.anchor_after(s.end)))
+                        .collect::<Vec<_>>()
+                };
+                let edit_ranges = old_selections.iter().map(|s| s.start..s.end);
+                buffer.edit_with_autoindent(edit_ranges, text, cx);
+                anchors
+            });
 
-        let old_selections = self.local_selections::<usize>(cx);
-        let selection_anchors = self.buffer.update(cx, |buffer, cx| {
-            let anchors = {
-                let snapshot = buffer.read(cx);
-                old_selections
-                    .iter()
-                    .map(|s| (s.id, s.goal, snapshot.anchor_after(s.end)))
-                    .collect::<Vec<_>>()
+            let selections = {
+                let snapshot = this.buffer.read(cx).read(cx);
+                selection_anchors
+                    .into_iter()
+                    .map(|(id, goal, position)| {
+                        let position = position.to_offset(&snapshot);
+                        Selection {
+                            id,
+                            start: position,
+                            end: position,
+                            goal,
+                            reversed: false,
+                        }
+                    })
+                    .collect()
             };
-            let edit_ranges = old_selections.iter().map(|s| s.start..s.end);
-            buffer.edit_with_autoindent(edit_ranges, text, cx);
-            anchors
+            this.update_selections(selections, Some(Autoscroll::Fit), cx);
         });
-
-        let selections = {
-            let snapshot = self.buffer.read(cx).read(cx);
-            selection_anchors
-                .into_iter()
-                .map(|(id, goal, position)| {
-                    let position = position.to_offset(&snapshot);
-                    Selection {
-                        id,
-                        start: position,
-                        end: position,
-                        goal,
-                        reversed: false,
-                    }
-                })
-                .collect()
-        };
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
-        self.end_transaction(cx);
     }
 
     fn trigger_completion_on_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
@@ -2284,21 +2284,21 @@ impl Editor {
         }
         let text = &text[common_prefix_len..];
 
-        self.start_transaction(cx);
-        if let Some(mut snippet) = snippet {
-            snippet.text = text.to_string();
-            for tabstop in snippet.tabstops.iter_mut().flatten() {
-                tabstop.start -= common_prefix_len as isize;
-                tabstop.end -= common_prefix_len as isize;
-            }
+        self.transact(cx, |this, cx| {
+            if let Some(mut snippet) = snippet {
+                snippet.text = text.to_string();
+                for tabstop in snippet.tabstops.iter_mut().flatten() {
+                    tabstop.start -= common_prefix_len as isize;
+                    tabstop.end -= common_prefix_len as isize;
+                }
 
-            self.insert_snippet(&ranges, snippet, cx).log_err();
-        } else {
-            self.buffer.update(cx, |buffer, cx| {
-                buffer.edit_with_autoindent(ranges, text, cx);
-            });
-        }
-        self.end_transaction(cx);
+                this.insert_snippet(&ranges, snippet, cx).log_err();
+            } else {
+                this.buffer.update(cx, |buffer, cx| {
+                    buffer.edit_with_autoindent(ranges, text, cx);
+                });
+            }
+        });
 
         let project = self.project.clone()?;
         let apply_edits = project.update(cx, |project, cx| {
@@ -2747,14 +2747,13 @@ impl Editor {
     }
 
     pub fn clear(&mut self, cx: &mut ViewContext<Self>) {
-        self.start_transaction(cx);
-        self.select_all(&SelectAll, cx);
-        self.insert("", cx);
-        self.end_transaction(cx);
+        self.transact(cx, |this, cx| {
+            this.select_all(&SelectAll, cx);
+            this.insert("", cx);
+        });
     }
 
     pub fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
-        self.start_transaction(cx);
         let mut selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         for selection in &mut selections {
@@ -2780,9 +2779,11 @@ impl Editor {
                 selection.set_head(new_head, SelectionGoal::None);
             }
         }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
-        self.insert("", cx);
-        self.end_transaction(cx);
+
+        self.transact(cx, |this, cx| {
+            this.update_selections(selections, Some(Autoscroll::Fit), cx);
+            this.insert("", cx);
+        });
     }
 
     pub fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) {
@@ -2802,75 +2803,76 @@ impl Editor {
             return;
         }
 
-        self.start_transaction(cx);
         let tab_size = cx.global::<Settings>().tab_size;
         let mut selections = self.local_selections::<Point>(cx);
-        let mut last_indent = None;
-        self.buffer.update(cx, |buffer, cx| {
-            for selection in &mut selections {
-                if selection.is_empty() {
-                    let char_column = buffer
-                        .read(cx)
-                        .text_for_range(Point::new(selection.start.row, 0)..selection.start)
-                        .flat_map(str::chars)
-                        .count();
-                    let chars_to_next_tab_stop = tab_size - (char_column % tab_size);
-                    buffer.edit(
-                        [selection.start..selection.start],
-                        " ".repeat(chars_to_next_tab_stop),
-                        cx,
-                    );
-                    selection.start.column += chars_to_next_tab_stop as u32;
-                    selection.end = selection.start;
-                } else {
-                    let mut start_row = selection.start.row;
-                    let mut end_row = selection.end.row + 1;
-
-                    // If a selection ends at the beginning of a line, don't indent
-                    // that last line.
-                    if selection.end.column == 0 {
-                        end_row -= 1;
-                    }
-
-                    // Avoid re-indenting a row that has already been indented by a
-                    // previous selection, but still update this selection's column
-                    // to reflect that indentation.
-                    if let Some((last_indent_row, last_indent_len)) = last_indent {
-                        if last_indent_row == selection.start.row {
-                            selection.start.column += last_indent_len;
-                            start_row += 1;
-                        }
-                        if last_indent_row == selection.end.row {
-                            selection.end.column += last_indent_len;
-                        }
-                    }
-
-                    for row in start_row..end_row {
-                        let indent_column = buffer.read(cx).indent_column_for_line(row) as usize;
-                        let columns_to_next_tab_stop = tab_size - (indent_column % tab_size);
-                        let row_start = Point::new(row, 0);
+        self.transact(cx, |this, cx| {
+            let mut last_indent = None;
+            this.buffer.update(cx, |buffer, cx| {
+                for selection in &mut selections {
+                    if selection.is_empty() {
+                        let char_column = buffer
+                            .read(cx)
+                            .text_for_range(Point::new(selection.start.row, 0)..selection.start)
+                            .flat_map(str::chars)
+                            .count();
+                        let chars_to_next_tab_stop = tab_size - (char_column % tab_size);
                         buffer.edit(
-                            [row_start..row_start],
-                            " ".repeat(columns_to_next_tab_stop),
+                            [selection.start..selection.start],
+                            " ".repeat(chars_to_next_tab_stop),
                             cx,
                         );
+                        selection.start.column += chars_to_next_tab_stop as u32;
+                        selection.end = selection.start;
+                    } else {
+                        let mut start_row = selection.start.row;
+                        let mut end_row = selection.end.row + 1;
 
-                        // Update this selection's endpoints to reflect the indentation.
-                        if row == selection.start.row {
-                            selection.start.column += columns_to_next_tab_stop as u32;
-                        }
-                        if row == selection.end.row {
-                            selection.end.column += columns_to_next_tab_stop as u32;
+                        // If a selection ends at the beginning of a line, don't indent
+                        // that last line.
+                        if selection.end.column == 0 {
+                            end_row -= 1;
                         }
 
-                        last_indent = Some((row, columns_to_next_tab_stop as u32));
+                        // Avoid re-indenting a row that has already been indented by a
+                        // previous selection, but still update this selection's column
+                        // to reflect that indentation.
+                        if let Some((last_indent_row, last_indent_len)) = last_indent {
+                            if last_indent_row == selection.start.row {
+                                selection.start.column += last_indent_len;
+                                start_row += 1;
+                            }
+                            if last_indent_row == selection.end.row {
+                                selection.end.column += last_indent_len;
+                            }
+                        }
+
+                        for row in start_row..end_row {
+                            let indent_column =
+                                buffer.read(cx).indent_column_for_line(row) as usize;
+                            let columns_to_next_tab_stop = tab_size - (indent_column % tab_size);
+                            let row_start = Point::new(row, 0);
+                            buffer.edit(
+                                [row_start..row_start],
+                                " ".repeat(columns_to_next_tab_stop),
+                                cx,
+                            );
+
+                            // Update this selection's endpoints to reflect the indentation.
+                            if row == selection.start.row {
+                                selection.start.column += columns_to_next_tab_stop as u32;
+                            }
+                            if row == selection.end.row {
+                                selection.end.column += columns_to_next_tab_stop as u32;
+                            }
+
+                            last_indent = Some((row, columns_to_next_tab_stop as u32));
+                        }
                     }
                 }
-            }
-        });
+            });
 
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
-        self.end_transaction(cx);
+            this.update_selections(selections, Some(Autoscroll::Fit), cx);
+        });
     }
 
     pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
@@ -2879,7 +2881,6 @@ impl Editor {
             return;
         }
 
-        self.start_transaction(cx);
         let tab_size = cx.global::<Settings>().tab_size;
         let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -2911,21 +2912,20 @@ impl Editor {
                 }
             }
         }
-        self.buffer.update(cx, |buffer, cx| {
-            buffer.edit(deletion_ranges, "", cx);
-        });
 
-        self.update_selections(
-            self.local_selections::<usize>(cx),
-            Some(Autoscroll::Fit),
-            cx,
-        );
-        self.end_transaction(cx);
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(deletion_ranges, "", cx);
+            });
+            this.update_selections(
+                this.local_selections::<usize>(cx),
+                Some(Autoscroll::Fit),
+                cx,
+            );
+        });
     }
 
     pub fn delete_line(&mut self, _: &DeleteLine, cx: &mut ViewContext<Self>) {
-        self.start_transaction(cx);
-
         let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
@@ -2975,30 +2975,29 @@ impl Editor {
             edit_ranges.push(edit_start..edit_end);
         }
 
-        let buffer = self.buffer.update(cx, |buffer, cx| {
-            buffer.edit(edit_ranges, "", cx);
-            buffer.snapshot(cx)
+        self.transact(cx, |this, cx| {
+            let buffer = this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edit_ranges, "", cx);
+                buffer.snapshot(cx)
+            });
+            let new_selections = new_cursors
+                .into_iter()
+                .map(|(id, cursor)| {
+                    let cursor = cursor.to_point(&buffer);
+                    Selection {
+                        id,
+                        start: cursor,
+                        end: cursor,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    }
+                })
+                .collect();
+            this.update_selections(new_selections, Some(Autoscroll::Fit), cx);
         });
-        let new_selections = new_cursors
-            .into_iter()
-            .map(|(id, cursor)| {
-                let cursor = cursor.to_point(&buffer);
-                Selection {
-                    id,
-                    start: cursor,
-                    end: cursor,
-                    reversed: false,
-                    goal: SelectionGoal::None,
-                }
-            })
-            .collect();
-        self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
-        self.end_transaction(cx);
     }
 
     pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
-        self.start_transaction(cx);
-
         let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
@@ -3029,14 +3028,15 @@ impl Editor {
             edits.push((start, text, rows.len() as u32));
         }
 
-        self.buffer.update(cx, |buffer, cx| {
-            for (point, text, _) in edits.into_iter().rev() {
-                buffer.edit(Some(point..point), text, cx);
-            }
-        });
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                for (point, text, _) in edits.into_iter().rev() {
+                    buffer.edit(Some(point..point), text, cx);
+                }
+            });
 
-        self.request_autoscroll(Autoscroll::Fit, cx);
-        self.end_transaction(cx);
+            this.request_autoscroll(Autoscroll::Fit, cx);
+        });
     }
 
     pub fn move_line_up(&mut self, _: &MoveLineUp, cx: &mut ViewContext<Self>) {
@@ -3137,16 +3137,16 @@ impl Editor {
             new_selections.extend(contiguous_row_selections.drain(..));
         }
 
-        self.start_transaction(cx);
-        self.unfold_ranges(unfold_ranges, cx);
-        self.buffer.update(cx, |buffer, cx| {
-            for (range, text) in edits {
-                buffer.edit([range], text, cx);
-            }
+        self.transact(cx, |this, cx| {
+            this.unfold_ranges(unfold_ranges, cx);
+            this.buffer.update(cx, |buffer, cx| {
+                for (range, text) in edits {
+                    buffer.edit([range], text, cx);
+                }
+            });
+            this.fold_ranges(refold_ranges, cx);
+            this.update_selections(new_selections, Some(Autoscroll::Fit), cx);
         });
-        self.fold_ranges(refold_ranges, cx);
-        self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
-        self.end_transaction(cx);
     }
 
     pub fn move_line_down(&mut self, _: &MoveLineDown, cx: &mut ViewContext<Self>) {
@@ -3240,20 +3240,19 @@ impl Editor {
             new_selections.extend(contiguous_row_selections.drain(..));
         }
 
-        self.start_transaction(cx);
-        self.unfold_ranges(unfold_ranges, cx);
-        self.buffer.update(cx, |buffer, cx| {
-            for (range, text) in edits {
-                buffer.edit([range], text, cx);
-            }
+        self.transact(cx, |this, cx| {
+            this.unfold_ranges(unfold_ranges, cx);
+            this.buffer.update(cx, |buffer, cx| {
+                for (range, text) in edits {
+                    buffer.edit([range], text, cx);
+                }
+            });
+            this.fold_ranges(refold_ranges, cx);
+            this.update_selections(new_selections, Some(Autoscroll::Fit), cx);
         });
-        self.fold_ranges(refold_ranges, cx);
-        self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
-        self.end_transaction(cx);
     }
 
     pub fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
-        self.start_transaction(cx);
         let mut text = String::new();
         let mut selections = self.local_selections::<Point>(cx);
         let mut clipboard_selections = Vec::with_capacity(selections.len());
@@ -3278,12 +3277,12 @@ impl Editor {
                 });
             }
         }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
-        self.insert("", cx);
-        self.end_transaction(cx);
 
-        cx.as_mut()
-            .write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
+        self.transact(cx, |this, cx| {
+            this.update_selections(selections, Some(Autoscroll::Fit), cx);
+            this.insert("", cx);
+            cx.write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
+        });
     }
 
     pub fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
@@ -3313,63 +3312,65 @@ impl Editor {
             }
         }
 
-        cx.as_mut()
-            .write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
+        cx.write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
     }
 
     pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
-        if let Some(item) = cx.as_mut().read_from_clipboard() {
-            let clipboard_text = item.text();
-            if let Some(mut clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
-                let mut selections = self.local_selections::<usize>(cx);
-                let all_selections_were_entire_line =
-                    clipboard_selections.iter().all(|s| s.is_entire_line);
-                if clipboard_selections.len() != selections.len() {
-                    clipboard_selections.clear();
-                }
-
-                let mut delta = 0_isize;
-                let mut start_offset = 0;
-                for (i, selection) in selections.iter_mut().enumerate() {
-                    let to_insert;
-                    let entire_line;
-                    if let Some(clipboard_selection) = clipboard_selections.get(i) {
-                        let end_offset = start_offset + clipboard_selection.len;
-                        to_insert = &clipboard_text[start_offset..end_offset];
-                        entire_line = clipboard_selection.is_entire_line;
-                        start_offset = end_offset
-                    } else {
-                        to_insert = clipboard_text.as_str();
-                        entire_line = all_selections_were_entire_line;
+        self.transact(cx, |this, cx| {
+            if let Some(item) = cx.as_mut().read_from_clipboard() {
+                let clipboard_text = item.text();
+                if let Some(mut clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
+                    let mut selections = this.local_selections::<usize>(cx);
+                    let all_selections_were_entire_line =
+                        clipboard_selections.iter().all(|s| s.is_entire_line);
+                    if clipboard_selections.len() != selections.len() {
+                        clipboard_selections.clear();
                     }
 
-                    selection.start = (selection.start as isize + delta) as usize;
-                    selection.end = (selection.end as isize + delta) as usize;
-
-                    self.buffer.update(cx, |buffer, cx| {
-                        // If the corresponding selection was empty when this slice of the
-                        // clipboard text was written, then the entire line containing the
-                        // selection was copied. If this selection is also currently empty,
-                        // then paste the line before the current line of the buffer.
-                        let range = if selection.is_empty() && entire_line {
-                            let column = selection.start.to_point(&buffer.read(cx)).column as usize;
-                            let line_start = selection.start - column;
-                            line_start..line_start
+                    let mut delta = 0_isize;
+                    let mut start_offset = 0;
+                    for (i, selection) in selections.iter_mut().enumerate() {
+                        let to_insert;
+                        let entire_line;
+                        if let Some(clipboard_selection) = clipboard_selections.get(i) {
+                            let end_offset = start_offset + clipboard_selection.len;
+                            to_insert = &clipboard_text[start_offset..end_offset];
+                            entire_line = clipboard_selection.is_entire_line;
+                            start_offset = end_offset
                         } else {
-                            selection.start..selection.end
-                        };
+                            to_insert = clipboard_text.as_str();
+                            entire_line = all_selections_were_entire_line;
+                        }
 
-                        delta += to_insert.len() as isize - range.len() as isize;
-                        buffer.edit([range], to_insert, cx);
-                        selection.start += to_insert.len();
-                        selection.end = selection.start;
-                    });
+                        selection.start = (selection.start as isize + delta) as usize;
+                        selection.end = (selection.end as isize + delta) as usize;
+
+                        this.buffer.update(cx, |buffer, cx| {
+                            // If the corresponding selection was empty when this slice of the
+                            // clipboard text was written, then the entire line containing the
+                            // selection was copied. If this selection is also currently empty,
+                            // then paste the line before the current line of the buffer.
+                            let range = if selection.is_empty() && entire_line {
+                                let column =
+                                    selection.start.to_point(&buffer.read(cx)).column as usize;
+                                let line_start = selection.start - column;
+                                line_start..line_start
+                            } else {
+                                selection.start..selection.end
+                            };
+
+                            delta += to_insert.len() as isize - range.len() as isize;
+                            buffer.edit([range], to_insert, cx);
+                            selection.start += to_insert.len();
+                            selection.end = selection.start;
+                        });
+                    }
+                    this.update_selections(selections, Some(Autoscroll::Fit), cx);
+                } else {
+                    this.insert(clipboard_text, cx);
                 }
-                self.update_selections(selections, Some(Autoscroll::Fit), cx);
-            } else {
-                self.insert(clipboard_text, cx);
             }
-        }
+        });
     }
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
@@ -3378,6 +3379,7 @@ impl Editor {
                 self.set_selections(selections, None, true, cx);
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
+            cx.emit(Event::Edited);
         }
     }
 
@@ -3387,6 +3389,7 @@ impl Editor {
                 self.set_selections(selections, None, true, cx);
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
+            cx.emit(Event::Edited);
         }
     }
 
@@ -3977,90 +3980,94 @@ impl Editor {
         let comment_prefix = full_comment_prefix.trim_end_matches(' ');
         let comment_prefix_whitespace = &full_comment_prefix[comment_prefix.len()..];
 
-        self.start_transaction(cx);
-        let mut selections = self.local_selections::<Point>(cx);
-        let mut all_selection_lines_are_comments = true;
-        let mut edit_ranges = Vec::new();
-        let mut last_toggled_row = None;
-        self.buffer.update(cx, |buffer, cx| {
-            for selection in &mut selections {
-                edit_ranges.clear();
-                let snapshot = buffer.snapshot(cx);
+        self.transact(cx, |this, cx| {
+            let mut selections = this.local_selections::<Point>(cx);
+            let mut all_selection_lines_are_comments = true;
+            let mut edit_ranges = Vec::new();
+            let mut last_toggled_row = None;
+            this.buffer.update(cx, |buffer, cx| {
+                for selection in &mut selections {
+                    edit_ranges.clear();
+                    let snapshot = buffer.snapshot(cx);
 
-                let end_row =
-                    if selection.end.row > selection.start.row && selection.end.column == 0 {
-                        selection.end.row
-                    } else {
-                        selection.end.row + 1
-                    };
+                    let end_row =
+                        if selection.end.row > selection.start.row && selection.end.column == 0 {
+                            selection.end.row
+                        } else {
+                            selection.end.row + 1
+                        };
 
-                for row in selection.start.row..end_row {
-                    // If multiple selections contain a given row, avoid processing that
-                    // row more than once.
-                    if last_toggled_row == Some(row) {
-                        continue;
-                    } else {
-                        last_toggled_row = Some(row);
+                    for row in selection.start.row..end_row {
+                        // If multiple selections contain a given row, avoid processing that
+                        // row more than once.
+                        if last_toggled_row == Some(row) {
+                            continue;
+                        } else {
+                            last_toggled_row = Some(row);
+                        }
+
+                        if snapshot.is_line_blank(row) {
+                            continue;
+                        }
+
+                        let start = Point::new(row, snapshot.indent_column_for_line(row));
+                        let mut line_bytes = snapshot
+                            .bytes_in_range(start..snapshot.max_point())
+                            .flatten()
+                            .copied();
+
+                        // If this line currently begins with the line comment prefix, then record
+                        // the range containing the prefix.
+                        if all_selection_lines_are_comments
+                            && line_bytes
+                                .by_ref()
+                                .take(comment_prefix.len())
+                                .eq(comment_prefix.bytes())
+                        {
+                            // Include any whitespace that matches the comment prefix.
+                            let matching_whitespace_len = line_bytes
+                                .zip(comment_prefix_whitespace.bytes())
+                                .take_while(|(a, b)| a == b)
+                                .count()
+                                as u32;
+                            let end = Point::new(
+                                row,
+                                start.column
+                                    + comment_prefix.len() as u32
+                                    + matching_whitespace_len,
+                            );
+                            edit_ranges.push(start..end);
+                        }
+                        // If this line does not begin with the line comment prefix, then record
+                        // the position where the prefix should be inserted.
+                        else {
+                            all_selection_lines_are_comments = false;
+                            edit_ranges.push(start..start);
+                        }
                     }
 
-                    if snapshot.is_line_blank(row) {
-                        continue;
-                    }
-
-                    let start = Point::new(row, snapshot.indent_column_for_line(row));
-                    let mut line_bytes = snapshot
-                        .bytes_in_range(start..snapshot.max_point())
-                        .flatten()
-                        .copied();
-
-                    // If this line currently begins with the line comment prefix, then record
-                    // the range containing the prefix.
-                    if all_selection_lines_are_comments
-                        && line_bytes
-                            .by_ref()
-                            .take(comment_prefix.len())
-                            .eq(comment_prefix.bytes())
-                    {
-                        // Include any whitespace that matches the comment prefix.
-                        let matching_whitespace_len = line_bytes
-                            .zip(comment_prefix_whitespace.bytes())
-                            .take_while(|(a, b)| a == b)
-                            .count() as u32;
-                        let end = Point::new(
-                            row,
-                            start.column + comment_prefix.len() as u32 + matching_whitespace_len,
-                        );
-                        edit_ranges.push(start..end);
-                    }
-                    // If this line does not begin with the line comment prefix, then record
-                    // the position where the prefix should be inserted.
-                    else {
-                        all_selection_lines_are_comments = false;
-                        edit_ranges.push(start..start);
+                    if !edit_ranges.is_empty() {
+                        if all_selection_lines_are_comments {
+                            buffer.edit(edit_ranges.iter().cloned(), "", cx);
+                        } else {
+                            let min_column =
+                                edit_ranges.iter().map(|r| r.start.column).min().unwrap();
+                            let edit_ranges = edit_ranges.iter().map(|range| {
+                                let position = Point::new(range.start.row, min_column);
+                                position..position
+                            });
+                            buffer.edit(edit_ranges, &full_comment_prefix, cx);
+                        }
                     }
                 }
+            });
 
-                if !edit_ranges.is_empty() {
-                    if all_selection_lines_are_comments {
-                        buffer.edit(edit_ranges.iter().cloned(), "", cx);
-                    } else {
-                        let min_column = edit_ranges.iter().map(|r| r.start.column).min().unwrap();
-                        let edit_ranges = edit_ranges.iter().map(|range| {
-                            let position = Point::new(range.start.row, min_column);
-                            position..position
-                        });
-                        buffer.edit(edit_ranges, &full_comment_prefix, cx);
-                    }
-                }
-            }
+            this.update_selections(
+                this.local_selections::<usize>(cx),
+                Some(Autoscroll::Fit),
+                cx,
+            );
         });
-
-        self.update_selections(
-            self.local_selections::<usize>(cx),
-            Some(Autoscroll::Fit),
-            cx,
-        );
-        self.end_transaction(cx);
     }
 
     pub fn select_larger_syntax_node(
@@ -5125,13 +5132,9 @@ impl Editor {
         cx: &mut ViewContext<Self>,
         update: impl FnOnce(&mut Self, &mut ViewContext<Self>),
     ) {
-        self.start_transaction(cx);
-        update(self, cx);
-        self.end_transaction(cx);
-    }
-
-    fn start_transaction(&mut self, cx: &mut ViewContext<Self>) {
         self.start_transaction_at(Instant::now(), cx);
+        update(self, cx);
+        self.end_transaction_at(Instant::now(), cx);
     }
 
     fn start_transaction_at(&mut self, now: Instant, cx: &mut ViewContext<Self>) {
@@ -5145,10 +5148,6 @@ impl Editor {
         }
     }
 
-    fn end_transaction(&mut self, cx: &mut ViewContext<Self>) {
-        self.end_transaction_at(Instant::now(), cx);
-    }
-
     fn end_transaction_at(&mut self, now: Instant, cx: &mut ViewContext<Self>) {
         if let Some(tx_id) = self
             .buffer
@@ -5159,6 +5158,8 @@ impl Editor {
             } else {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
+
+            cx.emit(Event::Edited);
         }
     }
 
@@ -5328,11 +5329,13 @@ impl Editor {
     }
 
     pub fn set_text(&mut self, text: impl Into<String>, cx: &mut ViewContext<Self>) {
-        self.buffer
-            .read(cx)
-            .as_singleton()
-            .expect("you can only call set_text on editors for singleton buffers")
-            .update(cx, |buffer, cx| buffer.set_text(text, cx));
+        self.transact(cx, |this, cx| {
+            this.buffer
+                .read(cx)
+                .as_singleton()
+                .expect("you can only call set_text on editors for singleton buffers")
+                .update(cx, |buffer, cx| buffer.set_text(text, cx));
+        });
     }
 
     pub fn display_text(&self, cx: &mut MutableAppContext) -> String {
@@ -5535,10 +5538,10 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            language::Event::Edited { local } => {
+            language::Event::Edited => {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
-                cx.emit(Event::Edited { local: *local });
+                cx.emit(Event::BufferEdited);
             }
             language::Event::Dirtied => cx.emit(Event::Dirtied),
             language::Event::Saved => cx.emit(Event::Saved),
@@ -5662,10 +5665,11 @@ fn compute_scroll_position(
     scroll_position
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     Activate,
-    Edited { local: bool },
+    BufferEdited,
+    Edited,
     Blurred,
     Dirtied,
     Saved,
@@ -6143,6 +6147,114 @@ mod tests {
     use unindent::Unindent;
     use util::test::sample_text;
     use workspace::FollowableItem;
+
+    #[gpui::test]
+    fn test_edit_events(cx: &mut MutableAppContext) {
+        populate_settings(cx);
+        let buffer = cx.add_model(|cx| language::Buffer::new(0, "123456", cx));
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let (_, editor1) = cx.add_window(Default::default(), {
+            let events = events.clone();
+            |cx| {
+                cx.subscribe(&cx.handle(), move |_, _, event, _| {
+                    if matches!(event, Event::Edited | Event::BufferEdited | Event::Dirtied) {
+                        events.borrow_mut().push(("editor1", *event));
+                    }
+                })
+                .detach();
+                Editor::for_buffer(buffer.clone(), None, cx)
+            }
+        });
+        let (_, editor2) = cx.add_window(Default::default(), {
+            let events = events.clone();
+            |cx| {
+                cx.subscribe(&cx.handle(), move |_, _, event, _| {
+                    if matches!(event, Event::Edited | Event::BufferEdited | Event::Dirtied) {
+                        events.borrow_mut().push(("editor2", *event));
+                    }
+                })
+                .detach();
+                Editor::for_buffer(buffer.clone(), None, cx)
+            }
+        });
+        assert_eq!(mem::take(&mut *events.borrow_mut()), []);
+
+        // Mutating editor 1 will emit an `Edited` event only for that editor.
+        editor1.update(cx, |editor, cx| editor.insert("X", cx));
+        assert_eq!(
+            mem::take(&mut *events.borrow_mut()),
+            [
+                ("editor1", Event::Edited),
+                ("editor1", Event::BufferEdited),
+                ("editor2", Event::BufferEdited),
+                ("editor1", Event::Dirtied),
+                ("editor2", Event::Dirtied)
+            ]
+        );
+
+        // Mutating editor 2 will emit an `Edited` event only for that editor.
+        editor2.update(cx, |editor, cx| editor.delete(&Delete, cx));
+        assert_eq!(
+            mem::take(&mut *events.borrow_mut()),
+            [
+                ("editor2", Event::Edited),
+                ("editor1", Event::BufferEdited),
+                ("editor2", Event::BufferEdited),
+            ]
+        );
+
+        // Undoing on editor 1 will emit an `Edited` event only for that editor.
+        editor1.update(cx, |editor, cx| editor.undo(&Undo, cx));
+        assert_eq!(
+            mem::take(&mut *events.borrow_mut()),
+            [
+                ("editor1", Event::Edited),
+                ("editor1", Event::BufferEdited),
+                ("editor2", Event::BufferEdited),
+            ]
+        );
+
+        // Redoing on editor 1 will emit an `Edited` event only for that editor.
+        editor1.update(cx, |editor, cx| editor.redo(&Redo, cx));
+        assert_eq!(
+            mem::take(&mut *events.borrow_mut()),
+            [
+                ("editor1", Event::Edited),
+                ("editor1", Event::BufferEdited),
+                ("editor2", Event::BufferEdited),
+            ]
+        );
+
+        // Undoing on editor 2 will emit an `Edited` event only for that editor.
+        editor2.update(cx, |editor, cx| editor.undo(&Undo, cx));
+        assert_eq!(
+            mem::take(&mut *events.borrow_mut()),
+            [
+                ("editor2", Event::Edited),
+                ("editor1", Event::BufferEdited),
+                ("editor2", Event::BufferEdited),
+            ]
+        );
+
+        // Redoing on editor 2 will emit an `Edited` event only for that editor.
+        editor2.update(cx, |editor, cx| editor.redo(&Redo, cx));
+        assert_eq!(
+            mem::take(&mut *events.borrow_mut()),
+            [
+                ("editor2", Event::Edited),
+                ("editor1", Event::BufferEdited),
+                ("editor2", Event::BufferEdited),
+            ]
+        );
+
+        // No event is emitted when the mutation is a no-op.
+        editor2.update(cx, |editor, cx| {
+            editor.select_ranges([0..0], None, cx);
+            editor.backspace(&Backspace, cx);
+        });
+        assert_eq!(mem::take(&mut *events.borrow_mut()), []);
+    }
 
     #[gpui::test]
     fn test_undo_redo_with_selection_restoration(cx: &mut MutableAppContext) {
