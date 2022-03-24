@@ -257,7 +257,7 @@ impl FoldMap {
             let mut folds = self.folds.iter().peekable();
             while let Some(fold) = folds.next() {
                 if let Some(next_fold) = folds.peek() {
-                    let comparison = fold.0.cmp(&next_fold.0, &self.buffer.lock()).unwrap();
+                    let comparison = fold.0.cmp(&next_fold.0, &self.buffer.lock());
                     assert!(comparison.is_le());
                 }
             }
@@ -700,10 +700,7 @@ impl FoldSnapshot {
                             let ranges = &highlights.1;
 
                             let start_ix = match ranges.binary_search_by(|probe| {
-                                let cmp = probe
-                                    .end
-                                    .cmp(&transform_start, &self.buffer_snapshot())
-                                    .unwrap();
+                                let cmp = probe.end.cmp(&transform_start, &self.buffer_snapshot());
                                 if cmp.is_gt() {
                                     Ordering::Greater
                                 } else {
@@ -716,7 +713,6 @@ impl FoldSnapshot {
                                 if range
                                     .start
                                     .cmp(&transform_end, &self.buffer_snapshot)
-                                    .unwrap()
                                     .is_ge()
                                 {
                                     break;
@@ -821,8 +817,8 @@ where
     let start = buffer.anchor_before(range.start.to_offset(buffer));
     let end = buffer.anchor_after(range.end.to_offset(buffer));
     let mut cursor = folds.filter::<_, usize>(move |summary| {
-        let start_cmp = start.cmp(&summary.max_end, buffer).unwrap();
-        let end_cmp = end.cmp(&summary.min_start, buffer).unwrap();
+        let start_cmp = start.cmp(&summary.max_end, buffer);
+        let end_cmp = end.cmp(&summary.min_start, buffer);
 
         if inclusive {
             start_cmp <= Ordering::Equal && end_cmp >= Ordering::Equal
@@ -963,19 +959,19 @@ impl sum_tree::Summary for FoldSummary {
     type Context = MultiBufferSnapshot;
 
     fn add_summary(&mut self, other: &Self, buffer: &MultiBufferSnapshot) {
-        if other.min_start.cmp(&self.min_start, buffer).unwrap() == Ordering::Less {
+        if other.min_start.cmp(&self.min_start, buffer) == Ordering::Less {
             self.min_start = other.min_start.clone();
         }
-        if other.max_end.cmp(&self.max_end, buffer).unwrap() == Ordering::Greater {
+        if other.max_end.cmp(&self.max_end, buffer) == Ordering::Greater {
             self.max_end = other.max_end.clone();
         }
 
         #[cfg(debug_assertions)]
         {
-            let start_comparison = self.start.cmp(&other.start, buffer).unwrap();
+            let start_comparison = self.start.cmp(&other.start, buffer);
             assert!(start_comparison <= Ordering::Equal);
             if start_comparison == Ordering::Equal {
-                assert!(self.end.cmp(&other.end, buffer).unwrap() >= Ordering::Equal);
+                assert!(self.end.cmp(&other.end, buffer) >= Ordering::Equal);
             }
         }
 
@@ -994,7 +990,7 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for Fold {
 
 impl<'a> sum_tree::SeekTarget<'a, FoldSummary, Fold> for Fold {
     fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
-        self.0.cmp(&other.0, buffer).unwrap()
+        self.0.cmp(&other.0, buffer)
     }
 }
 
@@ -1157,7 +1153,7 @@ impl Ord for HighlightEndpoint {
     fn cmp(&self, other: &Self) -> Ordering {
         self.offset
             .cmp(&other.offset)
-            .then_with(|| self.is_start.cmp(&other.is_start))
+            .then_with(|| other.is_start.cmp(&self.is_start))
     }
 }
 
@@ -1606,9 +1602,8 @@ mod tests {
                     .filter(|fold| {
                         let start = buffer_snapshot.anchor_before(start);
                         let end = buffer_snapshot.anchor_after(end);
-                        start.cmp(&fold.0.end, &buffer_snapshot).unwrap() == Ordering::Less
-                            && end.cmp(&fold.0.start, &buffer_snapshot).unwrap()
-                                == Ordering::Greater
+                        start.cmp(&fold.0.end, &buffer_snapshot) == Ordering::Less
+                            && end.cmp(&fold.0.start, &buffer_snapshot) == Ordering::Greater
                     })
                     .map(|fold| fold.0)
                     .collect::<Vec<_>>();
@@ -1686,7 +1681,7 @@ mod tests {
             let buffer = self.buffer.lock().clone();
             let mut folds = self.folds.items(&buffer);
             // Ensure sorting doesn't change how folds get merged and displayed.
-            folds.sort_by(|a, b| a.0.cmp(&b.0, &buffer).unwrap());
+            folds.sort_by(|a, b| a.0.cmp(&b.0, &buffer));
             let mut fold_ranges = folds
                 .iter()
                 .map(|fold| fold.0.start.to_offset(&buffer)..fold.0.end.to_offset(&buffer))

@@ -142,7 +142,7 @@ pub enum Operation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     Operation(Operation),
-    Edited { local: bool },
+    Edited,
     Dirtied,
     Saved,
     FileHandleChanged,
@@ -967,7 +967,7 @@ impl Buffer {
     ) -> Option<TransactionId> {
         if let Some((transaction_id, start_version)) = self.text.end_transaction_at(now) {
             let was_dirty = start_version != self.saved_version;
-            self.did_edit(&start_version, was_dirty, true, cx);
+            self.did_edit(&start_version, was_dirty, cx);
             Some(transaction_id)
         } else {
             None
@@ -1160,7 +1160,6 @@ impl Buffer {
         &mut self,
         old_version: &clock::Global,
         was_dirty: bool,
-        local: bool,
         cx: &mut ModelContext<Self>,
     ) {
         if self.edits_since::<usize>(old_version).next().is_none() {
@@ -1169,7 +1168,7 @@ impl Buffer {
 
         self.reparse(cx);
 
-        cx.emit(Event::Edited { local });
+        cx.emit(Event::Edited);
         if !was_dirty {
             cx.emit(Event::Dirtied);
         }
@@ -1206,7 +1205,7 @@ impl Buffer {
         self.text.apply_ops(buffer_ops)?;
         self.deferred_ops.insert(deferred_ops);
         self.flush_deferred_ops(cx);
-        self.did_edit(&old_version, was_dirty, false, cx);
+        self.did_edit(&old_version, was_dirty, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
         // selection update.
         cx.notify();
@@ -1321,7 +1320,7 @@ impl Buffer {
 
         if let Some((transaction_id, operation)) = self.text.undo() {
             self.send_operation(Operation::Buffer(operation), cx);
-            self.did_edit(&old_version, was_dirty, true, cx);
+            self.did_edit(&old_version, was_dirty, cx);
             Some(transaction_id)
         } else {
             None
@@ -1342,7 +1341,7 @@ impl Buffer {
             self.send_operation(Operation::Buffer(operation), cx);
         }
         if undone {
-            self.did_edit(&old_version, was_dirty, true, cx)
+            self.did_edit(&old_version, was_dirty, cx)
         }
         undone
     }
@@ -1353,7 +1352,7 @@ impl Buffer {
 
         if let Some((transaction_id, operation)) = self.text.redo() {
             self.send_operation(Operation::Buffer(operation), cx);
-            self.did_edit(&old_version, was_dirty, true, cx);
+            self.did_edit(&old_version, was_dirty, cx);
             Some(transaction_id)
         } else {
             None
@@ -1374,7 +1373,7 @@ impl Buffer {
             self.send_operation(Operation::Buffer(operation), cx);
         }
         if redone {
-            self.did_edit(&old_version, was_dirty, true, cx)
+            self.did_edit(&old_version, was_dirty, cx)
         }
         redone
     }
@@ -1440,7 +1439,7 @@ impl Buffer {
         if !ops.is_empty() {
             for op in ops {
                 self.send_operation(Operation::Buffer(op), cx);
-                self.did_edit(&old_version, was_dirty, true, cx);
+                self.did_edit(&old_version, was_dirty, cx);
             }
         }
     }
@@ -1821,20 +1820,12 @@ impl BufferSnapshot {
             })
             .map(move |(replica_id, set)| {
                 let start_ix = match set.selections.binary_search_by(|probe| {
-                    probe
-                        .end
-                        .cmp(&range.start, self)
-                        .unwrap()
-                        .then(Ordering::Greater)
+                    probe.end.cmp(&range.start, self).then(Ordering::Greater)
                 }) {
                     Ok(ix) | Err(ix) => ix,
                 };
                 let end_ix = match set.selections.binary_search_by(|probe| {
-                    probe
-                        .start
-                        .cmp(&range.end, self)
-                        .unwrap()
-                        .then(Ordering::Less)
+                    probe.start.cmp(&range.end, self).then(Ordering::Less)
                 }) {
                     Ok(ix) | Err(ix) => ix,
                 };

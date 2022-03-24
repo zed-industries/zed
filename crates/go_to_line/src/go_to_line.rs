@@ -102,7 +102,7 @@ impl GoToLine {
     ) {
         match event {
             editor::Event::Blurred => cx.emit(Event::Dismissed),
-            editor::Event::Edited { .. } => {
+            editor::Event::BufferEdited { .. } => {
                 let line_editor = self.line_editor.read(cx).buffer().read(cx).read(cx).text();
                 let mut components = line_editor.trim().split(&[',', ':'][..]);
                 let row = components.next().and_then(|row| row.parse::<u32>().ok());

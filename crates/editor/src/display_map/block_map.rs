@@ -499,7 +499,7 @@ impl<'a> BlockMapWriter<'a> {
             let block_ix = match self
                 .0
                 .blocks
-                .binary_search_by(|probe| probe.position.cmp(&position, &buffer).unwrap())
+                .binary_search_by(|probe| probe.position.cmp(&position, &buffer))
             {
                 Ok(ix) | Err(ix) => ix,
             };

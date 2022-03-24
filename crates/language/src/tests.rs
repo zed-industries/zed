@@ -122,19 +122,11 @@ fn test_edit_events(cx: &mut gpui::MutableAppContext) {
     let buffer_1_events = buffer_1_events.borrow();
     assert_eq!(
         *buffer_1_events,
-        vec![
-            Event::Edited { local: true },
-            Event::Dirtied,
-            Event::Edited { local: true },
-            Event::Edited { local: true }
-        ]
+        vec![Event::Edited, Event::Dirtied, Event::Edited, Event::Edited]
     );
 
     let buffer_2_events = buffer_2_events.borrow();
-    assert_eq!(
-        *buffer_2_events,
-        vec![Event::Edited { local: false }, Event::Dirtied]
-    );
+    assert_eq!(*buffer_2_events, vec![Event::Edited, Event::Dirtied]);
 }
 
 #[gpui::test]
@@ -827,7 +819,7 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
     for buffer in &buffers {
         let buffer = buffer.read(cx).snapshot();
         let actual_remote_selections = buffer
-            .remote_selections_in_range(Anchor::min()..Anchor::max())
+            .remote_selections_in_range(Anchor::MIN..Anchor::MAX)
             .map(|(replica_id, selections)| (replica_id, selections.collect::<Vec<_>>()))
             .collect::<Vec<_>>();
         let expected_remote_selections = active_selections
