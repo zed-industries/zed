@@ -1156,7 +1156,7 @@ impl Ord for HighlightEndpoint {
     fn cmp(&self, other: &Self) -> Ordering {
         self.offset
             .cmp(&other.offset)
-            .then_with(|| self.is_start.cmp(&other.is_start))
+            .then_with(|| other.is_start.cmp(&self.is_start))
     }
 }
 

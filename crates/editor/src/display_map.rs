@@ -489,13 +489,17 @@ impl ToDisplayPoint for Anchor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::movement;
+    use crate::{
+        movement,
+        test::{marked_text, marked_text_ranges},
+    };
     use gpui::{color::Color, elements::*, test::observe, MutableAppContext};
     use language::{Buffer, Language, LanguageConfig, RandomCharIter, SelectionGoal};
     use rand::{prelude::*, Rng};
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
+    use unindent::Unindent;
     use util::test::sample_text;
     use Bias::*;
 
@@ -929,7 +933,7 @@ mod tests {
         let map = cx
             .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
         assert_eq!(
-            cx.update(|cx| chunks(0..5, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(0..5, &map, &theme, cx)),
             vec![
                 ("fn ".to_string(), None),
                 ("outer".to_string(), Some(Color::blue())),
@@ -940,7 +944,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            cx.update(|cx| chunks(3..5, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(3..5, &map, &theme, cx)),
             vec![
                 ("    fn ".to_string(), Some(Color::red())),
                 ("inner".to_string(), Some(Color::blue())),
@@ -952,7 +956,7 @@ mod tests {
             map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx)
         });
         assert_eq!(
-            cx.update(|cx| chunks(0..2, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(0..2, &map, &theme, cx)),
             vec![
                 ("fn ".to_string(), None),
                 ("out".to_string(), Some(Color::blue())),
@@ -1018,7 +1022,7 @@ mod tests {
             DisplayMap::new(buffer, tab_size, font_id, font_size, Some(40.0), 1, 1, cx)
         });
         assert_eq!(
-            cx.update(|cx| chunks(0..5, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(0..5, &map, &theme, cx)),
             [
                 ("fn \n".to_string(), None),
                 ("oute\nr".to_string(), Some(Color::blue())),
@@ -1026,7 +1030,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            cx.update(|cx| chunks(3..5, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(3..5, &map, &theme, cx)),
             [("{}\n\n".to_string(), None)]
         );
 
@@ -1034,12 +1038,95 @@ mod tests {
             map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx)
         });
         assert_eq!(
-            cx.update(|cx| chunks(1..4, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(1..4, &map, &theme, cx)),
             [
                 ("out".to_string(), Some(Color::blue())),
                 ("…\n".to_string(), None),
                 ("  \nfn ".to_string(), Some(Color::red())),
                 ("i\n".to_string(), Some(Color::blue()))
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_chunks_with_text_highlights(cx: &mut gpui::TestAppContext) {
+        cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
+
+        let theme = SyntaxTheme::new(vec![
+            ("operator".to_string(), Color::red().into()),
+            ("string".to_string(), Color::green().into()),
+        ]);
+        let language = Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "Test".into(),
+                    path_suffixes: vec![".test".to_string()],
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )
+            .with_highlights_query(
+                r#"
+                ":" @operator
+                (string_literal) @string
+                "#,
+            )
+            .unwrap(),
+        );
+        language.set_theme(&theme);
+
+        let (text, highlighted_ranges) = marked_text_ranges(
+            r#"const{} <a>: B = "c [d]""#,
+            vec![('{', '}'), ('<', '>'), ('[', ']')],
+        );
+
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
+        buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
+
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+
+        let font_cache = cx.font_cache();
+        let tab_size = 4;
+        let family_id = font_cache.load_family(&["Courier"]).unwrap();
+        let font_id = font_cache
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 16.0;
+        let map = cx
+            .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
+
+        enum MyType {}
+
+        let style = HighlightStyle {
+            color: Some(Color::blue()),
+            ..Default::default()
+        };
+
+        map.update(cx, |map, _cx| {
+            map.highlight_text(
+                TypeId::of::<MyType>(),
+                highlighted_ranges
+                    .into_iter()
+                    .map(|range| {
+                        buffer_snapshot.anchor_before(range.start)
+                            ..buffer_snapshot.anchor_before(range.end)
+                    })
+                    .collect(),
+                style,
+            );
+        });
+
+        assert_eq!(
+            cx.update(|cx| chunks(0..10, &map, &theme, cx)),
+            [
+                ("const ".to_string(), None, None),
+                ("a".to_string(), None, Some(Color::blue())),
+                (":".to_string(), Some(Color::red()), None),
+                (" B = ".to_string(), None, None),
+                ("\"c ".to_string(), Some(Color::green()), None),
+                ("d".to_string(), Some(Color::green()), Some(Color::blue())),
+                ("\"".to_string(), Some(Color::green()), None),
             ]
         );
     }
@@ -1170,27 +1257,38 @@ mod tests {
         )
     }
 
-    fn chunks<'a>(
+    fn syntax_chunks<'a>(
         rows: Range<u32>,
         map: &ModelHandle<DisplayMap>,
         theme: &'a SyntaxTheme,
         cx: &mut MutableAppContext,
     ) -> Vec<(String, Option<Color>)> {
+        chunks(rows, map, theme, cx)
+            .into_iter()
+            .map(|(text, color, _)| (text, color))
+            .collect()
+    }
+
+    fn chunks<'a>(
+        rows: Range<u32>,
+        map: &ModelHandle<DisplayMap>,
+        theme: &'a SyntaxTheme,
+        cx: &mut MutableAppContext,
+    ) -> Vec<(String, Option<Color>, Option<Color>)> {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
-        let mut chunks: Vec<(String, Option<Color>)> = Vec::new();
+        let mut chunks: Vec<(String, Option<Color>, Option<Color>)> = Vec::new();
         for chunk in snapshot.chunks(rows, true) {
-            let color = chunk
+            let syntax_color = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(theme)?.color);
-            if let Some((last_chunk, last_color)) = chunks.last_mut() {
-                if color == *last_color {
+            let highlight_color = chunk.highlight_style.and_then(|style| style.color);
+            if let Some((last_chunk, last_syntax_color, last_highlight_color)) = chunks.last_mut() {
+                if syntax_color == *last_syntax_color && highlight_color == *last_highlight_color {
                     last_chunk.push_str(chunk.text);
-                } else {
-                    chunks.push((chunk.text.to_string(), color));
+                    continue;
                 }
-            } else {
-                chunks.push((chunk.text.to_string(), color));
             }
+            chunks.push((chunk.text.to_string(), syntax_color, highlight_color));
         }
         chunks
     }
