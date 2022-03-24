@@ -198,7 +198,7 @@ impl FollowableItem for Editor {
 
     fn should_unfollow_on_event(event: &Self::Event, _: &AppContext) -> bool {
         match event {
-            // Event::BufferEdited { local } => *local,
+            Event::Edited => true,
             Event::SelectionsChanged { local } => *local,
             Event::ScrollPositionChanged { local } => *local,
             _ => false,

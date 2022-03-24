@@ -3364,6 +3364,7 @@ impl Editor {
                 self.set_selections(selections, None, true, cx);
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
+            cx.emit(Event::Edited);
         }
     }
 
@@ -3373,6 +3374,7 @@ impl Editor {
                 self.set_selections(selections, None, true, cx);
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
+            cx.emit(Event::Edited);
         }
     }
 
@@ -5148,6 +5150,8 @@ impl Editor {
             } else {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
+
+            cx.emit(Event::Edited);
         }
     }
 
@@ -5657,6 +5661,7 @@ fn compute_scroll_position(
 pub enum Event {
     Activate,
     BufferEdited,
+    Edited,
     Blurred,
     Dirtied,
     Saved,
