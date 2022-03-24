@@ -2399,7 +2399,7 @@ impl Editor {
     ) -> Result<()> {
         let replica_id = this.read_with(&cx, |this, cx| this.replica_id(cx));
 
-        // If the code action's edits are all contained within this editor, then
+        // If the project transaction's edits are all contained within this editor, then
         // avoid opening a new editor to display them.
         let mut entries = transaction.0.iter();
         if let Some((buffer, transaction)) = entries.next() {
@@ -2521,7 +2521,6 @@ impl Editor {
                     }
 
                     let buffer_id = cursor_position.buffer_id;
-                    let excerpt_id = cursor_position.excerpt_id.clone();
                     let style = this.style(cx);
                     let read_background = style.document_highlight_read_background;
                     let write_background = style.document_highlight_write_background;
@@ -2533,22 +2532,39 @@ impl Editor {
                         return;
                     }
 
+                    let cursor_buffer_snapshot = cursor_buffer.read(cx);
                     let mut write_ranges = Vec::new();
                     let mut read_ranges = Vec::new();
                     for highlight in highlights {
-                        let range = Anchor {
-                            buffer_id,
-                            excerpt_id: excerpt_id.clone(),
-                            text_anchor: highlight.range.start,
-                        }..Anchor {
-                            buffer_id,
-                            excerpt_id: excerpt_id.clone(),
-                            text_anchor: highlight.range.end,
-                        };
-                        if highlight.kind == lsp::DocumentHighlightKind::WRITE {
-                            write_ranges.push(range);
-                        } else {
-                            read_ranges.push(range);
+                        for (excerpt_id, excerpt_range) in
+                            buffer.excerpts_for_buffer(&cursor_buffer, cx)
+                        {
+                            let start = highlight
+                                .range
+                                .start
+                                .max(&excerpt_range.start, cursor_buffer_snapshot);
+                            let end = highlight
+                                .range
+                                .end
+                                .min(&excerpt_range.end, cursor_buffer_snapshot);
+                            if start.cmp(&end, cursor_buffer_snapshot).unwrap().is_ge() {
+                                continue;
+                            }
+
+                            let range = Anchor {
+                                buffer_id,
+                                excerpt_id: excerpt_id.clone(),
+                                text_anchor: start,
+                            }..Anchor {
+                                buffer_id,
+                                excerpt_id,
+                                text_anchor: end,
+                            };
+                            if highlight.kind == lsp::DocumentHighlightKind::WRITE {
+                                write_ranges.push(range);
+                            } else {
+                                read_ranges.push(range);
+                            }
                         }
                     }
 
@@ -4413,7 +4429,6 @@ impl Editor {
                         .iter()
                         .map(|range| range.to_point(&snapshot))
                         .collect::<Vec<_>>();
-                    dbg!(point_ranges);
 
                     this.highlight_text::<Rename>(
                         ranges,

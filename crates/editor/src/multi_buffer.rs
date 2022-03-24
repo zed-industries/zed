@@ -211,7 +211,11 @@ impl MultiBuffer {
     pub fn singleton(buffer: ModelHandle<Buffer>, cx: &mut ModelContext<Self>) -> Self {
         let mut this = Self::new(buffer.read(cx).replica_id());
         this.singleton = true;
-        this.push_excerpts(buffer, [text::Anchor::min()..text::Anchor::max()], cx);
+        this.push_excerpts(
+            buffer,
+            [text::Anchor::build_min()..text::Anchor::build_max()],
+            cx,
+        );
         this.snapshot.borrow_mut().singleton = true;
         this
     }
@@ -814,11 +818,30 @@ impl MultiBuffer {
         cx.notify();
     }
 
-    pub fn excerpt_ids_for_buffer(&self, buffer: &ModelHandle<Buffer>) -> Vec<ExcerptId> {
-        self.buffers
-            .borrow()
+    pub fn excerpts_for_buffer(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        cx: &AppContext,
+    ) -> Vec<(ExcerptId, Range<text::Anchor>)> {
+        let mut excerpts = Vec::new();
+        let snapshot = self.read(cx);
+        let buffers = self.buffers.borrow();
+        let mut cursor = snapshot.excerpts.cursor::<Option<&ExcerptId>>();
+        for excerpt_id in buffers
             .get(&buffer.id())
-            .map_or(Vec::new(), |state| state.excerpts.clone())
+            .map(|state| &state.excerpts)
+            .into_iter()
+            .flatten()
+        {
+            cursor.seek_forward(&Some(excerpt_id), Bias::Left, &());
+            if let Some(excerpt) = cursor.item() {
+                if excerpt.id == *excerpt_id {
+                    excerpts.push((excerpt.id.clone(), excerpt.range.clone()));
+                }
+            }
+        }
+
+        excerpts
     }
 
     pub fn excerpt_ids(&self) -> Vec<ExcerptId> {
@@ -3070,7 +3093,8 @@ mod tests {
         );
 
         let snapshot = multibuffer.update(cx, |multibuffer, cx| {
-            let buffer_2_excerpt_id = multibuffer.excerpt_ids_for_buffer(&buffer_2)[0].clone();
+            let (buffer_2_excerpt_id, _) =
+                multibuffer.excerpts_for_buffer(&buffer_2, cx)[0].clone();
             multibuffer.remove_excerpts(&[buffer_2_excerpt_id], cx);
             multibuffer.snapshot(cx)
         });

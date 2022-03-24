@@ -1318,8 +1318,8 @@ impl Buffer {
         let mut futures = Vec::new();
         for anchor in anchors {
             if !self.version.observed(anchor.timestamp)
-                && *anchor != Anchor::max()
-                && *anchor != Anchor::min()
+                && *anchor != Anchor::build_max()
+                && *anchor != Anchor::build_min()
             {
                 let (tx, rx) = oneshot::channel();
                 self.edit_id_resolvers
@@ -1638,9 +1638,9 @@ impl BufferSnapshot {
         let mut position = D::default();
 
         anchors.map(move |anchor| {
-            if *anchor == Anchor::min() {
+            if *anchor == Anchor::build_min() {
                 return D::default();
-            } else if *anchor == Anchor::max() {
+            } else if *anchor == Anchor::build_max() {
                 return D::from_text_summary(&self.visible_text.summary());
             }
 
@@ -1680,9 +1680,9 @@ impl BufferSnapshot {
     where
         D: TextDimension,
     {
-        if *anchor == Anchor::min() {
+        if *anchor == Anchor::build_min() {
             D::default()
-        } else if *anchor == Anchor::max() {
+        } else if *anchor == Anchor::build_max() {
             D::from_text_summary(&self.visible_text.summary())
         } else {
             let anchor_key = InsertionFragmentKey {
@@ -1718,9 +1718,9 @@ impl BufferSnapshot {
     }
 
     fn fragment_id_for_anchor(&self, anchor: &Anchor) -> &Locator {
-        if *anchor == Anchor::min() {
+        if *anchor == Anchor::build_min() {
             &locator::MIN
-        } else if *anchor == Anchor::max() {
+        } else if *anchor == Anchor::build_max() {
             &locator::MAX
         } else {
             let anchor_key = InsertionFragmentKey {
@@ -1758,9 +1758,9 @@ impl BufferSnapshot {
     pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
         let offset = position.to_offset(self);
         if bias == Bias::Left && offset == 0 {
-            Anchor::min()
+            Anchor::build_min()
         } else if bias == Bias::Right && offset == self.len() {
-            Anchor::max()
+            Anchor::build_max()
         } else {
             let mut fragment_cursor = self.fragments.cursor::<usize>();
             fragment_cursor.seek(&offset, bias, &None);
@@ -1775,8 +1775,8 @@ impl BufferSnapshot {
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
-        *anchor == Anchor::min()
-            || *anchor == Anchor::max()
+        *anchor == Anchor::build_min()
+            || *anchor == Anchor::build_max()
             || self.version.observed(anchor.timestamp)
     }
 
@@ -1799,7 +1799,7 @@ impl BufferSnapshot {
     where
         D: TextDimension + Ord,
     {
-        self.edits_since_in_range(since, Anchor::min()..Anchor::max())
+        self.edits_since_in_range(since, Anchor::build_min()..Anchor::build_max())
     }
 
     pub fn edited_ranges_for_transaction<'a, D>(

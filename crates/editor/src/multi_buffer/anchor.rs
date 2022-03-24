@@ -19,7 +19,7 @@ impl Anchor {
         Self {
             buffer_id: None,
             excerpt_id: ExcerptId::min(),
-            text_anchor: text::Anchor::min(),
+            text_anchor: text::Anchor::build_min(),
         }
     }
 
@@ -27,7 +27,7 @@ impl Anchor {
         Self {
             buffer_id: None,
             excerpt_id: ExcerptId::max(),
-            text_anchor: text::Anchor::max(),
+            text_anchor: text::Anchor::build_max(),
         }
     }
 

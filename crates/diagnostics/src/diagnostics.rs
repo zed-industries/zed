@@ -278,7 +278,8 @@ impl ProjectDiagnosticsEditor {
                             prev_excerpt_id = excerpt_id.clone();
                             first_excerpt_id.get_or_insert_with(|| prev_excerpt_id.clone());
                             group_state.excerpts.push(excerpt_id.clone());
-                            let header_position = (excerpt_id.clone(), language::Anchor::min());
+                            let header_position =
+                                (excerpt_id.clone(), language::Anchor::build_min());
 
                             if is_first_excerpt_for_group {
                                 is_first_excerpt_for_group = false;

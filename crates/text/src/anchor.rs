@@ -12,7 +12,7 @@ pub struct Anchor {
 }
 
 impl Anchor {
-    pub fn min() -> Self {
+    pub fn build_min() -> Self {
         Self {
             timestamp: clock::Local::MIN,
             offset: usize::MIN,
@@ -20,7 +20,7 @@ impl Anchor {
         }
     }
 
-    pub fn max() -> Self {
+    pub fn build_max() -> Self {
         Self {
             timestamp: clock::Local::MAX,
             offset: usize::MAX,
@@ -40,6 +40,22 @@ impl Anchor {
         Ok(fragment_id_comparison
             .then_with(|| self.offset.cmp(&other.offset))
             .then_with(|| self.bias.cmp(&other.bias)))
+    }
+
+    pub fn min(&self, other: &Self, buffer: &BufferSnapshot) -> Self {
+        if self.cmp(other, buffer).unwrap().is_le() {
+            self.clone()
+        } else {
+            other.clone()
+        }
+    }
+
+    pub fn max(&self, other: &Self, buffer: &BufferSnapshot) -> Self {
+        if self.cmp(other, buffer).unwrap().is_ge() {
+            self.clone()
+        } else {
+            other.clone()
+        }
     }
 
     pub fn bias(&self, bias: Bias, buffer: &BufferSnapshot) -> Anchor {
