@@ -1813,20 +1813,12 @@ impl BufferSnapshot {
             })
             .map(move |(replica_id, set)| {
                 let start_ix = match set.selections.binary_search_by(|probe| {
-                    probe
-                        .end
-                        .cmp(&range.start, self)
-                        .unwrap()
-                        .then(Ordering::Greater)
+                    probe.end.cmp(&range.start, self).then(Ordering::Greater)
                 }) {
                     Ok(ix) | Err(ix) => ix,
                 };
                 let end_ix = match set.selections.binary_search_by(|probe| {
-                    probe
-                        .start
-                        .cmp(&range.end, self)
-                        .unwrap()
-                        .then(Ordering::Less)
+                    probe.start.cmp(&range.end, self).then(Ordering::Less)
                 }) {
                     Ok(ix) | Err(ix) => ix,
                 };

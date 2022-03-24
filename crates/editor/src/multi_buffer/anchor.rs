@@ -1,5 +1,4 @@
 use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToPoint};
-use anyhow::Result;
 use std::{
     cmp::Ordering,
     ops::{Range, Sub},
@@ -35,18 +34,18 @@ impl Anchor {
         &self.excerpt_id
     }
 
-    pub fn cmp<'a>(&self, other: &Anchor, snapshot: &MultiBufferSnapshot) -> Result<Ordering> {
+    pub fn cmp<'a>(&self, other: &Anchor, snapshot: &MultiBufferSnapshot) -> Ordering {
         let excerpt_id_cmp = self.excerpt_id.cmp(&other.excerpt_id);
         if excerpt_id_cmp.is_eq() {
             if self.excerpt_id == ExcerptId::min() || self.excerpt_id == ExcerptId::max() {
-                Ok(Ordering::Equal)
+                Ordering::Equal
             } else if let Some(excerpt) = snapshot.excerpt(&self.excerpt_id) {
                 self.text_anchor.cmp(&other.text_anchor, &excerpt.buffer)
             } else {
-                Ok(Ordering::Equal)
+                Ordering::Equal
             }
         } else {
-            Ok(excerpt_id_cmp)
+            excerpt_id_cmp
         }
     }
 
@@ -97,17 +96,17 @@ impl ToPoint for Anchor {
 }
 
 pub trait AnchorRangeExt {
-    fn cmp(&self, b: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> Result<Ordering>;
+    fn cmp(&self, b: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> Ordering;
     fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<usize>;
     fn to_point(&self, content: &MultiBufferSnapshot) -> Range<Point>;
 }
 
 impl AnchorRangeExt for Range<Anchor> {
-    fn cmp(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> Result<Ordering> {
-        Ok(match self.start.cmp(&other.start, buffer)? {
-            Ordering::Equal => other.end.cmp(&self.end, buffer)?,
+    fn cmp(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> Ordering {
+        match self.start.cmp(&other.start, buffer) {
+            Ordering::Equal => other.end.cmp(&self.end, buffer),
             ord @ _ => ord,
-        })
+        }
     }
 
     fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<usize> {

@@ -367,8 +367,7 @@ impl ProjectDiagnosticsEditor {
             range_a
                 .start
                 .cmp(&range_b.start, &snapshot)
-                .unwrap()
-                .then_with(|| range_a.end.cmp(&range_b.end, &snapshot).unwrap())
+                .then_with(|| range_a.end.cmp(&range_b.end, &snapshot))
         });
 
         if path_state.diagnostic_groups.is_empty() {
