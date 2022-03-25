@@ -40,6 +40,19 @@ impl<T: Clone> Selection<T> {
             self.start.clone()
         }
     }
+
+    pub fn map<F, S>(&self, f: F) -> Selection<S>
+    where
+        F: Fn(T) -> S,
+    {
+        Selection::<S> {
+            id: self.id,
+            start: f(self.start.clone()),
+            end: f(self.end.clone()),
+            reversed: self.reversed,
+            goal: self.goal,
+        }
+    }
 }
 
 impl<T: Copy + Ord> Selection<T> {

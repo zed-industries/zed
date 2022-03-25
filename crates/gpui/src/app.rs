@@ -442,13 +442,32 @@ impl TestAppContext {
     }
 
     pub fn dispatch_keystroke(
-        &self,
+        &mut self,
         window_id: usize,
-        responder_chain: Vec<usize>,
-        keystroke: &Keystroke,
-    ) -> Result<bool> {
-        let mut state = self.cx.borrow_mut();
-        state.dispatch_keystroke(window_id, responder_chain, keystroke)
+        keystroke: Keystroke,
+        input: Option<String>,
+        is_held: bool,
+    ) {
+        self.cx.borrow_mut().update(|cx| {
+            let presenter = cx
+                .presenters_and_platform_windows
+                .get(&window_id)
+                .unwrap()
+                .0
+                .clone();
+            let responder_chain = presenter.borrow().dispatch_path(cx.as_ref());
+
+            if !cx.dispatch_keystroke(window_id, responder_chain, &keystroke) {
+                presenter.borrow_mut().dispatch_event(
+                    Event::KeyDown {
+                        keystroke,
+                        input,
+                        is_held,
+                    },
+                    cx,
+                );
+            }
+        });
     }
 
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
@@ -503,7 +522,7 @@ impl TestAppContext {
 
     pub fn update<T, F: FnOnce(&mut MutableAppContext) -> T>(&mut self, callback: F) -> T {
         let mut state = self.cx.borrow_mut();
-        // Don't increment pending flushes in order to effects to be flushed before the callback
+        // Don't increment pending flushes in order for effects to be flushed before the callback
         // completes, which is helpful in tests.
         let result = callback(&mut *state);
         // Flush effects after the callback just in case there are any. This can happen in edge
@@ -1250,9 +1269,9 @@ impl MutableAppContext {
         }
     }
 
-    fn defer(&mut self, callback: Box<dyn FnOnce(&mut MutableAppContext)>) {
+    pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut MutableAppContext)) {
         self.pending_effects.push_back(Effect::Deferred {
-            callback,
+            callback: Box::new(callback),
             after_window_update: false,
         })
     }
@@ -1379,17 +1398,15 @@ impl MutableAppContext {
         window_id: usize,
         responder_chain: Vec<usize>,
         keystroke: &Keystroke,
-    ) -> Result<bool> {
+    ) -> bool {
         let mut context_chain = Vec::new();
         for view_id in &responder_chain {
-            if let Some(view) = self.cx.views.get(&(window_id, *view_id)) {
-                context_chain.push(view.keymap_context(self.as_ref()));
-            } else {
-                return Err(anyhow!(
-                    "View {} in responder chain does not exist",
-                    view_id
-                ));
-            }
+            let view = self
+                .cx
+                .views
+                .get(&(window_id, *view_id))
+                .expect("view in responder chain does not exist");
+            context_chain.push(view.keymap_context(self.as_ref()));
         }
 
         let mut pending = false;
@@ -1404,13 +1421,13 @@ impl MutableAppContext {
                     if self.dispatch_action_any(window_id, &responder_chain[0..=i], action.as_ref())
                     {
                         self.keystroke_matcher.clear_pending();
-                        return Ok(true);
+                        return true;
                     }
                 }
             }
         }
 
-        Ok(pending)
+        pending
     }
 
     pub fn default_global<T: 'static + Default>(&mut self) -> &T {
@@ -1540,14 +1557,11 @@ impl MutableAppContext {
             window.on_event(Box::new(move |event| {
                 app.update(|cx| {
                     if let Event::KeyDown { keystroke, .. } = &event {
-                        if cx
-                            .dispatch_keystroke(
-                                window_id,
-                                presenter.borrow().dispatch_path(cx.as_ref()),
-                                keystroke,
-                            )
-                            .unwrap()
-                        {
+                        if cx.dispatch_keystroke(
+                            window_id,
+                            presenter.borrow().dispatch_path(cx.as_ref()),
+                            keystroke,
+                        ) {
                             return;
                         }
                     }
@@ -2711,11 +2725,11 @@ impl<'a, T: Entity> ModelContext<'a, T> {
 
     pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut T, &mut ModelContext<T>)) {
         let handle = self.handle();
-        self.app.defer(Box::new(move |cx| {
+        self.app.defer(move |cx| {
             handle.update(cx, |model, cx| {
                 callback(model, cx);
             })
-        }))
+        })
     }
 
     pub fn emit(&mut self, payload: T::Event) {
@@ -3064,11 +3078,11 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut T, &mut ViewContext<T>)) {
         let handle = self.handle();
-        self.app.defer(Box::new(move |cx| {
+        self.app.defer(move |cx| {
             handle.update(cx, |view, cx| {
                 callback(view, cx);
             })
-        }))
+        })
     }
 
     pub fn after_window_update(
@@ -3678,9 +3692,9 @@ impl<T: View> ViewHandle<T> {
         F: 'static + FnOnce(&mut T, &mut ViewContext<T>),
     {
         let this = self.clone();
-        cx.as_mut().defer(Box::new(move |cx| {
+        cx.as_mut().defer(move |cx| {
             this.update(cx, |view, cx| update(view, cx));
-        }));
+        });
     }
 
     pub fn is_focused(&self, cx: &AppContext) -> bool {
@@ -5921,8 +5935,7 @@ mod tests {
             window_id,
             vec![view_1.id(), view_2.id(), view_3.id()],
             &Keystroke::parse("a").unwrap(),
-        )
-        .unwrap();
+        );
 
         assert_eq!(&*actions.borrow(), &["2 a"]);
 
@@ -5931,8 +5944,7 @@ mod tests {
             window_id,
             vec![view_1.id(), view_2.id(), view_3.id()],
             &Keystroke::parse("b").unwrap(),
-        )
-        .unwrap();
+        );
 
         assert_eq!(&*actions.borrow(), &["3 b", "2 b", "1 b", "global b"]);
     }

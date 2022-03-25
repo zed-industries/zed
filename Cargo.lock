@@ -5674,6 +5674,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5a972e5669d67ba988ce3dc826706fb0a8b01471c088cb0b6110b805cc36aed"
 
 [[package]]
+name = "vim"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "editor",
+ "gpui",
+ "language",
+ "log",
+ "project",
+ "workspace",
+]
+
+[[package]]
 name = "waker-fn"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6003,6 +6016,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "vim",
  "workspace",
 ]
 
