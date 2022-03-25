@@ -140,13 +140,14 @@ impl<'a> FoldMapWriter<'a> {
     pub fn unfold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
+        inclusive: bool,
     ) -> (FoldSnapshot, Vec<FoldEdit>) {
         let mut edits = Vec::new();
         let mut fold_ixs_to_delete = Vec::new();
         let buffer = self.0.buffer.lock().clone();
         for range in ranges.into_iter() {
             // Remove intersecting folds and add their ranges to edits that are passed to sync.
-            let mut folds_cursor = intersecting_folds(&buffer, &self.0.folds, range, true);
+            let mut folds_cursor = intersecting_folds(&buffer, &self.0.folds, range, inclusive);
             while let Some(fold) = folds_cursor.item() {
                 let offset_range = fold.0.start.to_offset(&buffer)..fold.0.end.to_offset(&buffer);
                 if offset_range.end > offset_range.start {
@@ -1278,9 +1279,14 @@ mod tests {
         assert_eq!(snapshot4.text(), "123a…c123456eee");
 
         let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
-        writer.unfold(Some(Point::new(0, 4)..Point::new(0, 5)));
+        writer.unfold(Some(Point::new(0, 4)..Point::new(0, 4)), false);
         let (snapshot5, _) = map.read(buffer_snapshot.clone(), vec![]);
-        assert_eq!(snapshot5.text(), "123aaaaa\nbbbbbb\nccc123456eee");
+        assert_eq!(snapshot5.text(), "123a…c123456eee");
+
+        let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
+        writer.unfold(Some(Point::new(0, 4)..Point::new(0, 4)), true);
+        let (snapshot6, _) = map.read(buffer_snapshot.clone(), vec![]);
+        assert_eq!(snapshot6.text(), "123aaaaa\nbbbbbb\nccc123456eee");
     }
 
     #[gpui::test]

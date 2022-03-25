@@ -489,6 +489,7 @@ impl ProjectSearchView {
             );
             let range_to_select = model.match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
+                editor.unfold_ranges([range_to_select.clone()], false, cx);
                 editor.select_ranges([range_to_select], Some(Autoscroll::Fit), cx);
             });
         }

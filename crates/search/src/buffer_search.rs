@@ -336,11 +336,9 @@ impl SearchBar {
                             direction,
                             &editor.buffer().read(cx).read(cx),
                         );
-                        editor.select_ranges(
-                            [ranges[new_index].clone()],
-                            Some(Autoscroll::Fit),
-                            cx,
-                        );
+                        let range_to_select = ranges[new_index].clone();
+                        editor.unfold_ranges([range_to_select.clone()], false, cx);
+                        editor.select_ranges([range_to_select], Some(Autoscroll::Fit), cx);
                     }
                 });
             }

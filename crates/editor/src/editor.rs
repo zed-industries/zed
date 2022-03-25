@@ -122,7 +122,7 @@ action!(ConfirmRename);
 action!(PageUp);
 action!(PageDown);
 action!(Fold);
-action!(Unfold);
+action!(UnfoldLines);
 action!(FoldSelectedRanges);
 action!(Scroll, Vector2F);
 action!(Select, SelectPhase);
@@ -263,7 +263,7 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("pageup", PageUp, Some("Editor")),
         Binding::new("pagedown", PageDown, Some("Editor")),
         Binding::new("alt-cmd-[", Fold, Some("Editor")),
-        Binding::new("alt-cmd-]", Unfold, Some("Editor")),
+        Binding::new("alt-cmd-]", UnfoldLines, Some("Editor")),
         Binding::new("alt-cmd-f", FoldSelectedRanges, Some("Editor")),
         Binding::new("ctrl-space", ShowCompletions, Some("Editor")),
         Binding::new("cmd-.", ToggleCodeActions(false), Some("Editor")),
@@ -329,7 +329,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::page_up);
     cx.add_action(Editor::page_down);
     cx.add_action(Editor::fold);
-    cx.add_action(Editor::unfold);
+    cx.add_action(Editor::unfold_lines);
     cx.add_action(Editor::fold_selected_ranges);
     cx.add_action(Editor::show_completions);
     cx.add_action(Editor::toggle_code_actions);
@@ -3138,7 +3138,7 @@ impl Editor {
         }
 
         self.transact(cx, |this, cx| {
-            this.unfold_ranges(unfold_ranges, cx);
+            this.unfold_ranges(unfold_ranges, true, cx);
             this.buffer.update(cx, |buffer, cx| {
                 for (range, text) in edits {
                     buffer.edit([range], text, cx);
@@ -3241,7 +3241,7 @@ impl Editor {
         }
 
         self.transact(cx, |this, cx| {
-            this.unfold_ranges(unfold_ranges, cx);
+            this.unfold_ranges(unfold_ranges, true, cx);
             this.buffer.update(cx, |buffer, cx| {
                 for (range, text) in edits {
                     buffer.edit([range], text, cx);
@@ -3766,7 +3766,7 @@ impl Editor {
                 to_unfold.push(selection.start..selection.end);
             }
         }
-        self.unfold_ranges(to_unfold, cx);
+        self.unfold_ranges(to_unfold, true, cx);
         self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
     }
 
@@ -3925,6 +3925,7 @@ impl Editor {
                         reversed: false,
                         goal: SelectionGoal::None,
                     });
+                    self.unfold_ranges([next_selected_range], false, cx);
                     self.update_selections(selections, Some(Autoscroll::Newest), cx);
                 } else {
                     select_next_state.done = true;
@@ -3952,6 +3953,7 @@ impl Editor {
                     wordwise: true,
                     done: false,
                 };
+                self.unfold_ranges([selection.start..selection.end], false, cx);
                 self.update_selections(selections, Some(Autoscroll::Newest), cx);
                 self.select_next_state = Some(select_state);
             } else {
@@ -5196,7 +5198,7 @@ impl Editor {
         self.fold_ranges(fold_ranges, cx);
     }
 
-    pub fn unfold(&mut self, _: &Unfold, cx: &mut ViewContext<Self>) {
+    pub fn unfold_lines(&mut self, _: &UnfoldLines, cx: &mut ViewContext<Self>) {
         let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
@@ -5211,7 +5213,7 @@ impl Editor {
                 start..end
             })
             .collect::<Vec<_>>();
-        self.unfold_ranges(ranges, cx);
+        self.unfold_ranges(ranges, true, cx);
     }
 
     fn is_line_foldable(&self, display_map: &DisplaySnapshot, display_row: u32) -> bool {
@@ -5262,7 +5264,7 @@ impl Editor {
         self.fold_ranges(ranges, cx);
     }
 
-    fn fold_ranges<T: ToOffset>(
+    pub fn fold_ranges<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &mut ViewContext<Self>,
@@ -5275,10 +5277,16 @@ impl Editor {
         }
     }
 
-    fn unfold_ranges<T: ToOffset>(&mut self, ranges: Vec<Range<T>>, cx: &mut ViewContext<Self>) {
-        if !ranges.is_empty() {
+    pub fn unfold_ranges<T: ToOffset>(
+        &mut self,
+        ranges: impl IntoIterator<Item = Range<T>>,
+        inclusive: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let mut ranges = ranges.into_iter().peekable();
+        if ranges.peek().is_some() {
             self.display_map
-                .update(cx, |map, cx| map.unfold(ranges, cx));
+                .update(cx, |map, cx| map.unfold(ranges, inclusive, cx));
             self.request_autoscroll(Autoscroll::Fit, cx);
             cx.notify();
         }
@@ -6581,7 +6589,7 @@ mod tests {
                 .unindent(),
             );
 
-            view.unfold(&Unfold, cx);
+            view.unfold_lines(&UnfoldLines, cx);
             assert_eq!(
                 view.display_text(cx),
                 "
@@ -6602,7 +6610,7 @@ mod tests {
                 .unindent(),
             );
 
-            view.unfold(&Unfold, cx);
+            view.unfold_lines(&UnfoldLines, cx);
             assert_eq!(view.display_text(cx), buffer.read(cx).read(cx).text());
         });
     }
