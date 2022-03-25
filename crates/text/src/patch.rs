@@ -200,7 +200,7 @@ where
         }
     }
 
-    pub fn transform_old(&self, old: T) -> T {
+    pub fn old_to_new(&self, old: T) -> T {
         let ix = match self.0.binary_search_by(|probe| probe.old.start.cmp(&old)) {
             Ok(ix) => ix,
             Err(ix) => {
@@ -458,7 +458,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_transform_old() {
+    fn test_old_to_new() {
         let patch = Patch(vec![
             Edit {
                 old: 2..4,
@@ -469,16 +469,16 @@ mod tests {
                 new: 7..11,
             },
         ]);
-        assert_eq!(patch.transform_old(0), 0);
-        assert_eq!(patch.transform_old(1), 1);
-        assert_eq!(patch.transform_old(2), 2);
-        assert_eq!(patch.transform_old(3), 2);
-        assert_eq!(patch.transform_old(4), 4);
-        assert_eq!(patch.transform_old(5), 5);
-        assert_eq!(patch.transform_old(6), 6);
-        assert_eq!(patch.transform_old(7), 7);
-        assert_eq!(patch.transform_old(8), 11);
-        assert_eq!(patch.transform_old(9), 12);
+        assert_eq!(patch.old_to_new(0), 0);
+        assert_eq!(patch.old_to_new(1), 1);
+        assert_eq!(patch.old_to_new(2), 2);
+        assert_eq!(patch.old_to_new(3), 2);
+        assert_eq!(patch.old_to_new(4), 4);
+        assert_eq!(patch.old_to_new(5), 5);
+        assert_eq!(patch.old_to_new(6), 6);
+        assert_eq!(patch.old_to_new(7), 7);
+        assert_eq!(patch.old_to_new(8), 11);
+        assert_eq!(patch.old_to_new(9), 12);
     }
 
     #[gpui::test(iterations = 100)]
