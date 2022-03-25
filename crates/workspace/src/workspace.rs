@@ -1278,7 +1278,7 @@ impl Workspace {
         self.project.update(cx, |project, cx| {
             if project.is_local() {
                 if project.is_shared() {
-                    project.unshare(cx).detach();
+                    project.unshare(cx);
                 } else {
                     project.share(cx).detach();
                 }

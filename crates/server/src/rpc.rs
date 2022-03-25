@@ -1310,10 +1310,7 @@ mod tests {
             .unwrap();
 
         // Unshare the project as client A
-        project_a
-            .update(cx_a, |project, cx| project.unshare(cx))
-            .await
-            .unwrap();
+        project_a.update(cx_a, |project, cx| project.unshare(cx));
         project_b
             .condition(cx_b, |project, _| project.is_read_only())
             .await;

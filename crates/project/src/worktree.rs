@@ -711,7 +711,9 @@ impl LocalWorktree {
                 let worktree = this.as_local_mut().unwrap();
                 match response {
                     Ok(_) => {
-                        worktree.registration = Registration::Done { project_id };
+                        if worktree.registration == Registration::Pending {
+                            worktree.registration = Registration::Done { project_id };
+                        }
                         Ok(())
                     }
                     Err(error) => {
@@ -806,6 +808,11 @@ impl LocalWorktree {
                 .await
                 .unwrap_or_else(|| Err(anyhow!("share ended")))
         })
+    }
+
+    pub fn unregister(&mut self) {
+        self.unshare();
+        self.registration = Registration::None;
     }
 
     pub fn unshare(&mut self) {
