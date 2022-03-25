@@ -18,8 +18,8 @@ use language::{
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, Anchor, Bias, Buffer, CodeAction, CodeLabel, Completion, Diagnostic,
     DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _, Language, LanguageRegistry,
-    LocalFile, OffsetRangeExt, Operation, PointUtf16, TextBufferSnapshot, ToLspPosition, ToOffset,
-    ToPointUtf16, Transaction,
+    LocalFile, OffsetRangeExt, Operation, Patch, PointUtf16, TextBufferSnapshot, ToLspPosition,
+    ToOffset, ToPointUtf16, Transaction,
 };
 use lsp::{DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer};
 use lsp_command::*;
@@ -1866,38 +1866,23 @@ impl Project {
         });
 
         let mut sanitized_diagnostics = Vec::new();
-        let mut edits_since_save = snapshot
-            .edits_since::<PointUtf16>(buffer.read(cx).saved_version())
-            .peekable();
-        let mut last_edit_old_end = PointUtf16::zero();
-        let mut last_edit_new_end = PointUtf16::zero();
-        'outer: for entry in diagnostics {
-            let mut start = entry.range.start;
-            let mut end = entry.range.end;
-
-            // Some diagnostics are based on files on disk instead of buffers'
-            // current contents. Adjust these diagnostics' ranges to reflect
-            // any unsaved edits.
+        let edits_since_save = Patch::new(
+            snapshot
+                .edits_since::<PointUtf16>(buffer.read(cx).saved_version())
+                .collect(),
+        );
+        for entry in diagnostics {
+            let start;
+            let end;
             if entry.diagnostic.is_disk_based {
-                while let Some(edit) = edits_since_save.peek() {
-                    if edit.old.end <= start {
-                        last_edit_old_end = edit.old.end;
-                        last_edit_new_end = edit.new.end;
-                        edits_since_save.next();
-                    } else if edit.old.start <= end && edit.old.end >= start {
-                        continue 'outer;
-                    } else {
-                        break;
-                    }
-                }
-
-                let start_overshoot = start - last_edit_old_end;
-                start = last_edit_new_end;
-                start += start_overshoot;
-
-                let end_overshoot = end - last_edit_old_end;
-                end = last_edit_new_end;
-                end += end_overshoot;
+                // Some diagnostics are based on files on disk instead of buffers'
+                // current contents. Adjust these diagnostics' ranges to reflect
+                // any unsaved edits.
+                start = edits_since_save.old_to_new(entry.range.start);
+                end = edits_since_save.old_to_new(entry.range.end);
+            } else {
+                start = entry.range.start;
+                end = entry.range.end;
             }
 
             let mut range = snapshot.clip_point_utf16(start, Bias::Left)
@@ -5018,7 +5003,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_transforming_disk_based_diagnostics(cx: &mut gpui::TestAppContext) {
+    async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
 
         let (mut lsp_config, mut fake_servers) = LanguageServerConfig::fake();
@@ -5243,11 +5228,13 @@ mod tests {
         buffer.update(cx, |buffer, cx| {
             buffer.edit(Some(Point::new(2, 0)..Point::new(2, 0)), "    ", cx);
             buffer.edit(Some(Point::new(2, 8)..Point::new(2, 10)), "(x: usize)", cx);
+            buffer.edit(Some(Point::new(3, 10)..Point::new(3, 10)), "xxx", cx);
         });
-        let change_notification_2 =
-            fake_server.receive_notification::<lsp::notification::DidChangeTextDocument>();
+        let change_notification_2 = fake_server
+            .receive_notification::<lsp::notification::DidChangeTextDocument>()
+            .await;
         assert!(
-            change_notification_2.await.text_document.version
+            change_notification_2.text_document.version
                 > change_notification_1.text_document.version
         );
 
@@ -5255,7 +5242,7 @@ mod tests {
         fake_server.notify::<lsp::notification::PublishDiagnostics>(
             lsp::PublishDiagnosticsParams {
                 uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
-                version: Some(open_notification.text_document.version),
+                version: Some(change_notification_2.text_document.version),
                 diagnostics: vec![
                     lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(1, 11)),
@@ -5295,7 +5282,7 @@ mod tests {
                         }
                     },
                     DiagnosticEntry {
-                        range: Point::new(3, 9)..Point::new(3, 11),
+                        range: Point::new(3, 9)..Point::new(3, 14),
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'BB'".to_string(),
