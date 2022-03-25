@@ -1310,10 +1310,7 @@ mod tests {
             .unwrap();
 
         // Unshare the project as client A
-        project_a
-            .update(cx_a, |project, cx| project.unshare(cx))
-            .await
-            .unwrap();
+        project_a.update(cx_a, |project, cx| project.unshare(cx));
         project_b
             .condition(cx_b, |project, _| project.is_read_only())
             .await;
@@ -1321,6 +1318,107 @@ mod tests {
         cx_b.update(|_| {
             drop(project_b);
         });
+
+        // Share the project again and ensure guests can still join.
+        project_a
+            .update(cx_a, |project, cx| project.share(cx))
+            .await
+            .unwrap();
+        assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
+
+        let project_b2 = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+        project_b2
+            .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+            .await
+            .unwrap();
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_host_disconnect(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+        let lang_registry = Arc::new(LanguageRegistry::test());
+        let fs = FakeFs::new(cx_a.background());
+        cx_a.foreground().forbid_parking();
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
+
+        // Share a project as client A
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "a.txt": "a-contents",
+                "b.txt": "b-contents",
+            }),
+        )
+        .await;
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let (worktree_a, _) = project_a
+            .update(cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/a", true, cx)
+            })
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
+        assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
+
+        // Join that project as client B
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+        project_b
+            .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+            .await
+            .unwrap();
+
+        // Drop client A's connection. Collaborators should disappear and the project should not be shown as shared.
+        server.disconnect_client(client_a.current_user_id(cx_a));
+        cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
+        project_a
+            .condition(cx_a, |project, _| project.collaborators().is_empty())
+            .await;
+        project_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
+        project_b
+            .condition(cx_b, |project, _| project.is_read_only())
+            .await;
+        assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
+        cx_b.update(|_| {
+            drop(project_b);
+        });
+
+        // Await reconnection
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
 
         // Share the project again and ensure guests can still join.
         project_a

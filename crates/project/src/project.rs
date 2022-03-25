@@ -302,31 +302,11 @@ impl Project {
                         let mut status = rpc.status();
                         while let Some(status) = status.next().await {
                             if let Some(this) = this.upgrade(&cx) {
-                                let remote_id = if status.is_connected() {
-                                    let response = rpc.request(proto::RegisterProject {}).await?;
-                                    Some(response.project_id)
+                                if status.is_connected() {
+                                    this.update(&mut cx, |this, cx| this.register(cx)).await?;
                                 } else {
-                                    None
-                                };
-
-                                if let Some(project_id) = remote_id {
-                                    let mut registrations = Vec::new();
-                                    this.update(&mut cx, |this, cx| {
-                                        for worktree in this.worktrees(cx).collect::<Vec<_>>() {
-                                            registrations.push(worktree.update(
-                                                cx,
-                                                |worktree, cx| {
-                                                    let worktree = worktree.as_local_mut().unwrap();
-                                                    worktree.register(project_id, cx)
-                                                },
-                                            ));
-                                        }
-                                    });
-                                    for registration in registrations {
-                                        registration.await?;
-                                    }
+                                    this.update(&mut cx, |this, cx| this.unregister(cx));
                                 }
-                                this.update(&mut cx, |this, cx| this.set_remote_id(remote_id, cx));
                             }
                         }
                         Ok(())
@@ -558,17 +538,54 @@ impl Project {
         &self.fs
     }
 
-    fn set_remote_id(&mut self, remote_id: Option<u64>, cx: &mut ModelContext<Self>) {
+    fn unregister(&mut self, cx: &mut ModelContext<Self>) {
+        self.unshare(cx);
+        for worktree in &self.worktrees {
+            if let Some(worktree) = worktree.upgrade(cx) {
+                worktree.update(cx, |worktree, _| {
+                    worktree.as_local_mut().unwrap().unregister();
+                });
+            }
+        }
+
         if let ProjectClientState::Local { remote_id_tx, .. } = &mut self.client_state {
-            *remote_id_tx.borrow_mut() = remote_id;
+            *remote_id_tx.borrow_mut() = None;
         }
 
         self.subscriptions.clear();
-        if let Some(remote_id) = remote_id {
-            self.subscriptions
-                .push(self.client.add_model_for_remote_entity(remote_id, cx));
-        }
-        cx.emit(Event::RemoteIdChanged(remote_id))
+    }
+
+    fn register(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        self.unregister(cx);
+
+        let response = self.client.request(proto::RegisterProject {});
+        cx.spawn(|this, mut cx| async move {
+            let remote_id = response.await?.project_id;
+
+            let mut registrations = Vec::new();
+            this.update(&mut cx, |this, cx| {
+                if let ProjectClientState::Local { remote_id_tx, .. } = &mut this.client_state {
+                    *remote_id_tx.borrow_mut() = Some(remote_id);
+                }
+
+                cx.emit(Event::RemoteIdChanged(Some(remote_id)));
+
+                this.subscriptions
+                    .push(this.client.add_model_for_remote_entity(remote_id, cx));
+
+                for worktree in &this.worktrees {
+                    if let Some(worktree) = worktree.upgrade(cx) {
+                        registrations.push(worktree.update(cx, |worktree, cx| {
+                            let worktree = worktree.as_local_mut().unwrap();
+                            worktree.register(remote_id, cx)
+                        }));
+                    }
+                }
+            });
+
+            futures::future::try_join_all(registrations).await?;
+            Ok(())
+        })
     }
 
     pub fn remote_id(&self) -> Option<u64> {
@@ -725,59 +742,51 @@ impl Project {
         })
     }
 
-    pub fn unshare(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn unshare(&mut self, cx: &mut ModelContext<Self>) {
         let rpc = self.client.clone();
-        cx.spawn(|this, mut cx| async move {
-            let project_id = this.update(&mut cx, |this, cx| {
-                if let ProjectClientState::Local {
-                    is_shared,
-                    remote_id_rx,
-                    ..
-                } = &mut this.client_state
-                {
-                    *is_shared = false;
 
-                    for open_buffer in this.opened_buffers.values_mut() {
-                        match open_buffer {
-                            OpenBuffer::Strong(buffer) => {
-                                *open_buffer = OpenBuffer::Weak(buffer.downgrade());
-                            }
-                            _ => {}
-                        }
-                    }
+        if let ProjectClientState::Local {
+            is_shared,
+            remote_id_rx,
+            ..
+        } = &mut self.client_state
+        {
+            if !*is_shared {
+                return;
+            }
 
-                    for worktree_handle in this.worktrees.iter_mut() {
-                        match worktree_handle {
-                            WorktreeHandle::Strong(worktree) => {
-                                if !worktree.read(cx).is_visible() {
-                                    *worktree_handle = WorktreeHandle::Weak(worktree.downgrade());
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    remote_id_rx
-                        .borrow()
-                        .ok_or_else(|| anyhow!("no project id"))
-                } else {
-                    Err(anyhow!("can't share a remote project"))
-                }
-            })?;
-
-            rpc.send(proto::UnshareProject { project_id })?;
-            this.update(&mut cx, |this, cx| {
-                this.collaborators.clear();
-                this.shared_buffers.clear();
-                for worktree in this.worktrees(cx).collect::<Vec<_>>() {
-                    worktree.update(cx, |worktree, _| {
+            *is_shared = false;
+            self.collaborators.clear();
+            self.shared_buffers.clear();
+            for worktree_handle in self.worktrees.iter_mut() {
+                if let WorktreeHandle::Strong(worktree) = worktree_handle {
+                    let is_visible = worktree.update(cx, |worktree, _| {
                         worktree.as_local_mut().unwrap().unshare();
+                        worktree.is_visible()
                     });
+                    if !is_visible {
+                        *worktree_handle = WorktreeHandle::Weak(worktree.downgrade());
+                    }
                 }
-                cx.notify()
-            });
-            Ok(())
-        })
+            }
+
+            for open_buffer in self.opened_buffers.values_mut() {
+                match open_buffer {
+                    OpenBuffer::Strong(buffer) => {
+                        *open_buffer = OpenBuffer::Weak(buffer.downgrade());
+                    }
+                    _ => {}
+                }
+            }
+
+            if let Some(project_id) = *remote_id_rx.borrow() {
+                rpc.send(proto::UnshareProject { project_id }).log_err();
+            }
+
+            cx.notify();
+        } else {
+            log::error!("attempted to unshare a remote project");
+        }
     }
 
     fn project_unshared(&mut self, cx: &mut ModelContext<Self>) {
