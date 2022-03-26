@@ -18,11 +18,13 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 fn normal_before(_: &mut Workspace, _: &NormalBefore, cx: &mut ViewContext<Workspace>) {
-    VimState::update_active_editor(cx, |editor, cx| {
-        editor.move_cursors(cx, |map, mut cursor, _| {
-            *cursor.column_mut() = cursor.column().saturating_sub(1);
-            (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
+    VimState::update_global(cx, |state, cx| {
+        state.update_active_editor(cx, |editor, cx| {
+            editor.move_cursors(cx, |map, mut cursor, _| {
+                *cursor.column_mut() = cursor.column().saturating_sub(1);
+                (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
+            });
         });
-    });
-    VimState::switch_mode(&SwitchMode(Mode::Normal), cx);
+        state.switch_mode(&SwitchMode(Mode::Normal), cx);
+    })
 }
