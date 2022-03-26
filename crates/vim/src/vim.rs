@@ -1,5 +1,4 @@
 mod editor_events;
-mod editor_utils;
 mod insert;
 mod mode;
 mod normal;
@@ -8,7 +7,6 @@ mod vim_tests;
 
 use collections::HashMap;
 use editor::{CursorShape, Editor};
-use editor_utils::VimEditorExt;
 use gpui::{action, MutableAppContext, ViewContext, WeakViewHandle};
 
 use mode::Mode;
@@ -49,21 +47,11 @@ impl VimState {
     }
 
     fn switch_mode(SwitchMode(mode): &SwitchMode, cx: &mut MutableAppContext) {
-        let active_editor = cx.update_default_global(|this: &mut Self, _| {
+        cx.update_default_global(|this: &mut Self, _| {
             this.mode = *mode;
-            this.active_editor.clone()
         });
 
-        if let Some(active_editor) = active_editor.and_then(|e| e.upgrade(cx)) {
-            active_editor.update(cx, |active_editor, cx| {
-                active_editor.set_keymap_context_layer::<Self>(mode.keymap_context_layer());
-                active_editor.set_input_enabled(*mode == Mode::Insert);
-                if *mode != Mode::Insert {
-                    active_editor.clip_selections(cx);
-                }
-            });
-        }
-        VimState::update_cursor_shapes(cx);
+        VimState::sync_editor_options(cx);
     }
 
     fn settings_changed(cx: &mut MutableAppContext) {
@@ -76,20 +64,29 @@ impl VimState {
                 } else {
                     Mode::Insert
                 };
-                Self::update_cursor_shapes(cx);
+                Self::sync_editor_options(cx);
             }
         });
     }
 
-    fn update_cursor_shapes(cx: &mut MutableAppContext) {
+    fn sync_editor_options(cx: &mut MutableAppContext) {
         cx.defer(move |cx| {
             cx.update_default_global(|this: &mut VimState, cx| {
-                let cursor_shape = this.mode.cursor_shape();
+                let mode = this.mode;
+                let cursor_shape = mode.cursor_shape();
+                let keymap_layer_active = this.enabled;
                 for editor in this.editors.values() {
                     if let Some(editor) = editor.upgrade(cx) {
                         editor.update(cx, |editor, cx| {
                             editor.set_cursor_shape(cursor_shape, cx);
                             editor.set_clip_at_line_ends(cursor_shape == CursorShape::Block, cx);
+                            editor.set_input_enabled(mode == Mode::Insert);
+                            if keymap_layer_active {
+                                let context_layer = mode.keymap_context_layer();
+                                editor.set_keymap_context_layer::<Self>(context_layer);
+                            } else {
+                                editor.remove_keymap_context_layer::<Self>();
+                            }
                         });
                     }
                 }

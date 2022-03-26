@@ -1,8 +1,10 @@
+use indoc::indoc;
 use std::ops::Deref;
 
 use editor::{display_map::ToDisplayPoint, DisplayPoint};
 use gpui::{json::json, keymap::Keystroke, ViewHandle};
 use language::{Point, Selection};
+use util::test::marked_text;
 use workspace::{WorkspaceHandle, WorkspaceParams};
 
 use crate::*;
@@ -10,46 +12,98 @@ use crate::*;
 #[gpui::test]
 async fn test_insert_mode(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestAppContext::new(cx, "").await;
-    assert_eq!(cx.mode(), Mode::Normal);
     cx.simulate_keystroke("i");
     assert_eq!(cx.mode(), Mode::Insert);
     cx.simulate_keystrokes(&["T", "e", "s", "t"]);
-    assert_eq!(cx.editor_text(), "Test".to_owned());
+    cx.assert_newest_selection_head("Test|");
     cx.simulate_keystroke("escape");
     assert_eq!(cx.mode(), Mode::Normal);
+    cx.assert_newest_selection_head("Tes|t");
 }
 
 #[gpui::test]
 async fn test_normal_hjkl(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestAppContext::new(cx, "Test\nTestTest\nTest").await;
-    assert_eq!(cx.mode(), Mode::Normal);
     cx.simulate_keystroke("l");
-    assert_eq!(cx.newest_selection().head(), DisplayPoint::new(0, 1));
+    cx.assert_newest_selection_head(indoc! {"
+        T|est
+        TestTest
+        Test"});
     cx.simulate_keystroke("h");
-    assert_eq!(cx.newest_selection().head(), DisplayPoint::new(0, 0));
+    cx.assert_newest_selection_head(indoc! {"
+        |Test
+        TestTest
+        Test"});
     cx.simulate_keystroke("j");
-    assert_eq!(cx.newest_selection().head(), DisplayPoint::new(1, 0));
+    cx.assert_newest_selection_head(indoc! {"
+        Test
+        |TestTest
+        Test"});
     cx.simulate_keystroke("k");
-    assert_eq!(cx.newest_selection().head(), DisplayPoint::new(0, 0));
-
+    cx.assert_newest_selection_head(indoc! {"
+        |Test
+        TestTest
+        Test"});
     cx.simulate_keystroke("j");
-    assert_eq!(cx.newest_selection().head(), DisplayPoint::new(1, 0));
+    cx.assert_newest_selection_head(indoc! {"
+        Test
+        |TestTest
+        Test"});
 
     // When moving left, cursor does not wrap to the previous line
     cx.simulate_keystroke("h");
-    assert_eq!(cx.newest_selection().head(), DisplayPoint::new(1, 0));
+    cx.assert_newest_selection_head(indoc! {"
+        Test
+        |TestTest
+        Test"});
 
     // When moving right, cursor does not reach the line end or wrap to the next line
     for _ in 0..9 {
         cx.simulate_keystroke("l");
     }
-    assert_eq!(cx.newest_selection().head(), DisplayPoint::new(1, 7));
+    cx.assert_newest_selection_head(indoc! {"
+        Test
+        TestTes|t
+        Test"});
 
     // Goal column respects the inability to reach the end of the line
     cx.simulate_keystroke("k");
-    assert_eq!(cx.newest_selection().head(), DisplayPoint::new(0, 3));
+    cx.assert_newest_selection_head(indoc! {"
+        Tes|t
+        TestTest
+        Test"});
     cx.simulate_keystroke("j");
-    assert_eq!(cx.newest_selection().head(), DisplayPoint::new(1, 7));
+    cx.assert_newest_selection_head(indoc! {"
+        Test
+        TestTes|t
+        Test"});
+}
+
+#[gpui::test]
+async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestAppContext::new(cx, "").await;
+
+    // Editor acts as though vim is disabled
+    cx.disable_vim();
+    assert_eq!(cx.mode(), Mode::Insert);
+    cx.simulate_keystrokes(&["h", "j", "k", "l"]);
+    cx.assert_newest_selection_head("hjkl|");
+
+    // Enabling dynamically sets vim mode again
+    cx.enable_vim();
+    assert_eq!(cx.mode(), Mode::Normal);
+    cx.simulate_keystrokes(&["h", "h", "h", "l"]);
+    assert_eq!(cx.editor_text(), "hjkl".to_owned());
+    cx.assert_newest_selection_head("hj|kl");
+    cx.simulate_keystrokes(&["i", "T", "e", "s", "t"]);
+    cx.assert_newest_selection_head("hjTest|kl");
+
+    // Disabling and enabling resets to normal mode
+    assert_eq!(cx.mode(), Mode::Insert);
+    cx.disable_vim();
+    assert_eq!(cx.mode(), Mode::Insert);
+    cx.enable_vim();
+    assert_eq!(cx.mode(), Mode::Normal);
 }
 
 struct VimTestAppContext<'a> {
@@ -68,6 +122,13 @@ impl<'a> VimTestAppContext<'a> {
             crate::init(cx);
         });
         let params = cx.update(WorkspaceParams::test);
+
+        cx.update(|cx| {
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.vim_mode = true;
+            });
+        });
+
         params
             .fs
             .as_fake()
@@ -107,6 +168,22 @@ impl<'a> VimTestAppContext<'a> {
         }
     }
 
+    fn enable_vim(&mut self) {
+        self.cx.update(|cx| {
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.vim_mode = true;
+            });
+        })
+    }
+
+    fn disable_vim(&mut self) {
+        self.cx.update(|cx| {
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.vim_mode = false;
+            });
+        })
+    }
+
     fn newest_selection(&mut self) -> Selection<DisplayPoint> {
         self.editor.update(self.cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
@@ -140,6 +217,20 @@ impl<'a> VimTestAppContext<'a> {
         for keystroke_text in keystroke_texts.into_iter() {
             self.simulate_keystroke(keystroke_text);
         }
+    }
+
+    fn assert_newest_selection_head(&mut self, text: &str) {
+        let (unmarked_text, markers) = marked_text(&text);
+        assert_eq!(
+            self.editor_text(),
+            unmarked_text,
+            "Unmarked text doesn't match editor text"
+        );
+        let newest_selection = self.newest_selection();
+        let expected_head = self.editor.update(self.cx, |editor, cx| {
+            markers[0].to_display_point(&editor.snapshot(cx))
+        });
+        assert_eq!(newest_selection.head(), expected_head)
     }
 }
 

@@ -6167,7 +6167,6 @@ pub fn styled_runs_for_code_label<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::test::marked_text_by;
 
     use super::*;
     use gpui::{
@@ -6181,7 +6180,7 @@ mod tests {
     use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
-    use util::test::sample_text;
+    use util::test::{marked_text_by, sample_text};
     use workspace::FollowableItem;
 
     #[gpui::test]

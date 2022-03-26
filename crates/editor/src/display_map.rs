@@ -498,17 +498,14 @@ impl ToDisplayPoint for Anchor {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::{
-        movement,
-        test::{marked_display_snapshot, marked_text_ranges},
-    };
+    use crate::{movement, test::marked_display_snapshot};
     use gpui::{color::Color, elements::*, test::observe, MutableAppContext};
     use language::{Buffer, Language, LanguageConfig, RandomCharIter, SelectionGoal};
     use rand::{prelude::*, Rng};
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
-    use util::test::sample_text;
+    use util::test::{marked_text_ranges, sample_text};
     use Bias::*;
 
     #[gpui::test(iterations = 100)]

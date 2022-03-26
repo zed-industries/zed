@@ -13,9 +13,7 @@ pub fn init(cx: &mut MutableAppContext) {
 fn editor_created(EditorCreated(editor): &EditorCreated, cx: &mut MutableAppContext) {
     cx.update_default_global(|vim_state: &mut VimState, cx| {
         vim_state.editors.insert(editor.id(), editor.downgrade());
-        if vim_state.enabled {
-            VimState::update_cursor_shapes(cx);
-        }
+        VimState::sync_editor_options(cx);
     })
 }
 
@@ -40,9 +38,7 @@ fn editor_blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut MutableAppCont
             }
         }
     });
-    editor.update(cx, |editor, _| {
-        editor.remove_keymap_context_layer::<VimState>();
-    })
+    VimState::sync_editor_options(cx);
 }
 
 fn editor_released(EditorReleased(editor): &EditorReleased, cx: &mut MutableAppContext) {
