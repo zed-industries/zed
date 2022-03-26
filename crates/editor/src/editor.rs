@@ -456,6 +456,8 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
+    keymap_context_layers: BTreeMap<TypeId, gpui::keymap::Context>,
+    input_enabled: bool,
     leader_replica_id: Option<u16>,
 }
 
@@ -932,6 +934,8 @@ impl Editor {
             searchable: true,
             override_text_style: None,
             cursor_shape: Default::default(),
+            keymap_context_layers: Default::default(),
+            input_enabled: true,
             leader_replica_id: None,
         };
         this.end_selection(cx);
@@ -1000,6 +1004,10 @@ impl Editor {
         )
     }
 
+    pub fn mode(&self) -> EditorMode {
+        self.mode
+    }
+
     pub fn set_placeholder_text(
         &mut self,
         placeholder_text: impl Into<Arc<str>>,
@@ -1061,6 +1069,24 @@ impl Editor {
     pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape, cx: &mut ViewContext<Self>) {
         self.cursor_shape = cursor_shape;
         cx.notify();
+    }
+
+    pub fn set_clip_at_line_ends(&mut self, clip: bool, cx: &mut ViewContext<Self>) {
+        self.display_map
+            .update(cx, |map, _| map.clip_at_line_ends = clip);
+    }
+
+    pub fn set_keymap_context_layer<Tag: 'static>(&mut self, context: gpui::keymap::Context) {
+        self.keymap_context_layers
+            .insert(TypeId::of::<Tag>(), context);
+    }
+
+    pub fn remove_keymap_context_layer<Tag: 'static>(&mut self) {
+        self.keymap_context_layers.remove(&TypeId::of::<Tag>());
+    }
+
+    pub fn set_input_enabled(&mut self, input_enabled: bool) {
+        self.input_enabled = input_enabled;
     }
 
     pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> Vector2F {
@@ -1742,6 +1768,11 @@ impl Editor {
     }
 
     pub fn handle_input(&mut self, action: &Input, cx: &mut ViewContext<Self>) {
+        if !self.input_enabled {
+            cx.propagate_action();
+            return;
+        }
+
         let text = action.0.as_ref();
         if !self.skip_autoclose_end(text, cx) {
             self.transact(cx, |this, cx| {
@@ -5741,26 +5772,31 @@ impl View for Editor {
     }
 
     fn keymap_context(&self, _: &AppContext) -> gpui::keymap::Context {
-        let mut cx = Self::default_keymap_context();
+        let mut context = Self::default_keymap_context();
         let mode = match self.mode {
             EditorMode::SingleLine => "single_line",
             EditorMode::AutoHeight { .. } => "auto_height",
             EditorMode::Full => "full",
         };
-        cx.map.insert("mode".into(), mode.into());
+        context.map.insert("mode".into(), mode.into());
         if self.pending_rename.is_some() {
-            cx.set.insert("renaming".into());
+            context.set.insert("renaming".into());
         }
         match self.context_menu.as_ref() {
             Some(ContextMenu::Completions(_)) => {
-                cx.set.insert("showing_completions".into());
+                context.set.insert("showing_completions".into());
             }
             Some(ContextMenu::CodeActions(_)) => {
-                cx.set.insert("showing_code_actions".into());
+                context.set.insert("showing_code_actions".into());
             }
             None => {}
         }
-        cx
+
+        for layer in self.keymap_context_layers.values() {
+            context.extend(layer);
+        }
+
+        context
     }
 }
 
@@ -6139,7 +6175,6 @@ pub fn styled_runs_for_code_label<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::test::marked_text_by;
 
     use super::*;
     use gpui::{
@@ -6153,7 +6188,7 @@ mod tests {
     use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
-    use util::test::sample_text;
+    use util::test::{marked_text_by, sample_text};
     use workspace::FollowableItem;
 
     #[gpui::test]

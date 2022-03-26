@@ -78,6 +78,7 @@ fn main() {
         project_panel::init(cx);
         diagnostics::init(cx);
         search::init(cx);
+        vim::init(cx);
         cx.spawn({
             let client = client.clone();
             |cx| async move {

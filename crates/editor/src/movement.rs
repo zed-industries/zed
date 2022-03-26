@@ -266,13 +266,13 @@ pub fn surrounding_word(map: &DisplaySnapshot, position: DisplayPoint) -> Range<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test::marked_text, Buffer, DisplayMap, MultiBuffer};
+    use crate::{test::marked_display_snapshot, Buffer, DisplayMap, MultiBuffer};
     use language::Point;
 
     #[gpui::test]
     fn test_previous_word_start(cx: &mut gpui::MutableAppContext) {
         fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
-            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 previous_word_start(&snapshot, display_points[1]),
                 display_points[0]
@@ -298,7 +298,7 @@ mod tests {
     #[gpui::test]
     fn test_previous_subword_start(cx: &mut gpui::MutableAppContext) {
         fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
-            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 previous_subword_start(&snapshot, display_points[1]),
                 display_points[0]
@@ -335,7 +335,7 @@ mod tests {
             cx: &mut gpui::MutableAppContext,
             is_boundary: impl FnMut(char, char) -> bool,
         ) {
-            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 find_preceding_boundary(&snapshot, display_points[1], is_boundary),
                 display_points[0]
@@ -362,7 +362,7 @@ mod tests {
     #[gpui::test]
     fn test_next_word_end(cx: &mut gpui::MutableAppContext) {
         fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
-            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 next_word_end(&snapshot, display_points[0]),
                 display_points[1]
@@ -385,7 +385,7 @@ mod tests {
     #[gpui::test]
     fn test_next_subword_end(cx: &mut gpui::MutableAppContext) {
         fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
-            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 next_subword_end(&snapshot, display_points[0]),
                 display_points[1]
@@ -421,7 +421,7 @@ mod tests {
             cx: &mut gpui::MutableAppContext,
             is_boundary: impl FnMut(char, char) -> bool,
         ) {
-            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 find_boundary(&snapshot, display_points[0], is_boundary),
                 display_points[1]
@@ -448,7 +448,7 @@ mod tests {
     #[gpui::test]
     fn test_surrounding_word(cx: &mut gpui::MutableAppContext) {
         fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
-            let (snapshot, display_points) = marked_snapshot(marked_text, cx);
+            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 surrounding_word(&snapshot, display_points[1]),
                 display_points[0]..display_points[2]
@@ -531,32 +531,5 @@ mod tests {
             down(&snapshot, DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
             (DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
         );
-    }
-
-    // Returns a snapshot from text containing '|' character markers with the markers removed, and DisplayPoints for each one.
-    fn marked_snapshot(
-        text: &str,
-        cx: &mut gpui::MutableAppContext,
-    ) -> (DisplaySnapshot, Vec<DisplayPoint>) {
-        let (unmarked_text, markers) = marked_text(text);
-
-        let tab_size = 4;
-        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
-        let font_id = cx
-            .font_cache()
-            .select_font(family_id, &Default::default())
-            .unwrap();
-        let font_size = 14.0;
-
-        let buffer = MultiBuffer::build_simple(&unmarked_text, cx);
-        let display_map = cx
-            .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
-        let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
-        let markers = markers
-            .into_iter()
-            .map(|offset| offset.to_display_point(&snapshot))
-            .collect();
-
-        (snapshot, markers)
     }
 }

@@ -36,6 +36,7 @@ pub struct DisplayMap {
     wrap_map: ModelHandle<WrapMap>,
     block_map: BlockMap,
     text_highlights: TextHighlights,
+    pub clip_at_line_ends: bool,
 }
 
 impl Entity for DisplayMap {
@@ -67,6 +68,7 @@ impl DisplayMap {
             wrap_map,
             block_map,
             text_highlights: Default::default(),
+            clip_at_line_ends: false,
         }
     }
 
@@ -87,6 +89,7 @@ impl DisplayMap {
             wraps_snapshot,
             blocks_snapshot,
             text_highlights: self.text_highlights.clone(),
+            clip_at_line_ends: self.clip_at_line_ends,
         }
     }
 
@@ -205,6 +208,7 @@ pub struct DisplaySnapshot {
     wraps_snapshot: wrap_map::WrapSnapshot,
     blocks_snapshot: block_map::BlockSnapshot,
     text_highlights: TextHighlights,
+    clip_at_line_ends: bool,
 }
 
 impl DisplaySnapshot {
@@ -332,7 +336,12 @@ impl DisplaySnapshot {
     }
 
     pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
-        DisplayPoint(self.blocks_snapshot.clip_point(point.0, bias))
+        let mut clipped = self.blocks_snapshot.clip_point(point.0, bias);
+        if self.clip_at_line_ends && clipped.column == self.line_len(clipped.row) {
+            clipped.column = clipped.column.saturating_sub(1);
+            clipped = self.blocks_snapshot.clip_point(clipped, Bias::Left);
+        }
+        DisplayPoint(clipped)
     }
 
     pub fn folds_in_range<'a, T>(
@@ -488,19 +497,16 @@ impl ToDisplayPoint for Anchor {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
-    use crate::{
-        movement,
-        test::{marked_text_ranges},
-    };
+    use crate::{movement, test::marked_display_snapshot};
     use gpui::{color::Color, elements::*, test::observe, MutableAppContext};
     use language::{Buffer, Language, LanguageConfig, RandomCharIter, SelectionGoal};
     use rand::{prelude::*, Rng};
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
-    use util::test::sample_text;
+    use util::test::{marked_text_ranges, sample_text};
     use Bias::*;
 
     #[gpui::test(iterations = 100)]
@@ -1133,49 +1139,70 @@ mod tests {
 
     #[gpui::test]
     fn test_clip_point(cx: &mut gpui::MutableAppContext) {
+        fn assert(text: &str, shift_right: bool, bias: Bias, cx: &mut gpui::MutableAppContext) {
+            let (unmarked_snapshot, mut markers) = marked_display_snapshot(text, cx);
+
+            match bias {
+                Bias::Left => {
+                    if shift_right {
+                        *markers[1].column_mut() += 1;
+                    }
+
+                    assert_eq!(unmarked_snapshot.clip_point(markers[1], bias), markers[0])
+                }
+                Bias::Right => {
+                    if shift_right {
+                        *markers[0].column_mut() += 1;
+                    }
+
+                    assert_eq!(
+                        unmarked_snapshot.clip_point(dbg!(markers[0]), bias),
+                        markers[1]
+                    )
+                }
+            };
+        }
+
         use Bias::{Left, Right};
+        assert("||α", false, Left, cx);
+        assert("||α", true, Left, cx);
+        assert("||α", false, Right, cx);
+        assert("|α|", true, Right, cx);
+        assert("||✋", false, Left, cx);
+        assert("||✋", true, Left, cx);
+        assert("||✋", false, Right, cx);
+        assert("|✋|", true, Right, cx);
+        assert("||🍐", false, Left, cx);
+        assert("||🍐", true, Left, cx);
+        assert("||🍐", false, Right, cx);
+        assert("|🍐|", true, Right, cx);
+        assert("||\t", false, Left, cx);
+        assert("||\t", true, Left, cx);
+        assert("||\t", false, Right, cx);
+        assert("|\t|", true, Right, cx);
+        assert(" ||\t", false, Left, cx);
+        assert(" ||\t", true, Left, cx);
+        assert(" ||\t", false, Right, cx);
+        assert(" |\t|", true, Right, cx);
+        assert("   ||\t", false, Left, cx);
+        assert("   ||\t", false, Right, cx);
+    }
 
-        let text = "\n'a', 'α',\t'✋',\t'❎', '🍐'\n";
-        let display_text = "\n'a', 'α',   '✋',    '❎', '🍐'\n";
-        let buffer = MultiBuffer::build_simple(text, cx);
-
-        let tab_size = 4;
-        let font_cache = cx.font_cache();
-        let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
-        let font_id = font_cache
-            .select_font(family_id, &Default::default())
-            .unwrap();
-        let font_size = 14.0;
-        let map = cx.add_model(|cx| {
-            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, 1, 1, cx)
-        });
-        let map = map.update(cx, |map, cx| map.snapshot(cx));
-
-        assert_eq!(map.text(), display_text);
-        for (input_column, bias, output_column) in vec![
-            ("'a', '".len(), Left, "'a', '".len()),
-            ("'a', '".len() + 1, Left, "'a', '".len()),
-            ("'a', '".len() + 1, Right, "'a', 'α".len()),
-            ("'a', 'α', ".len(), Left, "'a', 'α',".len()),
-            ("'a', 'α', ".len(), Right, "'a', 'α',   ".len()),
-            ("'a', 'α',   '".len() + 1, Left, "'a', 'α',   '".len()),
-            ("'a', 'α',   '".len() + 1, Right, "'a', 'α',   '✋".len()),
-            ("'a', 'α',   '✋',".len(), Right, "'a', 'α',   '✋',".len()),
-            ("'a', 'α',   '✋', ".len(), Left, "'a', 'α',   '✋',".len()),
-            (
-                "'a', 'α',   '✋', ".len(),
-                Right,
-                "'a', 'α',   '✋',    ".len(),
-            ),
-        ] {
+    #[gpui::test]
+    fn test_clip_at_line_ends(cx: &mut gpui::MutableAppContext) {
+        fn assert(text: &str, cx: &mut gpui::MutableAppContext) {
+            let (mut unmarked_snapshot, markers) = marked_display_snapshot(text, cx);
+            unmarked_snapshot.clip_at_line_ends = true;
             assert_eq!(
-                map.clip_point(DisplayPoint::new(1, input_column as u32), bias),
-                DisplayPoint::new(1, output_column as u32),
-                "clip_point(({}, {}))",
-                1,
-                input_column,
+                unmarked_snapshot.clip_point(markers[1], Bias::Left),
+                markers[0]
             );
         }
+
+        assert("||", cx);
+        assert("|a|", cx);
+        assert("a|b|", cx);
+        assert("a|α|", cx);
     }
 
     #[gpui::test]
