@@ -7,7 +7,7 @@ mod normal;
 mod vim_tests;
 
 use collections::HashMap;
-use editor::Editor;
+use editor::{CursorShape, Editor};
 use editor_utils::VimEditorExt;
 use gpui::{action, MutableAppContext, ViewContext, WeakViewHandle};
 
@@ -59,7 +59,7 @@ impl VimState {
                 active_editor.set_keymap_context_layer::<Self>(mode.keymap_context_layer());
                 active_editor.set_input_enabled(*mode == Mode::Insert);
                 if *mode != Mode::Insert {
-                    active_editor.adjust_selections(cx);
+                    active_editor.clip_selections(cx);
                 }
             });
         }
@@ -89,6 +89,7 @@ impl VimState {
                     if let Some(editor) = editor.upgrade(cx) {
                         editor.update(cx, |editor, cx| {
                             editor.set_cursor_shape(cursor_shape, cx);
+                            editor.set_clip_at_line_ends(cursor_shape == CursorShape::Block, cx);
                         });
                     }
                 }

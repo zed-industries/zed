@@ -1071,6 +1071,11 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_clip_at_line_ends(&mut self, clip: bool, cx: &mut ViewContext<Self>) {
+        self.display_map
+            .update(cx, |map, _| map.clip_at_line_ends = clip);
+    }
+
     pub fn set_keymap_context_layer<Tag: 'static>(&mut self, context: gpui::keymap::Context) {
         self.keymap_context_layers
             .insert(TypeId::of::<Tag>(), context);

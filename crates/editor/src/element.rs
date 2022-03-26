@@ -1292,7 +1292,7 @@ impl PaintState {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum CursorShape {
     Bar,
     Block,

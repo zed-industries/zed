@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
 use editor::{display_map::ToDisplayPoint, DisplayPoint};
-use gpui::{json::json, keymap::Keystroke, AppContext, ViewHandle};
+use gpui::{json::json, keymap::Keystroke, ViewHandle};
 use language::{Point, Selection};
 use workspace::{WorkspaceHandle, WorkspaceParams};
 
