@@ -71,8 +71,10 @@ action!(Newline);
 action!(Tab);
 action!(Outdent);
 action!(DeleteLine);
-action!(DeleteToPreviousWordBoundary);
-action!(DeleteToNextWordBoundary);
+action!(DeleteToPreviousWordStart);
+action!(DeleteToPreviousSubwordStart);
+action!(DeleteToNextWordEnd);
+action!(DeleteToNextSubwordEnd);
 action!(DeleteToBeginningOfLine);
 action!(DeleteToEndOfLine);
 action!(CutToEndOfLine);
@@ -89,7 +91,9 @@ action!(MoveDown);
 action!(MoveLeft);
 action!(MoveRight);
 action!(MoveToPreviousWordStart);
+action!(MoveToPreviousSubwordStart);
 action!(MoveToNextWordEnd);
+action!(MoveToNextSubwordEnd);
 action!(MoveToBeginningOfLine);
 action!(MoveToEndOfLine);
 action!(MoveToBeginning);
@@ -98,8 +102,10 @@ action!(SelectUp);
 action!(SelectDown);
 action!(SelectLeft);
 action!(SelectRight);
-action!(SelectToPreviousWordBoundary);
-action!(SelectToNextWordBoundary);
+action!(SelectToPreviousWordStart);
+action!(SelectToPreviousSubwordStart);
+action!(SelectToNextWordEnd);
+action!(SelectToNextSubwordEnd);
 action!(SelectToBeginningOfLine, bool);
 action!(SelectToEndOfLine, bool);
 action!(SelectToBeginning);
@@ -173,14 +179,18 @@ pub fn init(cx: &mut MutableAppContext) {
         ),
         Binding::new("shift-tab", Outdent, Some("Editor")),
         Binding::new("ctrl-shift-K", DeleteLine, Some("Editor")),
+        Binding::new("alt-backspace", DeleteToPreviousWordStart, Some("Editor")),
+        Binding::new("alt-h", DeleteToPreviousWordStart, Some("Editor")),
         Binding::new(
-            "alt-backspace",
-            DeleteToPreviousWordBoundary,
+            "ctrl-alt-backspace",
+            DeleteToPreviousSubwordStart,
             Some("Editor"),
         ),
-        Binding::new("alt-h", DeleteToPreviousWordBoundary, Some("Editor")),
-        Binding::new("alt-delete", DeleteToNextWordBoundary, Some("Editor")),
-        Binding::new("alt-d", DeleteToNextWordBoundary, Some("Editor")),
+        Binding::new("ctrl-alt-h", DeleteToPreviousSubwordStart, Some("Editor")),
+        Binding::new("alt-delete", DeleteToNextWordEnd, Some("Editor")),
+        Binding::new("alt-d", DeleteToNextWordEnd, Some("Editor")),
+        Binding::new("ctrl-alt-delete", DeleteToNextSubwordEnd, Some("Editor")),
+        Binding::new("ctrl-alt-d", DeleteToNextSubwordEnd, Some("Editor")),
         Binding::new("cmd-backspace", DeleteToBeginningOfLine, Some("Editor")),
         Binding::new("cmd-delete", DeleteToEndOfLine, Some("Editor")),
         Binding::new("ctrl-k", CutToEndOfLine, Some("Editor")),
@@ -202,8 +212,12 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("ctrl-f", MoveRight, Some("Editor")),
         Binding::new("alt-left", MoveToPreviousWordStart, Some("Editor")),
         Binding::new("alt-b", MoveToPreviousWordStart, Some("Editor")),
+        Binding::new("ctrl-alt-left", MoveToPreviousSubwordStart, Some("Editor")),
+        Binding::new("ctrl-alt-b", MoveToPreviousSubwordStart, Some("Editor")),
         Binding::new("alt-right", MoveToNextWordEnd, Some("Editor")),
         Binding::new("alt-f", MoveToNextWordEnd, Some("Editor")),
+        Binding::new("ctrl-alt-right", MoveToNextSubwordEnd, Some("Editor")),
+        Binding::new("ctrl-alt-f", MoveToNextSubwordEnd, Some("Editor")),
         Binding::new("cmd-left", MoveToBeginningOfLine, Some("Editor")),
         Binding::new("ctrl-a", MoveToBeginningOfLine, Some("Editor")),
         Binding::new("cmd-right", MoveToEndOfLine, Some("Editor")),
@@ -218,19 +232,31 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("ctrl-shift-B", SelectLeft, Some("Editor")),
         Binding::new("shift-right", SelectRight, Some("Editor")),
         Binding::new("ctrl-shift-F", SelectRight, Some("Editor")),
+        Binding::new("alt-shift-left", SelectToPreviousWordStart, Some("Editor")),
+        Binding::new("alt-shift-B", SelectToPreviousWordStart, Some("Editor")),
         Binding::new(
-            "alt-shift-left",
-            SelectToPreviousWordBoundary,
+            "ctrl-alt-shift-left",
+            SelectToPreviousSubwordStart,
             Some("Editor"),
         ),
-        Binding::new("alt-shift-B", SelectToPreviousWordBoundary, Some("Editor")),
-        Binding::new("alt-shift-right", SelectToNextWordBoundary, Some("Editor")),
-        Binding::new("alt-shift-F", SelectToNextWordBoundary, Some("Editor")),
+        Binding::new(
+            "ctrl-alt-shift-B",
+            SelectToPreviousSubwordStart,
+            Some("Editor"),
+        ),
+        Binding::new("alt-shift-right", SelectToNextWordEnd, Some("Editor")),
+        Binding::new("alt-shift-F", SelectToNextWordEnd, Some("Editor")),
         Binding::new(
             "cmd-shift-left",
             SelectToBeginningOfLine(true),
             Some("Editor"),
         ),
+        Binding::new(
+            "ctrl-alt-shift-right",
+            SelectToNextSubwordEnd,
+            Some("Editor"),
+        ),
+        Binding::new("ctrl-alt-shift-F", SelectToNextSubwordEnd, Some("Editor")),
         Binding::new(
             "ctrl-shift-A",
             SelectToBeginningOfLine(true),
@@ -282,7 +308,9 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::outdent);
     cx.add_action(Editor::delete_line);
     cx.add_action(Editor::delete_to_previous_word_start);
+    cx.add_action(Editor::delete_to_previous_subword_start);
     cx.add_action(Editor::delete_to_next_word_end);
+    cx.add_action(Editor::delete_to_next_subword_end);
     cx.add_action(Editor::delete_to_beginning_of_line);
     cx.add_action(Editor::delete_to_end_of_line);
     cx.add_action(Editor::cut_to_end_of_line);
@@ -299,7 +327,9 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::move_left);
     cx.add_action(Editor::move_right);
     cx.add_action(Editor::move_to_previous_word_start);
+    cx.add_action(Editor::move_to_previous_subword_start);
     cx.add_action(Editor::move_to_next_word_end);
+    cx.add_action(Editor::move_to_next_subword_end);
     cx.add_action(Editor::move_to_beginning_of_line);
     cx.add_action(Editor::move_to_end_of_line);
     cx.add_action(Editor::move_to_beginning);
@@ -309,7 +339,9 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::select_left);
     cx.add_action(Editor::select_right);
     cx.add_action(Editor::select_to_previous_word_start);
+    cx.add_action(Editor::select_to_previous_subword_start);
     cx.add_action(Editor::select_to_next_word_end);
+    cx.add_action(Editor::select_to_next_subword_end);
     cx.add_action(Editor::select_to_beginning_of_line);
     cx.add_action(Editor::select_to_end_of_line);
     cx.add_action(Editor::select_to_beginning);
@@ -3532,9 +3564,22 @@ impl Editor {
         });
     }
 
+    pub fn move_to_previous_subword_start(
+        &mut self,
+        _: &MoveToPreviousSubwordStart,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.move_cursors(cx, |map, head, _| {
+            (
+                movement::previous_subword_start(map, head),
+                SelectionGoal::None,
+            )
+        });
+    }
+
     pub fn select_to_previous_word_start(
         &mut self,
-        _: &SelectToPreviousWordBoundary,
+        _: &SelectToPreviousWordStart,
         cx: &mut ViewContext<Self>,
     ) {
         self.move_selection_heads(cx, |map, head, _| {
@@ -3545,9 +3590,22 @@ impl Editor {
         });
     }
 
+    pub fn select_to_previous_subword_start(
+        &mut self,
+        _: &SelectToPreviousSubwordStart,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.move_selection_heads(cx, |map, head, _| {
+            (
+                movement::previous_subword_start(map, head),
+                SelectionGoal::None,
+            )
+        });
+    }
+
     pub fn delete_to_previous_word_start(
         &mut self,
-        _: &DeleteToPreviousWordBoundary,
+        _: &DeleteToPreviousWordStart,
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
@@ -3561,31 +3619,75 @@ impl Editor {
         });
     }
 
+    pub fn delete_to_previous_subword_start(
+        &mut self,
+        _: &DeleteToPreviousSubwordStart,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.transact(cx, |this, cx| {
+            this.move_selections(cx, |map, selection| {
+                if selection.is_empty() {
+                    let cursor = movement::previous_subword_start(map, selection.head());
+                    selection.set_head(cursor, SelectionGoal::None);
+                }
+            });
+            this.insert("", cx);
+        });
+    }
+
     pub fn move_to_next_word_end(&mut self, _: &MoveToNextWordEnd, cx: &mut ViewContext<Self>) {
         self.move_cursors(cx, |map, head, _| {
             (movement::next_word_end(map, head), SelectionGoal::None)
         });
     }
 
-    pub fn select_to_next_word_end(
+    pub fn move_to_next_subword_end(
         &mut self,
-        _: &SelectToNextWordBoundary,
+        _: &MoveToNextSubwordEnd,
         cx: &mut ViewContext<Self>,
     ) {
+        self.move_cursors(cx, |map, head, _| {
+            (movement::next_subword_end(map, head), SelectionGoal::None)
+        });
+    }
+
+    pub fn select_to_next_word_end(&mut self, _: &SelectToNextWordEnd, cx: &mut ViewContext<Self>) {
         self.move_selection_heads(cx, |map, head, _| {
             (movement::next_word_end(map, head), SelectionGoal::None)
         });
     }
 
-    pub fn delete_to_next_word_end(
+    pub fn select_to_next_subword_end(
         &mut self,
-        _: &DeleteToNextWordBoundary,
+        _: &SelectToNextSubwordEnd,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.move_selection_heads(cx, |map, head, _| {
+            (movement::next_subword_end(map, head), SelectionGoal::None)
+        });
+    }
+
+    pub fn delete_to_next_word_end(&mut self, _: &DeleteToNextWordEnd, cx: &mut ViewContext<Self>) {
+        self.transact(cx, |this, cx| {
+            this.move_selections(cx, |map, selection| {
+                if selection.is_empty() {
+                    let cursor = movement::next_word_end(map, selection.head());
+                    selection.set_head(cursor, SelectionGoal::None);
+                }
+            });
+            this.insert("", cx);
+        });
+    }
+
+    pub fn delete_to_next_subword_end(
+        &mut self,
+        _: &DeleteToNextSubwordEnd,
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
             this.move_selections(cx, |map, selection| {
                 if selection.is_empty() {
-                    let cursor = movement::next_word_end(map, selection.head());
+                    let cursor = movement::next_subword_end(map, selection.head());
                     selection.set_head(cursor, SelectionGoal::None);
                 }
             });
@@ -7090,7 +7192,7 @@ mod tests {
             );
 
             view.move_right(&MoveRight, cx);
-            view.select_to_previous_word_start(&SelectToPreviousWordBoundary, cx);
+            view.select_to_previous_word_start(&SelectToPreviousWordStart, cx);
             assert_selection_ranges(
                 "use std::>s<tr::{foo, bar}\n\n  {]b[az.qux()}",
                 vec![('<', '>'), ('[', ']')],
@@ -7098,7 +7200,7 @@ mod tests {
                 cx,
             );
 
-            view.select_to_previous_word_start(&SelectToPreviousWordBoundary, cx);
+            view.select_to_previous_word_start(&SelectToPreviousWordStart, cx);
             assert_selection_ranges(
                 "use std>::s<tr::{foo, bar}\n\n  ]{b[az.qux()}",
                 vec![('<', '>'), ('[', ']')],
@@ -7106,7 +7208,7 @@ mod tests {
                 cx,
             );
 
-            view.select_to_next_word_end(&SelectToNextWordBoundary, cx);
+            view.select_to_next_word_end(&SelectToNextWordEnd, cx);
             assert_selection_ranges(
                 "use std::>s<tr::{foo, bar}\n\n  {]b[az.qux()}",
                 vec![('<', '>'), ('[', ']')],
@@ -7185,7 +7287,7 @@ mod tests {
                 ],
                 cx,
             );
-            view.delete_to_previous_word_start(&DeleteToPreviousWordBoundary, cx);
+            view.delete_to_previous_word_start(&DeleteToPreviousWordStart, cx);
         });
 
         assert_eq!(buffer.read(cx).read(cx).text(), "e two te four");
@@ -7200,7 +7302,7 @@ mod tests {
                 ],
                 cx,
             );
-            view.delete_to_next_word_end(&DeleteToNextWordBoundary, cx);
+            view.delete_to_next_word_end(&DeleteToNextWordEnd, cx);
         });
 
         assert_eq!(buffer.read(cx).read(cx).text(), "e t te our");
