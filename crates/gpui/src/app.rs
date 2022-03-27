@@ -782,7 +782,7 @@ type GlobalActionCallback = dyn FnMut(&dyn AnyAction, &mut MutableAppContext);
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
 type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
-type GlobalObservationCallback = Box<dyn FnMut(&mut MutableAppContext)>;
+type GlobalObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 
 pub struct MutableAppContext {
@@ -1222,10 +1222,10 @@ impl MutableAppContext {
         }
     }
 
-    pub fn observe_global<G, F>(&mut self, observe: F) -> Subscription
+    pub fn observe_global<G, F>(&mut self, mut observe: F) -> Subscription
     where
         G: Any,
-        F: 'static + FnMut(&mut MutableAppContext),
+        F: 'static + FnMut(&G, &mut MutableAppContext),
     {
         let type_id = TypeId::of::<G>();
         let id = post_inc(&mut self.next_subscription_id);
@@ -1234,7 +1234,14 @@ impl MutableAppContext {
             .lock()
             .entry(type_id)
             .or_default()
-            .insert(id, Some(Box::new(observe)));
+            .insert(
+                id,
+                Some(
+                    Box::new(move |global: &dyn Any, cx: &mut MutableAppContext| {
+                        observe(global.downcast_ref().unwrap(), cx)
+                    }) as GlobalObservationCallback,
+                ),
+            );
 
         Subscription::GlobalObservation {
             id,
@@ -2075,10 +2082,10 @@ impl MutableAppContext {
     fn notify_global_observers(&mut self, observed_type_id: TypeId) {
         let callbacks = self.global_observations.lock().remove(&observed_type_id);
         if let Some(callbacks) = callbacks {
-            if self.cx.globals.contains_key(&observed_type_id) {
+            if let Some(global) = self.cx.globals.remove(&observed_type_id) {
                 for (id, callback) in callbacks {
                     if let Some(mut callback) = callback {
-                        callback(self);
+                        callback(global.as_ref(), self);
                         match self
                             .global_observations
                             .lock()
@@ -2095,6 +2102,7 @@ impl MutableAppContext {
                         }
                     }
                 }
+                self.cx.globals.insert(observed_type_id, global);
             }
         }
     }
@@ -5232,7 +5240,7 @@ mod tests {
         let observation_count = Rc::new(RefCell::new(0));
         let subscription = cx.observe_global::<Global, _>({
             let observation_count = observation_count.clone();
-            move |_| {
+            move |_, _| {
                 *observation_count.borrow_mut() += 1;
             }
         });
@@ -5262,7 +5270,7 @@ mod tests {
         let observation_count = Rc::new(RefCell::new(0));
         cx.observe_global::<OtherGlobal, _>({
             let observation_count = observation_count.clone();
-            move |_| {
+            move |_, _| {
                 *observation_count.borrow_mut() += 1;
             }
         })
@@ -5636,7 +5644,7 @@ mod tests {
         *subscription.borrow_mut() = Some(cx.observe_global::<(), _>({
             let observation_count = observation_count.clone();
             let subscription = subscription.clone();
-            move |_| {
+            move |_, _| {
                 subscription.borrow_mut().take();
                 *observation_count.borrow_mut() += 1;
             }

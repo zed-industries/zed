@@ -13,7 +13,7 @@ pub fn init(cx: &mut MutableAppContext) {
 fn editor_created(EditorCreated(editor): &EditorCreated, cx: &mut MutableAppContext) {
     cx.update_default_global(|vim_state: &mut VimState, cx| {
         vim_state.editors.insert(editor.id(), editor.downgrade());
-        VimState::sync_editor_options(cx);
+        vim_state.sync_editor_options(cx);
     })
 }
 
@@ -24,21 +24,21 @@ fn editor_focused(EditorFocused(editor): &EditorFocused, cx: &mut MutableAppCont
         Mode::Normal
     };
 
-    cx.update_default_global(|vim_state: &mut VimState, _| {
-        vim_state.active_editor = Some(editor.downgrade());
+    VimState::update_global(cx, |state, cx| {
+        state.active_editor = Some(editor.downgrade());
+        state.switch_mode(&SwitchMode(mode), cx);
     });
-    VimState::switch_mode(&SwitchMode(mode), cx);
 }
 
 fn editor_blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut MutableAppContext) {
-    cx.update_default_global(|vim_state: &mut VimState, _| {
-        if let Some(previous_editor) = vim_state.active_editor.clone() {
+    VimState::update_global(cx, |state, cx| {
+        if let Some(previous_editor) = state.active_editor.clone() {
             if previous_editor == editor.clone() {
-                vim_state.active_editor = None;
+                state.active_editor = None;
             }
         }
-    });
-    VimState::sync_editor_options(cx);
+        state.sync_editor_options(cx);
+    })
 }
 
 fn editor_released(EditorReleased(editor): &EditorReleased, cx: &mut MutableAppContext) {

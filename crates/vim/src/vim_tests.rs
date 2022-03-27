@@ -11,7 +11,7 @@ use crate::*;
 
 #[gpui::test]
 async fn test_insert_mode(cx: &mut gpui::TestAppContext) {
-    let mut cx = VimTestAppContext::new(cx, "").await;
+    let mut cx = VimTestAppContext::new(cx, true, "").await;
     cx.simulate_keystroke("i");
     assert_eq!(cx.mode(), Mode::Insert);
     cx.simulate_keystrokes(&["T", "e", "s", "t"]);
@@ -23,7 +23,7 @@ async fn test_insert_mode(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_normal_hjkl(cx: &mut gpui::TestAppContext) {
-    let mut cx = VimTestAppContext::new(cx, "Test\nTestTest\nTest").await;
+    let mut cx = VimTestAppContext::new(cx, true, "Test\nTestTest\nTest").await;
     cx.simulate_keystroke("l");
     cx.assert_newest_selection_head(indoc! {"
         T|est
@@ -81,15 +81,17 @@ async fn test_normal_hjkl(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
-    let mut cx = VimTestAppContext::new(cx, "").await;
+    let mut cx = VimTestAppContext::new(cx, true, "").await;
+
+    cx.simulate_keystroke("i");
+    assert_eq!(cx.mode(), Mode::Insert);
 
     // Editor acts as though vim is disabled
     cx.disable_vim();
-    assert_eq!(cx.mode(), Mode::Insert);
     cx.simulate_keystrokes(&["h", "j", "k", "l"]);
     cx.assert_newest_selection_head("hjkl|");
 
-    // Enabling dynamically sets vim mode again
+    // Enabling dynamically sets vim mode again and restores normal mode
     cx.enable_vim();
     assert_eq!(cx.mode(), Mode::Normal);
     cx.simulate_keystrokes(&["h", "h", "h", "l"]);
@@ -106,6 +108,13 @@ async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
     assert_eq!(cx.mode(), Mode::Normal);
 }
 
+#[gpui::test]
+async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestAppContext::new(cx, false, "").await;
+    cx.simulate_keystrokes(&["h", "j", "k", "l"]);
+    cx.assert_newest_selection_head("hjkl|");
+}
+
 struct VimTestAppContext<'a> {
     cx: &'a mut gpui::TestAppContext,
     window_id: usize,
@@ -115,6 +124,7 @@ struct VimTestAppContext<'a> {
 impl<'a> VimTestAppContext<'a> {
     async fn new(
         cx: &'a mut gpui::TestAppContext,
+        enabled: bool,
         initial_editor_text: &str,
     ) -> VimTestAppContext<'a> {
         cx.update(|cx| {
@@ -125,7 +135,7 @@ impl<'a> VimTestAppContext<'a> {
 
         cx.update(|cx| {
             cx.update_global(|settings: &mut Settings, _| {
-                settings.vim_mode = true;
+                settings.vim_mode = enabled;
             });
         });
 

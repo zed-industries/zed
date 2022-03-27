@@ -28,31 +28,39 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 fn move_left(_: &mut Workspace, _: &MoveLeft, cx: &mut ViewContext<Workspace>) {
-    VimState::update_active_editor(cx, |editor, cx| {
-        editor.move_cursors(cx, |map, mut cursor, _| {
-            *cursor.column_mut() = cursor.column().saturating_sub(1);
-            (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
+    VimState::update_global(cx, |state, cx| {
+        state.update_active_editor(cx, |editor, cx| {
+            editor.move_cursors(cx, |map, mut cursor, _| {
+                *cursor.column_mut() = cursor.column().saturating_sub(1);
+                (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
+            });
+        });
+    })
+}
+
+fn move_down(_: &mut Workspace, _: &MoveDown, cx: &mut ViewContext<Workspace>) {
+    VimState::update_global(cx, |state, cx| {
+        state.update_active_editor(cx, |editor, cx| {
+            editor.move_cursors(cx, movement::down);
         });
     });
 }
 
-fn move_down(_: &mut Workspace, _: &MoveDown, cx: &mut ViewContext<Workspace>) {
-    VimState::update_active_editor(cx, |editor, cx| {
-        editor.move_cursors(cx, movement::down);
-    });
-}
-
 fn move_up(_: &mut Workspace, _: &MoveUp, cx: &mut ViewContext<Workspace>) {
-    VimState::update_active_editor(cx, |editor, cx| {
-        editor.move_cursors(cx, movement::up);
+    VimState::update_global(cx, |state, cx| {
+        state.update_active_editor(cx, |editor, cx| {
+            editor.move_cursors(cx, movement::up);
+        });
     });
 }
 
 fn move_right(_: &mut Workspace, _: &MoveRight, cx: &mut ViewContext<Workspace>) {
-    VimState::update_active_editor(cx, |editor, cx| {
-        editor.move_cursors(cx, |map, mut cursor, _| {
-            *cursor.column_mut() += 1;
-            (map.clip_point(cursor, Bias::Right), SelectionGoal::None)
+    VimState::update_global(cx, |state, cx| {
+        state.update_active_editor(cx, |editor, cx| {
+            editor.move_cursors(cx, |map, mut cursor, _| {
+                *cursor.column_mut() += 1;
+                (map.clip_point(cursor, Bias::Right), SelectionGoal::None)
+            });
         });
     });
 }
