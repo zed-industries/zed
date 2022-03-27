@@ -65,6 +65,9 @@ impl VimState {
     fn set_enabled(&mut self, enabled: bool, cx: &mut MutableAppContext) {
         if self.enabled != enabled {
             self.enabled = enabled;
+            if enabled {
+                self.mode = Mode::Normal;
+            }
             self.sync_editor_options(cx);
         }
     }
