@@ -10,7 +10,7 @@ mod test;
 use aho_corasick::AhoCorasick;
 use anyhow::Result;
 use clock::ReplicaId;
-use collections::{BTreeMap, Bound, HashMap, HashSet};
+use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
@@ -62,6 +62,7 @@ use workspace::{settings, ItemNavHistory, Settings, Workspace};
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
+const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 
 action!(Cancel);
 action!(Backspace);
@@ -537,8 +538,8 @@ struct SelectionHistory {
     selections_by_transaction:
         HashMap<TransactionId, (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)>,
     mode: SelectionHistoryMode,
-    undo_stack: Vec<SelectionHistoryEntry>,
-    redo_stack: Vec<SelectionHistoryEntry>,
+    undo_stack: VecDeque<SelectionHistoryEntry>,
+    redo_stack: VecDeque<SelectionHistoryEntry>,
 }
 
 impl SelectionHistory {
@@ -581,20 +582,26 @@ impl SelectionHistory {
     fn push_undo(&mut self, entry: SelectionHistoryEntry) {
         if self
             .undo_stack
-            .last()
+            .back()
             .map_or(true, |e| e.selections != entry.selections)
         {
-            self.undo_stack.push(entry)
+            self.undo_stack.push_back(entry);
+            if self.undo_stack.len() > MAX_SELECTION_HISTORY_LEN {
+                self.undo_stack.pop_front();
+            }
         }
     }
 
     fn push_redo(&mut self, entry: SelectionHistoryEntry) {
         if self
             .redo_stack
-            .last()
+            .back()
             .map_or(true, |e| e.selections != entry.selections)
         {
-            self.redo_stack.push(entry)
+            self.redo_stack.push_back(entry);
+            if self.redo_stack.len() > MAX_SELECTION_HISTORY_LEN {
+                self.redo_stack.pop_front();
+            }
         }
     }
 }
@@ -4388,7 +4395,7 @@ impl Editor {
     pub fn undo_selection(&mut self, _: &UndoSelection, cx: &mut ViewContext<Self>) {
         self.end_selection(cx);
         self.selection_history.mode = SelectionHistoryMode::Undoing;
-        if let Some(entry) = self.selection_history.undo_stack.pop() {
+        if let Some(entry) = self.selection_history.undo_stack.pop_back() {
             self.set_selections(entry.selections.clone(), None, true, cx);
             self.select_next_state = entry.select_next_state.clone();
             self.add_selections_state = entry.add_selections_state.clone();
@@ -4400,7 +4407,7 @@ impl Editor {
     pub fn redo_selection(&mut self, _: &RedoSelection, cx: &mut ViewContext<Self>) {
         self.end_selection(cx);
         self.selection_history.mode = SelectionHistoryMode::Redoing;
-        if let Some(entry) = self.selection_history.redo_stack.pop() {
+        if let Some(entry) = self.selection_history.redo_stack.pop_back() {
             self.set_selections(entry.selections.clone(), None, true, cx);
             self.select_next_state = entry.select_next_state.clone();
             self.add_selections_state = entry.add_selections_state.clone();
