@@ -1,8 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
-use futures::{
-    channel::oneshot, future::BoxFuture, io::BufWriter, AsyncRead, AsyncWrite, FutureExt,
-};
+use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite};
 use gpui::{executor, Task};
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
@@ -560,7 +558,11 @@ type FakeLanguageServerHandlers = Arc<
             &'static str,
             Box<
                 dyn Send
-                    + FnMut(usize, &[u8], gpui::AsyncAppContext) -> BoxFuture<'static, Vec<u8>>,
+                    + FnMut(
+                        usize,
+                        &[u8],
+                        gpui::AsyncAppContext,
+                    ) -> futures::future::BoxFuture<'static, Vec<u8>>,
             >,
         >,
     >,
@@ -724,6 +726,8 @@ impl FakeLanguageServer {
         F: 'static + Send + FnMut(T::Params, gpui::AsyncAppContext) -> Fut,
         Fut: 'static + Send + Future<Output = T::Result>,
     {
+        use futures::FutureExt as _;
+
         let (responded_tx, responded_rx) = futures::channel::mpsc::unbounded();
         self.handlers.lock().insert(
             T::METHOD,
