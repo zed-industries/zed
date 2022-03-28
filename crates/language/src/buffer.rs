@@ -276,6 +276,16 @@ pub enum CharKind {
     Word,
 }
 
+impl CharKind {
+    pub fn coerce_punctuation(self, treat_punctuation_as_word: bool) -> Self {
+        if treat_punctuation_as_word && self == CharKind::Punctuation {
+            CharKind::Word
+        } else {
+            self
+        }
+    }
+}
+
 impl Buffer {
     pub fn new<T: Into<Arc<str>>>(
         replica_id: ReplicaId,

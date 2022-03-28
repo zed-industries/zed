@@ -3,7 +3,7 @@ mod insert;
 mod mode;
 mod normal;
 #[cfg(test)]
-mod vim_tests;
+mod vim_test_context;
 
 use collections::HashMap;
 use editor::{CursorShape, Editor};
@@ -65,8 +65,9 @@ impl VimState {
     fn set_enabled(&mut self, enabled: bool, cx: &mut MutableAppContext) {
         if self.enabled != enabled {
             self.enabled = enabled;
+            self.mode = Default::default();
             if enabled {
-                self.mode = Mode::Normal;
+                self.mode = Mode::normal();
             }
             self.sync_editor_options(cx);
         }
@@ -93,5 +94,45 @@ impl VimState {
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{mode::Mode, vim_test_context::VimTestContext};
+
+    #[gpui::test]
+    async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, false, "").await;
+        cx.simulate_keystrokes(&["h", "j", "k", "l"]);
+        cx.assert_editor_state("hjkl|");
+    }
+
+    #[gpui::test]
+    async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true, "").await;
+
+        cx.simulate_keystroke("i");
+        assert_eq!(cx.mode(), Mode::Insert);
+
+        // Editor acts as though vim is disabled
+        cx.disable_vim();
+        cx.simulate_keystrokes(&["h", "j", "k", "l"]);
+        cx.assert_editor_state("hjkl|");
+
+        // Enabling dynamically sets vim mode again and restores normal mode
+        cx.enable_vim();
+        assert_eq!(cx.mode(), Mode::normal());
+        cx.simulate_keystrokes(&["h", "h", "h", "l"]);
+        assert_eq!(cx.editor_text(), "hjkl".to_owned());
+        cx.assert_editor_state("hj|kl");
+        cx.simulate_keystrokes(&["i", "T", "e", "s", "t"]);
+        cx.assert_editor_state("hjTest|kl");
+
+        // Disabling and enabling resets to normal mode
+        assert_eq!(cx.mode(), Mode::Insert);
+        cx.disable_vim();
+        cx.enable_vim();
+        assert_eq!(cx.mode(), Mode::normal());
     }
 }
