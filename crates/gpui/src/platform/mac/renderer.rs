@@ -561,9 +561,10 @@ impl Renderer {
         }
 
         for icon in icons {
-            let origin = icon.bounds.origin() * scale_factor;
-            let target_size = icon.bounds.size() * scale_factor;
-            let source_size = (target_size * 2.).ceil().to_i32();
+            // Snap sprite to pixel grid.
+            let origin = (icon.bounds.origin() * scale_factor).floor();
+            let target_size = (icon.bounds.size() * scale_factor).ceil();
+            let source_size = (target_size * 2.).to_i32();
 
             let sprite =
                 self.sprite_cache

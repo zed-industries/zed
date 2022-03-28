@@ -69,7 +69,8 @@ action!(Backspace);
 action!(Delete);
 action!(Input, String);
 action!(Newline);
-action!(Tab);
+action!(Tab, Direction);
+action!(Indent);
 action!(Outdent);
 action!(DeleteLine);
 action!(DeleteToPreviousWordStart);
@@ -174,13 +175,15 @@ pub fn init(cx: &mut MutableAppContext) {
             Some("Editor && showing_code_actions"),
         ),
         Binding::new("enter", ConfirmRename, Some("Editor && renaming")),
-        Binding::new("tab", Tab, Some("Editor")),
+        Binding::new("tab", Tab(Direction::Next), Some("Editor")),
+        Binding::new("shift-tab", Tab(Direction::Prev), Some("Editor")),
         Binding::new(
             "tab",
             ConfirmCompletion(None),
             Some("Editor && showing_completions"),
         ),
-        Binding::new("shift-tab", Outdent, Some("Editor")),
+        Binding::new("cmd-[", Outdent, Some("Editor")),
+        Binding::new("cmd-]", Indent, Some("Editor")),
         Binding::new("ctrl-shift-K", DeleteLine, Some("Editor")),
         Binding::new("alt-backspace", DeleteToPreviousWordStart, Some("Editor")),
         Binding::new("alt-h", DeleteToPreviousWordStart, Some("Editor")),
@@ -310,6 +313,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::backspace);
     cx.add_action(Editor::delete);
     cx.add_action(Editor::tab);
+    cx.add_action(Editor::indent);
     cx.add_action(Editor::outdent);
     cx.add_action(Editor::delete_line);
     cx.add_action(Editor::delete_to_previous_word_start);
@@ -2961,75 +2965,101 @@ impl Editor {
         });
     }
 
-    pub fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
-        if self.move_to_next_snippet_tabstop(cx) {
-            return;
-        }
+    pub fn tab(&mut self, &Tab(direction): &Tab, cx: &mut ViewContext<Self>) {
+        match direction {
+            Direction::Prev => {
+                if !self.snippet_stack.is_empty() {
+                    self.move_to_prev_snippet_tabstop(cx);
+                    return;
+                }
 
+                self.outdent(&Outdent, cx);
+            }
+            Direction::Next => {
+                if self.move_to_next_snippet_tabstop(cx) {
+                    return;
+                }
+
+                let tab_size = cx.global::<Settings>().tab_size;
+                let mut selections = self.local_selections::<Point>(cx);
+                if selections.iter().all(|s| s.is_empty()) {
+                    self.transact(cx, |this, cx| {
+                        this.buffer.update(cx, |buffer, cx| {
+                            for selection in &mut selections {
+                                let char_column = buffer
+                                    .read(cx)
+                                    .text_for_range(
+                                        Point::new(selection.start.row, 0)..selection.start,
+                                    )
+                                    .flat_map(str::chars)
+                                    .count();
+                                let chars_to_next_tab_stop = tab_size - (char_column % tab_size);
+                                buffer.edit(
+                                    [selection.start..selection.start],
+                                    " ".repeat(chars_to_next_tab_stop),
+                                    cx,
+                                );
+                                selection.start.column += chars_to_next_tab_stop as u32;
+                                selection.end = selection.start;
+                            }
+                        });
+                        this.update_selections(selections, Some(Autoscroll::Fit), cx);
+                    });
+                } else {
+                    self.indent(&Indent, cx);
+                }
+            }
+        }
+    }
+
+    pub fn indent(&mut self, _: &Indent, cx: &mut ViewContext<Self>) {
         let tab_size = cx.global::<Settings>().tab_size;
         let mut selections = self.local_selections::<Point>(cx);
         self.transact(cx, |this, cx| {
             let mut last_indent = None;
             this.buffer.update(cx, |buffer, cx| {
                 for selection in &mut selections {
-                    if selection.is_empty() {
-                        let char_column = buffer
-                            .read(cx)
-                            .text_for_range(Point::new(selection.start.row, 0)..selection.start)
-                            .flat_map(str::chars)
-                            .count();
-                        let chars_to_next_tab_stop = tab_size - (char_column % tab_size);
+                    let mut start_row = selection.start.row;
+                    let mut end_row = selection.end.row + 1;
+
+                    // If a selection ends at the beginning of a line, don't indent
+                    // that last line.
+                    if selection.end.column == 0 {
+                        end_row -= 1;
+                    }
+
+                    // Avoid re-indenting a row that has already been indented by a
+                    // previous selection, but still update this selection's column
+                    // to reflect that indentation.
+                    if let Some((last_indent_row, last_indent_len)) = last_indent {
+                        if last_indent_row == selection.start.row {
+                            selection.start.column += last_indent_len;
+                            start_row += 1;
+                        }
+                        if last_indent_row == selection.end.row {
+                            selection.end.column += last_indent_len;
+                        }
+                    }
+
+                    for row in start_row..end_row {
+                        let indent_column = buffer.read(cx).indent_column_for_line(row) as usize;
+                        let columns_to_next_tab_stop = tab_size - (indent_column % tab_size);
+                        let row_start = Point::new(row, 0);
                         buffer.edit(
-                            [selection.start..selection.start],
-                            " ".repeat(chars_to_next_tab_stop),
+                            [row_start..row_start],
+                            " ".repeat(columns_to_next_tab_stop),
                             cx,
                         );
-                        selection.start.column += chars_to_next_tab_stop as u32;
-                        selection.end = selection.start;
-                    } else {
-                        let mut start_row = selection.start.row;
-                        let mut end_row = selection.end.row + 1;
 
-                        // If a selection ends at the beginning of a line, don't indent
-                        // that last line.
-                        if selection.end.column == 0 {
-                            end_row -= 1;
+                        // Update this selection's endpoints to reflect the indentation.
+                        if row == selection.start.row {
+                            selection.start.column += columns_to_next_tab_stop as u32;
+                        }
+                        if row == selection.end.row {
+                            selection.end.column += columns_to_next_tab_stop as u32;
                         }
 
-                        // Avoid re-indenting a row that has already been indented by a
-                        // previous selection, but still update this selection's column
-                        // to reflect that indentation.
-                        if let Some((last_indent_row, last_indent_len)) = last_indent {
-                            if last_indent_row == selection.start.row {
-                                selection.start.column += last_indent_len;
-                                start_row += 1;
-                            }
-                            if last_indent_row == selection.end.row {
-                                selection.end.column += last_indent_len;
-                            }
-                        }
-
-                        for row in start_row..end_row {
-                            let indent_column =
-                                buffer.read(cx).indent_column_for_line(row) as usize;
-                            let columns_to_next_tab_stop = tab_size - (indent_column % tab_size);
-                            let row_start = Point::new(row, 0);
-                            buffer.edit(
-                                [row_start..row_start],
-                                " ".repeat(columns_to_next_tab_stop),
-                                cx,
-                            );
-
-                            // Update this selection's endpoints to reflect the indentation.
-                            if row == selection.start.row {
-                                selection.start.column += columns_to_next_tab_stop as u32;
-                            }
-                            if row == selection.end.row {
-                                selection.end.column += columns_to_next_tab_stop as u32;
-                            }
-
-                            last_indent = Some((row, columns_to_next_tab_stop as u32));
-                        }
+                        last_indent = Some((row, columns_to_next_tab_stop as u32));
                     }
                 }
             });
@@ -3039,11 +3069,6 @@ impl Editor {
     }
 
     pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
-        if !self.snippet_stack.is_empty() {
-            self.move_to_prev_snippet_tabstop(cx);
-            return;
-        }
-
         let tab_size = cx.global::<Settings>().tab_size;
         let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -6427,7 +6452,7 @@ mod tests {
     use text::Point;
     use unindent::Unindent;
     use util::test::{marked_text_by, marked_text_ranges, sample_text};
-    use workspace::FollowableItem;
+    use workspace::{FollowableItem, ItemHandle};
 
     #[gpui::test]
     fn test_edit_events(cx: &mut MutableAppContext) {
@@ -7594,7 +7619,7 @@ mod tests {
             );
 
             // indent from mid-tabstop to full tabstop
-            view.tab(&Tab, cx);
+            view.tab(&Tab(Direction::Next), cx);
             assert_eq!(view.text(cx), "    one two\nthree\n four");
             assert_eq!(
                 view.selected_display_ranges(cx),
@@ -7605,7 +7630,7 @@ mod tests {
             );
 
             // outdent from 1 tabstop to 0 tabstops
-            view.outdent(&Outdent, cx);
+            view.tab(&Tab(Direction::Prev), cx);
             assert_eq!(view.text(cx), "one two\nthree\n four");
             assert_eq!(
                 view.selected_display_ranges(cx),
@@ -7619,13 +7644,13 @@ mod tests {
             view.select_display_ranges(&[DisplayPoint::new(1, 1)..DisplayPoint::new(2, 0)], cx);
 
             // indent and outdent affect only the preceding line
-            view.tab(&Tab, cx);
+            view.tab(&Tab(Direction::Next), cx);
             assert_eq!(view.text(cx), "one two\n    three\n four");
             assert_eq!(
                 view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 5)..DisplayPoint::new(2, 0)]
             );
-            view.outdent(&Outdent, cx);
+            view.tab(&Tab(Direction::Prev), cx);
             assert_eq!(view.text(cx), "one two\nthree\n four");
             assert_eq!(
                 view.selected_display_ranges(cx),
@@ -7634,7 +7659,7 @@ mod tests {
 
             // Ensure that indenting/outdenting works when the cursor is at column 0.
             view.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
-            view.tab(&Tab, cx);
+            view.tab(&Tab(Direction::Next), cx);
             assert_eq!(view.text(cx), "one two\n    three\n four");
             assert_eq!(
                 view.selected_display_ranges(cx),
@@ -7642,7 +7667,7 @@ mod tests {
             );
 
             view.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
-            view.outdent(&Outdent, cx);
+            view.tab(&Tab(Direction::Prev), cx);
             assert_eq!(view.text(cx), "one two\nthree\n four");
             assert_eq!(
                 view.selected_display_ranges(cx),
@@ -8851,6 +8876,94 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_format_during_save(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+        cx.update(populate_settings);
+
+        let (mut language_server_config, mut fake_servers) = LanguageServerConfig::fake();
+        language_server_config.set_fake_capabilities(lsp::ServerCapabilities {
+            document_formatting_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        });
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".to_string()],
+                language_server: Some(language_server_config),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        ));
+
+        let fs = FakeFs::new(cx.background().clone());
+        fs.insert_file("/file.rs", Default::default()).await;
+
+        let project = Project::test(fs, cx);
+        project.update(cx, |project, _| project.languages().add(language));
+
+        let worktree_id = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/file.rs", true, cx)
+            })
+            .await
+            .unwrap()
+            .0
+            .read_with(cx, |tree, _| tree.id());
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer((worktree_id, ""), cx))
+            .await
+            .unwrap();
+        let mut fake_server = fake_servers.next().await.unwrap();
+
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let (_, editor) = cx.add_window(|cx| build_editor(buffer, cx));
+        editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+        assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+        let save = cx.update(|cx| editor.save(project.clone(), cx));
+        fake_server
+            .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path("/file.rs").unwrap()
+                );
+                Some(vec![lsp::TextEdit::new(
+                    lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
+                    ", ".to_string(),
+                )])
+            })
+            .next()
+            .await;
+        save.await.unwrap();
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "one, two\nthree\n"
+        );
+        assert!(!cx.read(|cx| editor.is_dirty(cx)));
+
+        editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+        assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+        // Ensure we can still save even if formatting hangs.
+        fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path("/file.rs").unwrap()
+            );
+            futures::future::pending::<()>().await;
+            unreachable!()
+        });
+        let save = cx.update(|cx| editor.save(project.clone(), cx));
+        cx.foreground().advance_clock(items::FORMAT_TIMEOUT);
+        save.await.unwrap();
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "one\ntwo\nthree\n"
+        );
+        assert!(!cx.read(|cx| editor.is_dirty(cx)));
+    }
+
+    #[gpui::test]
     async fn test_completion(cx: &mut gpui::TestAppContext) {
         cx.update(populate_settings);
 
@@ -9031,31 +9144,34 @@ mod tests {
             position: Point,
             completions: Vec<(Range<Point>, &'static str)>,
         ) {
-            fake.handle_request::<lsp::request::Completion, _>(move |params, _| {
-                assert_eq!(
-                    params.text_document_position.text_document.uri,
-                    lsp::Url::from_file_path(path).unwrap()
-                );
-                assert_eq!(
-                    params.text_document_position.position,
-                    lsp::Position::new(position.row, position.column)
-                );
-                Some(lsp::CompletionResponse::Array(
-                    completions
-                        .iter()
-                        .map(|(range, new_text)| lsp::CompletionItem {
-                            label: new_text.to_string(),
-                            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                range: lsp::Range::new(
-                                    lsp::Position::new(range.start.row, range.start.column),
-                                    lsp::Position::new(range.start.row, range.start.column),
-                                ),
-                                new_text: new_text.to_string(),
-                            })),
-                            ..Default::default()
-                        })
-                        .collect(),
-                ))
+            fake.handle_request::<lsp::request::Completion, _, _>(move |params, _| {
+                let completions = completions.clone();
+                async move {
+                    assert_eq!(
+                        params.text_document_position.text_document.uri,
+                        lsp::Url::from_file_path(path).unwrap()
+                    );
+                    assert_eq!(
+                        params.text_document_position.position,
+                        lsp::Position::new(position.row, position.column)
+                    );
+                    Some(lsp::CompletionResponse::Array(
+                        completions
+                            .iter()
+                            .map(|(range, new_text)| lsp::CompletionItem {
+                                label: new_text.to_string(),
+                                text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                    range: lsp::Range::new(
+                                        lsp::Position::new(range.start.row, range.start.column),
+                                        lsp::Position::new(range.start.row, range.start.column),
+                                    ),
+                                    new_text: new_text.to_string(),
+                                })),
+                                ..Default::default()
+                            })
+                            .collect(),
+                    ))
+                }
             })
             .next()
             .await;
@@ -9065,18 +9181,21 @@ mod tests {
             fake: &mut FakeLanguageServer,
             edit: Option<(Range<Point>, &'static str)>,
         ) {
-            fake.handle_request::<lsp::request::ResolveCompletionItem, _>(move |_, _| {
-                lsp::CompletionItem {
-                    additional_text_edits: edit.clone().map(|(range, new_text)| {
-                        vec![lsp::TextEdit::new(
-                            lsp::Range::new(
-                                lsp::Position::new(range.start.row, range.start.column),
-                                lsp::Position::new(range.end.row, range.end.column),
-                            ),
-                            new_text.to_string(),
-                        )]
-                    }),
-                    ..Default::default()
+            fake.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _| {
+                let edit = edit.clone();
+                async move {
+                    lsp::CompletionItem {
+                        additional_text_edits: edit.map(|(range, new_text)| {
+                            vec![lsp::TextEdit::new(
+                                lsp::Range::new(
+                                    lsp::Position::new(range.start.row, range.start.column),
+                                    lsp::Position::new(range.end.row, range.end.column),
+                                ),
+                                new_text.to_string(),
+                            )]
+                        }),
+                        ..Default::default()
+                    }
                 }
             })
             .next()

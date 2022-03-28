@@ -337,7 +337,7 @@ impl Deterministic {
 
             if let Some((_, wakeup_time, _)) = state.pending_timers.first() {
                 let wakeup_time = *wakeup_time;
-                if wakeup_time < new_now {
+                if wakeup_time <= new_now {
                     let timer_count = state
                         .pending_timers
                         .iter()

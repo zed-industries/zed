@@ -1617,6 +1617,7 @@ dependencies = [
  "collections",
  "ctor",
  "env_logger",
+ "futures",
  "fuzzy",
  "gpui",
  "itertools",

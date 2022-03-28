@@ -556,7 +556,14 @@ type FakeLanguageServerHandlers = Arc<
     Mutex<
         HashMap<
             &'static str,
-            Box<dyn Send + FnMut(usize, &[u8], gpui::AsyncAppContext) -> Vec<u8>>,
+            Box<
+                dyn Send
+                    + FnMut(
+                        usize,
+                        &[u8],
+                        gpui::AsyncAppContext,
+                    ) -> futures::future::BoxFuture<'static, Vec<u8>>,
+            >,
         >,
     >,
 >;
@@ -585,11 +592,16 @@ impl LanguageServer {
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
 
         let mut fake = FakeLanguageServer::new(stdin_reader, stdout_writer, cx);
-        fake.handle_request::<request::Initialize, _>({
+        fake.handle_request::<request::Initialize, _, _>({
             let capabilities = capabilities.clone();
-            move |_, _| InitializeResult {
-                capabilities: capabilities.clone(),
-                ..Default::default()
+            move |_, _| {
+                let capabilities = capabilities.clone();
+                async move {
+                    InitializeResult {
+                        capabilities,
+                        ..Default::default()
+                    }
+                }
             }
         });
 
@@ -628,7 +640,8 @@ impl FakeLanguageServer {
                         let response;
                         if let Some(handler) = handlers.lock().get_mut(request.method) {
                             response =
-                                handler(request.id, request.params.get().as_bytes(), cx.clone());
+                                handler(request.id, request.params.get().as_bytes(), cx.clone())
+                                    .await;
                             log::debug!("handled lsp request. method:{}", request.method);
                         } else {
                             response = serde_json::to_vec(&AnyResponse {
@@ -704,28 +717,36 @@ impl FakeLanguageServer {
         }
     }
 
-    pub fn handle_request<T, F>(
+    pub fn handle_request<T, F, Fut>(
         &mut self,
         mut handler: F,
     ) -> futures::channel::mpsc::UnboundedReceiver<()>
     where
         T: 'static + request::Request,
-        F: 'static + Send + FnMut(T::Params, gpui::AsyncAppContext) -> T::Result,
+        F: 'static + Send + FnMut(T::Params, gpui::AsyncAppContext) -> Fut,
+        Fut: 'static + Send + Future<Output = T::Result>,
     {
+        use futures::FutureExt as _;
+
         let (responded_tx, responded_rx) = futures::channel::mpsc::unbounded();
         self.handlers.lock().insert(
             T::METHOD,
             Box::new(move |id, params, cx| {
                 let result = handler(serde_json::from_slice::<T::Params>(params).unwrap(), cx);
-                let result = serde_json::to_string(&result).unwrap();
-                let result = serde_json::from_str::<&RawValue>(&result).unwrap();
-                let response = AnyResponse {
-                    id,
-                    error: None,
-                    result: Some(result),
-                };
-                responded_tx.unbounded_send(()).ok();
-                serde_json::to_vec(&response).unwrap()
+                let responded_tx = responded_tx.clone();
+                async move {
+                    let result = result.await;
+                    let result = serde_json::to_string(&result).unwrap();
+                    let result = serde_json::from_str::<&RawValue>(&result).unwrap();
+                    let response = AnyResponse {
+                        id,
+                        error: None,
+                        result: Some(result),
+                    };
+                    responded_tx.unbounded_send(()).ok();
+                    serde_json::to_vec(&response).unwrap()
+                }
+                .boxed()
             }),
         );
         responded_rx
@@ -844,7 +865,7 @@ mod tests {
             "file://b/c"
         );
 
-        fake.handle_request::<request::Shutdown, _>(|_, _| ());
+        fake.handle_request::<request::Shutdown, _, _>(|_, _| async move {});
 
         drop(server);
         fake.receive_notification::<notification::Exit>().await;
