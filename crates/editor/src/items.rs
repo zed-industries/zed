@@ -1,5 +1,6 @@
 use crate::{Anchor, Autoscroll, Editor, Event, ExcerptId, NavigationData, ToOffset, ToPoint as _};
 use anyhow::{anyhow, Result};
+use futures::FutureExt;
 use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
     RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
@@ -7,12 +8,14 @@ use gpui::{
 use language::{Bias, Buffer, Diagnostic, File as _, SelectionGoal};
 use project::{File, Project, ProjectEntryId, ProjectPath};
 use rpc::proto::{self, update_view};
-use std::{fmt::Write, path::PathBuf};
+use std::{fmt::Write, path::PathBuf, time::Duration};
 use text::{Point, Selection};
-use util::ResultExt;
+use util::TryFutureExt;
 use workspace::{
     FollowableItem, Item, ItemHandle, ItemNavHistory, ProjectItem, Settings, StatusItemView,
 };
+
+pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl FollowableItem for Editor {
     fn from_state_proto(
@@ -317,9 +320,17 @@ impl Item for Editor {
     ) -> Task<Result<()>> {
         let buffer = self.buffer().clone();
         let buffers = buffer.read(cx).all_buffers();
-        let transaction = project.update(cx, |project, cx| project.format(buffers, true, cx));
+        let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
+        let format = project.update(cx, |project, cx| project.format(buffers, true, cx));
         cx.spawn(|this, mut cx| async move {
-            let transaction = transaction.await.log_err();
+            let transaction = futures::select_biased! {
+                _ = timeout => {
+                    log::warn!("timed out waiting for formatting");
+                    None
+                }
+                transaction = format.log_err().fuse() => transaction,
+            };
+
             this.update(&mut cx, |editor, cx| {
                 editor.request_autoscroll(Autoscroll::Fit, cx)
             });
