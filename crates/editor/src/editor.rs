@@ -8850,31 +8850,34 @@ mod tests {
             position: Point,
             completions: Vec<(Range<Point>, &'static str)>,
         ) {
-            fake.handle_request::<lsp::request::Completion, _>(move |params, _| {
-                assert_eq!(
-                    params.text_document_position.text_document.uri,
-                    lsp::Url::from_file_path(path).unwrap()
-                );
-                assert_eq!(
-                    params.text_document_position.position,
-                    lsp::Position::new(position.row, position.column)
-                );
-                Some(lsp::CompletionResponse::Array(
-                    completions
-                        .iter()
-                        .map(|(range, new_text)| lsp::CompletionItem {
-                            label: new_text.to_string(),
-                            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                range: lsp::Range::new(
-                                    lsp::Position::new(range.start.row, range.start.column),
-                                    lsp::Position::new(range.start.row, range.start.column),
-                                ),
-                                new_text: new_text.to_string(),
-                            })),
-                            ..Default::default()
-                        })
-                        .collect(),
-                ))
+            fake.handle_request::<lsp::request::Completion, _, _>(move |params, _| {
+                let completions = completions.clone();
+                async move {
+                    assert_eq!(
+                        params.text_document_position.text_document.uri,
+                        lsp::Url::from_file_path(path).unwrap()
+                    );
+                    assert_eq!(
+                        params.text_document_position.position,
+                        lsp::Position::new(position.row, position.column)
+                    );
+                    Some(lsp::CompletionResponse::Array(
+                        completions
+                            .iter()
+                            .map(|(range, new_text)| lsp::CompletionItem {
+                                label: new_text.to_string(),
+                                text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                    range: lsp::Range::new(
+                                        lsp::Position::new(range.start.row, range.start.column),
+                                        lsp::Position::new(range.start.row, range.start.column),
+                                    ),
+                                    new_text: new_text.to_string(),
+                                })),
+                                ..Default::default()
+                            })
+                            .collect(),
+                    ))
+                }
             })
             .next()
             .await;
@@ -8884,18 +8887,21 @@ mod tests {
             fake: &mut FakeLanguageServer,
             edit: Option<(Range<Point>, &'static str)>,
         ) {
-            fake.handle_request::<lsp::request::ResolveCompletionItem, _>(move |_, _| {
-                lsp::CompletionItem {
-                    additional_text_edits: edit.clone().map(|(range, new_text)| {
-                        vec![lsp::TextEdit::new(
-                            lsp::Range::new(
-                                lsp::Position::new(range.start.row, range.start.column),
-                                lsp::Position::new(range.end.row, range.end.column),
-                            ),
-                            new_text.to_string(),
-                        )]
-                    }),
-                    ..Default::default()
+            fake.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _| {
+                let edit = edit.clone();
+                async move {
+                    lsp::CompletionItem {
+                        additional_text_edits: edit.map(|(range, new_text)| {
+                            vec![lsp::TextEdit::new(
+                                lsp::Range::new(
+                                    lsp::Position::new(range.start.row, range.start.column),
+                                    lsp::Position::new(range.end.row, range.end.column),
+                                ),
+                                new_text.to_string(),
+                            )]
+                        }),
+                        ..Default::default()
+                    }
                 }
             })
             .next()
