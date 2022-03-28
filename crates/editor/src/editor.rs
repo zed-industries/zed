@@ -4421,9 +4421,9 @@ impl Editor {
         self.end_selection(cx);
         self.selection_history.mode = SelectionHistoryMode::Undoing;
         if let Some(entry) = self.selection_history.undo_stack.pop_back() {
-            self.set_selections(entry.selections.clone(), None, true, cx);
-            self.select_next_state = entry.select_next_state.clone();
-            self.add_selections_state = entry.add_selections_state.clone();
+            self.set_selections(entry.selections, None, true, cx);
+            self.select_next_state = entry.select_next_state;
+            self.add_selections_state = entry.add_selections_state;
             self.request_autoscroll(Autoscroll::Newest, cx);
         }
         self.selection_history.mode = SelectionHistoryMode::Normal;
@@ -4433,9 +4433,9 @@ impl Editor {
         self.end_selection(cx);
         self.selection_history.mode = SelectionHistoryMode::Redoing;
         if let Some(entry) = self.selection_history.redo_stack.pop_back() {
-            self.set_selections(entry.selections.clone(), None, true, cx);
-            self.select_next_state = entry.select_next_state.clone();
-            self.add_selections_state = entry.add_selections_state.clone();
+            self.set_selections(entry.selections, None, true, cx);
+            self.select_next_state = entry.select_next_state;
+            self.add_selections_state = entry.add_selections_state;
             self.request_autoscroll(Autoscroll::Newest, cx);
         }
         self.selection_history.mode = SelectionHistoryMode::Normal;
