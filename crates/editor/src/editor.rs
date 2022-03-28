@@ -3998,7 +3998,7 @@ impl Editor {
             state.stack.pop();
         }
 
-        self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+        self.update_selections(new_selections, Some(Autoscroll::Newest), cx);
         if state.stack.len() > 1 {
             self.add_selections_state = Some(state);
         }
