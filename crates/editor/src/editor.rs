@@ -120,6 +120,8 @@ action!(ToggleComments);
 action!(SelectLargerSyntaxNode);
 action!(SelectSmallerSyntaxNode);
 action!(MoveToEnclosingBracket);
+action!(UndoSelection);
+action!(RedoSelection);
 action!(GoToDiagnostic, Direction);
 action!(GoToDefinition);
 action!(FindAllReferences);
@@ -280,6 +282,8 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("ctrl-w", SelectLargerSyntaxNode, Some("Editor")),
         Binding::new("alt-down", SelectSmallerSyntaxNode, Some("Editor")),
         Binding::new("ctrl-shift-W", SelectSmallerSyntaxNode, Some("Editor")),
+        Binding::new("cmd-u", UndoSelection, Some("Editor")),
+        Binding::new("cmd-shift-U", RedoSelection, Some("Editor")),
         Binding::new("f8", GoToDiagnostic(Direction::Next), Some("Editor")),
         Binding::new("shift-f8", GoToDiagnostic(Direction::Prev), Some("Editor")),
         Binding::new("f2", Rename, Some("Editor")),
@@ -356,6 +360,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::select_larger_syntax_node);
     cx.add_action(Editor::select_smaller_syntax_node);
     cx.add_action(Editor::move_to_enclosing_bracket);
+    cx.add_action(Editor::undo_selection);
+    cx.add_action(Editor::redo_selection);
     cx.add_action(Editor::go_to_diagnostic);
     cx.add_action(Editor::go_to_definition);
     cx.add_action(Editor::page_up);
@@ -507,10 +513,32 @@ pub struct PendingSelection {
     mode: SelectMode,
 }
 
+#[derive(Clone)]
+struct SelectionHistoryEntry {
+    selections: Arc<[Selection<Anchor>]>,
+    select_next_state: Option<SelectNextState>,
+    add_selections_state: Option<AddSelectionsState>,
+}
+
+enum SelectionHistoryMode {
+    Normal,
+    Undoing,
+    Redoing,
+}
+
+impl Default for SelectionHistoryMode {
+    fn default() -> Self {
+        Self::Normal
+    }
+}
+
 #[derive(Default)]
 struct SelectionHistory {
     selections_by_transaction:
         HashMap<TransactionId, (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)>,
+    mode: SelectionHistoryMode,
+    undo_stack: Vec<SelectionHistoryEntry>,
+    redo_stack: Vec<SelectionHistoryEntry>,
 }
 
 impl SelectionHistory {
@@ -536,13 +564,48 @@ impl SelectionHistory {
     ) -> Option<&mut (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)> {
         self.selections_by_transaction.get_mut(&transaction_id)
     }
+
+    fn push(&mut self, entry: SelectionHistoryEntry) {
+        if !entry.selections.is_empty() {
+            match self.mode {
+                SelectionHistoryMode::Normal => {
+                    self.push_undo(entry);
+                    self.redo_stack.clear();
+                }
+                SelectionHistoryMode::Undoing => self.push_redo(entry),
+                SelectionHistoryMode::Redoing => self.push_undo(entry),
+            }
+        }
+    }
+
+    fn push_undo(&mut self, entry: SelectionHistoryEntry) {
+        if self
+            .undo_stack
+            .last()
+            .map_or(true, |e| e.selections != entry.selections)
+        {
+            self.undo_stack.push(entry)
+        }
+    }
+
+    fn push_redo(&mut self, entry: SelectionHistoryEntry) {
+        if self
+            .redo_stack
+            .last()
+            .map_or(true, |e| e.selections != entry.selections)
+        {
+            self.redo_stack.push(entry)
+        }
+    }
 }
 
+#[derive(Clone)]
 struct AddSelectionsState {
     above: bool,
     stack: Vec<usize>,
 }
 
+#[derive(Clone)]
 struct SelectNextState {
     query: AhoCorasick,
     wordwise: bool,
@@ -3943,6 +4006,7 @@ impl Editor {
     }
 
     fn add_selection(&mut self, above: bool, cx: &mut ViewContext<Self>) {
+        self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.local_selections::<Point>(cx);
         let mut state = self.add_selections_state.take().unwrap_or_else(|| {
@@ -4036,6 +4100,7 @@ impl Editor {
     }
 
     pub fn select_next(&mut self, action: &SelectNext, cx: &mut ViewContext<Self>) {
+        self.push_to_selection_history();
         let replace_newest = action.0;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
@@ -4318,6 +4383,30 @@ impl Editor {
         }
 
         self.update_selections(selections, Some(Autoscroll::Fit), cx);
+    }
+
+    pub fn undo_selection(&mut self, _: &UndoSelection, cx: &mut ViewContext<Self>) {
+        self.end_selection(cx);
+        self.selection_history.mode = SelectionHistoryMode::Undoing;
+        if let Some(entry) = self.selection_history.undo_stack.pop() {
+            self.set_selections(entry.selections.clone(), None, true, cx);
+            self.select_next_state = entry.select_next_state.clone();
+            self.add_selections_state = entry.add_selections_state.clone();
+            self.request_autoscroll(Autoscroll::Newest, cx);
+        }
+        self.selection_history.mode = SelectionHistoryMode::Normal;
+    }
+
+    pub fn redo_selection(&mut self, _: &RedoSelection, cx: &mut ViewContext<Self>) {
+        self.end_selection(cx);
+        self.selection_history.mode = SelectionHistoryMode::Redoing;
+        if let Some(entry) = self.selection_history.redo_stack.pop() {
+            self.set_selections(entry.selections.clone(), None, true, cx);
+            self.select_next_state = entry.select_next_state.clone();
+            self.add_selections_state = entry.add_selections_state.clone();
+            self.request_autoscroll(Autoscroll::Newest, cx);
+        }
+        self.selection_history.mode = SelectionHistoryMode::Normal;
     }
 
     pub fn go_to_diagnostic(
@@ -5218,6 +5307,7 @@ impl Editor {
 
         let old_cursor_position = self.newest_anchor_selection().head();
 
+        self.push_to_selection_history();
         self.selections = selections;
         self.pending_selection = pending_selection;
         if self.focused && self.leader_replica_id.is_none() {
@@ -5281,6 +5371,14 @@ impl Editor {
 
         self.pause_cursor_blinking(cx);
         cx.emit(Event::SelectionsChanged { local });
+    }
+
+    fn push_to_selection_history(&mut self) {
+        self.selection_history.push(SelectionHistoryEntry {
+            selections: self.selections.clone(),
+            select_next_state: self.select_next_state.clone(),
+            add_selections_state: self.add_selections_state.clone(),
+        });
     }
 
     pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
