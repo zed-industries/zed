@@ -179,6 +179,8 @@ pub fn init(cx: &mut MutableAppContext) {
             ConfirmCompletion(None),
             Some("Editor && showing_completions"),
         ),
+        Binding::new("cmd-[", Outdent, Some("Editor")),
+        Binding::new("cmd-]", Indent, Some("Editor")),
         Binding::new("ctrl-shift-K", DeleteLine, Some("Editor")),
         Binding::new("alt-backspace", DeleteToPreviousWordStart, Some("Editor")),
         Binding::new("alt-h", DeleteToPreviousWordStart, Some("Editor")),
