@@ -68,7 +68,8 @@ action!(Backspace);
 action!(Delete);
 action!(Input, String);
 action!(Newline);
-action!(Tab);
+action!(Tab, Direction);
+action!(Indent);
 action!(Outdent);
 action!(DeleteLine);
 action!(DeleteToPreviousWordStart);
@@ -171,13 +172,13 @@ pub fn init(cx: &mut MutableAppContext) {
             Some("Editor && showing_code_actions"),
         ),
         Binding::new("enter", ConfirmRename, Some("Editor && renaming")),
-        Binding::new("tab", Tab, Some("Editor")),
+        Binding::new("tab", Tab(Direction::Next), Some("Editor")),
+        Binding::new("shift-tab", Tab(Direction::Prev), Some("Editor")),
         Binding::new(
             "tab",
             ConfirmCompletion(None),
             Some("Editor && showing_completions"),
         ),
-        Binding::new("shift-tab", Outdent, Some("Editor")),
         Binding::new("ctrl-shift-K", DeleteLine, Some("Editor")),
         Binding::new("alt-backspace", DeleteToPreviousWordStart, Some("Editor")),
         Binding::new("alt-h", DeleteToPreviousWordStart, Some("Editor")),
@@ -304,7 +305,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::newline);
     cx.add_action(Editor::backspace);
     cx.add_action(Editor::delete);
-    cx.add_action(Editor::tab);
+    cx.add_action(Editor::handle_tab);
+    cx.add_action(Editor::indent);
     cx.add_action(Editor::outdent);
     cx.add_action(Editor::delete_line);
     cx.add_action(Editor::delete_to_previous_word_start);
@@ -2861,18 +2863,34 @@ impl Editor {
         });
     }
 
-    pub fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
-        if self.move_to_next_snippet_tabstop(cx) {
-            return;
-        }
+    pub fn handle_tab(&mut self, &Tab(direction): &Tab, cx: &mut ViewContext<Self>) {
+        match direction {
+            Direction::Prev => {
+                if !self.snippet_stack.is_empty() {
+                    self.move_to_prev_snippet_tabstop(cx);
+                    return;
+                }
 
+                self.outdent(&Outdent, cx);
+            }
+            Direction::Next => {
+                if self.move_to_next_snippet_tabstop(cx) {
+                    return;
+                }
+
+                self.tab(false, cx);
+            }
+        }
+    }
+
+    pub fn tab(&mut self, force_indentation: bool, cx: &mut ViewContext<Self>) {
         let tab_size = cx.global::<Settings>().tab_size;
         let mut selections = self.local_selections::<Point>(cx);
         self.transact(cx, |this, cx| {
             let mut last_indent = None;
             this.buffer.update(cx, |buffer, cx| {
                 for selection in &mut selections {
-                    if selection.is_empty() {
+                    if selection.is_empty() && !force_indentation {
                         let char_column = buffer
                             .read(cx)
                             .text_for_range(Point::new(selection.start.row, 0)..selection.start)
@@ -2938,12 +2956,11 @@ impl Editor {
         });
     }
 
-    pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
-        if !self.snippet_stack.is_empty() {
-            self.move_to_prev_snippet_tabstop(cx);
-            return;
-        }
+    pub fn indent(&mut self, _: &Indent, cx: &mut ViewContext<Self>) {
+        self.tab(true, cx);
+    }
 
+    pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
         let tab_size = cx.global::<Settings>().tab_size;
         let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -7458,7 +7475,7 @@ mod tests {
             );
 
             // indent from mid-tabstop to full tabstop
-            view.tab(&Tab, cx);
+            view.tab(false, cx);
             assert_eq!(view.text(cx), "    one two\nthree\n four");
             assert_eq!(
                 view.selected_display_ranges(cx),
@@ -7483,7 +7500,7 @@ mod tests {
             view.select_display_ranges(&[DisplayPoint::new(1, 1)..DisplayPoint::new(2, 0)], cx);
 
             // indent and outdent affect only the preceding line
-            view.tab(&Tab, cx);
+            view.tab(false, cx);
             assert_eq!(view.text(cx), "one two\n    three\n four");
             assert_eq!(
                 view.selected_display_ranges(cx),
@@ -7498,7 +7515,7 @@ mod tests {
 
             // Ensure that indenting/outdenting works when the cursor is at column 0.
             view.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
-            view.tab(&Tab, cx);
+            view.tab(false, cx);
             assert_eq!(view.text(cx), "one two\n    three\n four");
             assert_eq!(
                 view.selected_display_ranges(cx),
