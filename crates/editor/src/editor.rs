@@ -455,8 +455,7 @@ pub struct Editor {
     columnar_selection_tail: Option<Anchor>,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
-    selection_history:
-        HashMap<TransactionId, (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)>,
+    selection_history: SelectionHistory,
     autoclose_stack: InvalidationStack<BracketPairState>,
     snippet_stack: InvalidationStack<SnippetState>,
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
@@ -506,6 +505,37 @@ pub struct EditorSnapshot {
 pub struct PendingSelection {
     selection: Selection<Anchor>,
     mode: SelectMode,
+}
+
+#[derive(Default)]
+struct SelectionHistory {
+    selections_by_transaction:
+        HashMap<TransactionId, (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)>,
+}
+
+impl SelectionHistory {
+    fn insert_transaction(
+        &mut self,
+        transaction_id: TransactionId,
+        selections: Arc<[Selection<Anchor>]>,
+    ) {
+        self.selections_by_transaction
+            .insert(transaction_id, (selections, None));
+    }
+
+    fn transaction(
+        &self,
+        transaction_id: TransactionId,
+    ) -> Option<&(Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)> {
+        self.selections_by_transaction.get(&transaction_id)
+    }
+
+    fn transaction_mut(
+        &mut self,
+        transaction_id: TransactionId,
+    ) -> Option<&mut (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)> {
+        self.selections_by_transaction.get_mut(&transaction_id)
+    }
 }
 
 struct AddSelectionsState {
@@ -3438,7 +3468,7 @@ impl Editor {
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
-            if let Some((selections, _)) = self.selection_history.get(&tx_id).cloned() {
+            if let Some((selections, _)) = self.selection_history.transaction(tx_id).cloned() {
                 self.set_selections(selections, None, true, cx);
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
@@ -3448,7 +3478,8 @@ impl Editor {
 
     pub fn redo(&mut self, _: &Redo, cx: &mut ViewContext<Self>) {
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
-            if let Some((_, Some(selections))) = self.selection_history.get(&tx_id).cloned() {
+            if let Some((_, Some(selections))) = self.selection_history.transaction(tx_id).cloned()
+            {
                 self.set_selections(selections, None, true, cx);
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
@@ -5279,7 +5310,7 @@ impl Editor {
             .update(cx, |buffer, cx| buffer.start_transaction_at(now, cx))
         {
             self.selection_history
-                .insert(tx_id, (self.selections.clone(), None));
+                .insert_transaction(tx_id, self.selections.clone());
         }
     }
 
@@ -5288,7 +5319,7 @@ impl Editor {
             .buffer
             .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
         {
-            if let Some((_, end_selections)) = self.selection_history.get_mut(&tx_id) {
+            if let Some((_, end_selections)) = self.selection_history.transaction_mut(tx_id) {
                 *end_selections = Some(self.selections.clone());
             } else {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
