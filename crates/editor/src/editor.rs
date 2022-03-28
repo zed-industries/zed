@@ -6291,7 +6291,7 @@ mod tests {
     use text::Point;
     use unindent::Unindent;
     use util::test::{marked_text_by, sample_text};
-    use workspace::FollowableItem;
+    use workspace::{FollowableItem, ItemHandle};
 
     #[gpui::test]
     fn test_edit_events(cx: &mut MutableAppContext) {
@@ -8667,6 +8667,94 @@ mod tests {
                 ]
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_format_during_save(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+        cx.update(populate_settings);
+
+        let (mut language_server_config, mut fake_servers) = LanguageServerConfig::fake();
+        language_server_config.set_fake_capabilities(lsp::ServerCapabilities {
+            document_formatting_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        });
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".to_string()],
+                language_server: Some(language_server_config),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        ));
+
+        let fs = FakeFs::new(cx.background().clone());
+        fs.insert_file("/file.rs", Default::default()).await;
+
+        let project = Project::test(fs, cx);
+        project.update(cx, |project, _| project.languages().add(language));
+
+        let worktree_id = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/file.rs", true, cx)
+            })
+            .await
+            .unwrap()
+            .0
+            .read_with(cx, |tree, _| tree.id());
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer((worktree_id, ""), cx))
+            .await
+            .unwrap();
+        let mut fake_server = fake_servers.next().await.unwrap();
+
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let (_, editor) = cx.add_window(|cx| build_editor(buffer, cx));
+        editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+        assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+        let save = cx.update(|cx| editor.save(project.clone(), cx));
+        fake_server
+            .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path("/file.rs").unwrap()
+                );
+                Some(vec![lsp::TextEdit::new(
+                    lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
+                    ", ".to_string(),
+                )])
+            })
+            .next()
+            .await;
+        save.await.unwrap();
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "one, two\nthree\n"
+        );
+        assert!(!cx.read(|cx| editor.is_dirty(cx)));
+
+        editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+        assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+        // Ensure we can still save even if formatting hangs.
+        fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path("/file.rs").unwrap()
+            );
+            futures::future::pending::<()>().await;
+            unreachable!()
+        });
+        let save = cx.update(|cx| editor.save(project.clone(), cx));
+        cx.foreground().advance_clock(items::FORMAT_TIMEOUT);
+        save.await.unwrap();
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "one\ntwo\nthree\n"
+        );
+        assert!(!cx.read(|cx| editor.is_dirty(cx)));
     }
 
     #[gpui::test]
