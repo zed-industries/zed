@@ -6426,7 +6426,7 @@ mod tests {
     use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
-    use util::test::{marked_text_by, sample_text};
+    use util::test::{marked_text_by, marked_text_ranges, sample_text};
     use workspace::FollowableItem;
 
     #[gpui::test]
@@ -8221,6 +8221,21 @@ mod tests {
                 view.selected_display_ranges(cx),
                 vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
             );
+
+            view.undo_selection(&UndoSelection, cx);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
+                ]
+            );
+
+            view.redo_selection(&RedoSelection, cx);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
+            );
         });
 
         view.update(cx, |view, cx| {
@@ -8350,6 +8365,36 @@ mod tests {
                     DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
                 ]
             );
+        });
+    }
+
+    #[gpui::test]
+    fn test_select_next(cx: &mut gpui::MutableAppContext) {
+        populate_settings(cx);
+
+        let (text, ranges) = marked_text_ranges("[abc]\n[abc] [abc]\ndefabc\n[abc]");
+        let buffer = MultiBuffer::build_simple(&text, cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
+
+        view.update(cx, |view, cx| {
+            view.select_ranges([ranges[1].start + 1..ranges[1].start + 1], None, cx);
+            view.select_next(&SelectNext(false), cx);
+            assert_eq!(view.selected_ranges(cx), &ranges[1..2]);
+
+            view.select_next(&SelectNext(false), cx);
+            assert_eq!(view.selected_ranges(cx), &ranges[1..3]);
+
+            view.undo_selection(&UndoSelection, cx);
+            assert_eq!(view.selected_ranges(cx), &ranges[1..2]);
+
+            view.redo_selection(&RedoSelection, cx);
+            assert_eq!(view.selected_ranges(cx), &ranges[1..3]);
+
+            view.select_next(&SelectNext(false), cx);
+            assert_eq!(view.selected_ranges(cx), &ranges[1..4]);
+
+            view.select_next(&SelectNext(false), cx);
+            assert_eq!(view.selected_ranges(cx), &ranges[0..4]);
         });
     }
 
