@@ -10,7 +10,7 @@ mod test;
 use aho_corasick::AhoCorasick;
 use anyhow::Result;
 use clock::ReplicaId;
-use collections::{BTreeMap, Bound, HashMap, HashSet};
+use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
@@ -62,6 +62,7 @@ use workspace::{settings, ItemNavHistory, Settings, Workspace};
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
+const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 
 action!(Cancel);
 action!(Backspace);
@@ -121,6 +122,8 @@ action!(ToggleComments);
 action!(SelectLargerSyntaxNode);
 action!(SelectSmallerSyntaxNode);
 action!(MoveToEnclosingBracket);
+action!(UndoSelection);
+action!(RedoSelection);
 action!(GoToDiagnostic, Direction);
 action!(GoToDefinition);
 action!(FindAllReferences);
@@ -283,6 +286,8 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("ctrl-w", SelectLargerSyntaxNode, Some("Editor")),
         Binding::new("alt-down", SelectSmallerSyntaxNode, Some("Editor")),
         Binding::new("ctrl-shift-W", SelectSmallerSyntaxNode, Some("Editor")),
+        Binding::new("cmd-u", UndoSelection, Some("Editor")),
+        Binding::new("cmd-shift-U", RedoSelection, Some("Editor")),
         Binding::new("f8", GoToDiagnostic(Direction::Next), Some("Editor")),
         Binding::new("shift-f8", GoToDiagnostic(Direction::Prev), Some("Editor")),
         Binding::new("f2", Rename, Some("Editor")),
@@ -360,6 +365,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::select_larger_syntax_node);
     cx.add_action(Editor::select_smaller_syntax_node);
     cx.add_action(Editor::move_to_enclosing_bracket);
+    cx.add_action(Editor::undo_selection);
+    cx.add_action(Editor::redo_selection);
     cx.add_action(Editor::go_to_diagnostic);
     cx.add_action(Editor::go_to_definition);
     cx.add_action(Editor::page_up);
@@ -459,8 +466,7 @@ pub struct Editor {
     columnar_selection_tail: Option<Anchor>,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
-    selection_history:
-        HashMap<TransactionId, (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)>,
+    selection_history: SelectionHistory,
     autoclose_stack: InvalidationStack<BracketPairState>,
     snippet_stack: InvalidationStack<SnippetState>,
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
@@ -512,11 +518,105 @@ pub struct PendingSelection {
     mode: SelectMode,
 }
 
+#[derive(Clone)]
+struct SelectionHistoryEntry {
+    selections: Arc<[Selection<Anchor>]>,
+    select_next_state: Option<SelectNextState>,
+    add_selections_state: Option<AddSelectionsState>,
+}
+
+enum SelectionHistoryMode {
+    Normal,
+    Undoing,
+    Redoing,
+}
+
+impl Default for SelectionHistoryMode {
+    fn default() -> Self {
+        Self::Normal
+    }
+}
+
+#[derive(Default)]
+struct SelectionHistory {
+    selections_by_transaction:
+        HashMap<TransactionId, (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)>,
+    mode: SelectionHistoryMode,
+    undo_stack: VecDeque<SelectionHistoryEntry>,
+    redo_stack: VecDeque<SelectionHistoryEntry>,
+}
+
+impl SelectionHistory {
+    fn insert_transaction(
+        &mut self,
+        transaction_id: TransactionId,
+        selections: Arc<[Selection<Anchor>]>,
+    ) {
+        self.selections_by_transaction
+            .insert(transaction_id, (selections, None));
+    }
+
+    fn transaction(
+        &self,
+        transaction_id: TransactionId,
+    ) -> Option<&(Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)> {
+        self.selections_by_transaction.get(&transaction_id)
+    }
+
+    fn transaction_mut(
+        &mut self,
+        transaction_id: TransactionId,
+    ) -> Option<&mut (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)> {
+        self.selections_by_transaction.get_mut(&transaction_id)
+    }
+
+    fn push(&mut self, entry: SelectionHistoryEntry) {
+        if !entry.selections.is_empty() {
+            match self.mode {
+                SelectionHistoryMode::Normal => {
+                    self.push_undo(entry);
+                    self.redo_stack.clear();
+                }
+                SelectionHistoryMode::Undoing => self.push_redo(entry),
+                SelectionHistoryMode::Redoing => self.push_undo(entry),
+            }
+        }
+    }
+
+    fn push_undo(&mut self, entry: SelectionHistoryEntry) {
+        if self
+            .undo_stack
+            .back()
+            .map_or(true, |e| e.selections != entry.selections)
+        {
+            self.undo_stack.push_back(entry);
+            if self.undo_stack.len() > MAX_SELECTION_HISTORY_LEN {
+                self.undo_stack.pop_front();
+            }
+        }
+    }
+
+    fn push_redo(&mut self, entry: SelectionHistoryEntry) {
+        if self
+            .redo_stack
+            .back()
+            .map_or(true, |e| e.selections != entry.selections)
+        {
+            self.redo_stack.push_back(entry);
+            if self.redo_stack.len() > MAX_SELECTION_HISTORY_LEN {
+                self.redo_stack.pop_front();
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
 struct AddSelectionsState {
     above: bool,
     stack: Vec<usize>,
 }
 
+#[derive(Clone)]
 struct SelectNextState {
     query: AhoCorasick,
     wordwise: bool,
@@ -3463,7 +3563,7 @@ impl Editor {
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
-            if let Some((selections, _)) = self.selection_history.get(&tx_id).cloned() {
+            if let Some((selections, _)) = self.selection_history.transaction(tx_id).cloned() {
                 self.set_selections(selections, None, true, cx);
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
@@ -3473,7 +3573,8 @@ impl Editor {
 
     pub fn redo(&mut self, _: &Redo, cx: &mut ViewContext<Self>) {
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
-            if let Some((_, Some(selections))) = self.selection_history.get(&tx_id).cloned() {
+            if let Some((_, Some(selections))) = self.selection_history.transaction(tx_id).cloned()
+            {
                 self.set_selections(selections, None, true, cx);
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
@@ -3937,6 +4038,7 @@ impl Editor {
     }
 
     fn add_selection(&mut self, above: bool, cx: &mut ViewContext<Self>) {
+        self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.local_selections::<Point>(cx);
         let mut state = self.add_selections_state.take().unwrap_or_else(|| {
@@ -4023,13 +4125,14 @@ impl Editor {
             state.stack.pop();
         }
 
-        self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+        self.update_selections(new_selections, Some(Autoscroll::Newest), cx);
         if state.stack.len() > 1 {
             self.add_selections_state = Some(state);
         }
     }
 
     pub fn select_next(&mut self, action: &SelectNext, cx: &mut ViewContext<Self>) {
+        self.push_to_selection_history();
         let replace_newest = action.0;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
@@ -4312,6 +4415,30 @@ impl Editor {
         }
 
         self.update_selections(selections, Some(Autoscroll::Fit), cx);
+    }
+
+    pub fn undo_selection(&mut self, _: &UndoSelection, cx: &mut ViewContext<Self>) {
+        self.end_selection(cx);
+        self.selection_history.mode = SelectionHistoryMode::Undoing;
+        if let Some(entry) = self.selection_history.undo_stack.pop_back() {
+            self.set_selections(entry.selections, None, true, cx);
+            self.select_next_state = entry.select_next_state;
+            self.add_selections_state = entry.add_selections_state;
+            self.request_autoscroll(Autoscroll::Newest, cx);
+        }
+        self.selection_history.mode = SelectionHistoryMode::Normal;
+    }
+
+    pub fn redo_selection(&mut self, _: &RedoSelection, cx: &mut ViewContext<Self>) {
+        self.end_selection(cx);
+        self.selection_history.mode = SelectionHistoryMode::Redoing;
+        if let Some(entry) = self.selection_history.redo_stack.pop_back() {
+            self.set_selections(entry.selections, None, true, cx);
+            self.select_next_state = entry.select_next_state;
+            self.add_selections_state = entry.add_selections_state;
+            self.request_autoscroll(Autoscroll::Newest, cx);
+        }
+        self.selection_history.mode = SelectionHistoryMode::Normal;
     }
 
     pub fn go_to_diagnostic(
@@ -5212,6 +5339,7 @@ impl Editor {
 
         let old_cursor_position = self.newest_anchor_selection().head();
 
+        self.push_to_selection_history();
         self.selections = selections;
         self.pending_selection = pending_selection;
         if self.focused && self.leader_replica_id.is_none() {
@@ -5277,6 +5405,14 @@ impl Editor {
         cx.emit(Event::SelectionsChanged { local });
     }
 
+    fn push_to_selection_history(&mut self) {
+        self.selection_history.push(SelectionHistoryEntry {
+            selections: self.selections.clone(),
+            select_next_state: self.select_next_state.clone(),
+            add_selections_state: self.add_selections_state.clone(),
+        });
+    }
+
     pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
         self.autoscroll_request = Some((autoscroll, true));
         cx.notify();
@@ -5304,7 +5440,7 @@ impl Editor {
             .update(cx, |buffer, cx| buffer.start_transaction_at(now, cx))
         {
             self.selection_history
-                .insert(tx_id, (self.selections.clone(), None));
+                .insert_transaction(tx_id, self.selections.clone());
         }
     }
 
@@ -5313,7 +5449,7 @@ impl Editor {
             .buffer
             .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
         {
-            if let Some((_, end_selections)) = self.selection_history.get_mut(&tx_id) {
+            if let Some((_, end_selections)) = self.selection_history.transaction_mut(tx_id) {
                 *end_selections = Some(self.selections.clone());
             } else {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
@@ -6315,7 +6451,7 @@ mod tests {
     use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
-    use util::test::{marked_text_by, sample_text};
+    use util::test::{marked_text_by, marked_text_ranges, sample_text};
     use workspace::{FollowableItem, ItemHandle};
 
     #[gpui::test]
@@ -8110,6 +8246,21 @@ mod tests {
                 view.selected_display_ranges(cx),
                 vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
             );
+
+            view.undo_selection(&UndoSelection, cx);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
+                ]
+            );
+
+            view.redo_selection(&RedoSelection, cx);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
+            );
         });
 
         view.update(cx, |view, cx| {
@@ -8239,6 +8390,36 @@ mod tests {
                     DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
                 ]
             );
+        });
+    }
+
+    #[gpui::test]
+    fn test_select_next(cx: &mut gpui::MutableAppContext) {
+        populate_settings(cx);
+
+        let (text, ranges) = marked_text_ranges("[abc]\n[abc] [abc]\ndefabc\n[abc]");
+        let buffer = MultiBuffer::build_simple(&text, cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
+
+        view.update(cx, |view, cx| {
+            view.select_ranges([ranges[1].start + 1..ranges[1].start + 1], None, cx);
+            view.select_next(&SelectNext(false), cx);
+            assert_eq!(view.selected_ranges(cx), &ranges[1..2]);
+
+            view.select_next(&SelectNext(false), cx);
+            assert_eq!(view.selected_ranges(cx), &ranges[1..3]);
+
+            view.undo_selection(&UndoSelection, cx);
+            assert_eq!(view.selected_ranges(cx), &ranges[1..2]);
+
+            view.redo_selection(&RedoSelection, cx);
+            assert_eq!(view.selected_ranges(cx), &ranges[1..3]);
+
+            view.select_next(&SelectNext(false), cx);
+            assert_eq!(view.selected_ranges(cx), &ranges[1..4]);
+
+            view.select_next(&SelectNext(false), cx);
+            assert_eq!(view.selected_ranges(cx), &ranges[0..4]);
         });
     }
 

@@ -1081,10 +1081,7 @@ pub mod tests {
         );
         language.set_theme(&theme);
 
-        let (text, highlighted_ranges) = marked_text_ranges(
-            r#"const{} <a>: B = "c [d]""#,
-            vec![('{', '}'), ('<', '>'), ('[', ']')],
-        );
+        let (text, highlighted_ranges) = marked_text_ranges(r#"const[] [a]: B = "c [d]""#);
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
