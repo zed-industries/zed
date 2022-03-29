@@ -66,7 +66,7 @@ impl View for SearchBar {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        if self.dismissed {
+        if self.dismissed || self.active_editor.is_none() {
             Empty::new().boxed()
         } else {
             let theme = cx.global::<Settings>().theme.clone();
@@ -129,6 +129,7 @@ impl View for SearchBar {
 
 impl ToolbarItemView for SearchBar {
     fn set_active_pane_item(&mut self, item: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+        cx.notify();
         self.active_editor_subscription.take();
         self.active_editor.take();
         self.pending_search.take();
@@ -139,12 +140,9 @@ impl ToolbarItemView for SearchBar {
                     Some(cx.subscribe(&editor, Self::on_active_editor_event));
                 self.active_editor = Some(editor);
                 self.update_matches(false, cx);
-                self.dismissed = false;
                 return;
             }
         }
-
-        self.dismiss(&Dismiss, cx);
     }
 }
 
