@@ -89,6 +89,8 @@ background = "$surface.1"
 border = { color = "$border.0", width = 1, left = false, right = false, bottom = true, top = false }
 height = 44
 item_spacing = 8
+padding.left = 8
+padding.right = 8
 
 [panel]
 padding = { top = 12, left = 12, bottom = 12, right = 12 }
