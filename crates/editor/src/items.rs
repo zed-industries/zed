@@ -1,162 +1,251 @@
-use crate::{Autoscroll, Editor, Event, MultiBuffer, NavigationData, ToOffset, ToPoint as _};
-use anyhow::Result;
+use crate::{Anchor, Autoscroll, Editor, Event, ExcerptId, NavigationData, ToOffset, ToPoint as _};
+use anyhow::{anyhow, Result};
+use futures::FutureExt;
 use gpui::{
-    elements::*, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, RenderContext,
-    Subscription, Task, View, ViewContext, ViewHandle, WeakModelHandle,
+    elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
+    RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
 };
-use language::{Bias, Buffer, Diagnostic, File as _};
-use project::{File, Project, ProjectPath};
-use std::path::PathBuf;
-use std::rc::Rc;
-use std::{cell::RefCell, fmt::Write};
+use language::{Bias, Buffer, Diagnostic, File as _, SelectionGoal};
+use project::{File, Project, ProjectEntryId, ProjectPath};
+use rpc::proto::{self, update_view};
+use std::{fmt::Write, path::PathBuf, time::Duration};
 use text::{Point, Selection};
-use util::ResultExt;
+use util::TryFutureExt;
 use workspace::{
-    ItemHandle, ItemNavHistory, ItemView, ItemViewHandle, NavHistory, PathOpener, Settings,
-    StatusItemView, WeakItemHandle, Workspace,
+    FollowableItem, Item, ItemHandle, ItemNavHistory, ProjectItem, Settings, StatusItemView,
 };
 
-pub struct BufferOpener;
+pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 
-#[derive(Clone)]
-pub struct BufferItemHandle(pub ModelHandle<Buffer>);
-
-#[derive(Clone)]
-struct WeakBufferItemHandle(WeakModelHandle<Buffer>);
-
-#[derive(Clone)]
-pub struct MultiBufferItemHandle(pub ModelHandle<MultiBuffer>);
-
-#[derive(Clone)]
-struct WeakMultiBufferItemHandle(WeakModelHandle<MultiBuffer>);
-
-impl PathOpener for BufferOpener {
-    fn open(
-        &self,
-        project: &mut Project,
-        project_path: ProjectPath,
-        cx: &mut ModelContext<Project>,
-    ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
-        let buffer = project.open_buffer(project_path, cx);
-        let task = cx.spawn(|_, _| async move {
-            let buffer = buffer.await?;
-            Ok(Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
-        });
-        Some(task)
-    }
-}
-
-impl ItemHandle for BufferItemHandle {
-    fn add_view(
-        &self,
-        window_id: usize,
-        workspace: &Workspace,
-        nav_history: Rc<RefCell<NavHistory>>,
+impl FollowableItem for Editor {
+    fn from_state_proto(
+        pane: ViewHandle<workspace::Pane>,
+        project: ModelHandle<Project>,
+        state: &mut Option<proto::view::Variant>,
         cx: &mut MutableAppContext,
-    ) -> Box<dyn ItemViewHandle> {
-        let buffer = cx.add_model(|cx| MultiBuffer::singleton(self.0.clone(), cx));
-        Box::new(cx.add_view(window_id, |cx| {
-            let mut editor = Editor::for_buffer(buffer, Some(workspace.project().clone()), cx);
-            editor.nav_history = Some(ItemNavHistory::new(nav_history, &cx.handle()));
-            editor
-        }))
-    }
-
-    fn boxed_clone(&self) -> Box<dyn ItemHandle> {
-        Box::new(self.clone())
-    }
-
-    fn to_any(&self) -> gpui::AnyModelHandle {
-        self.0.clone().into()
-    }
-
-    fn downgrade(&self) -> Box<dyn workspace::WeakItemHandle> {
-        Box::new(WeakBufferItemHandle(self.0.downgrade()))
-    }
-
-    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
-        File::from_dyn(self.0.read(cx).file()).map(|f| ProjectPath {
-            worktree_id: f.worktree_id(cx),
-            path: f.path().clone(),
-        })
-    }
-
-    fn id(&self) -> usize {
-        self.0.id()
-    }
-}
-
-impl ItemHandle for MultiBufferItemHandle {
-    fn add_view(
-        &self,
-        window_id: usize,
-        workspace: &Workspace,
-        nav_history: Rc<RefCell<NavHistory>>,
-        cx: &mut MutableAppContext,
-    ) -> Box<dyn ItemViewHandle> {
-        Box::new(cx.add_view(window_id, |cx| {
-            let mut editor =
-                Editor::for_buffer(self.0.clone(), Some(workspace.project().clone()), cx);
-            editor.nav_history = Some(ItemNavHistory::new(nav_history, &cx.handle()));
-            editor
-        }))
-    }
-
-    fn boxed_clone(&self) -> Box<dyn ItemHandle> {
-        Box::new(self.clone())
-    }
-
-    fn to_any(&self) -> gpui::AnyModelHandle {
-        self.0.clone().into()
-    }
-
-    fn downgrade(&self) -> Box<dyn WeakItemHandle> {
-        Box::new(WeakMultiBufferItemHandle(self.0.downgrade()))
-    }
-
-    fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
-        None
-    }
-
-    fn id(&self) -> usize {
-        self.0.id()
-    }
-}
-
-impl WeakItemHandle for WeakBufferItemHandle {
-    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
-        self.0
-            .upgrade(cx)
-            .map(|buffer| Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
-    }
-
-    fn id(&self) -> usize {
-        self.0.id()
-    }
-}
-
-impl WeakItemHandle for WeakMultiBufferItemHandle {
-    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
-        self.0
-            .upgrade(cx)
-            .map(|buffer| Box::new(MultiBufferItemHandle(buffer)) as Box<dyn ItemHandle>)
-    }
-
-    fn id(&self) -> usize {
-        self.0.id()
-    }
-}
-
-impl ItemView for Editor {
-    fn item(&self, cx: &AppContext) -> Box<dyn ItemHandle> {
-        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
-            Box::new(BufferItemHandle(buffer))
+    ) -> Option<Task<Result<ViewHandle<Self>>>> {
+        let state = if matches!(state, Some(proto::view::Variant::Editor(_))) {
+            if let Some(proto::view::Variant::Editor(state)) = state.take() {
+                state
+            } else {
+                unreachable!()
+            }
         } else {
-            Box::new(MultiBufferItemHandle(self.buffer.clone()))
+            return None;
+        };
+
+        let buffer = project.update(cx, |project, cx| {
+            project.open_buffer_by_id(state.buffer_id, cx)
+        });
+        Some(cx.spawn(|mut cx| async move {
+            let buffer = buffer.await?;
+            let editor = pane
+                .read_with(&cx, |pane, cx| {
+                    pane.items_of_type::<Self>().find(|editor| {
+                        editor.read(cx).buffer.read(cx).as_singleton().as_ref() == Some(&buffer)
+                    })
+                })
+                .unwrap_or_else(|| {
+                    cx.add_view(pane.window_id(), |cx| {
+                        Editor::for_buffer(buffer, Some(project), cx)
+                    })
+                });
+            editor.update(&mut cx, |editor, cx| {
+                let excerpt_id;
+                let buffer_id;
+                {
+                    let buffer = editor.buffer.read(cx).read(cx);
+                    let singleton = buffer.as_singleton().unwrap();
+                    excerpt_id = singleton.0.clone();
+                    buffer_id = singleton.1;
+                }
+                let selections = state
+                    .selections
+                    .into_iter()
+                    .map(|selection| {
+                        deserialize_selection(&excerpt_id, buffer_id, selection)
+                            .ok_or_else(|| anyhow!("invalid selection"))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                if !selections.is_empty() {
+                    editor.set_selections_from_remote(selections.into(), cx);
+                }
+
+                if let Some(anchor) = state.scroll_top_anchor {
+                    editor.set_scroll_top_anchor(
+                        Anchor {
+                            buffer_id: Some(state.buffer_id as usize),
+                            excerpt_id: excerpt_id.clone(),
+                            text_anchor: language::proto::deserialize_anchor(anchor)
+                                .ok_or_else(|| anyhow!("invalid scroll top"))?,
+                        },
+                        vec2f(state.scroll_x, state.scroll_y),
+                        cx,
+                    );
+                }
+
+                Ok::<_, anyhow::Error>(())
+            })?;
+            Ok(editor)
+        }))
+    }
+
+    fn set_leader_replica_id(
+        &mut self,
+        leader_replica_id: Option<u16>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.leader_replica_id = leader_replica_id;
+        if self.leader_replica_id.is_some() {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.remove_active_selections(cx);
+            });
+        } else {
+            self.buffer.update(cx, |buffer, cx| {
+                if self.focused {
+                    buffer.set_active_selections(&self.selections, cx);
+                }
+            });
+        }
+        cx.notify();
+    }
+
+    fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {
+        let buffer_id = self.buffer.read(cx).as_singleton()?.read(cx).remote_id();
+        Some(proto::view::Variant::Editor(proto::view::Editor {
+            buffer_id,
+            scroll_top_anchor: Some(language::proto::serialize_anchor(
+                &self.scroll_top_anchor.text_anchor,
+            )),
+            scroll_x: self.scroll_position.x(),
+            scroll_y: self.scroll_position.y(),
+            selections: self.selections.iter().map(serialize_selection).collect(),
+        }))
+    }
+
+    fn add_event_to_update_proto(
+        &self,
+        event: &Self::Event,
+        update: &mut Option<proto::update_view::Variant>,
+        _: &AppContext,
+    ) -> bool {
+        let update =
+            update.get_or_insert_with(|| proto::update_view::Variant::Editor(Default::default()));
+
+        match update {
+            proto::update_view::Variant::Editor(update) => match event {
+                Event::ScrollPositionChanged { .. } => {
+                    update.scroll_top_anchor = Some(language::proto::serialize_anchor(
+                        &self.scroll_top_anchor.text_anchor,
+                    ));
+                    update.scroll_x = self.scroll_position.x();
+                    update.scroll_y = self.scroll_position.y();
+                    true
+                }
+                Event::SelectionsChanged { .. } => {
+                    update.selections = self
+                        .selections
+                        .iter()
+                        .chain(self.pending_selection.as_ref().map(|p| &p.selection))
+                        .map(serialize_selection)
+                        .collect();
+                    true
+                }
+                _ => false,
+            },
         }
     }
 
-    fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) {
+    fn apply_update_proto(
+        &mut self,
+        message: update_view::Variant,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<()> {
+        match message {
+            update_view::Variant::Editor(message) => {
+                let buffer = self.buffer.read(cx);
+                let buffer = buffer.read(cx);
+                let (excerpt_id, buffer_id, _) = buffer.as_singleton().unwrap();
+                let excerpt_id = excerpt_id.clone();
+                drop(buffer);
+
+                let selections = message
+                    .selections
+                    .into_iter()
+                    .filter_map(|selection| {
+                        deserialize_selection(&excerpt_id, buffer_id, selection)
+                    })
+                    .collect::<Vec<_>>();
+
+                if !selections.is_empty() {
+                    self.set_selections_from_remote(selections, cx);
+                    self.request_autoscroll_remotely(Autoscroll::Newest, cx);
+                } else {
+                    if let Some(anchor) = message.scroll_top_anchor {
+                        self.set_scroll_top_anchor(
+                            Anchor {
+                                buffer_id: Some(buffer_id),
+                                excerpt_id: excerpt_id.clone(),
+                                text_anchor: language::proto::deserialize_anchor(anchor)
+                                    .ok_or_else(|| anyhow!("invalid scroll top"))?,
+                            },
+                            vec2f(message.scroll_x, message.scroll_y),
+                            cx,
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn should_unfollow_on_event(event: &Self::Event, _: &AppContext) -> bool {
+        match event {
+            Event::Edited => true,
+            Event::SelectionsChanged { local } => *local,
+            Event::ScrollPositionChanged { local } => *local,
+            _ => false,
+        }
+    }
+}
+
+fn serialize_selection(selection: &Selection<Anchor>) -> proto::Selection {
+    proto::Selection {
+        id: selection.id as u64,
+        start: Some(language::proto::serialize_anchor(
+            &selection.start.text_anchor,
+        )),
+        end: Some(language::proto::serialize_anchor(
+            &selection.end.text_anchor,
+        )),
+        reversed: selection.reversed,
+    }
+}
+
+fn deserialize_selection(
+    excerpt_id: &ExcerptId,
+    buffer_id: usize,
+    selection: proto::Selection,
+) -> Option<Selection<Anchor>> {
+    Some(Selection {
+        id: selection.id as usize,
+        start: Anchor {
+            buffer_id: Some(buffer_id),
+            excerpt_id: excerpt_id.clone(),
+            text_anchor: language::proto::deserialize_anchor(selection.start?)?,
+        },
+        end: Anchor {
+            buffer_id: Some(buffer_id),
+            excerpt_id: excerpt_id.clone(),
+            text_anchor: language::proto::deserialize_anchor(selection.end?)?,
+        },
+        reversed: selection.reversed,
+        goal: SelectionGoal::None,
+    })
+}
+
+impl Item for Editor {
+    fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
         if let Some(data) = data.downcast_ref::<NavigationData>() {
             let buffer = self.buffer.read(cx).read(cx);
             let offset = if buffer.can_resolve(&data.anchor) {
@@ -164,11 +253,19 @@ impl ItemView for Editor {
             } else {
                 buffer.clip_offset(data.offset, Bias::Left)
             };
-
+            let newest_selection = self.newest_selection_with_snapshot::<usize>(&buffer);
             drop(buffer);
-            let nav_history = self.nav_history.take();
-            self.select_ranges([offset..offset], Some(Autoscroll::Fit), cx);
-            self.nav_history = nav_history;
+
+            if newest_selection.head() == offset {
+                false
+            } else {
+                let nav_history = self.nav_history.take();
+                self.select_ranges([offset..offset], Some(Autoscroll::Fit), cx);
+                self.nav_history = nav_history;
+                true
+            }
+        } else {
+            false
         }
     }
 
@@ -184,15 +281,19 @@ impl ItemView for Editor {
         })
     }
 
-    fn clone_on_split(
-        &self,
-        nav_history: ItemNavHistory,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<Self>
+    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId> {
+        File::from_dyn(self.buffer().read(cx).file(cx)).and_then(|file| file.project_entry_id(cx))
+    }
+
+    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
     {
-        Some(self.clone(nav_history, cx))
+        Some(self.clone(cx))
+    }
+
+    fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {
+        self.nav_history = Some(history);
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
@@ -219,9 +320,17 @@ impl ItemView for Editor {
     ) -> Task<Result<()>> {
         let buffer = self.buffer().clone();
         let buffers = buffer.read(cx).all_buffers();
-        let transaction = project.update(cx, |project, cx| project.format(buffers, true, cx));
+        let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
+        let format = project.update(cx, |project, cx| project.format(buffers, true, cx));
         cx.spawn(|this, mut cx| async move {
-            let transaction = transaction.await.log_err();
+            let transaction = futures::select_biased! {
+                _ = timeout => {
+                    log::warn!("timed out waiting for formatting");
+                    None
+                }
+                transaction = format.log_err().fuse() => transaction,
+            };
+
             this.update(&mut cx, |editor, cx| {
                 editor.request_autoscroll(Autoscroll::Fit, cx)
             });
@@ -275,6 +384,18 @@ impl ItemView for Editor {
     }
 }
 
+impl ProjectItem for Editor {
+    type Item = Buffer;
+
+    fn for_project_item(
+        project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        Self::for_buffer(buffer, Some(project), cx)
+    }
+}
+
 pub struct CursorPosition {
     position: Option<Point>,
     selected_count: usize,
@@ -322,7 +443,7 @@ impl View for CursorPosition {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         if let Some(position) = self.position {
-            let theme = &cx.app_state::<Settings>().theme.workspace.status_bar;
+            let theme = &cx.global::<Settings>().theme.workspace.status_bar;
             let mut text = format!("{},{}", position.row + 1, position.column + 1);
             if self.selected_count > 0 {
                 write!(text, " ({} selected)", self.selected_count).unwrap();
@@ -337,7 +458,7 @@ impl View for CursorPosition {
 impl StatusItemView for CursorPosition {
     fn set_active_pane_item(
         &mut self,
-        active_pane_item: Option<&dyn ItemViewHandle>,
+        active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
@@ -395,7 +516,7 @@ impl View for DiagnosticMessage {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         if let Some(diagnostic) = &self.diagnostic {
-            let theme = &cx.app_state::<Settings>().theme.workspace.status_bar;
+            let theme = &cx.global::<Settings>().theme.workspace.status_bar;
             Label::new(
                 diagnostic.message.split('\n').next().unwrap().to_string(),
                 theme.diagnostic_message.clone(),
@@ -410,7 +531,7 @@ impl View for DiagnosticMessage {
 impl StatusItemView for DiagnosticMessage {
     fn set_active_pane_item(
         &mut self,
-        active_pane_item: Option<&dyn ItemViewHandle>,
+        active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {

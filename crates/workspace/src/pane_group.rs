@@ -1,8 +1,10 @@
+use crate::{FollowerStatesByLeader, Pane};
 use anyhow::{anyhow, Result};
-use gpui::{elements::*, Axis, ViewHandle};
+use client::PeerId;
+use collections::HashMap;
+use gpui::{elements::*, Axis, Border, ViewHandle};
+use project::Collaborator;
 use theme::Theme;
-
-use crate::Pane;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaneGroup {
@@ -47,8 +49,19 @@ impl PaneGroup {
         }
     }
 
-    pub fn render<'a>(&self, theme: &Theme) -> ElementBox {
-        self.root.render(theme)
+    pub(crate) fn render<'a>(
+        &self,
+        theme: &Theme,
+        follower_states: &FollowerStatesByLeader,
+        collaborators: &HashMap<PeerId, Collaborator>,
+    ) -> ElementBox {
+        self.root.render(theme, follower_states, collaborators)
+    }
+
+    pub(crate) fn panes(&self) -> Vec<&ViewHandle<Pane>> {
+        let mut panes = Vec::new();
+        self.root.collect_panes(&mut panes);
+        panes
     }
 }
 
@@ -80,10 +93,50 @@ impl Member {
         Member::Axis(PaneAxis { axis, members })
     }
 
-    pub fn render(&self, theme: &Theme) -> ElementBox {
+    pub fn render(
+        &self,
+        theme: &Theme,
+        follower_states: &FollowerStatesByLeader,
+        collaborators: &HashMap<PeerId, Collaborator>,
+    ) -> ElementBox {
         match self {
-            Member::Pane(pane) => ChildView::new(pane).boxed(),
-            Member::Axis(axis) => axis.render(theme),
+            Member::Pane(pane) => {
+                let mut border = Border::default();
+                let leader = follower_states
+                    .iter()
+                    .find_map(|(leader_id, follower_states)| {
+                        if follower_states.contains_key(pane) {
+                            Some(leader_id)
+                        } else {
+                            None
+                        }
+                    })
+                    .and_then(|leader_id| collaborators.get(leader_id));
+                if let Some(leader) = leader {
+                    let leader_color = theme
+                        .editor
+                        .replica_selection_style(leader.replica_id)
+                        .cursor;
+                    border = Border::all(theme.workspace.leader_border_width, leader_color);
+                    border
+                        .color
+                        .fade_out(1. - theme.workspace.leader_border_opacity);
+                    border.overlay = true;
+                }
+                ChildView::new(pane).contained().with_border(border).boxed()
+            }
+            Member::Axis(axis) => axis.render(theme, follower_states, collaborators),
+        }
+    }
+
+    fn collect_panes<'a>(&'a self, panes: &mut Vec<&'a ViewHandle<Pane>>) {
+        match self {
+            Member::Axis(axis) => {
+                for member in &axis.members {
+                    member.collect_panes(panes);
+                }
+            }
+            Member::Pane(pane) => panes.push(pane),
         }
     }
 }
@@ -172,11 +225,16 @@ impl PaneAxis {
         }
     }
 
-    fn render<'a>(&self, theme: &Theme) -> ElementBox {
+    fn render(
+        &self,
+        theme: &Theme,
+        follower_state: &FollowerStatesByLeader,
+        collaborators: &HashMap<PeerId, Collaborator>,
+    ) -> ElementBox {
         let last_member_ix = self.members.len() - 1;
         Flex::new(self.axis)
             .with_children(self.members.iter().enumerate().map(|(ix, member)| {
-                let mut member = member.render(theme);
+                let mut member = member.render(theme, follower_state, collaborators);
                 if ix < last_member_ix {
                     let mut border = theme.workspace.pane_divider;
                     border.left = false;

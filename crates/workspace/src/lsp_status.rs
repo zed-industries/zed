@@ -1,4 +1,4 @@
-use crate::{ItemViewHandle, Settings, StatusItemView};
+use crate::{ItemHandle, Settings, StatusItemView};
 use futures::StreamExt;
 use gpui::AppContext;
 use gpui::{
@@ -116,7 +116,7 @@ impl View for LspStatus {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &cx.app_state::<Settings>().theme;
+        let theme = &cx.global::<Settings>().theme;
 
         let mut pending_work = self.pending_language_server_work(cx);
         if let Some((lang_server_name, progress_token, progress)) = pending_work.next() {
@@ -166,7 +166,7 @@ impl View for LspStatus {
         } else if !self.failed.is_empty() {
             drop(pending_work);
             MouseEventHandler::new::<Self, _, _>(0, cx, |_, cx| {
-                let theme = &cx.app_state::<Settings>().theme;
+                let theme = &cx.global::<Settings>().theme;
                 Label::new(
                     format!(
                         "Failed to download {} language server{}. Click to dismiss.",
@@ -187,5 +187,5 @@ impl View for LspStatus {
 }
 
 impl StatusItemView for LspStatus {
-    fn set_active_pane_item(&mut self, _: Option<&dyn ItemViewHandle>, _: &mut ViewContext<Self>) {}
+    fn set_active_pane_item(&mut self, _: Option<&dyn ItemHandle>, _: &mut ViewContext<Self>) {}
 }

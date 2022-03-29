@@ -43,7 +43,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_global_action(quit);
     cx.add_global_action({
         move |action: &AdjustBufferFontSize, cx| {
-            cx.update_app_state::<Settings, _, _>(|settings, cx| {
+            cx.update_global::<Settings, _, _>(|settings, cx| {
                 settings.buffer_font_size =
                     (settings.buffer_font_size + action.0).max(MIN_FONT_SIZE);
                 cx.refresh_windows();
@@ -111,7 +111,6 @@ pub fn build_workspace(
         languages: app_state.languages.clone(),
         user_store: app_state.user_store.clone(),
         channel_list: app_state.channel_list.clone(),
-        path_openers: app_state.path_openers.clone(),
     };
     let mut workspace = Workspace::new(&workspace_params, cx);
     let project = workspace.project().clone();
@@ -193,7 +192,7 @@ mod tests {
     use theme::{Theme, ThemeRegistry, DEFAULT_THEME_NAME};
     use util::test::temp_tree;
     use workspace::{
-        open_paths, pane, ItemView, ItemViewHandle, OpenNew, Pane, SplitDirection, WorkspaceHandle,
+        open_paths, pane, Item, ItemHandle, OpenNew, Pane, SplitDirection, WorkspaceHandle,
     };
 
     #[gpui::test]
@@ -253,7 +252,7 @@ mod tests {
     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
         let app_state = cx.update(test_app_state);
         cx.update(|cx| {
-            workspace::init(cx);
+            workspace::init(&app_state.client, cx);
         });
         cx.dispatch_global_action(workspace::OpenNew(app_state.clone()));
         let window_id = *cx.window_ids().first().unwrap();
@@ -325,7 +324,7 @@ mod tests {
                 pane.active_item().unwrap().project_path(cx),
                 Some(file1.clone())
             );
-            assert_eq!(pane.item_views().count(), 1);
+            assert_eq!(pane.items().count(), 1);
         });
 
         // Open the second entry
@@ -339,7 +338,7 @@ mod tests {
                 pane.active_item().unwrap().project_path(cx),
                 Some(file2.clone())
             );
-            assert_eq!(pane.item_views().count(), 2);
+            assert_eq!(pane.items().count(), 2);
         });
 
         // Open the first entry again. The existing pane item is activated.
@@ -355,7 +354,7 @@ mod tests {
                 pane.active_item().unwrap().project_path(cx),
                 Some(file1.clone())
             );
-            assert_eq!(pane.item_views().count(), 2);
+            assert_eq!(pane.items().count(), 2);
         });
 
         // Split the pane with the first entry, then open the second entry again.
@@ -394,7 +393,7 @@ mod tests {
                 Some(file3.clone())
             );
             let pane_entries = pane
-                .item_views()
+                .items()
                 .map(|i| i.project_path(cx).unwrap())
                 .collect::<Vec<_>>();
             assert_eq!(pane_entries, &[file1, file2, file3]);
@@ -892,6 +891,52 @@ mod tests {
         assert_eq!(
             active_location(&workspace, cx),
             (file3.clone(), DisplayPoint::new(0, 0))
+        );
+
+        // Modify file to remove nav history location, and ensure duplicates are skipped
+        editor1.update(cx, |editor, cx| {
+            editor.select_display_ranges(&[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)], cx)
+        });
+
+        for _ in 0..5 {
+            editor1.update(cx, |editor, cx| {
+                editor
+                    .select_display_ranges(&[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)], cx);
+            });
+            editor1.update(cx, |editor, cx| {
+                editor.select_display_ranges(
+                    &[DisplayPoint::new(13, 0)..DisplayPoint::new(13, 0)],
+                    cx,
+                )
+            });
+        }
+
+        editor1.update(cx, |editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                editor.select_display_ranges(
+                    &[DisplayPoint::new(2, 0)..DisplayPoint::new(14, 0)],
+                    cx,
+                );
+                editor.insert("", cx);
+            })
+        });
+
+        editor1.update(cx, |editor, cx| {
+            editor.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx)
+        });
+        workspace
+            .update(cx, |w, cx| Pane::go_back(w, None, cx))
+            .await;
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file1.clone(), DisplayPoint::new(2, 0))
+        );
+        workspace
+            .update(cx, |w, cx| Pane::go_back(w, None, cx))
+            .await;
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file1.clone(), DisplayPoint::new(3, 0))
         );
 
         fn active_location(

@@ -224,15 +224,19 @@ impl Keystroke {
             key: key.unwrap(),
         })
     }
+
+    pub fn modified(&self) -> bool {
+        self.ctrl || self.alt || self.shift || self.cmd
+    }
 }
 
 impl Context {
-    pub fn extend(&mut self, other: Context) {
-        for v in other.set {
-            self.set.insert(v);
+    pub fn extend(&mut self, other: &Context) {
+        for v in &other.set {
+            self.set.insert(v.clone());
         }
-        for (k, v) in other.map {
-            self.map.insert(k, v);
+        for (k, v) in &other.map {
+            self.map.insert(k.clone(), v.clone());
         }
     }
 }

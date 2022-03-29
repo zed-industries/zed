@@ -8,6 +8,7 @@ use crate::{
     AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
 };
 use anyhow::{anyhow, Result};
+use collections::btree_map;
 use keymap::MatchResult;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -93,6 +94,8 @@ pub trait UpgradeModelHandle {
 
 pub trait UpgradeViewHandle {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>>;
+
+    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle>;
 }
 
 pub trait ReadView {
@@ -180,6 +183,12 @@ macro_rules! action {
 
             fn boxed_clone_as_any(&self) -> Box<dyn std::any::Any> {
                 Box::new(self.clone())
+            }
+        }
+
+        impl From<$arg> for $name {
+            fn from(arg: $arg) -> Self {
+                Self(arg)
             }
         }
     };
@@ -433,13 +442,32 @@ impl TestAppContext {
     }
 
     pub fn dispatch_keystroke(
-        &self,
+        &mut self,
         window_id: usize,
-        responder_chain: Vec<usize>,
-        keystroke: &Keystroke,
-    ) -> Result<bool> {
-        let mut state = self.cx.borrow_mut();
-        state.dispatch_keystroke(window_id, responder_chain, keystroke)
+        keystroke: Keystroke,
+        input: Option<String>,
+        is_held: bool,
+    ) {
+        self.cx.borrow_mut().update(|cx| {
+            let presenter = cx
+                .presenters_and_platform_windows
+                .get(&window_id)
+                .unwrap()
+                .0
+                .clone();
+            let responder_chain = presenter.borrow().dispatch_path(cx.as_ref());
+
+            if !cx.dispatch_keystroke(window_id, responder_chain, &keystroke) {
+                presenter.borrow_mut().dispatch_event(
+                    Event::KeyDown {
+                        keystroke,
+                        input,
+                        is_held,
+                    },
+                    cx,
+                );
+            }
+        });
     }
 
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
@@ -494,7 +522,7 @@ impl TestAppContext {
 
     pub fn update<T, F: FnOnce(&mut MutableAppContext) -> T>(&mut self, callback: F) -> T {
         let mut state = self.cx.borrow_mut();
-        // Don't increment pending flushes in order to effects to be flushed before the callback
+        // Don't increment pending flushes in order for effects to be flushed before the callback
         // completes, which is helpful in tests.
         let result = callback(&mut *state);
         // Flush effects after the callback just in case there are any. This can happen in edge
@@ -595,6 +623,14 @@ impl AsyncAppContext {
         self.update(|cx| cx.add_model(build_model))
     }
 
+    pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
+    where
+        T: View,
+        F: FnOnce(&mut ViewContext<T>) -> T,
+    {
+        self.update(|cx| cx.add_view(window_id, build_view))
+    }
+
     pub fn platform(&self) -> Arc<dyn Platform> {
         self.0.borrow().platform()
     }
@@ -638,6 +674,10 @@ impl UpgradeModelHandle for AsyncAppContext {
 impl UpgradeViewHandle for AsyncAppContext {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
         self.0.borrow_mut().upgrade_view_handle(handle)
+    }
+
+    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
+        self.0.borrow_mut().upgrade_any_view_handle(handle)
     }
 }
 
@@ -742,6 +782,7 @@ type GlobalActionCallback = dyn FnMut(&dyn AnyAction, &mut MutableAppContext);
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
 type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
+type GlobalObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 
 pub struct MutableAppContext {
@@ -761,12 +802,15 @@ pub struct MutableAppContext {
     global_subscriptions:
         Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalSubscriptionCallback>>>>>,
     observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>,
+    global_observations:
+        Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalObservationCallback>>>>>,
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
     presenters_and_platform_windows:
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
     foreground: Rc<executor::Foreground>,
     pending_effects: VecDeque<Effect>,
     pending_notifications: HashSet<usize>,
+    pending_global_notifications: HashSet<TypeId>,
     pending_flushes: usize,
     flushing_effects: bool,
     next_cursor_style_handle_id: Arc<AtomicUsize>,
@@ -791,7 +835,7 @@ impl MutableAppContext {
                 models: Default::default(),
                 views: Default::default(),
                 windows: Default::default(),
-                app_states: Default::default(),
+                globals: Default::default(),
                 element_states: Default::default(),
                 ref_counts: Arc::new(Mutex::new(ref_counts)),
                 background,
@@ -810,10 +854,12 @@ impl MutableAppContext {
             global_subscriptions: Default::default(),
             observations: Default::default(),
             release_observations: Default::default(),
+            global_observations: Default::default(),
             presenters_and_platform_windows: HashMap::new(),
             foreground,
             pending_effects: VecDeque::new(),
             pending_notifications: HashSet::new(),
+            pending_global_notifications: HashSet::new(),
             pending_flushes: 0,
             flushing_effects: false,
             next_cursor_style_handle_id: Default::default(),
@@ -1090,21 +1136,18 @@ impl MutableAppContext {
         E: Any,
         F: 'static + FnMut(&E, &mut Self),
     {
-        let id = post_inc(&mut self.next_subscription_id);
+        let subscription_id = post_inc(&mut self.next_subscription_id);
         let type_id = TypeId::of::<E>();
-        self.global_subscriptions
-            .lock()
-            .entry(type_id)
-            .or_default()
-            .insert(
-                id,
-                Some(Box::new(move |payload, cx| {
-                    let payload = payload.downcast_ref().expect("downcast is type safe");
-                    callback(payload, cx)
-                })),
-            );
+        self.pending_effects.push_back(Effect::GlobalSubscription {
+            type_id,
+            subscription_id,
+            callback: Box::new(move |payload, cx| {
+                let payload = payload.downcast_ref().expect("downcast is type safe");
+                callback(payload, cx)
+            }),
+        });
         Subscription::GlobalSubscription {
-            id,
+            id: subscription_id,
             type_id,
             subscriptions: Some(Arc::downgrade(&self.global_subscriptions)),
         }
@@ -1130,25 +1173,22 @@ impl MutableAppContext {
         H: Handle<E>,
         F: 'static + FnMut(H, &E::Event, &mut Self) -> bool,
     {
-        let id = post_inc(&mut self.next_subscription_id);
+        let subscription_id = post_inc(&mut self.next_subscription_id);
         let emitter = handle.downgrade();
-        self.subscriptions
-            .lock()
-            .entry(handle.id())
-            .or_default()
-            .insert(
-                id,
-                Some(Box::new(move |payload, cx| {
-                    if let Some(emitter) = H::upgrade_from(&emitter, cx.as_ref()) {
-                        let payload = payload.downcast_ref().expect("downcast is type safe");
-                        callback(emitter, payload, cx)
-                    } else {
-                        false
-                    }
-                })),
-            );
+        self.pending_effects.push_back(Effect::Subscription {
+            entity_id: handle.id(),
+            subscription_id,
+            callback: Box::new(move |payload, cx| {
+                if let Some(emitter) = H::upgrade_from(&emitter, cx.as_ref()) {
+                    let payload = payload.downcast_ref().expect("downcast is type safe");
+                    callback(emitter, payload, cx)
+                } else {
+                    false
+                }
+            }),
+        });
         Subscription::Subscription {
-            id,
+            id: subscription_id,
             entity_id: handle.id(),
             subscriptions: Some(Arc::downgrade(&self.subscriptions)),
         }
@@ -1161,26 +1201,52 @@ impl MutableAppContext {
         H: Handle<E>,
         F: 'static + FnMut(H, &mut Self) -> bool,
     {
-        let id = post_inc(&mut self.next_subscription_id);
+        let subscription_id = post_inc(&mut self.next_subscription_id);
         let observed = handle.downgrade();
-        self.observations
+        let entity_id = handle.id();
+        self.pending_effects.push_back(Effect::Observation {
+            entity_id,
+            subscription_id,
+            callback: Box::new(move |cx| {
+                if let Some(observed) = H::upgrade_from(&observed, cx) {
+                    callback(observed, cx)
+                } else {
+                    false
+                }
+            }),
+        });
+        Subscription::Observation {
+            id: subscription_id,
+            entity_id,
+            observations: Some(Arc::downgrade(&self.observations)),
+        }
+    }
+
+    pub fn observe_global<G, F>(&mut self, mut observe: F) -> Subscription
+    where
+        G: Any,
+        F: 'static + FnMut(&G, &mut MutableAppContext),
+    {
+        let type_id = TypeId::of::<G>();
+        let id = post_inc(&mut self.next_subscription_id);
+
+        self.global_observations
             .lock()
-            .entry(handle.id())
+            .entry(type_id)
             .or_default()
             .insert(
                 id,
-                Some(Box::new(move |cx| {
-                    if let Some(observed) = H::upgrade_from(&observed, cx) {
-                        callback(observed, cx)
-                    } else {
-                        false
-                    }
-                })),
+                Some(
+                    Box::new(move |global: &dyn Any, cx: &mut MutableAppContext| {
+                        observe(global.downcast_ref().unwrap(), cx)
+                    }) as GlobalObservationCallback,
+                ),
             );
-        Subscription::Observation {
+
+        Subscription::GlobalObservation {
             id,
-            entity_id: handle.id(),
-            observations: Some(Arc::downgrade(&self.observations)),
+            type_id,
+            observations: Some(Arc::downgrade(&self.global_observations)),
         }
     }
 
@@ -1210,8 +1276,18 @@ impl MutableAppContext {
         }
     }
 
-    fn defer(&mut self, callback: Box<dyn FnOnce(&mut MutableAppContext)>) {
-        self.pending_effects.push_back(Effect::Deferred(callback))
+    pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut MutableAppContext)) {
+        self.pending_effects.push_back(Effect::Deferred {
+            callback: Box::new(callback),
+            after_window_update: false,
+        })
+    }
+
+    pub fn after_window_update(&mut self, callback: impl 'static + FnOnce(&mut MutableAppContext)) {
+        self.pending_effects.push_back(Effect::Deferred {
+            callback: Box::new(callback),
+            after_window_update: true,
+        })
     }
 
     pub(crate) fn notify_model(&mut self, model_id: usize) {
@@ -1225,6 +1301,13 @@ impl MutableAppContext {
         if self.pending_notifications.insert(view_id) {
             self.pending_effects
                 .push_back(Effect::ViewNotification { window_id, view_id });
+        }
+    }
+
+    pub(crate) fn notify_global(&mut self, type_id: TypeId) {
+        if self.pending_global_notifications.insert(type_id) {
+            self.pending_effects
+                .push_back(Effect::GlobalNotification { type_id });
         }
     }
 
@@ -1322,17 +1405,15 @@ impl MutableAppContext {
         window_id: usize,
         responder_chain: Vec<usize>,
         keystroke: &Keystroke,
-    ) -> Result<bool> {
+    ) -> bool {
         let mut context_chain = Vec::new();
         for view_id in &responder_chain {
-            if let Some(view) = self.cx.views.get(&(window_id, *view_id)) {
-                context_chain.push(view.keymap_context(self.as_ref()));
-            } else {
-                return Err(anyhow!(
-                    "View {} in responder chain does not exist",
-                    view_id
-                ));
-            }
+            let view = self
+                .cx
+                .views
+                .get(&(window_id, *view_id))
+                .expect("view in responder chain does not exist");
+            context_chain.push(view.keymap_context(self.as_ref()));
         }
 
         let mut pending = false;
@@ -1347,34 +1428,74 @@ impl MutableAppContext {
                     if self.dispatch_action_any(window_id, &responder_chain[0..=i], action.as_ref())
                     {
                         self.keystroke_matcher.clear_pending();
-                        return Ok(true);
+                        return true;
                     }
                 }
             }
         }
 
-        Ok(pending)
+        pending
     }
 
-    pub fn add_app_state<T: 'static>(&mut self, state: T) {
-        self.cx
-            .app_states
-            .insert(TypeId::of::<T>(), Box::new(state));
+    pub fn default_global<T: 'static + Default>(&mut self) -> &T {
+        let type_id = TypeId::of::<T>();
+        self.update(|this| {
+            if !this.globals.contains_key(&type_id) {
+                this.notify_global(type_id);
+            }
+
+            this.cx
+                .globals
+                .entry(type_id)
+                .or_insert_with(|| Box::new(T::default()));
+        });
+        self.globals.get(&type_id).unwrap().downcast_ref().unwrap()
     }
 
-    pub fn update_app_state<T: 'static, F, U>(&mut self, update: F) -> U
+    pub fn set_global<T: 'static>(&mut self, state: T) {
+        self.update(|this| {
+            let type_id = TypeId::of::<T>();
+            this.cx.globals.insert(type_id, Box::new(state));
+            this.notify_global(type_id);
+        });
+    }
+
+    pub fn update_default_global<T, F, U>(&mut self, update: F) -> U
     where
+        T: 'static + Default,
         F: FnOnce(&mut T, &mut MutableAppContext) -> U,
     {
-        let type_id = TypeId::of::<T>();
-        let mut state = self
-            .cx
-            .app_states
-            .remove(&type_id)
-            .expect("no app state has been added for this type");
-        let result = update(state.downcast_mut().unwrap(), self);
-        self.cx.app_states.insert(type_id, state);
-        result
+        self.update(|this| {
+            let type_id = TypeId::of::<T>();
+            let mut state = this
+                .cx
+                .globals
+                .remove(&type_id)
+                .unwrap_or_else(|| Box::new(T::default()));
+            let result = update(state.downcast_mut().unwrap(), this);
+            this.cx.globals.insert(type_id, state);
+            this.notify_global(type_id);
+            result
+        })
+    }
+
+    pub fn update_global<T, F, U>(&mut self, update: F) -> U
+    where
+        T: 'static,
+        F: FnOnce(&mut T, &mut MutableAppContext) -> U,
+    {
+        self.update(|this| {
+            let type_id = TypeId::of::<T>();
+            let mut state = this
+                .cx
+                .globals
+                .remove(&type_id)
+                .expect("no global has been added for this type");
+            let result = update(state.downcast_mut().unwrap(), this);
+            this.cx.globals.insert(type_id, state);
+            this.notify_global(type_id);
+            result
+        })
     }
 
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
@@ -1413,11 +1534,10 @@ impl MutableAppContext {
                     invalidation: None,
                 },
             );
-            this.open_platform_window(window_id, window_options);
             root_view.update(this, |view, cx| {
                 view.on_focus(cx);
-                cx.notify();
             });
+            this.open_platform_window(window_id, window_options);
 
             (window_id, root_view)
         })
@@ -1444,14 +1564,11 @@ impl MutableAppContext {
             window.on_event(Box::new(move |event| {
                 app.update(|cx| {
                     if let Event::KeyDown { keystroke, .. } = &event {
-                        if cx
-                            .dispatch_keystroke(
-                                window_id,
-                                presenter.borrow().dispatch_path(cx.as_ref()),
-                                keystroke,
-                            )
-                            .unwrap()
-                        {
+                        if cx.dispatch_keystroke(
+                            window_id,
+                            presenter.borrow().dispatch_path(cx.as_ref()),
+                            keystroke,
+                        ) {
                             return;
                         }
                     }
@@ -1475,6 +1592,11 @@ impl MutableAppContext {
             }));
         }
 
+        let scene =
+            presenter
+                .borrow_mut()
+                .build_scene(window.size(), window.scale_factor(), false, self);
+        window.present_scene(scene);
         self.presenters_and_platform_windows
             .insert(window_id, (presenter.clone(), window));
     }
@@ -1599,6 +1721,7 @@ impl MutableAppContext {
 
     fn flush_effects(&mut self) {
         self.pending_flushes = self.pending_flushes.saturating_sub(1);
+        let mut after_window_update_callbacks = Vec::new();
 
         if !self.flushing_effects && self.pending_flushes == 0 {
             self.flushing_effects = true;
@@ -1607,15 +1730,46 @@ impl MutableAppContext {
             loop {
                 if let Some(effect) = self.pending_effects.pop_front() {
                     match effect {
+                        Effect::Subscription {
+                            entity_id,
+                            subscription_id,
+                            callback,
+                        } => self.handle_subscription_effect(entity_id, subscription_id, callback),
                         Effect::Event { entity_id, payload } => self.emit_event(entity_id, payload),
+                        Effect::GlobalSubscription {
+                            type_id,
+                            subscription_id,
+                            callback,
+                        } => self.handle_global_subscription_effect(
+                            type_id,
+                            subscription_id,
+                            callback,
+                        ),
                         Effect::GlobalEvent { payload } => self.emit_global_event(payload),
+                        Effect::Observation {
+                            entity_id,
+                            subscription_id,
+                            callback,
+                        } => self.handle_observation_effect(entity_id, subscription_id, callback),
                         Effect::ModelNotification { model_id } => {
                             self.notify_model_observers(model_id)
                         }
                         Effect::ViewNotification { window_id, view_id } => {
                             self.notify_view_observers(window_id, view_id)
                         }
-                        Effect::Deferred(callback) => callback(self),
+                        Effect::GlobalNotification { type_id } => {
+                            self.notify_global_observers(type_id)
+                        }
+                        Effect::Deferred {
+                            callback,
+                            after_window_update,
+                        } => {
+                            if after_window_update {
+                                after_window_update_callbacks.push(callback);
+                            } else {
+                                callback(self)
+                            }
+                        }
                         Effect::ModelRelease { model_id, model } => {
                             self.notify_release_observers(model_id, model.as_any())
                         }
@@ -1647,12 +1801,19 @@ impl MutableAppContext {
                     }
 
                     if self.pending_effects.is_empty() {
-                        self.flushing_effects = false;
-                        self.pending_notifications.clear();
-                        break;
-                    } else {
-                        refreshing = false;
+                        for callback in after_window_update_callbacks.drain(..) {
+                            callback(self);
+                        }
+
+                        if self.pending_effects.is_empty() {
+                            self.flushing_effects = false;
+                            self.pending_notifications.clear();
+                            self.pending_global_notifications.clear();
+                            break;
+                        }
                     }
+
+                    refreshing = false;
                 }
             }
         }
@@ -1666,13 +1827,13 @@ impl MutableAppContext {
             }
         }
 
-        for (window_id, invalidation) in invalidations {
+        for (window_id, mut invalidation) in invalidations {
             if let Some((presenter, mut window)) =
                 self.presenters_and_platform_windows.remove(&window_id)
             {
                 {
                     let mut presenter = presenter.borrow_mut();
-                    presenter.invalidate(invalidation, self);
+                    presenter.invalidate(&mut invalidation, self);
                     let scene =
                         presenter.build_scene(window.size(), window.scale_factor(), false, self);
                     window.present_scene(scene);
@@ -1695,7 +1856,7 @@ impl MutableAppContext {
     fn perform_window_refresh(&mut self) {
         let mut presenters = mem::take(&mut self.presenters_and_platform_windows);
         for (window_id, (presenter, window)) in &mut presenters {
-            let invalidation = self
+            let mut invalidation = self
                 .cx
                 .windows
                 .get_mut(&window_id)
@@ -1703,7 +1864,10 @@ impl MutableAppContext {
                 .invalidation
                 .take();
             let mut presenter = presenter.borrow_mut();
-            presenter.refresh(invalidation, self);
+            presenter.refresh(
+                invalidation.as_mut().unwrap_or(&mut Default::default()),
+                self,
+            );
             let scene = presenter.build_scene(window.size(), window.scale_factor(), true, self);
             window.present_scene(scene);
         }
@@ -1717,6 +1881,30 @@ impl MutableAppContext {
             id,
             next_cursor_style_handle_id: self.next_cursor_style_handle_id.clone(),
             platform: self.platform(),
+        }
+    }
+
+    fn handle_subscription_effect(
+        &mut self,
+        entity_id: usize,
+        subscription_id: usize,
+        callback: SubscriptionCallback,
+    ) {
+        match self
+            .subscriptions
+            .lock()
+            .entry(entity_id)
+            .or_default()
+            .entry(subscription_id)
+        {
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(Some(callback));
+            }
+            // Subscription was dropped before effect was processed
+            btree_map::Entry::Occupied(entry) => {
+                debug_assert!(entry.get().is_none());
+                entry.remove();
+            }
         }
     }
 
@@ -1734,15 +1922,39 @@ impl MutableAppContext {
                             .or_default()
                             .entry(id)
                         {
-                            collections::btree_map::Entry::Vacant(entry) => {
+                            btree_map::Entry::Vacant(entry) => {
                                 entry.insert(Some(callback));
                             }
-                            collections::btree_map::Entry::Occupied(entry) => {
+                            btree_map::Entry::Occupied(entry) => {
                                 entry.remove();
                             }
                         }
                     }
                 }
+            }
+        }
+    }
+
+    fn handle_global_subscription_effect(
+        &mut self,
+        type_id: TypeId,
+        subscription_id: usize,
+        callback: GlobalSubscriptionCallback,
+    ) {
+        match self
+            .global_subscriptions
+            .lock()
+            .entry(type_id)
+            .or_default()
+            .entry(subscription_id)
+        {
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(Some(callback));
+            }
+            // Subscription was dropped before effect was processed
+            btree_map::Entry::Occupied(entry) => {
+                debug_assert!(entry.get().is_none());
+                entry.remove();
             }
         }
     }
@@ -1761,14 +1973,38 @@ impl MutableAppContext {
                         .or_default()
                         .entry(id)
                     {
-                        collections::btree_map::Entry::Vacant(entry) => {
+                        btree_map::Entry::Vacant(entry) => {
                             entry.insert(Some(callback));
                         }
-                        collections::btree_map::Entry::Occupied(entry) => {
+                        btree_map::Entry::Occupied(entry) => {
                             entry.remove();
                         }
                     }
                 }
+            }
+        }
+    }
+
+    fn handle_observation_effect(
+        &mut self,
+        entity_id: usize,
+        subscription_id: usize,
+        callback: ObservationCallback,
+    ) {
+        match self
+            .observations
+            .lock()
+            .entry(entity_id)
+            .or_default()
+            .entry(subscription_id)
+        {
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(Some(callback));
+            }
+            // Observation was dropped before effect was processed
+            btree_map::Entry::Occupied(entry) => {
+                debug_assert!(entry.get().is_none());
+                entry.remove();
             }
         }
     }
@@ -1788,10 +2024,10 @@ impl MutableAppContext {
                                 .or_default()
                                 .entry(id)
                             {
-                                collections::btree_map::Entry::Vacant(entry) => {
+                                btree_map::Entry::Vacant(entry) => {
                                     entry.insert(Some(callback));
                                 }
-                                collections::btree_map::Entry::Occupied(entry) => {
+                                btree_map::Entry::Occupied(entry) => {
                                     entry.remove();
                                 }
                             }
@@ -1829,16 +2065,44 @@ impl MutableAppContext {
                                 .or_default()
                                 .entry(id)
                             {
-                                collections::btree_map::Entry::Vacant(entry) => {
+                                btree_map::Entry::Vacant(entry) => {
                                     entry.insert(Some(callback));
                                 }
-                                collections::btree_map::Entry::Occupied(entry) => {
+                                btree_map::Entry::Occupied(entry) => {
                                     entry.remove();
                                 }
                             }
                         }
                     }
                 }
+            }
+        }
+    }
+
+    fn notify_global_observers(&mut self, observed_type_id: TypeId) {
+        let callbacks = self.global_observations.lock().remove(&observed_type_id);
+        if let Some(callbacks) = callbacks {
+            if let Some(global) = self.cx.globals.remove(&observed_type_id) {
+                for (id, callback) in callbacks {
+                    if let Some(mut callback) = callback {
+                        callback(global.as_ref(), self);
+                        match self
+                            .global_observations
+                            .lock()
+                            .entry(observed_type_id)
+                            .or_default()
+                            .entry(id)
+                        {
+                            collections::btree_map::Entry::Vacant(entry) => {
+                                entry.insert(Some(callback));
+                            }
+                            collections::btree_map::Entry::Occupied(entry) => {
+                                entry.remove();
+                            }
+                        }
+                    }
+                }
+                self.cx.globals.insert(observed_type_id, global);
             }
         }
     }
@@ -1978,6 +2242,10 @@ impl UpgradeViewHandle for MutableAppContext {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
         self.cx.upgrade_view_handle(handle)
     }
+
+    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
+        self.cx.upgrade_any_view_handle(handle)
+    }
 }
 
 impl ReadView for MutableAppContext {
@@ -2039,7 +2307,7 @@ pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     views: HashMap<(usize, usize), Box<dyn AnyView>>,
     windows: HashMap<usize, Window>,
-    app_states: HashMap<TypeId, Box<dyn Any>>,
+    globals: HashMap<TypeId, Box<dyn Any>>,
     element_states: HashMap<ElementStateId, Box<dyn Any>>,
     background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
@@ -2072,8 +2340,12 @@ impl AppContext {
         &self.platform
     }
 
-    pub fn app_state<T: 'static>(&self) -> &T {
-        self.app_states
+    pub fn has_global<T: 'static>(&self) -> bool {
+        self.globals.contains_key(&TypeId::of::<T>())
+    }
+
+    pub fn global<T: 'static>(&self) -> &T {
+        self.globals
             .get(&TypeId::of::<T>())
             .expect("no app state has been added for this type")
             .downcast_ref()
@@ -2135,6 +2407,19 @@ impl UpgradeViewHandle for AppContext {
             None
         }
     }
+
+    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
+        if self.ref_counts.lock().is_entity_alive(handle.view_id) {
+            Some(AnyViewHandle::new(
+                handle.window_id,
+                handle.view_id,
+                handle.view_type,
+                self.ref_counts.clone(),
+            ))
+        } else {
+            None
+        }
+    }
 }
 
 impl ReadView for AppContext {
@@ -2162,12 +2447,27 @@ pub struct WindowInvalidation {
 }
 
 pub enum Effect {
+    Subscription {
+        entity_id: usize,
+        subscription_id: usize,
+        callback: SubscriptionCallback,
+    },
     Event {
         entity_id: usize,
         payload: Box<dyn Any>,
     },
+    GlobalSubscription {
+        type_id: TypeId,
+        subscription_id: usize,
+        callback: GlobalSubscriptionCallback,
+    },
     GlobalEvent {
         payload: Box<dyn Any>,
+    },
+    Observation {
+        entity_id: usize,
+        subscription_id: usize,
+        callback: ObservationCallback,
     },
     ModelNotification {
         model_id: usize,
@@ -2176,7 +2476,13 @@ pub enum Effect {
         window_id: usize,
         view_id: usize,
     },
-    Deferred(Box<dyn FnOnce(&mut MutableAppContext)>),
+    Deferred {
+        callback: Box<dyn FnOnce(&mut MutableAppContext)>,
+        after_window_update: bool,
+    },
+    GlobalNotification {
+        type_id: TypeId,
+    },
     ModelRelease {
         model_id: usize,
         model: Box<dyn AnyModel>,
@@ -2198,13 +2504,40 @@ pub enum Effect {
 impl Debug for Effect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Effect::Subscription {
+                entity_id,
+                subscription_id,
+                ..
+            } => f
+                .debug_struct("Effect::Subscribe")
+                .field("entity_id", entity_id)
+                .field("subscription_id", subscription_id)
+                .finish(),
             Effect::Event { entity_id, .. } => f
                 .debug_struct("Effect::Event")
                 .field("entity_id", entity_id)
                 .finish(),
+            Effect::GlobalSubscription {
+                type_id,
+                subscription_id,
+                ..
+            } => f
+                .debug_struct("Effect::Subscribe")
+                .field("type_id", type_id)
+                .field("subscription_id", subscription_id)
+                .finish(),
             Effect::GlobalEvent { payload, .. } => f
                 .debug_struct("Effect::GlobalEvent")
                 .field("type_id", &(&*payload).type_id())
+                .finish(),
+            Effect::Observation {
+                entity_id,
+                subscription_id,
+                ..
+            } => f
+                .debug_struct("Effect::Observation")
+                .field("entity_id", entity_id)
+                .field("subscription_id", subscription_id)
                 .finish(),
             Effect::ModelNotification { model_id } => f
                 .debug_struct("Effect::ModelNotification")
@@ -2215,7 +2548,11 @@ impl Debug for Effect {
                 .field("window_id", window_id)
                 .field("view_id", view_id)
                 .finish(),
-            Effect::Deferred(_) => f.debug_struct("Effect::Deferred").finish(),
+            Effect::GlobalNotification { type_id } => f
+                .debug_struct("Effect::GlobalNotification")
+                .field("type_id", type_id)
+                .finish(),
+            Effect::Deferred { .. } => f.debug_struct("Effect::Deferred").finish(),
             Effect::ModelRelease { model_id, .. } => f
                 .debug_struct("Effect::ModelRelease")
                 .field("model_id", model_id)
@@ -2392,6 +2729,15 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         F: FnOnce(&mut ModelContext<S>) -> S,
     {
         self.app.add_model(build_model)
+    }
+
+    pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut T, &mut ModelContext<T>)) {
+        let handle = self.handle();
+        self.app.defer(move |cx| {
+            handle.update(cx, |model, cx| {
+                callback(model, cx);
+            })
+        })
     }
 
     pub fn emit(&mut self, payload: T::Event) {
@@ -2740,11 +3086,23 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut T, &mut ViewContext<T>)) {
         let handle = self.handle();
-        self.app.defer(Box::new(move |cx| {
+        self.app.defer(move |cx| {
             handle.update(cx, |view, cx| {
                 callback(view, cx);
             })
-        }))
+        })
+    }
+
+    pub fn after_window_update(
+        &mut self,
+        callback: impl 'static + FnOnce(&mut T, &mut ViewContext<T>),
+    ) {
+        let handle = self.handle();
+        self.app.after_window_update(move |cx| {
+            handle.update(cx, |view, cx| {
+                callback(view, cx);
+            })
+        })
     }
 
     pub fn propagate_action(&mut self) {
@@ -2891,6 +3249,10 @@ impl<V> UpgradeModelHandle for ViewContext<'_, V> {
 impl<V> UpgradeViewHandle for ViewContext<'_, V> {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
         self.cx.upgrade_view_handle(handle)
+    }
+
+    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
+        self.cx.upgrade_any_view_handle(handle)
     }
 }
 
@@ -3338,9 +3700,9 @@ impl<T: View> ViewHandle<T> {
         F: 'static + FnOnce(&mut T, &mut ViewContext<T>),
     {
         let this = self.clone();
-        cx.as_mut().defer(Box::new(move |cx| {
+        cx.as_mut().defer(move |cx| {
             this.update(cx, |view, cx| update(view, cx));
-        }));
+        });
     }
 
     pub fn is_focused(&self, cx: &AppContext) -> bool {
@@ -3452,7 +3814,26 @@ impl<T> PartialEq for ViewHandle<T> {
     }
 }
 
+impl<T> PartialEq<WeakViewHandle<T>> for ViewHandle<T> {
+    fn eq(&self, other: &WeakViewHandle<T>) -> bool {
+        self.window_id == other.window_id && self.view_id == other.view_id
+    }
+}
+
+impl<T> PartialEq<ViewHandle<T>> for WeakViewHandle<T> {
+    fn eq(&self, other: &ViewHandle<T>) -> bool {
+        self.window_id == other.window_id && self.view_id == other.view_id
+    }
+}
+
 impl<T> Eq for ViewHandle<T> {}
+
+impl<T> Hash for ViewHandle<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.window_id.hash(state);
+        self.view_id.hash(state);
+    }
+}
 
 impl<T> Debug for ViewHandle<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -3567,6 +3948,18 @@ impl AnyViewHandle {
         } else {
             None
         }
+    }
+
+    pub fn downgrade(&self) -> AnyWeakViewHandle {
+        AnyWeakViewHandle {
+            window_id: self.window_id,
+            view_id: self.view_id,
+            view_type: self.view_type,
+        }
+    }
+
+    pub fn view_type(&self) -> TypeId {
+        self.view_type
     }
 }
 
@@ -3690,6 +4083,10 @@ impl AnyModelHandle {
     pub fn is<T: Entity>(&self) -> bool {
         self.model_type == TypeId::of::<T>()
     }
+
+    pub fn model_type(&self) -> TypeId {
+        self.model_type
+    }
 }
 
 impl<T: Entity> From<ModelHandle<T>> for AnyModelHandle {
@@ -3790,6 +4187,28 @@ impl<T> Hash for WeakViewHandle<T> {
     }
 }
 
+pub struct AnyWeakViewHandle {
+    window_id: usize,
+    view_id: usize,
+    view_type: TypeId,
+}
+
+impl AnyWeakViewHandle {
+    pub fn upgrade(&self, cx: &impl UpgradeViewHandle) -> Option<AnyViewHandle> {
+        cx.upgrade_any_view_handle(self)
+    }
+}
+
+impl<T: View> From<WeakViewHandle<T>> for AnyWeakViewHandle {
+    fn from(handle: WeakViewHandle<T>) -> Self {
+        AnyWeakViewHandle {
+            window_id: handle.window_id,
+            view_id: handle.view_id,
+            view_type: TypeId::of::<T>(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ElementStateId {
     view_id: usize,
@@ -3878,6 +4297,13 @@ pub enum Subscription {
         observations:
             Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>>,
     },
+    GlobalObservation {
+        id: usize,
+        type_id: TypeId,
+        observations: Option<
+            Weak<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalObservationCallback>>>>>,
+        >,
+    },
     ReleaseObservation {
         id: usize,
         entity_id: usize,
@@ -3896,6 +4322,9 @@ impl Subscription {
                 subscriptions.take();
             }
             Subscription::Observation { observations, .. } => {
+                observations.take();
+            }
+            Subscription::GlobalObservation { observations, .. } => {
                 observations.take();
             }
             Subscription::ReleaseObservation { observations, .. } => {
@@ -3920,10 +4349,10 @@ impl Drop for Subscription {
                         .or_default()
                         .entry(*id)
                     {
-                        collections::btree_map::Entry::Vacant(entry) => {
+                        btree_map::Entry::Vacant(entry) => {
                             entry.insert(None);
                         }
-                        collections::btree_map::Entry::Occupied(entry) => {
+                        btree_map::Entry::Occupied(entry) => {
                             entry.remove();
                         }
                     }
@@ -3936,10 +4365,10 @@ impl Drop for Subscription {
             } => {
                 if let Some(subscriptions) = subscriptions.as_ref().and_then(Weak::upgrade) {
                     match subscriptions.lock().entry(*type_id).or_default().entry(*id) {
-                        collections::btree_map::Entry::Vacant(entry) => {
+                        btree_map::Entry::Vacant(entry) => {
                             entry.insert(None);
                         }
-                        collections::btree_map::Entry::Occupied(entry) => {
+                        btree_map::Entry::Occupied(entry) => {
                             entry.remove();
                         }
                     }
@@ -3957,6 +4386,22 @@ impl Drop for Subscription {
                         .or_default()
                         .entry(*id)
                     {
+                        btree_map::Entry::Vacant(entry) => {
+                            entry.insert(None);
+                        }
+                        btree_map::Entry::Occupied(entry) => {
+                            entry.remove();
+                        }
+                    }
+                }
+            }
+            Subscription::GlobalObservation {
+                id,
+                type_id,
+                observations,
+            } => {
+                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
+                    match observations.lock().entry(*type_id).or_default().entry(*id) {
                         collections::btree_map::Entry::Vacant(entry) => {
                             entry.insert(None);
                         }
@@ -4165,7 +4610,7 @@ mod tests {
     use smol::future::poll_once;
     use std::{
         cell::Cell,
-        sync::atomic::{AtomicUsize, Ordering::SeqCst},
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
     };
 
     #[crate::test(self)]
@@ -4242,6 +4687,7 @@ mod tests {
 
         let handle_1 = cx.add_model(|_| Model::default());
         let handle_2 = cx.add_model(|_| Model::default());
+
         handle_1.update(cx, |_, cx| {
             cx.subscribe(&handle_2, move |model: &mut Model, emitter, event, cx| {
                 model.events.push(*event);
@@ -4259,6 +4705,37 @@ mod tests {
 
         handle_2.update(cx, |_, c| c.emit(5));
         assert_eq!(handle_1.read(cx).events, vec![7, 5, 10]);
+    }
+
+    #[crate::test(self)]
+    fn test_model_emit_before_subscribe_in_same_update_cycle(cx: &mut MutableAppContext) {
+        #[derive(Default)]
+        struct Model;
+
+        impl Entity for Model {
+            type Event = ();
+        }
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.add_model(|cx| {
+            drop(cx.subscribe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _, _| events.borrow_mut().push("dropped before flush")
+            }));
+            cx.subscribe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _, _| events.borrow_mut().push("before emit")
+            })
+            .detach();
+            cx.emit(());
+            cx.subscribe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _, _| events.borrow_mut().push("after emit")
+            })
+            .detach();
+            Model
+        });
+        assert_eq!(*events.borrow(), ["before emit"]);
     }
 
     #[crate::test(self)]
@@ -4298,6 +4775,89 @@ mod tests {
             c.notify()
         });
         assert_eq!(handle_1.read(cx).events, vec![7, 5, 10])
+    }
+
+    #[crate::test(self)]
+    fn test_model_notify_before_observe_in_same_update_cycle(cx: &mut MutableAppContext) {
+        #[derive(Default)]
+        struct Model;
+
+        impl Entity for Model {
+            type Event = ();
+        }
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.add_model(|cx| {
+            drop(cx.observe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _| events.borrow_mut().push("dropped before flush")
+            }));
+            cx.observe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _| events.borrow_mut().push("before notify")
+            })
+            .detach();
+            cx.notify();
+            cx.observe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _| events.borrow_mut().push("after notify")
+            })
+            .detach();
+            Model
+        });
+        assert_eq!(*events.borrow(), ["before notify"]);
+    }
+
+    #[crate::test(self)]
+    fn test_defer_and_after_window_update(cx: &mut MutableAppContext) {
+        struct View {
+            render_count: usize,
+        }
+
+        impl Entity for View {
+            type Event = usize;
+        }
+
+        impl super::View for View {
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+                post_inc(&mut self.render_count);
+                Empty::new().boxed()
+            }
+
+            fn ui_name() -> &'static str {
+                "View"
+            }
+        }
+
+        let (_, view) = cx.add_window(Default::default(), |_| View { render_count: 0 });
+        let called_defer = Rc::new(AtomicBool::new(false));
+        let called_after_window_update = Rc::new(AtomicBool::new(false));
+
+        view.update(cx, |this, cx| {
+            assert_eq!(this.render_count, 1);
+            cx.defer({
+                let called_defer = called_defer.clone();
+                move |this, _| {
+                    assert_eq!(this.render_count, 1);
+                    called_defer.store(true, SeqCst);
+                }
+            });
+            cx.after_window_update({
+                let called_after_window_update = called_after_window_update.clone();
+                move |this, cx| {
+                    assert_eq!(this.render_count, 2);
+                    called_after_window_update.store(true, SeqCst);
+                    cx.notify();
+                }
+            });
+            assert!(!called_defer.load(SeqCst));
+            assert!(!called_after_window_update.load(SeqCst));
+            cx.notify();
+        });
+
+        assert!(called_defer.load(SeqCst));
+        assert!(called_after_window_update.load(SeqCst));
+        assert_eq!(view.read(cx).render_count, 3);
     }
 
     #[crate::test(self)]
@@ -4595,6 +5155,41 @@ mod tests {
     }
 
     #[crate::test(self)]
+    fn test_global_events_emitted_before_subscription_in_same_update_cycle(
+        cx: &mut MutableAppContext,
+    ) {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            {
+                let events = events.clone();
+                drop(cx.subscribe_global(move |_: &(), _| {
+                    events.borrow_mut().push("dropped before emit");
+                }));
+            }
+
+            {
+                let events = events.clone();
+                cx.subscribe_global(move |_: &(), _| {
+                    events.borrow_mut().push("before emit");
+                })
+                .detach();
+            }
+
+            cx.emit_global(());
+
+            {
+                let events = events.clone();
+                cx.subscribe_global(move |_: &(), _| {
+                    events.borrow_mut().push("after emit");
+                })
+                .detach();
+            }
+        });
+
+        assert_eq!(*events.borrow(), ["before emit"]);
+    }
+
+    #[crate::test(self)]
     fn test_global_nested_events(cx: &mut MutableAppContext) {
         #[derive(Clone, Debug, Eq, PartialEq)]
         struct GlobalEvent(u64);
@@ -4606,11 +5201,13 @@ mod tests {
             cx.subscribe_global(move |e: &GlobalEvent, cx| {
                 events.borrow_mut().push(("Outer", e.clone()));
 
-                let events = events.clone();
-                cx.subscribe_global(move |e: &GlobalEvent, _| {
-                    events.borrow_mut().push(("Inner", e.clone()));
-                })
-                .detach();
+                if e.0 == 1 {
+                    let events = events.clone();
+                    cx.subscribe_global(move |e: &GlobalEvent, _| {
+                        events.borrow_mut().push(("Inner", e.clone()));
+                    })
+                    .detach();
+                }
             })
             .detach();
         }
@@ -4620,18 +5217,75 @@ mod tests {
             cx.emit_global(GlobalEvent(2));
             cx.emit_global(GlobalEvent(3));
         });
+        cx.update(|cx| {
+            cx.emit_global(GlobalEvent(4));
+        });
 
         assert_eq!(
             &*events.borrow(),
             &[
                 ("Outer", GlobalEvent(1)),
                 ("Outer", GlobalEvent(2)),
-                ("Inner", GlobalEvent(2)),
                 ("Outer", GlobalEvent(3)),
-                ("Inner", GlobalEvent(3)),
-                ("Inner", GlobalEvent(3)),
+                ("Outer", GlobalEvent(4)),
+                ("Inner", GlobalEvent(4)),
             ]
         );
+    }
+
+    #[crate::test(self)]
+    fn test_global(cx: &mut MutableAppContext) {
+        type Global = usize;
+
+        let observation_count = Rc::new(RefCell::new(0));
+        let subscription = cx.observe_global::<Global, _>({
+            let observation_count = observation_count.clone();
+            move |_, _| {
+                *observation_count.borrow_mut() += 1;
+            }
+        });
+
+        assert!(!cx.has_global::<Global>());
+        assert_eq!(cx.default_global::<Global>(), &0);
+        assert_eq!(*observation_count.borrow(), 1);
+        assert!(cx.has_global::<Global>());
+        assert_eq!(
+            cx.update_global::<Global, _, _>(|global, _| {
+                *global = 1;
+                "Update Result"
+            }),
+            "Update Result"
+        );
+        assert_eq!(*observation_count.borrow(), 2);
+        assert_eq!(cx.global::<Global>(), &1);
+
+        drop(subscription);
+        cx.update_global::<Global, _, _>(|global, _| {
+            *global = 2;
+        });
+        assert_eq!(*observation_count.borrow(), 2);
+
+        type OtherGlobal = f32;
+
+        let observation_count = Rc::new(RefCell::new(0));
+        cx.observe_global::<OtherGlobal, _>({
+            let observation_count = observation_count.clone();
+            move |_, _| {
+                *observation_count.borrow_mut() += 1;
+            }
+        })
+        .detach();
+
+        assert_eq!(
+            cx.update_default_global::<OtherGlobal, _, _>(|global, _| {
+                assert_eq!(global, &0.0);
+                *global = 2.0;
+                "Default update result"
+            }),
+            "Default update result"
+        );
+        assert_eq!(cx.global::<OtherGlobal>(), &2.0);
+        assert_eq!(*observation_count.borrow(), 1);
     }
 
     #[crate::test(self)]
@@ -4682,6 +5336,47 @@ mod tests {
     }
 
     #[crate::test(self)]
+    fn test_view_emit_before_subscribe_in_same_update_cycle(cx: &mut MutableAppContext) {
+        #[derive(Default)]
+        struct TestView;
+
+        impl Entity for TestView {
+            type Event = ();
+        }
+
+        impl View for TestView {
+            fn ui_name() -> &'static str {
+                "TestView"
+            }
+
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+                Empty::new().boxed()
+            }
+        }
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.add_window(Default::default(), |cx| {
+            drop(cx.subscribe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _, _| events.borrow_mut().push("dropped before flush")
+            }));
+            cx.subscribe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _, _| events.borrow_mut().push("before emit")
+            })
+            .detach();
+            cx.emit(());
+            cx.subscribe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _, _| events.borrow_mut().push("after emit")
+            })
+            .detach();
+            TestView
+        });
+        assert_eq!(*events.borrow(), ["before emit"]);
+    }
+
+    #[crate::test(self)]
     fn test_observe_and_notify_from_view(cx: &mut MutableAppContext) {
         #[derive(Default)]
         struct View {
@@ -4726,6 +5421,47 @@ mod tests {
             c.notify();
         });
         assert_eq!(view.read(cx).events, vec![11]);
+    }
+
+    #[crate::test(self)]
+    fn test_view_notify_before_observe_in_same_update_cycle(cx: &mut MutableAppContext) {
+        #[derive(Default)]
+        struct TestView;
+
+        impl Entity for TestView {
+            type Event = ();
+        }
+
+        impl View for TestView {
+            fn ui_name() -> &'static str {
+                "TestView"
+            }
+
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+                Empty::new().boxed()
+            }
+        }
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.add_window(Default::default(), |cx| {
+            drop(cx.observe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _| events.borrow_mut().push("dropped before flush")
+            }));
+            cx.observe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _| events.borrow_mut().push("before notify")
+            })
+            .detach();
+            cx.notify();
+            cx.observe(&cx.handle(), {
+                let events = events.clone();
+                move |_, _, _| events.borrow_mut().push("after notify")
+            })
+            .detach();
+            TestView
+        });
+        assert_eq!(*events.borrow(), ["before notify"]);
     }
 
     #[crate::test(self)]
@@ -4900,6 +5636,22 @@ mod tests {
             cx.notify();
         });
 
+        assert_eq!(*observation_count.borrow(), 1);
+
+        // Global Observation
+        let observation_count = Rc::new(RefCell::new(0));
+        let subscription = Rc::new(RefCell::new(None));
+        *subscription.borrow_mut() = Some(cx.observe_global::<(), _>({
+            let observation_count = observation_count.clone();
+            let subscription = subscription.clone();
+            move |_, _| {
+                subscription.borrow_mut().take();
+                *observation_count.borrow_mut() += 1;
+            }
+        }));
+
+        cx.default_global::<()>();
+        cx.set_global(());
         assert_eq!(*observation_count.borrow(), 1);
     }
 
@@ -5191,8 +5943,7 @@ mod tests {
             window_id,
             vec![view_1.id(), view_2.id(), view_3.id()],
             &Keystroke::parse("a").unwrap(),
-        )
-        .unwrap();
+        );
 
         assert_eq!(&*actions.borrow(), &["2 a"]);
 
@@ -5201,8 +5952,7 @@ mod tests {
             window_id,
             vec![view_1.id(), view_2.id(), view_3.id()],
             &Keystroke::parse("b").unwrap(),
-        )
-        .unwrap();
+        );
 
         assert_eq!(&*actions.borrow(), &["3 b", "2 b", "1 b", "global b"]);
     }
@@ -5362,5 +6112,66 @@ mod tests {
         let condition = view.condition(&cx, |_, _| false);
         cx.update(|_| drop(view));
         condition.await;
+    }
+
+    #[crate::test(self)]
+    fn test_refresh_windows(cx: &mut MutableAppContext) {
+        struct View(usize);
+
+        impl super::Entity for View {
+            type Event = ();
+        }
+
+        impl super::View for View {
+            fn ui_name() -> &'static str {
+                "test view"
+            }
+
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+                Empty::new().named(format!("render count: {}", post_inc(&mut self.0)))
+            }
+        }
+
+        let (window_id, root_view) = cx.add_window(Default::default(), |_| View(0));
+        let presenter = cx.presenters_and_platform_windows[&window_id].0.clone();
+
+        assert_eq!(
+            presenter.borrow().rendered_views[&root_view.id()].name(),
+            Some("render count: 0")
+        );
+
+        let view = cx.add_view(window_id, |cx| {
+            cx.refresh_windows();
+            View(0)
+        });
+
+        assert_eq!(
+            presenter.borrow().rendered_views[&root_view.id()].name(),
+            Some("render count: 1")
+        );
+        assert_eq!(
+            presenter.borrow().rendered_views[&view.id()].name(),
+            Some("render count: 0")
+        );
+
+        cx.update(|cx| cx.refresh_windows());
+        assert_eq!(
+            presenter.borrow().rendered_views[&root_view.id()].name(),
+            Some("render count: 2")
+        );
+        assert_eq!(
+            presenter.borrow().rendered_views[&view.id()].name(),
+            Some("render count: 1")
+        );
+
+        cx.update(|cx| {
+            cx.refresh_windows();
+            drop(view);
+        });
+        assert_eq!(
+            presenter.borrow().rendered_views[&root_view.id()].name(),
+            Some("render count: 3")
+        );
+        assert_eq!(presenter.borrow().rendered_views.len(), 1);
     }
 }

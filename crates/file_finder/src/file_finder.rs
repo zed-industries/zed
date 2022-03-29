@@ -67,7 +67,7 @@ impl View for FileFinder {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         Align::new(
             ConstrainedBox::new(
                 Container::new(
@@ -106,7 +106,7 @@ impl View for FileFinder {
 impl FileFinder {
     fn render_matches(&self, cx: &AppContext) -> ElementBox {
         if self.matches.is_empty() {
-            let settings = cx.app_state::<Settings>();
+            let settings = cx.global::<Settings>();
             return Container::new(
                 Label::new(
                     "No matches".into(),
@@ -142,7 +142,7 @@ impl FileFinder {
 
     fn render_match(&self, path_match: &PathMatch, index: usize, cx: &AppContext) -> ElementBox {
         let selected_index = self.selected_index();
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         let style = if index == selected_index {
             &settings.theme.selector.active_item
         } else {
@@ -291,7 +291,7 @@ impl FileFinder {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            editor::Event::Edited => {
+            editor::Event::BufferEdited { .. } => {
                 let query = self.query_editor.update(cx, |buffer, cx| buffer.text(cx));
                 if query.is_empty() {
                     self.latest_search_id = post_inc(&mut self.search_count);
@@ -407,16 +407,21 @@ mod tests {
     use std::path::PathBuf;
     use workspace::{Workspace, WorkspaceParams};
 
+    #[ctor::ctor]
+    fn init_logger() {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::init();
+        }
+    }
+
     #[gpui::test]
     async fn test_matching_paths(cx: &mut gpui::TestAppContext) {
-        let mut path_openers = Vec::new();
         cx.update(|cx| {
             super::init(cx);
-            editor::init(cx, &mut path_openers);
+            editor::init(cx);
         });
 
-        let mut params = cx.update(WorkspaceParams::test);
-        params.path_openers = Arc::from(path_openers);
+        let params = cx.update(WorkspaceParams::test);
         params
             .fs
             .as_fake()

@@ -9,7 +9,6 @@ use gpui::{App, AssetSource, Task};
 use log::LevelFilter;
 use parking_lot::Mutex;
 use project::Fs;
-use simplelog::SimpleLogger;
 use smol::process::Command;
 use std::{env, fs, path::PathBuf, sync::Arc};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
@@ -61,7 +60,6 @@ fn main() {
     app.run(move |cx| {
         let http = http::client();
         let client = client::Client::new(http.clone());
-        let mut path_openers = Vec::new();
         let mut languages = language::build_language_registry(login_shell_env_loaded);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
         let channel_list =
@@ -70,8 +68,8 @@ fn main() {
         project::Project::init(&client);
         client::Channel::init(&client);
         client::init(client.clone(), cx);
-        workspace::init(cx);
-        editor::init(cx, &mut path_openers);
+        workspace::init(&client, cx);
+        editor::init(cx);
         go_to_line::init(cx);
         file_finder::init(cx);
         chat_panel::init(cx);
@@ -80,11 +78,18 @@ fn main() {
         project_panel::init(cx);
         diagnostics::init(cx);
         search::init(cx);
+        vim::init(cx);
         cx.spawn({
             let client = client.clone();
             |cx| async move {
-                if client.has_keychain_credentials(&cx) {
-                    client.authenticate_and_connect(&cx).await?;
+                if stdout_is_a_pty() {
+                    if client::IMPERSONATE_LOGIN.is_some() {
+                        client.authenticate_and_connect(false, &cx).await?;
+                    }
+                } else {
+                    if client.has_keychain_credentials(&cx) {
+                        client.authenticate_and_connect(true, &cx).await?;
+                    }
                 }
                 Ok::<_, anyhow::Error>(())
             }
@@ -102,7 +107,7 @@ fn main() {
         cx.spawn(|mut cx| async move {
             while let Some(settings) = settings_rx.next().await {
                 cx.update(|cx| {
-                    cx.update_app_state(|s, _| *s = settings);
+                    cx.update_global(|s, _| *s = settings);
                     cx.refresh_windows();
                 });
             }
@@ -111,7 +116,7 @@ fn main() {
 
         languages.set_language_server_download_dir(zed::ROOT_PATH.clone());
         languages.set_theme(&settings.theme.editor.syntax);
-        cx.add_app_state(settings);
+        cx.set_global(settings);
 
         let app_state = Arc::new(AppState {
             languages: Arc::new(languages),
@@ -120,7 +125,6 @@ fn main() {
             client,
             user_store,
             fs,
-            path_openers: Arc::from(path_openers),
             build_window_options: &build_window_options,
             build_workspace: &build_workspace,
         });
@@ -144,11 +148,10 @@ fn main() {
 }
 
 fn init_logger() {
-    let level = LevelFilter::Info;
-
     if stdout_is_a_pty() {
-        SimpleLogger::init(level, Default::default()).expect("could not initialize logger");
+        env_logger::init();
     } else {
+        let level = LevelFilter::Info;
         let log_dir_path = dirs::home_dir()
             .expect("could not locate home directory for logging")
             .join("Library/Logs/");

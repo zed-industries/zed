@@ -11,15 +11,15 @@ use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{future::Shared, Future, FutureExt, StreamExt, TryFutureExt};
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
-    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
-    UpgradeModelHandle, WeakModelHandle,
+    AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
+    MutableAppContext, Task, UpgradeModelHandle, WeakModelHandle,
 };
 use language::{
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, Anchor, Bias, Buffer, CodeAction, CodeLabel, Completion, Diagnostic,
     DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _, Language, LanguageRegistry,
-    LocalFile, OffsetRangeExt, Operation, PointUtf16, TextBufferSnapshot, ToLspPosition, ToOffset,
-    ToPointUtf16, Transaction,
+    LocalFile, OffsetRangeExt, Operation, Patch, PointUtf16, TextBufferSnapshot, ToLspPosition,
+    ToOffset, ToPointUtf16, Transaction,
 };
 use lsp::{DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer};
 use lsp_command::*;
@@ -39,7 +39,7 @@ use std::{
     path::{Component, Path, PathBuf},
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, AtomicUsize},
+        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc,
     },
     time::Instant,
@@ -49,9 +49,13 @@ use util::{post_inc, ResultExt, TryFutureExt as _};
 pub use fs::*;
 pub use worktree::*;
 
+pub trait Item: Entity {
+    fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
+}
+
 pub struct Project {
     worktrees: Vec<WorktreeHandle>,
-    active_entry: Option<ProjectEntry>,
+    active_entry: Option<ProjectEntryId>,
     languages: Arc<LanguageRegistry>,
     language_servers: HashMap<(WorktreeId, Arc<str>), Arc<LanguageServer>>,
     started_language_servers: HashMap<(WorktreeId, Arc<str>), Task<Option<Arc<LanguageServer>>>>,
@@ -114,12 +118,14 @@ pub struct Collaborator {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
-    ActiveEntryChanged(Option<ProjectEntry>),
+    ActiveEntryChanged(Option<ProjectEntryId>),
     WorktreeRemoved(WorktreeId),
     DiskBasedDiagnosticsStarted,
     DiskBasedDiagnosticsUpdated,
     DiskBasedDiagnosticsFinished,
     DiagnosticsUpdated(ProjectPath),
+    RemoteIdChanged(Option<u64>),
+    CollaboratorLeft(PeerId),
 }
 
 enum LanguageServerEvent {
@@ -226,42 +232,58 @@ impl DiagnosticSummary {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ProjectEntry {
-    pub worktree_id: WorktreeId,
-    pub entry_id: usize,
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ProjectEntryId(usize);
+
+impl ProjectEntryId {
+    pub fn new(counter: &AtomicUsize) -> Self {
+        Self(counter.fetch_add(1, SeqCst))
+    }
+
+    pub fn from_proto(id: u64) -> Self {
+        Self(id as usize)
+    }
+
+    pub fn to_proto(&self) -> u64 {
+        self.0 as u64
+    }
+
+    pub fn to_usize(&self) -> usize {
+        self.0
+    }
 }
 
 impl Project {
     pub fn init(client: &Arc<Client>) {
-        client.add_entity_message_handler(Self::handle_add_collaborator);
-        client.add_entity_message_handler(Self::handle_buffer_reloaded);
-        client.add_entity_message_handler(Self::handle_buffer_saved);
-        client.add_entity_message_handler(Self::handle_start_language_server);
-        client.add_entity_message_handler(Self::handle_update_language_server);
-        client.add_entity_message_handler(Self::handle_remove_collaborator);
-        client.add_entity_message_handler(Self::handle_register_worktree);
-        client.add_entity_message_handler(Self::handle_unregister_worktree);
-        client.add_entity_message_handler(Self::handle_unshare_project);
-        client.add_entity_message_handler(Self::handle_update_buffer_file);
-        client.add_entity_message_handler(Self::handle_update_buffer);
-        client.add_entity_message_handler(Self::handle_update_diagnostic_summary);
-        client.add_entity_message_handler(Self::handle_update_worktree);
-        client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
-        client.add_entity_request_handler(Self::handle_apply_code_action);
-        client.add_entity_request_handler(Self::handle_format_buffers);
-        client.add_entity_request_handler(Self::handle_get_code_actions);
-        client.add_entity_request_handler(Self::handle_get_completions);
-        client.add_entity_request_handler(Self::handle_lsp_command::<GetDefinition>);
-        client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
-        client.add_entity_request_handler(Self::handle_lsp_command::<GetReferences>);
-        client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
-        client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
-        client.add_entity_request_handler(Self::handle_search_project);
-        client.add_entity_request_handler(Self::handle_get_project_symbols);
-        client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
-        client.add_entity_request_handler(Self::handle_open_buffer);
-        client.add_entity_request_handler(Self::handle_save_buffer);
+        client.add_model_message_handler(Self::handle_add_collaborator);
+        client.add_model_message_handler(Self::handle_buffer_reloaded);
+        client.add_model_message_handler(Self::handle_buffer_saved);
+        client.add_model_message_handler(Self::handle_start_language_server);
+        client.add_model_message_handler(Self::handle_update_language_server);
+        client.add_model_message_handler(Self::handle_remove_collaborator);
+        client.add_model_message_handler(Self::handle_register_worktree);
+        client.add_model_message_handler(Self::handle_unregister_worktree);
+        client.add_model_message_handler(Self::handle_unshare_project);
+        client.add_model_message_handler(Self::handle_update_buffer_file);
+        client.add_model_message_handler(Self::handle_update_buffer);
+        client.add_model_message_handler(Self::handle_update_diagnostic_summary);
+        client.add_model_message_handler(Self::handle_update_worktree);
+        client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
+        client.add_model_request_handler(Self::handle_apply_code_action);
+        client.add_model_request_handler(Self::handle_format_buffers);
+        client.add_model_request_handler(Self::handle_get_code_actions);
+        client.add_model_request_handler(Self::handle_get_completions);
+        client.add_model_request_handler(Self::handle_lsp_command::<GetDefinition>);
+        client.add_model_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
+        client.add_model_request_handler(Self::handle_lsp_command::<GetReferences>);
+        client.add_model_request_handler(Self::handle_lsp_command::<PrepareRename>);
+        client.add_model_request_handler(Self::handle_lsp_command::<PerformRename>);
+        client.add_model_request_handler(Self::handle_search_project);
+        client.add_model_request_handler(Self::handle_get_project_symbols);
+        client.add_model_request_handler(Self::handle_open_buffer_for_symbol);
+        client.add_model_request_handler(Self::handle_open_buffer_by_id);
+        client.add_model_request_handler(Self::handle_open_buffer_by_path);
+        client.add_model_request_handler(Self::handle_save_buffer);
     }
 
     pub fn local(
@@ -280,31 +302,11 @@ impl Project {
                         let mut status = rpc.status();
                         while let Some(status) = status.next().await {
                             if let Some(this) = this.upgrade(&cx) {
-                                let remote_id = if status.is_connected() {
-                                    let response = rpc.request(proto::RegisterProject {}).await?;
-                                    Some(response.project_id)
+                                if status.is_connected() {
+                                    this.update(&mut cx, |this, cx| this.register(cx)).await?;
                                 } else {
-                                    None
-                                };
-
-                                if let Some(project_id) = remote_id {
-                                    let mut registrations = Vec::new();
-                                    this.update(&mut cx, |this, cx| {
-                                        for worktree in this.worktrees(cx).collect::<Vec<_>>() {
-                                            registrations.push(worktree.update(
-                                                cx,
-                                                |worktree, cx| {
-                                                    let worktree = worktree.as_local_mut().unwrap();
-                                                    worktree.register(project_id, cx)
-                                                },
-                                            ));
-                                        }
-                                    });
-                                    for registration in registrations {
-                                        registration.await?;
-                                    }
+                                    this.update(&mut cx, |this, cx| this.unregister(cx));
                                 }
-                                this.update(&mut cx, |this, cx| this.set_remote_id(remote_id, cx));
                             }
                         }
                         Ok(())
@@ -355,7 +357,7 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
-        client.authenticate_and_connect(&cx).await?;
+        client.authenticate_and_connect(true, &cx).await?;
 
         let response = client
             .request(proto::JoinProject {
@@ -468,7 +470,6 @@ impl Project {
         cx.update(|cx| Project::local(client, user_store, languages, fs, cx))
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn buffer_for_id(&self, remote_id: u64, cx: &AppContext) -> Option<ModelHandle<Buffer>> {
         self.opened_buffers
             .get(&remote_id)
@@ -537,16 +538,54 @@ impl Project {
         &self.fs
     }
 
-    fn set_remote_id(&mut self, remote_id: Option<u64>, cx: &mut ModelContext<Self>) {
+    fn unregister(&mut self, cx: &mut ModelContext<Self>) {
+        self.unshare(cx);
+        for worktree in &self.worktrees {
+            if let Some(worktree) = worktree.upgrade(cx) {
+                worktree.update(cx, |worktree, _| {
+                    worktree.as_local_mut().unwrap().unregister();
+                });
+            }
+        }
+
         if let ProjectClientState::Local { remote_id_tx, .. } = &mut self.client_state {
-            *remote_id_tx.borrow_mut() = remote_id;
+            *remote_id_tx.borrow_mut() = None;
         }
 
         self.subscriptions.clear();
-        if let Some(remote_id) = remote_id {
-            self.subscriptions
-                .push(self.client.add_model_for_remote_entity(remote_id, cx));
-        }
+    }
+
+    fn register(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        self.unregister(cx);
+
+        let response = self.client.request(proto::RegisterProject {});
+        cx.spawn(|this, mut cx| async move {
+            let remote_id = response.await?.project_id;
+
+            let mut registrations = Vec::new();
+            this.update(&mut cx, |this, cx| {
+                if let ProjectClientState::Local { remote_id_tx, .. } = &mut this.client_state {
+                    *remote_id_tx.borrow_mut() = Some(remote_id);
+                }
+
+                cx.emit(Event::RemoteIdChanged(Some(remote_id)));
+
+                this.subscriptions
+                    .push(this.client.add_model_for_remote_entity(remote_id, cx));
+
+                for worktree in &this.worktrees {
+                    if let Some(worktree) = worktree.upgrade(cx) {
+                        registrations.push(worktree.update(cx, |worktree, cx| {
+                            let worktree = worktree.as_local_mut().unwrap();
+                            worktree.register(remote_id, cx)
+                        }));
+                    }
+                }
+            });
+
+            futures::future::try_join_all(registrations).await?;
+            Ok(())
+        })
     }
 
     pub fn remote_id(&self) -> Option<u64> {
@@ -623,6 +662,24 @@ impl Project {
             .find(|worktree| worktree.read(cx).id() == id)
     }
 
+    pub fn worktree_for_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        cx: &AppContext,
+    ) -> Option<ModelHandle<Worktree>> {
+        self.worktrees(cx)
+            .find(|worktree| worktree.read(cx).contains_entry(entry_id))
+    }
+
+    pub fn worktree_id_for_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        cx: &AppContext,
+    ) -> Option<WorktreeId> {
+        self.worktree_for_entry(entry_id, cx)
+            .map(|worktree| worktree.read(cx).id())
+    }
+
     pub fn share(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let rpc = self.client.clone();
         cx.spawn(|this, mut cx| async move {
@@ -685,59 +742,51 @@ impl Project {
         })
     }
 
-    pub fn unshare(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn unshare(&mut self, cx: &mut ModelContext<Self>) {
         let rpc = self.client.clone();
-        cx.spawn(|this, mut cx| async move {
-            let project_id = this.update(&mut cx, |this, cx| {
-                if let ProjectClientState::Local {
-                    is_shared,
-                    remote_id_rx,
-                    ..
-                } = &mut this.client_state
-                {
-                    *is_shared = false;
 
-                    for open_buffer in this.opened_buffers.values_mut() {
-                        match open_buffer {
-                            OpenBuffer::Strong(buffer) => {
-                                *open_buffer = OpenBuffer::Weak(buffer.downgrade());
-                            }
-                            _ => {}
-                        }
-                    }
+        if let ProjectClientState::Local {
+            is_shared,
+            remote_id_rx,
+            ..
+        } = &mut self.client_state
+        {
+            if !*is_shared {
+                return;
+            }
 
-                    for worktree_handle in this.worktrees.iter_mut() {
-                        match worktree_handle {
-                            WorktreeHandle::Strong(worktree) => {
-                                if !worktree.read(cx).is_visible() {
-                                    *worktree_handle = WorktreeHandle::Weak(worktree.downgrade());
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    remote_id_rx
-                        .borrow()
-                        .ok_or_else(|| anyhow!("no project id"))
-                } else {
-                    Err(anyhow!("can't share a remote project"))
-                }
-            })?;
-
-            rpc.send(proto::UnshareProject { project_id })?;
-            this.update(&mut cx, |this, cx| {
-                this.collaborators.clear();
-                this.shared_buffers.clear();
-                for worktree in this.worktrees(cx).collect::<Vec<_>>() {
-                    worktree.update(cx, |worktree, _| {
+            *is_shared = false;
+            self.collaborators.clear();
+            self.shared_buffers.clear();
+            for worktree_handle in self.worktrees.iter_mut() {
+                if let WorktreeHandle::Strong(worktree) = worktree_handle {
+                    let is_visible = worktree.update(cx, |worktree, _| {
                         worktree.as_local_mut().unwrap().unshare();
+                        worktree.is_visible()
                     });
+                    if !is_visible {
+                        *worktree_handle = WorktreeHandle::Weak(worktree.downgrade());
+                    }
                 }
-                cx.notify()
-            });
-            Ok(())
-        })
+            }
+
+            for open_buffer in self.opened_buffers.values_mut() {
+                match open_buffer {
+                    OpenBuffer::Strong(buffer) => {
+                        *open_buffer = OpenBuffer::Weak(buffer.downgrade());
+                    }
+                    _ => {}
+                }
+            }
+
+            if let Some(project_id) = *remote_id_rx.borrow() {
+                rpc.send(proto::UnshareProject { project_id }).log_err();
+            }
+
+            cx.notify();
+        } else {
+            log::error!("attempted to unshare a remote project");
+        }
     }
 
     fn project_unshared(&mut self, cx: &mut ModelContext<Self>) {
@@ -783,6 +832,23 @@ impl Project {
         });
         self.register_buffer(&buffer, cx)?;
         Ok(buffer)
+    }
+
+    pub fn open_path(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<(ProjectEntryId, AnyModelHandle)>> {
+        let task = self.open_buffer(path, cx);
+        cx.spawn_weak(|_, cx| async move {
+            let buffer = task.await?;
+            let project_entry_id = buffer
+                .read_with(&cx, |buffer, cx| {
+                    File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx))
+                })
+                .ok_or_else(|| anyhow!("no project entry"))?;
+            Ok((project_entry_id, buffer.into()))
+        })
     }
 
     pub fn open_buffer(
@@ -876,7 +942,7 @@ impl Project {
         let path_string = path.to_string_lossy().to_string();
         cx.spawn(|this, mut cx| async move {
             let response = rpc
-                .request(proto::OpenBuffer {
+                .request(proto::OpenBufferByPath {
                     project_id,
                     worktree_id: remote_worktree_id.to_proto(),
                     path: path_string,
@@ -923,6 +989,32 @@ impl Project {
             this.update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
                 .await
         })
+    }
+
+    pub fn open_buffer_by_id(
+        &mut self,
+        id: u64,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<Buffer>>> {
+        if let Some(buffer) = self.buffer_for_id(id, cx) {
+            Task::ready(Ok(buffer))
+        } else if self.is_local() {
+            Task::ready(Err(anyhow!("buffer {} does not exist", id)))
+        } else if let Some(project_id) = self.remote_id() {
+            let request = self
+                .client
+                .request(proto::OpenBufferById { project_id, id });
+            cx.spawn(|this, mut cx| async move {
+                let buffer = request
+                    .await?
+                    .buffer
+                    .ok_or_else(|| anyhow!("invalid buffer"))?;
+                this.update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
+                    .await
+            })
+        } else {
+            Task::ready(Err(anyhow!("cannot open buffer while disconnected")))
+        }
     }
 
     pub fn save_buffer_as(
@@ -1096,7 +1188,7 @@ impl Project {
                 });
                 cx.background().spawn(request).detach_and_log_err(cx);
             }
-            BufferEvent::Edited => {
+            BufferEvent::Edited { .. } => {
                 let language_server = self
                     .language_server_for_buffer(buffer.read(cx), cx)?
                     .clone();
@@ -1783,38 +1875,23 @@ impl Project {
         });
 
         let mut sanitized_diagnostics = Vec::new();
-        let mut edits_since_save = snapshot
-            .edits_since::<PointUtf16>(buffer.read(cx).saved_version())
-            .peekable();
-        let mut last_edit_old_end = PointUtf16::zero();
-        let mut last_edit_new_end = PointUtf16::zero();
-        'outer: for entry in diagnostics {
-            let mut start = entry.range.start;
-            let mut end = entry.range.end;
-
-            // Some diagnostics are based on files on disk instead of buffers'
-            // current contents. Adjust these diagnostics' ranges to reflect
-            // any unsaved edits.
+        let edits_since_save = Patch::new(
+            snapshot
+                .edits_since::<PointUtf16>(buffer.read(cx).saved_version())
+                .collect(),
+        );
+        for entry in diagnostics {
+            let start;
+            let end;
             if entry.diagnostic.is_disk_based {
-                while let Some(edit) = edits_since_save.peek() {
-                    if edit.old.end <= start {
-                        last_edit_old_end = edit.old.end;
-                        last_edit_new_end = edit.new.end;
-                        edits_since_save.next();
-                    } else if edit.old.start <= end && edit.old.end >= start {
-                        continue 'outer;
-                    } else {
-                        break;
-                    }
-                }
-
-                let start_overshoot = start - last_edit_old_end;
-                start = last_edit_new_end;
-                start += start_overshoot;
-
-                let end_overshoot = end - last_edit_old_end;
-                end = last_edit_new_end;
-                end += end_overshoot;
+                // Some diagnostics are based on files on disk instead of buffers'
+                // current contents. Adjust these diagnostics' ranges to reflect
+                // any unsaved edits.
+                start = edits_since_save.old_to_new(entry.range.start);
+                end = edits_since_save.old_to_new(entry.range.end);
+            } else {
+                start = entry.range.start;
+                end = entry.range.end;
             }
 
             let mut range = snapshot.clip_point_utf16(start, Bias::Left)
@@ -3163,10 +3240,7 @@ impl Project {
         let new_active_entry = entry.and_then(|project_path| {
             let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
             let entry = worktree.read(cx).entry_for_path(project_path.path)?;
-            Some(ProjectEntry {
-                worktree_id: project_path.worktree_id,
-                entry_id: entry.id,
-            })
+            Some(entry.id)
         });
         if new_active_entry != self.active_entry {
             self.active_entry = new_active_entry;
@@ -3217,8 +3291,23 @@ impl Project {
         }
     }
 
-    pub fn active_entry(&self) -> Option<ProjectEntry> {
+    pub fn active_entry(&self) -> Option<ProjectEntryId> {
         self.active_entry
+    }
+
+    pub fn entry_for_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<ProjectEntryId> {
+        self.worktree_for_id(path.worktree_id, cx)?
+            .read(cx)
+            .entry_for_path(&path.path)
+            .map(|entry| entry.id)
+    }
+
+    pub fn path_for_entry(&self, entry_id: ProjectEntryId, cx: &AppContext) -> Option<ProjectPath> {
+        let worktree = self.worktree_for_entry(entry_id, cx)?;
+        let worktree = worktree.read(cx);
+        let worktree_id = worktree.id();
+        let path = worktree.entry_for_id(entry_id)?.path.clone();
+        Some(ProjectPath { worktree_id, path })
     }
 
     // RPC message handlers
@@ -3274,6 +3363,7 @@ impl Project {
                     buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
                 }
             }
+            cx.emit(Event::CollaboratorLeft(peer_id));
             cx.notify();
             Ok(())
         })
@@ -3821,9 +3911,28 @@ impl Project {
         hasher.finalize().as_slice().try_into().unwrap()
     }
 
-    async fn handle_open_buffer(
+    async fn handle_open_buffer_by_id(
         this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::OpenBuffer>,
+        envelope: TypedEnvelope<proto::OpenBufferById>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::OpenBufferResponse> {
+        let peer_id = envelope.original_sender_id()?;
+        let buffer = this
+            .update(&mut cx, |this, cx| {
+                this.open_buffer_by_id(envelope.payload.id, cx)
+            })
+            .await?;
+        this.update(&mut cx, |this, cx| {
+            Ok(proto::OpenBufferResponse {
+                buffer: Some(this.serialize_buffer_for_peer(&buffer, peer_id, cx)),
+            })
+        })
+    }
+
+    async fn handle_open_buffer_by_path(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::OpenBufferByPath>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::OpenBufferResponse> {
@@ -4477,6 +4586,12 @@ fn relativize_path(base: &Path, path: &Path) -> PathBuf {
     components.iter().map(|c| c.as_os_str()).collect()
 }
 
+impl Item for Buffer {
+    fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId> {
+        File::from_dyn(self.file()).and_then(|file| file.project_entry_id(cx))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Event, *};
@@ -4897,7 +5012,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_transforming_disk_based_diagnostics(cx: &mut gpui::TestAppContext) {
+    async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
 
         let (mut lsp_config, mut fake_servers) = LanguageServerConfig::fake();
@@ -5122,11 +5237,13 @@ mod tests {
         buffer.update(cx, |buffer, cx| {
             buffer.edit(Some(Point::new(2, 0)..Point::new(2, 0)), "    ", cx);
             buffer.edit(Some(Point::new(2, 8)..Point::new(2, 10)), "(x: usize)", cx);
+            buffer.edit(Some(Point::new(3, 10)..Point::new(3, 10)), "xxx", cx);
         });
-        let change_notification_2 =
-            fake_server.receive_notification::<lsp::notification::DidChangeTextDocument>();
+        let change_notification_2 = fake_server
+            .receive_notification::<lsp::notification::DidChangeTextDocument>()
+            .await;
         assert!(
-            change_notification_2.await.text_document.version
+            change_notification_2.text_document.version
                 > change_notification_1.text_document.version
         );
 
@@ -5134,7 +5251,7 @@ mod tests {
         fake_server.notify::<lsp::notification::PublishDiagnostics>(
             lsp::PublishDiagnosticsParams {
                 uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
-                version: Some(open_notification.text_document.version),
+                version: Some(change_notification_2.text_document.version),
                 diagnostics: vec![
                     lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(1, 11)),
@@ -5174,7 +5291,7 @@ mod tests {
                         }
                     },
                     DiagnosticEntry {
-                        range: Point::new(3, 9)..Point::new(3, 11),
+                        range: Point::new(3, 9)..Point::new(3, 14),
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'BB'".to_string(),
@@ -5672,7 +5789,7 @@ mod tests {
             .unwrap();
 
         let mut fake_server = fake_servers.next().await.unwrap();
-        fake_server.handle_request::<lsp::request::GotoDefinition, _>(move |params, _| {
+        fake_server.handle_request::<lsp::request::GotoDefinition, _, _>(|params, _| async move {
             let params = params.text_document_position_params;
             assert_eq!(
                 params.text_document.uri.to_file_path().unwrap(),
@@ -6607,7 +6724,7 @@ mod tests {
             project.prepare_rename(buffer.clone(), 7, cx)
         });
         fake_server
-            .handle_request::<lsp::request::PrepareRenameRequest, _>(|params, _| {
+            .handle_request::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
                 assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
                 assert_eq!(params.position, lsp::Position::new(0, 7));
                 Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
@@ -6626,7 +6743,7 @@ mod tests {
             project.perform_rename(buffer.clone(), 7, "THREE".to_string(), true, cx)
         });
         fake_server
-            .handle_request::<lsp::request::Rename, _>(|params, _| {
+            .handle_request::<lsp::request::Rename, _, _>(|params, _| async move {
                 assert_eq!(
                     params.text_document_position.text_document.uri.as_str(),
                     "file:///dir/one.rs"

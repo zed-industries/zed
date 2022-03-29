@@ -4,6 +4,8 @@ base = { family = "Zed Sans", size = 14 }
 [workspace]
 background = "$surface.0"
 pane_divider = { width = 1, color = "$border.0" }
+leader_border_opacity = 0.7
+leader_border_width = 2.0
 
 [workspace.titlebar]
 height = 32

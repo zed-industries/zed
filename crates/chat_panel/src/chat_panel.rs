@@ -64,13 +64,13 @@ impl ChatPanel {
                         ix,
                         item_type,
                         is_hovered,
-                        &cx.app_state::<Settings>().theme.chat_panel.channel_select,
+                        &cx.global::<Settings>().theme.chat_panel.channel_select,
                         cx,
                     )
                 }
             })
             .with_style(move |cx| {
-                let theme = &cx.app_state::<Settings>().theme.chat_panel.channel_select;
+                let theme = &cx.global::<Settings>().theme.chat_panel.channel_select;
                 SelectStyle {
                     header: theme.header.container.clone(),
                     menu: theme.menu.clone(),
@@ -200,7 +200,7 @@ impl ChatPanel {
     }
 
     fn render_channel(&self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &cx.app_state::<Settings>().theme;
+        let theme = &cx.global::<Settings>().theme;
         Flex::column()
             .with_child(
                 Container::new(ChildView::new(&self.channel_select).boxed())
@@ -224,7 +224,7 @@ impl ChatPanel {
 
     fn render_message(&self, message: &ChannelMessage, cx: &AppContext) -> ElementBox {
         let now = OffsetDateTime::now_utc();
-        let settings = cx.app_state::<Settings>();
+        let settings = cx.global::<Settings>();
         let theme = if message.is_pending() {
             &settings.theme.chat_panel.pending_message
         } else {
@@ -267,7 +267,7 @@ impl ChatPanel {
     }
 
     fn render_input_box(&self, cx: &AppContext) -> ElementBox {
-        let theme = &cx.app_state::<Settings>().theme;
+        let theme = &cx.global::<Settings>().theme;
         Container::new(ChildView::new(&self.input_editor).boxed())
             .with_style(theme.chat_panel.input_editor.container)
             .boxed()
@@ -304,7 +304,7 @@ impl ChatPanel {
     }
 
     fn render_sign_in_prompt(&self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = cx.app_state::<Settings>().theme.clone();
+        let theme = cx.global::<Settings>().theme.clone();
         let rpc = self.rpc.clone();
         let this = cx.handle();
 
@@ -327,7 +327,12 @@ impl ChatPanel {
                 let rpc = rpc.clone();
                 let this = this.clone();
                 cx.spawn(|mut cx| async move {
-                    if rpc.authenticate_and_connect(&cx).log_err().await.is_some() {
+                    if rpc
+                        .authenticate_and_connect(true, &cx)
+                        .log_err()
+                        .await
+                        .is_some()
+                    {
                         cx.update(|cx| {
                             if let Some(this) = this.upgrade(cx) {
                                 if this.is_focused(cx) {
@@ -385,7 +390,7 @@ impl View for ChatPanel {
         } else {
             self.render_sign_in_prompt(cx)
         };
-        let theme = &cx.app_state::<Settings>().theme;
+        let theme = &cx.global::<Settings>().theme;
         ConstrainedBox::new(
             Container::new(element)
                 .with_style(theme.chat_panel.container)

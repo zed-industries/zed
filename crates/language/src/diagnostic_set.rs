@@ -81,8 +81,8 @@ impl DiagnosticSet {
         let range = buffer.anchor_before(range.start)..buffer.anchor_at(range.end, end_bias);
         let mut cursor = self.diagnostics.filter::<_, ()>({
             move |summary: &Summary| {
-                let start_cmp = range.start.cmp(&summary.max_end, buffer).unwrap();
-                let end_cmp = range.end.cmp(&summary.min_start, buffer).unwrap();
+                let start_cmp = range.start.cmp(&summary.max_end, buffer);
+                let end_cmp = range.end.cmp(&summary.min_start, buffer);
                 if inclusive {
                     start_cmp <= Ordering::Equal && end_cmp >= Ordering::Equal
                 } else {
@@ -123,7 +123,7 @@ impl DiagnosticSet {
 
         let start_ix = output.len();
         output.extend(groups.into_values().filter_map(|mut entries| {
-            entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start, buffer).unwrap());
+            entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start, buffer));
             entries
                 .iter()
                 .position(|entry| entry.diagnostic.is_primary)
@@ -137,7 +137,6 @@ impl DiagnosticSet {
                 .range
                 .start
                 .cmp(&b.entries[b.primary_ix].range.start, buffer)
-                .unwrap()
         });
     }
 
@@ -187,10 +186,10 @@ impl DiagnosticEntry<Anchor> {
 impl Default for Summary {
     fn default() -> Self {
         Self {
-            start: Anchor::min(),
-            end: Anchor::max(),
-            min_start: Anchor::max(),
-            max_end: Anchor::min(),
+            start: Anchor::MIN,
+            end: Anchor::MAX,
+            min_start: Anchor::MAX,
+            max_end: Anchor::MIN,
             count: 0,
         }
     }
@@ -200,15 +199,10 @@ impl sum_tree::Summary for Summary {
     type Context = text::BufferSnapshot;
 
     fn add_summary(&mut self, other: &Self, buffer: &Self::Context) {
-        if other
-            .min_start
-            .cmp(&self.min_start, buffer)
-            .unwrap()
-            .is_lt()
-        {
+        if other.min_start.cmp(&self.min_start, buffer).is_lt() {
             self.min_start = other.min_start.clone();
         }
-        if other.max_end.cmp(&self.max_end, buffer).unwrap().is_gt() {
+        if other.max_end.cmp(&self.max_end, buffer).is_gt() {
             self.max_end = other.max_end.clone();
         }
         self.start = other.start.clone();

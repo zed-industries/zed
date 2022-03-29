@@ -509,6 +509,44 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
+fn test_range_for_syntax_ancestor(cx: &mut MutableAppContext) {
+    cx.add_model(|cx| {
+        let text = "fn a() { b(|c| {}) }";
+        let buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
+        let snapshot = buffer.snapshot();
+
+        assert_eq!(
+            snapshot.range_for_syntax_ancestor(empty_range_at(text, "|")),
+            Some(range_of(text, "|"))
+        );
+        assert_eq!(
+            snapshot.range_for_syntax_ancestor(range_of(text, "|")),
+            Some(range_of(text, "|c|"))
+        );
+        assert_eq!(
+            snapshot.range_for_syntax_ancestor(range_of(text, "|c|")),
+            Some(range_of(text, "|c| {}"))
+        );
+        assert_eq!(
+            snapshot.range_for_syntax_ancestor(range_of(text, "|c| {}")),
+            Some(range_of(text, "(|c| {})"))
+        );
+
+        buffer
+    });
+
+    fn empty_range_at(text: &str, part: &str) -> Range<usize> {
+        let start = text.find(part).unwrap();
+        start..start
+    }
+
+    fn range_of(text: &str, part: &str) -> Range<usize> {
+        let start = text.find(part).unwrap();
+        start..start + part.len()
+    }
+}
+
+#[gpui::test]
 fn test_edit_with_autoindent(cx: &mut MutableAppContext) {
     cx.add_model(|cx| {
         let text = "fn a() {}";
@@ -839,7 +877,7 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
     for buffer in &buffers {
         let buffer = buffer.read(cx).snapshot();
         let actual_remote_selections = buffer
-            .remote_selections_in_range(Anchor::min()..Anchor::max())
+            .remote_selections_in_range(Anchor::MIN..Anchor::MAX)
             .map(|(replica_id, selections)| (replica_id, selections.collect::<Vec<_>>()))
             .collect::<Vec<_>>();
         let expected_remote_selections = active_selections

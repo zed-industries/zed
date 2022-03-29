@@ -340,59 +340,41 @@ fn test_anchors() {
     let anchor_at_offset_2 = buffer.anchor_before(2);
 
     assert_eq!(
-        anchor_at_offset_0
-            .cmp(&anchor_at_offset_0, &buffer)
-            .unwrap(),
+        anchor_at_offset_0.cmp(&anchor_at_offset_0, &buffer),
         Ordering::Equal
     );
     assert_eq!(
-        anchor_at_offset_1
-            .cmp(&anchor_at_offset_1, &buffer)
-            .unwrap(),
+        anchor_at_offset_1.cmp(&anchor_at_offset_1, &buffer),
         Ordering::Equal
     );
     assert_eq!(
-        anchor_at_offset_2
-            .cmp(&anchor_at_offset_2, &buffer)
-            .unwrap(),
+        anchor_at_offset_2.cmp(&anchor_at_offset_2, &buffer),
         Ordering::Equal
     );
 
     assert_eq!(
-        anchor_at_offset_0
-            .cmp(&anchor_at_offset_1, &buffer)
-            .unwrap(),
+        anchor_at_offset_0.cmp(&anchor_at_offset_1, &buffer),
         Ordering::Less
     );
     assert_eq!(
-        anchor_at_offset_1
-            .cmp(&anchor_at_offset_2, &buffer)
-            .unwrap(),
+        anchor_at_offset_1.cmp(&anchor_at_offset_2, &buffer),
         Ordering::Less
     );
     assert_eq!(
-        anchor_at_offset_0
-            .cmp(&anchor_at_offset_2, &buffer)
-            .unwrap(),
+        anchor_at_offset_0.cmp(&anchor_at_offset_2, &buffer),
         Ordering::Less
     );
 
     assert_eq!(
-        anchor_at_offset_1
-            .cmp(&anchor_at_offset_0, &buffer)
-            .unwrap(),
+        anchor_at_offset_1.cmp(&anchor_at_offset_0, &buffer),
         Ordering::Greater
     );
     assert_eq!(
-        anchor_at_offset_2
-            .cmp(&anchor_at_offset_1, &buffer)
-            .unwrap(),
+        anchor_at_offset_2.cmp(&anchor_at_offset_1, &buffer),
         Ordering::Greater
     );
     assert_eq!(
-        anchor_at_offset_2
-            .cmp(&anchor_at_offset_0, &buffer)
-            .unwrap(),
+        anchor_at_offset_2.cmp(&anchor_at_offset_0, &buffer),
         Ordering::Greater
     );
 }

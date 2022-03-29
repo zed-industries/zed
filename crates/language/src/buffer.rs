@@ -271,7 +271,6 @@ pub(crate) struct DiagnosticEndpoint {
 
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug)]
 pub enum CharKind {
-    Newline,
     Punctuation,
     Whitespace,
     Word,
@@ -1621,8 +1620,13 @@ impl BufferSnapshot {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut cursor = tree.root_node().walk();
 
-        // Descend to smallest leaf that touches or exceeds the start of the range.
-        while cursor.goto_first_child_for_byte(range.start).is_some() {}
+        // Descend to the first leaf that touches the start of the range,
+        // and if the range is non-empty, extends beyond the start.
+        while cursor.goto_first_child_for_byte(range.start).is_some() {
+            if !range.is_empty() && cursor.node().end_byte() == range.start {
+                cursor.goto_next_sibling();
+            }
+        }
 
         // Ascend to the smallest ancestor that strictly contains the range.
         loop {
@@ -1656,6 +1660,9 @@ impl BufferSnapshot {
                 }
             }
 
+            // If there is a candidate node on both sides of the (empty) range, then
+            // decide between the two by favoring a named node over an anonymous token.
+            // If both nodes are the same in that regard, favor the right one.
             if let Some(right_node) = right_node {
                 if right_node.is_named() || !left_node.is_named() {
                     return Some(right_node.byte_range());
@@ -1822,12 +1829,6 @@ impl BufferSnapshot {
             .min_by_key(|(open_range, close_range)| close_range.end - open_range.start)
     }
 
-    /*
-    impl BufferSnapshot
-      pub fn remote_selections_in_range(&self, Range<Anchor>) -> impl Iterator<Item = (ReplicaId, impl Iterator<Item = &Selection<Anchor>>)>
-      pub fn remote_selections_in_range(&self, Range<Anchor>) -> impl Iterator<Item = (ReplicaId, i
-    */
-
     pub fn remote_selections_in_range<'a>(
         &'a self,
         range: Range<Anchor>,
@@ -1840,20 +1841,12 @@ impl BufferSnapshot {
             })
             .map(move |(replica_id, set)| {
                 let start_ix = match set.selections.binary_search_by(|probe| {
-                    probe
-                        .end
-                        .cmp(&range.start, self)
-                        .unwrap()
-                        .then(Ordering::Greater)
+                    probe.end.cmp(&range.start, self).then(Ordering::Greater)
                 }) {
                     Ok(ix) | Err(ix) => ix,
                 };
                 let end_ix = match set.selections.binary_search_by(|probe| {
-                    probe
-                        .start
-                        .cmp(&range.end, self)
-                        .unwrap()
-                        .then(Ordering::Less)
+                    probe.start.cmp(&range.end, self).then(Ordering::Less)
                 }) {
                     Ok(ix) | Err(ix) => ix,
                 };
@@ -2280,9 +2273,7 @@ pub fn contiguous_ranges(
 }
 
 pub fn char_kind(c: char) -> CharKind {
-    if c == '\n' {
-        CharKind::Newline
-    } else if c.is_whitespace() {
+    if c.is_whitespace() {
         CharKind::Whitespace
     } else if c.is_alphanumeric() || c == '_' {
         CharKind::Word

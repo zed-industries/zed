@@ -1617,6 +1617,7 @@ dependencies = [
  "collections",
  "ctor",
  "env_logger",
+ "futures",
  "fuzzy",
  "gpui",
  "itertools",
@@ -1629,6 +1630,7 @@ dependencies = [
  "postage",
  "project",
  "rand 0.8.3",
+ "rpc",
  "serde",
  "smallvec",
  "smol",
@@ -1782,7 +1784,9 @@ dependencies = [
 name = "file_finder"
 version = "0.1.0"
 dependencies = [
+ "ctor",
  "editor",
+ "env_logger",
  "fuzzy",
  "gpui",
  "postage",
@@ -2522,6 +2526,15 @@ checksum = "824845a0bf897a9042383849b02c1bc219c2383772efcd5c6f9766fa4b81aef3"
 dependencies = [
  "autocfg 1.0.1",
  "hashbrown 0.9.1",
+]
+
+[[package]]
+name = "indoc"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7906a9fababaeacb774f72410e497a1d18de916322e33797bb2cd29baa23c9e"
+dependencies = [
+ "unindent",
 ]
 
 [[package]]
@@ -5550,9 +5563,9 @@ checksum = "39ec24b3121d976906ece63c9daad25b85969647682eee313cb5779fdd69e14e"
 
 [[package]]
 name = "unindent"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f14ee04d9415b52b3aeab06258a3f07093182b88ba0f9b8d203f211a7a7d41c7"
+checksum = "514672a55d7380da379785a4d70ca8386c8883ff7eaae877be4d2081cebe73d8"
 
 [[package]]
 name = "universal-hash"
@@ -5669,6 +5682,21 @@ name = "version_check"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5a972e5669d67ba988ce3dc826706fb0a8b01471c088cb0b6110b805cc36aed"
+
+[[package]]
+name = "vim"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "editor",
+ "gpui",
+ "indoc",
+ "language",
+ "log",
+ "project",
+ "util",
+ "workspace",
+]
 
 [[package]]
 name = "waker-fn"
@@ -5929,7 +5957,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "zed"
-version = "0.21.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -6000,6 +6028,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "vim",
  "workspace",
 ]
 

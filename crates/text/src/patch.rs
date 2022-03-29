@@ -199,6 +199,28 @@ where
             self.0.push(edit);
         }
     }
+
+    pub fn old_to_new(&self, old: T) -> T {
+        let ix = match self.0.binary_search_by(|probe| probe.old.start.cmp(&old)) {
+            Ok(ix) => ix,
+            Err(ix) => {
+                if ix == 0 {
+                    return old;
+                } else {
+                    ix - 1
+                }
+            }
+        };
+        if let Some(edit) = self.0.get(ix) {
+            if old >= edit.old.end {
+                edit.new.end + (old - edit.old.end)
+            } else {
+                edit.new.start
+            }
+        } else {
+            old
+        }
+    }
 }
 
 impl<T: Clone> IntoIterator for Patch<T> {
@@ -399,26 +421,6 @@ mod tests {
         );
     }
 
-    // #[test]
-    // fn test_compose_edits() {
-    //     assert_eq!(
-    //         compose_edits(
-    //             &Edit {
-    //                 old: 3..3,
-    //                 new: 3..6,
-    //             },
-    //             &Edit {
-    //                 old: 2..7,
-    //                 new: 2..4,
-    //             },
-    //         ),
-    //         Edit {
-    //             old: 2..4,
-    //             new: 2..4
-    //         }
-    //     );
-    // }
-
     #[gpui::test]
     fn test_two_new_edits_touching_one_old_edit() {
         assert_patch_composition(
@@ -453,6 +455,30 @@ mod tests {
                 },
             ]),
         );
+    }
+
+    #[gpui::test]
+    fn test_old_to_new() {
+        let patch = Patch(vec![
+            Edit {
+                old: 2..4,
+                new: 2..4,
+            },
+            Edit {
+                old: 7..8,
+                new: 7..11,
+            },
+        ]);
+        assert_eq!(patch.old_to_new(0), 0);
+        assert_eq!(patch.old_to_new(1), 1);
+        assert_eq!(patch.old_to_new(2), 2);
+        assert_eq!(patch.old_to_new(3), 2);
+        assert_eq!(patch.old_to_new(4), 4);
+        assert_eq!(patch.old_to_new(5), 5);
+        assert_eq!(patch.old_to_new(6), 6);
+        assert_eq!(patch.old_to_new(7), 7);
+        assert_eq!(patch.old_to_new(8), 11);
+        assert_eq!(patch.old_to_new(9), 12);
     }
 
     #[gpui::test(iterations = 100)]

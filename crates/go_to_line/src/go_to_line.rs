@@ -59,7 +59,8 @@ impl GoToLine {
     }
 
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
-        if let Some(editor) = workspace.active_item(cx)
+        if let Some(editor) = workspace
+            .active_item(cx)
             .and_then(|active_item| active_item.downcast::<Editor>())
         {
             workspace.toggle_modal(cx, |cx, _| {
@@ -101,7 +102,7 @@ impl GoToLine {
     ) {
         match event {
             editor::Event::Blurred => cx.emit(Event::Dismissed),
-            editor::Event::Edited => {
+            editor::Event::BufferEdited { .. } => {
                 let line_editor = self.line_editor.read(cx).buffer().read(cx).read(cx).text();
                 let mut components = line_editor.trim().split(&[',', ':'][..]);
                 let row = components.next().and_then(|row| row.parse::<u32>().ok());
@@ -148,7 +149,7 @@ impl View for GoToLine {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &cx.app_state::<Settings>().theme.selector;
+        let theme = &cx.global::<Settings>().theme.selector;
 
         let label = format!(
             "{},{} of {} lines",

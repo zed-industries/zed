@@ -12,7 +12,7 @@ use gpui::{
     Entity, ModelContext, ModelHandle,
 };
 use language::{Point, Subscription as BufferSubscription};
-use std::{any::TypeId, ops::Range, sync::Arc};
+use std::{any::TypeId, fmt::Debug, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
 use wrap_map::WrapMap;
@@ -36,6 +36,7 @@ pub struct DisplayMap {
     wrap_map: ModelHandle<WrapMap>,
     block_map: BlockMap,
     text_highlights: TextHighlights,
+    pub clip_at_line_ends: bool,
 }
 
 impl Entity for DisplayMap {
@@ -67,6 +68,7 @@ impl DisplayMap {
             wrap_map,
             block_map,
             text_highlights: Default::default(),
+            clip_at_line_ends: false,
         }
     }
 
@@ -87,6 +89,7 @@ impl DisplayMap {
             wraps_snapshot,
             blocks_snapshot,
             text_highlights: self.text_highlights.clone(),
+            clip_at_line_ends: self.clip_at_line_ends,
         }
     }
 
@@ -114,6 +117,7 @@ impl DisplayMap {
     pub fn unfold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
+        inclusive: bool,
         cx: &mut ModelContext<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -124,7 +128,7 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
-        let (snapshot, edits) = fold_map.unfold(ranges);
+        let (snapshot, edits) = fold_map.unfold(ranges, inclusive);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
@@ -204,6 +208,7 @@ pub struct DisplaySnapshot {
     wraps_snapshot: wrap_map::WrapSnapshot,
     blocks_snapshot: block_map::BlockSnapshot,
     text_highlights: TextHighlights,
+    clip_at_line_ends: bool,
 }
 
 impl DisplaySnapshot {
@@ -331,7 +336,12 @@ impl DisplaySnapshot {
     }
 
     pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
-        DisplayPoint(self.blocks_snapshot.clip_point(point.0, bias))
+        let mut clipped = self.blocks_snapshot.clip_point(point.0, bias);
+        if self.clip_at_line_ends && clipped.column == self.line_len(clipped.row) {
+            clipped.column = clipped.column.saturating_sub(1);
+            clipped = self.blocks_snapshot.clip_point(clipped, Bias::Left);
+        }
+        DisplayPoint(clipped)
     }
 
     pub fn folds_in_range<'a, T>(
@@ -414,8 +424,18 @@ impl DisplaySnapshot {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
+#[derive(Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct DisplayPoint(BlockPoint);
+
+impl Debug for DisplayPoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "DisplayPoint({}, {})",
+            self.row(),
+            self.column()
+        ))
+    }
+}
 
 impl DisplayPoint {
     pub fn new(row: u32, column: u32) -> Self {
@@ -426,7 +446,6 @@ impl DisplayPoint {
         Self::new(0, 0)
     }
 
-    #[cfg(test)]
     pub fn is_zero(&self) -> bool {
         self.0.is_zero()
     }
@@ -478,16 +497,16 @@ impl ToDisplayPoint for Anchor {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
-    use crate::movement;
+    use crate::{movement, test::marked_display_snapshot};
     use gpui::{color::Color, elements::*, test::observe, MutableAppContext};
     use language::{Buffer, Language, LanguageConfig, RandomCharIter, SelectionGoal};
     use rand::{prelude::*, Rng};
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
-    use util::test::sample_text;
+    use util::test::{marked_text_ranges, sample_text};
     use Bias::*;
 
     #[gpui::test(iterations = 100)]
@@ -620,7 +639,7 @@ mod tests {
                     if rng.gen() && fold_count > 0 {
                         log::info!("unfolding ranges: {:?}", ranges);
                         map.update(cx, |map, cx| {
-                            map.unfold(ranges, cx);
+                            map.unfold(ranges, true, cx);
                         });
                     } else {
                         log::info!("folding ranges: {:?}", ranges);
@@ -705,7 +724,7 @@ mod tests {
 
                 log::info!("Moving from point {:?}", point);
 
-                let moved_right = movement::right(&snapshot, point).unwrap();
+                let moved_right = movement::right(&snapshot, point);
                 log::info!("Right {:?}", moved_right);
                 if point < max_point {
                     assert!(moved_right > point);
@@ -719,7 +738,7 @@ mod tests {
                     assert_eq!(moved_right, point);
                 }
 
-                let moved_left = movement::left(&snapshot, point).unwrap();
+                let moved_left = movement::left(&snapshot, point);
                 log::info!("Left {:?}", moved_left);
                 if point > min_point {
                     assert!(moved_left < point);
@@ -777,15 +796,15 @@ mod tests {
             DisplayPoint::new(1, 0)
         );
         assert_eq!(
-            movement::right(&snapshot, DisplayPoint::new(0, 7)).unwrap(),
+            movement::right(&snapshot, DisplayPoint::new(0, 7)),
             DisplayPoint::new(1, 0)
         );
         assert_eq!(
-            movement::left(&snapshot, DisplayPoint::new(1, 0)).unwrap(),
+            movement::left(&snapshot, DisplayPoint::new(1, 0)),
             DisplayPoint::new(0, 7)
         );
         assert_eq!(
-            movement::up(&snapshot, DisplayPoint::new(1, 10), SelectionGoal::None).unwrap(),
+            movement::up(&snapshot, DisplayPoint::new(1, 10), SelectionGoal::None),
             (DisplayPoint::new(0, 7), SelectionGoal::Column(10))
         );
         assert_eq!(
@@ -793,8 +812,7 @@ mod tests {
                 &snapshot,
                 DisplayPoint::new(0, 7),
                 SelectionGoal::Column(10)
-            )
-            .unwrap(),
+            ),
             (DisplayPoint::new(1, 10), SelectionGoal::Column(10))
         );
         assert_eq!(
@@ -802,8 +820,7 @@ mod tests {
                 &snapshot,
                 DisplayPoint::new(1, 10),
                 SelectionGoal::Column(10)
-            )
-            .unwrap(),
+            ),
             (DisplayPoint::new(2, 4), SelectionGoal::Column(10))
         );
 
@@ -922,7 +939,7 @@ mod tests {
         let map = cx
             .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
         assert_eq!(
-            cx.update(|cx| chunks(0..5, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(0..5, &map, &theme, cx)),
             vec![
                 ("fn ".to_string(), None),
                 ("outer".to_string(), Some(Color::blue())),
@@ -933,7 +950,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            cx.update(|cx| chunks(3..5, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(3..5, &map, &theme, cx)),
             vec![
                 ("    fn ".to_string(), Some(Color::red())),
                 ("inner".to_string(), Some(Color::blue())),
@@ -945,7 +962,7 @@ mod tests {
             map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx)
         });
         assert_eq!(
-            cx.update(|cx| chunks(0..2, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(0..2, &map, &theme, cx)),
             vec![
                 ("fn ".to_string(), None),
                 ("out".to_string(), Some(Color::blue())),
@@ -1011,7 +1028,7 @@ mod tests {
             DisplayMap::new(buffer, tab_size, font_id, font_size, Some(40.0), 1, 1, cx)
         });
         assert_eq!(
-            cx.update(|cx| chunks(0..5, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(0..5, &map, &theme, cx)),
             [
                 ("fn \n".to_string(), None),
                 ("oute\nr".to_string(), Some(Color::blue())),
@@ -1019,7 +1036,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            cx.update(|cx| chunks(3..5, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(3..5, &map, &theme, cx)),
             [("{}\n\n".to_string(), None)]
         );
 
@@ -1027,7 +1044,7 @@ mod tests {
             map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx)
         });
         assert_eq!(
-            cx.update(|cx| chunks(1..4, &map, &theme, cx)),
+            cx.update(|cx| syntax_chunks(1..4, &map, &theme, cx)),
             [
                 ("out".to_string(), Some(Color::blue())),
                 ("…\n".to_string(), None),
@@ -1038,50 +1055,151 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_clip_point(cx: &mut gpui::MutableAppContext) {
-        use Bias::{Left, Right};
+    async fn test_chunks_with_text_highlights(cx: &mut gpui::TestAppContext) {
+        cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
 
-        let text = "\n'a', 'α',\t'✋',\t'❎', '🍐'\n";
-        let display_text = "\n'a', 'α',   '✋',    '❎', '🍐'\n";
-        let buffer = MultiBuffer::build_simple(text, cx);
+        let theme = SyntaxTheme::new(vec![
+            ("operator".to_string(), Color::red().into()),
+            ("string".to_string(), Color::green().into()),
+        ]);
+        let language = Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "Test".into(),
+                    path_suffixes: vec![".test".to_string()],
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )
+            .with_highlights_query(
+                r#"
+                ":" @operator
+                (string_literal) @string
+                "#,
+            )
+            .unwrap(),
+        );
+        language.set_theme(&theme);
 
-        let tab_size = 4;
+        let (text, highlighted_ranges) = marked_text_ranges(r#"const[] [a]: B = "c [d]""#);
+
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
+        buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
+
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+
         let font_cache = cx.font_cache();
-        let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
+        let tab_size = 4;
+        let family_id = font_cache.load_family(&["Courier"]).unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
             .unwrap();
-        let font_size = 14.0;
-        let map = cx.add_model(|cx| {
-            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, 1, 1, cx)
-        });
-        let map = map.update(cx, |map, cx| map.snapshot(cx));
+        let font_size = 16.0;
+        let map = cx
+            .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
 
-        assert_eq!(map.text(), display_text);
-        for (input_column, bias, output_column) in vec![
-            ("'a', '".len(), Left, "'a', '".len()),
-            ("'a', '".len() + 1, Left, "'a', '".len()),
-            ("'a', '".len() + 1, Right, "'a', 'α".len()),
-            ("'a', 'α', ".len(), Left, "'a', 'α',".len()),
-            ("'a', 'α', ".len(), Right, "'a', 'α',   ".len()),
-            ("'a', 'α',   '".len() + 1, Left, "'a', 'α',   '".len()),
-            ("'a', 'α',   '".len() + 1, Right, "'a', 'α',   '✋".len()),
-            ("'a', 'α',   '✋',".len(), Right, "'a', 'α',   '✋',".len()),
-            ("'a', 'α',   '✋', ".len(), Left, "'a', 'α',   '✋',".len()),
-            (
-                "'a', 'α',   '✋', ".len(),
-                Right,
-                "'a', 'α',   '✋',    ".len(),
-            ),
-        ] {
+        enum MyType {}
+
+        let style = HighlightStyle {
+            color: Some(Color::blue()),
+            ..Default::default()
+        };
+
+        map.update(cx, |map, _cx| {
+            map.highlight_text(
+                TypeId::of::<MyType>(),
+                highlighted_ranges
+                    .into_iter()
+                    .map(|range| {
+                        buffer_snapshot.anchor_before(range.start)
+                            ..buffer_snapshot.anchor_before(range.end)
+                    })
+                    .collect(),
+                style,
+            );
+        });
+
+        assert_eq!(
+            cx.update(|cx| chunks(0..10, &map, &theme, cx)),
+            [
+                ("const ".to_string(), None, None),
+                ("a".to_string(), None, Some(Color::blue())),
+                (":".to_string(), Some(Color::red()), None),
+                (" B = ".to_string(), None, None),
+                ("\"c ".to_string(), Some(Color::green()), None),
+                ("d".to_string(), Some(Color::green()), Some(Color::blue())),
+                ("\"".to_string(), Some(Color::green()), None),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    fn test_clip_point(cx: &mut gpui::MutableAppContext) {
+        fn assert(text: &str, shift_right: bool, bias: Bias, cx: &mut gpui::MutableAppContext) {
+            let (unmarked_snapshot, mut markers) = marked_display_snapshot(text, cx);
+
+            match bias {
+                Bias::Left => {
+                    if shift_right {
+                        *markers[1].column_mut() += 1;
+                    }
+
+                    assert_eq!(unmarked_snapshot.clip_point(markers[1], bias), markers[0])
+                }
+                Bias::Right => {
+                    if shift_right {
+                        *markers[0].column_mut() += 1;
+                    }
+
+                    assert_eq!(
+                        unmarked_snapshot.clip_point(dbg!(markers[0]), bias),
+                        markers[1]
+                    )
+                }
+            };
+        }
+
+        use Bias::{Left, Right};
+        assert("||α", false, Left, cx);
+        assert("||α", true, Left, cx);
+        assert("||α", false, Right, cx);
+        assert("|α|", true, Right, cx);
+        assert("||✋", false, Left, cx);
+        assert("||✋", true, Left, cx);
+        assert("||✋", false, Right, cx);
+        assert("|✋|", true, Right, cx);
+        assert("||🍐", false, Left, cx);
+        assert("||🍐", true, Left, cx);
+        assert("||🍐", false, Right, cx);
+        assert("|🍐|", true, Right, cx);
+        assert("||\t", false, Left, cx);
+        assert("||\t", true, Left, cx);
+        assert("||\t", false, Right, cx);
+        assert("|\t|", true, Right, cx);
+        assert(" ||\t", false, Left, cx);
+        assert(" ||\t", true, Left, cx);
+        assert(" ||\t", false, Right, cx);
+        assert(" |\t|", true, Right, cx);
+        assert("   ||\t", false, Left, cx);
+        assert("   ||\t", false, Right, cx);
+    }
+
+    #[gpui::test]
+    fn test_clip_at_line_ends(cx: &mut gpui::MutableAppContext) {
+        fn assert(text: &str, cx: &mut gpui::MutableAppContext) {
+            let (mut unmarked_snapshot, markers) = marked_display_snapshot(text, cx);
+            unmarked_snapshot.clip_at_line_ends = true;
             assert_eq!(
-                map.clip_point(DisplayPoint::new(1, input_column as u32), bias),
-                DisplayPoint::new(1, output_column as u32),
-                "clip_point(({}, {}))",
-                1,
-                input_column,
+                unmarked_snapshot.clip_point(markers[1], Bias::Left),
+                markers[0]
             );
         }
+
+        assert("||", cx);
+        assert("|a|", cx);
+        assert("a|b|", cx);
+        assert("a|α|", cx);
     }
 
     #[gpui::test]
@@ -1163,27 +1281,38 @@ mod tests {
         )
     }
 
-    fn chunks<'a>(
+    fn syntax_chunks<'a>(
         rows: Range<u32>,
         map: &ModelHandle<DisplayMap>,
         theme: &'a SyntaxTheme,
         cx: &mut MutableAppContext,
     ) -> Vec<(String, Option<Color>)> {
+        chunks(rows, map, theme, cx)
+            .into_iter()
+            .map(|(text, color, _)| (text, color))
+            .collect()
+    }
+
+    fn chunks<'a>(
+        rows: Range<u32>,
+        map: &ModelHandle<DisplayMap>,
+        theme: &'a SyntaxTheme,
+        cx: &mut MutableAppContext,
+    ) -> Vec<(String, Option<Color>, Option<Color>)> {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
-        let mut chunks: Vec<(String, Option<Color>)> = Vec::new();
+        let mut chunks: Vec<(String, Option<Color>, Option<Color>)> = Vec::new();
         for chunk in snapshot.chunks(rows, true) {
-            let color = chunk
+            let syntax_color = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(theme)?.color);
-            if let Some((last_chunk, last_color)) = chunks.last_mut() {
-                if color == *last_color {
+            let highlight_color = chunk.highlight_style.and_then(|style| style.color);
+            if let Some((last_chunk, last_syntax_color, last_highlight_color)) = chunks.last_mut() {
+                if syntax_color == *last_syntax_color && highlight_color == *last_highlight_color {
                     last_chunk.push_str(chunk.text);
-                } else {
-                    chunks.push((chunk.text.to_string(), color));
+                    continue;
                 }
-            } else {
-                chunks.push((chunk.text.to_string(), color));
             }
+            chunks.push((chunk.text.to_string(), syntax_color, highlight_color));
         }
         chunks
     }

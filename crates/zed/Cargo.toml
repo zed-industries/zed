@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathansobo@gmail.com>"]
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.21.0"
+version = "0.23.0"
 
 [lib]
 name = "zed"
@@ -55,6 +55,7 @@ text = { path = "../text" }
 theme = { path = "../theme" }
 theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
+vim = { path = "../vim" }
 workspace = { path = "../workspace" }
 anyhow = "1.0.38"
 async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
@@ -64,6 +65,7 @@ crossbeam-channel = "0.5.0"
 ctor = "0.1.20"
 dirs = "3.0"
 easy-parallel = "3.1.0"
+env_logger = "0.8"
 futures = "0.3"
 http-auth-basic = "0.1.3"
 ignore = "0.4"

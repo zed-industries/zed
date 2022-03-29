@@ -17,6 +17,7 @@ use util::ResultExt;
 pub struct Settings {
     pub buffer_font_family: FamilyId,
     pub buffer_font_size: f32,
+    pub vim_mode: bool,
     pub tab_size: usize,
     pub soft_wrap: SoftWrap,
     pub preferred_line_length: u32,
@@ -48,6 +49,8 @@ struct SettingsFileContent {
     buffer_font_family: Option<String>,
     #[serde(default)]
     buffer_font_size: Option<f32>,
+    #[serde(default)]
+    vim_mode: Option<bool>,
     #[serde(flatten)]
     editor: LanguageOverride,
     #[serde(default)]
@@ -130,6 +133,7 @@ impl Settings {
         Ok(Self {
             buffer_font_family: font_cache.load_family(&[buffer_font_family])?,
             buffer_font_size: 15.,
+            vim_mode: false,
             tab_size: 4,
             soft_wrap: SoftWrap::None,
             preferred_line_length: 80,
@@ -174,6 +178,7 @@ impl Settings {
         Settings {
             buffer_font_family: cx.font_cache().load_family(&["Monaco"]).unwrap(),
             buffer_font_size: 14.,
+            vim_mode: false,
             tab_size: 4,
             soft_wrap: SoftWrap::None,
             preferred_line_length: 80,
@@ -200,6 +205,7 @@ impl Settings {
         }
 
         merge(&mut self.buffer_font_size, data.buffer_font_size);
+        merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.soft_wrap, data.editor.soft_wrap);
         merge(&mut self.tab_size, data.editor.tab_size);
         merge(

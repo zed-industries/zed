@@ -1,5 +1,5 @@
 use crate::Anchor;
-use crate::{rope::TextDimension, BufferSnapshot, ToOffset, ToPoint};
+use crate::{rope::TextDimension, BufferSnapshot};
 use std::cmp::Ordering;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -18,6 +18,12 @@ pub struct Selection<T> {
     pub goal: SelectionGoal,
 }
 
+impl Default for SelectionGoal {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 impl<T: Clone> Selection<T> {
     pub fn head(&self) -> T {
         if self.reversed {
@@ -34,14 +40,27 @@ impl<T: Clone> Selection<T> {
             self.start.clone()
         }
     }
+
+    pub fn map<F, S>(&self, f: F) -> Selection<S>
+    where
+        F: Fn(T) -> S,
+    {
+        Selection::<S> {
+            id: self.id,
+            start: f(self.start.clone()),
+            end: f(self.end.clone()),
+            reversed: self.reversed,
+            goal: self.goal,
+        }
+    }
 }
 
-impl<T: ToOffset + ToPoint + Copy + Ord> Selection<T> {
+impl<T: Copy + Ord> Selection<T> {
     pub fn is_empty(&self) -> bool {
         self.start == self.end
     }
 
-    pub fn set_head(&mut self, head: T) {
+    pub fn set_head(&mut self, head: T, new_goal: SelectionGoal) {
         if head.cmp(&self.tail()) < Ordering::Equal {
             if !self.reversed {
                 self.end = self.start;
@@ -55,6 +74,14 @@ impl<T: ToOffset + ToPoint + Copy + Ord> Selection<T> {
             }
             self.end = head;
         }
+        self.goal = new_goal;
+    }
+
+    pub fn collapse_to(&mut self, point: T, new_goal: SelectionGoal) {
+        self.start = point;
+        self.end = point;
+        self.goal = new_goal;
+        self.reversed = false;
     }
 }
 

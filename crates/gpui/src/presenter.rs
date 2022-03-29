@@ -20,7 +20,7 @@ use std::{
 
 pub struct Presenter {
     window_id: usize,
-    rendered_views: HashMap<usize, ElementBox>,
+    pub(crate) rendered_views: HashMap<usize, ElementBox>,
     parents: HashMap<usize, usize>,
     font_cache: Arc<FontCache>,
     text_layout_cache: TextLayoutCache,
@@ -63,39 +63,34 @@ impl Presenter {
         path
     }
 
-    pub fn invalidate(&mut self, mut invalidation: WindowInvalidation, cx: &mut MutableAppContext) {
+    pub fn invalidate(
+        &mut self,
+        invalidation: &mut WindowInvalidation,
+        cx: &mut MutableAppContext,
+    ) {
         cx.start_frame();
-        for view_id in invalidation.removed {
+        for view_id in &invalidation.removed {
             invalidation.updated.remove(&view_id);
             self.rendered_views.remove(&view_id);
             self.parents.remove(&view_id);
         }
-        for view_id in invalidation.updated {
+        for view_id in &invalidation.updated {
             self.rendered_views.insert(
-                view_id,
-                cx.render_view(self.window_id, view_id, self.titlebar_height, false)
+                *view_id,
+                cx.render_view(self.window_id, *view_id, self.titlebar_height, false)
                     .unwrap(),
             );
         }
     }
 
-    pub fn refresh(
-        &mut self,
-        invalidation: Option<WindowInvalidation>,
-        cx: &mut MutableAppContext,
-    ) {
-        cx.start_frame();
-        if let Some(invalidation) = invalidation {
-            for view_id in invalidation.removed {
-                self.rendered_views.remove(&view_id);
-                self.parents.remove(&view_id);
-            }
-        }
-
+    pub fn refresh(&mut self, invalidation: &mut WindowInvalidation, cx: &mut MutableAppContext) {
+        self.invalidate(invalidation, cx);
         for (view_id, view) in &mut self.rendered_views {
-            *view = cx
-                .render_view(self.window_id, *view_id, self.titlebar_height, true)
-                .unwrap();
+            if !invalidation.updated.contains(view_id) {
+                *view = cx
+                    .render_view(self.window_id, *view_id, self.titlebar_height, true)
+                    .unwrap();
+            }
         }
     }
 
@@ -303,6 +298,10 @@ impl<'a> UpgradeModelHandle for LayoutContext<'a> {
 impl<'a> UpgradeViewHandle for LayoutContext<'a> {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
         self.app.upgrade_view_handle(handle)
+    }
+
+    fn upgrade_any_view_handle(&self, handle: &crate::AnyWeakViewHandle) -> Option<AnyViewHandle> {
+        self.app.upgrade_any_view_handle(handle)
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::{ItemViewHandle, Pane, Settings};
+use crate::{ItemHandle, Pane, Settings};
 use gpui::{
     elements::*, AnyViewHandle, ElementBox, Entity, MutableAppContext, RenderContext, Subscription,
     View, ViewContext, ViewHandle,
@@ -7,7 +7,7 @@ use gpui::{
 pub trait StatusItemView: View {
     fn set_active_pane_item(
         &mut self,
-        active_pane_item: Option<&dyn crate::ItemViewHandle>,
+        active_pane_item: Option<&dyn crate::ItemHandle>,
         cx: &mut ViewContext<Self>,
     );
 }
@@ -16,7 +16,7 @@ trait StatusItemViewHandle {
     fn to_any(&self) -> AnyViewHandle;
     fn set_active_pane_item(
         &self,
-        active_pane_item: Option<&dyn ItemViewHandle>,
+        active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut MutableAppContext,
     );
 }
@@ -38,7 +38,7 @@ impl View for StatusBar {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &cx.app_state::<Settings>().theme.workspace.status_bar;
+        let theme = &cx.global::<Settings>().theme.workspace.status_bar;
         Flex::row()
             .with_children(self.left_items.iter().map(|i| {
                 ChildView::new(i.as_ref())
@@ -114,7 +114,7 @@ impl<T: StatusItemView> StatusItemViewHandle for ViewHandle<T> {
 
     fn set_active_pane_item(
         &self,
-        active_pane_item: Option<&dyn ItemViewHandle>,
+        active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut MutableAppContext,
     ) {
         self.update(cx, |this, cx| {
