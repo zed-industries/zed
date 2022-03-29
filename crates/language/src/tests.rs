@@ -961,11 +961,8 @@ fn rust_lang() -> Language {
             name: (_) @name) @item
         (impl_item
             "impl" @context
-            type: (_) @name) @item
-        (impl_item
-            "impl" @context
-            trait: (_) @name
-            "for" @context
+            trait: (_)? @name
+            "for"? @context
             type: (_) @name) @item
         (function_item
             "fn" @context
