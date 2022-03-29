@@ -92,6 +92,9 @@ item_spacing = 8
 padding.left = 8
 padding.right = 8
 
+[breadcrumbs]
+text = "$text.1"
+
 [panel]
 padding = { top = 12, left = 12, bottom = 12, right = 12 }
 

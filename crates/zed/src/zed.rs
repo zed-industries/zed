@@ -4,6 +4,7 @@ pub mod menus;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+use breadcrumbs::Breadcrumbs;
 use chat_panel::ChatPanel;
 pub use client;
 pub use contacts_panel;
@@ -109,6 +110,9 @@ pub fn build_workspace(
         let workspace::Event::PaneAdded(pane) = event;
         pane.update(cx, |pane, cx| {
             pane.toolbar().update(cx, |toolbar, cx| {
+                let breadcrumbs = cx.add_view(|_| Breadcrumbs::new());
+                toolbar.add_left_item(breadcrumbs, cx);
+
                 let search_bar = cx.add_view(|cx| SearchBar::new(cx));
                 toolbar.add_right_item(search_bar, cx);
             })

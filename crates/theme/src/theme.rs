@@ -26,6 +26,7 @@ pub struct Theme {
     pub editor: Editor,
     pub search: Search,
     pub project_diagnostics: ProjectDiagnostics,
+    pub breadcrumbs: Breadcrumbs,
 }
 
 #[derive(Deserialize, Default)]
@@ -269,6 +270,11 @@ pub struct ProjectDiagnostics {
     pub tab_icon_width: f32,
     pub tab_icon_spacing: f32,
     pub tab_summary_spacing: f32,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Breadcrumbs {
+    pub text: TextStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]

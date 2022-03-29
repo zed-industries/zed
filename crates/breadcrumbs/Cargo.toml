@@ -1,0 +1,21 @@
+[package]
+name = "breadcrumbs"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/breadcrumbs.rs"
+doctest = false
+
+[dependencies]
+collections = { path = "../collections" }
+editor = { path = "../editor" }
+gpui = { path = "../gpui" }
+language = { path = "../language" }
+theme = { path = "../theme" }
+workspace = { path = "../workspace" }
+
+[dev-dependencies]
+editor = { path = "../editor", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }
