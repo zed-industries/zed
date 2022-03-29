@@ -650,6 +650,10 @@ impl WorkspaceParams {
     }
 }
 
+pub enum Event {
+    PaneAdded(ViewHandle<Pane>),
+}
+
 pub struct Workspace {
     weak_self: WeakViewHandle<Self>,
     client: Arc<Client>,
@@ -1061,6 +1065,7 @@ impl Workspace {
         .detach();
         self.panes.push(pane.clone());
         self.activate_pane(pane.clone(), cx);
+        cx.emit(Event::PaneAdded(pane.clone()));
         pane
     }
 
@@ -1916,7 +1921,7 @@ impl Workspace {
 }
 
 impl Entity for Workspace {
-    type Event = ();
+    type Event = Event;
 }
 
 impl View for Workspace {
