@@ -85,7 +85,10 @@ diagnostic_message = "$text.2"
 lsp_message = "$text.2"
 
 [workspace.toolbar]
+background = "$surface.1"
+border = { color = "$border.0", width = 1, left = false, right = false, bottom = true, top = false }
 height = 44
+item_spacing = 8
 
 [panel]
 padding = { top = 12, left = 12, bottom = 12, right = 12 }
@@ -353,8 +356,8 @@ tab_icon_spacing = 4
 tab_summary_spacing = 10
 
 [search]
+max_editor_width = 400
 match_background = "$state.highlighted_line"
-background = "$surface.1"
 results_status = { extends = "$text.0", size = 18 }
 tab_icon_width = 14
 tab_icon_spacing = 4
@@ -388,7 +391,6 @@ extends = "$text.1"
 padding = 6
 
 [search.editor]
-max_width = 400
 background = "$surface.0"
 corner_radius = 6
 padding = { left = 13, right = 13, top = 3, bottom = 3 }

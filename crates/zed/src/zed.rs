@@ -21,6 +21,7 @@ pub use lsp;
 use project::Project;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
+use search::SearchBar;
 use std::{path::PathBuf, sync::Arc};
 pub use workspace;
 use workspace::{AppState, Settings, Workspace, WorkspaceParams};
@@ -104,6 +105,17 @@ pub fn build_workspace(
     app_state: &Arc<AppState>,
     cx: &mut ViewContext<Workspace>,
 ) -> Workspace {
+    cx.subscribe(&cx.handle(), |_, _, event, cx| {
+        let workspace::Event::PaneAdded(pane) = event;
+        pane.update(cx, |pane, cx| {
+            pane.toolbar().update(cx, |toolbar, cx| {
+                let search_bar = cx.add_view(|cx| SearchBar::new(cx));
+                toolbar.add_right_item(search_bar, cx);
+            })
+        });
+    })
+    .detach();
+
     let workspace_params = WorkspaceParams {
         project,
         client: app_state.client.clone(),

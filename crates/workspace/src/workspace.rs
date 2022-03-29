@@ -5,6 +5,7 @@ pub mod pane_group;
 pub mod settings;
 pub mod sidebar;
 mod status_bar;
+mod toolbar;
 
 use anyhow::{anyhow, Context, Result};
 use client::{
@@ -47,6 +48,7 @@ use std::{
     },
 };
 use theme::{Theme, ThemeRegistry};
+pub use toolbar::ToolbarItemView;
 use util::ResultExt;
 
 type ProjectItemBuilders = HashMap<
@@ -720,7 +722,7 @@ impl Workspace {
         })
         .detach();
 
-        let pane = cx.add_view(|_| Pane::new());
+        let pane = cx.add_view(|cx| Pane::new(cx));
         let pane_id = pane.id();
         cx.observe(&pane, move |me, _, cx| {
             let active_entry = me.active_project_path(cx);
@@ -733,6 +735,7 @@ impl Workspace {
         })
         .detach();
         cx.focus(&pane);
+        cx.emit(Event::PaneAdded(pane.clone()));
 
         let status_bar = cx.add_view(|cx| StatusBar::new(&pane, cx));
         let mut current_user = params.user_store.read(cx).watch_current_user().clone();
@@ -1051,7 +1054,7 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane = cx.add_view(|_| Pane::new());
+        let pane = cx.add_view(|cx| Pane::new(cx));
         let pane_id = pane.id();
         cx.observe(&pane, move |me, _, cx| {
             let active_entry = me.active_project_path(cx);

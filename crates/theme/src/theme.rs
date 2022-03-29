@@ -94,14 +94,18 @@ pub struct Tab {
 
 #[derive(Clone, Deserialize, Default)]
 pub struct Toolbar {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
     pub height: f32,
+    pub item_spacing: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
 pub struct Search {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub editor: FindEditor,
+    pub max_editor_width: f32,
+    pub editor: FieldEditor,
     pub invalid_editor: ContainerStyle,
     pub option_button_group: ContainerStyle,
     pub option_button: ContainedText,
@@ -113,13 +117,6 @@ pub struct Search {
     pub results_status: TextStyle,
     pub tab_icon_width: f32,
     pub tab_icon_spacing: f32,
-}
-
-#[derive(Clone, Deserialize, Default)]
-pub struct FindEditor {
-    #[serde(flatten)]
-    pub input: FieldEditor,
-    pub max_width: f32,
 }
 
 #[derive(Deserialize, Default)]

@@ -1,10 +1,10 @@
+pub use buffer_search::SearchBar;
+use editor::{Anchor, MultiBufferSnapshot};
+use gpui::{action, MutableAppContext};
 use std::{
     cmp::{self, Ordering},
     ops::Range,
 };
-
-use editor::{Anchor, MultiBufferSnapshot};
-use gpui::{action, MutableAppContext};
 
 mod buffer_search;
 mod project_search;

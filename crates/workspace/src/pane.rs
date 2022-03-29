@@ -1,5 +1,5 @@
 use super::{ItemHandle, SplitDirection};
-use crate::{Item, Settings, WeakItemHandle, Workspace};
+use crate::{toolbar::Toolbar, Item, Settings, WeakItemHandle, Workspace};
 use collections::{HashMap, VecDeque};
 use gpui::{
     action,
@@ -7,16 +7,11 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     keymap::Binding,
     platform::{CursorStyle, NavigationDirection},
-    AnyViewHandle, AppContext, Entity, MutableAppContext, Quad, RenderContext, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, Entity, MutableAppContext, Quad, RenderContext, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use project::{ProjectEntryId, ProjectPath};
-use std::{
-    any::{Any, TypeId},
-    cell::RefCell,
-    cmp, mem,
-    rc::Rc,
-};
+use std::{any::Any, cell::RefCell, cmp, mem, rc::Rc};
 use util::ResultExt;
 
 action!(Split, SplitDirection);
@@ -101,28 +96,7 @@ pub struct Pane {
     items: Vec<Box<dyn ItemHandle>>,
     active_item_index: usize,
     nav_history: Rc<RefCell<NavHistory>>,
-    toolbars: HashMap<TypeId, Box<dyn ToolbarHandle>>,
-    active_toolbar_type: Option<TypeId>,
-    active_toolbar_visible: bool,
-}
-
-pub trait Toolbar: View {
-    fn active_item_changed(
-        &mut self,
-        item: Option<Box<dyn ItemHandle>>,
-        cx: &mut ViewContext<Self>,
-    ) -> bool;
-    fn on_dismiss(&mut self, cx: &mut ViewContext<Self>);
-}
-
-trait ToolbarHandle {
-    fn active_item_changed(
-        &self,
-        item: Option<Box<dyn ItemHandle>>,
-        cx: &mut MutableAppContext,
-    ) -> bool;
-    fn on_dismiss(&self, cx: &mut MutableAppContext);
-    fn to_any(&self) -> AnyViewHandle;
+    toolbar: ViewHandle<Toolbar>,
 }
 
 pub struct ItemNavHistory {
@@ -158,14 +132,12 @@ pub struct NavigationEntry {
 }
 
 impl Pane {
-    pub fn new() -> Self {
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
         Self {
             items: Vec::new(),
             active_item_index: 0,
             nav_history: Default::default(),
-            toolbars: Default::default(),
-            active_toolbar_type: Default::default(),
-            active_toolbar_visible: false,
+            toolbar: cx.add_view(|_| Toolbar::new()),
         }
     }
 
@@ -402,7 +374,7 @@ impl Pane {
                 self.items[prev_active_item_ix].deactivated(cx);
                 cx.emit(Event::ActivateItem { local });
             }
-            self.update_active_toolbar(cx);
+            self.update_toolbar(cx);
             if local {
                 self.focus_active_item(cx);
                 self.activate(cx);
@@ -487,7 +459,7 @@ impl Pane {
             self.focus_active_item(cx);
             self.activate(cx);
         }
-        self.update_active_toolbar(cx);
+        self.update_toolbar(cx);
 
         cx.notify();
     }
@@ -502,63 +474,18 @@ impl Pane {
         cx.emit(Event::Split(direction));
     }
 
-    pub fn show_toolbar<F, V>(&mut self, cx: &mut ViewContext<Self>, build_toolbar: F)
-    where
-        F: FnOnce(&mut ViewContext<V>) -> V,
-        V: Toolbar,
-    {
-        let type_id = TypeId::of::<V>();
-        if self.active_toolbar_type != Some(type_id) {
-            self.dismiss_toolbar(cx);
-
-            let active_item = self.active_item();
-            self.toolbars
-                .entry(type_id)
-                .or_insert_with(|| Box::new(cx.add_view(build_toolbar)));
-
-            self.active_toolbar_type = Some(type_id);
-            self.active_toolbar_visible =
-                self.toolbars[&type_id].active_item_changed(active_item, cx);
-            cx.notify();
-        }
+    pub fn toolbar(&self) -> &ViewHandle<Toolbar> {
+        &self.toolbar
     }
 
-    pub fn dismiss_toolbar(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(active_toolbar_type) = self.active_toolbar_type.take() {
-            self.toolbars
-                .get_mut(&active_toolbar_type)
-                .unwrap()
-                .on_dismiss(cx);
-            self.active_toolbar_visible = false;
-            self.focus_active_item(cx);
-            cx.notify();
-        }
-    }
-
-    pub fn toolbar<T: Toolbar>(&self) -> Option<ViewHandle<T>> {
-        self.toolbars
-            .get(&TypeId::of::<T>())
-            .and_then(|toolbar| toolbar.to_any().downcast())
-    }
-
-    pub fn active_toolbar(&self) -> Option<AnyViewHandle> {
-        let type_id = self.active_toolbar_type?;
-        let toolbar = self.toolbars.get(&type_id)?;
-        if self.active_toolbar_visible {
-            Some(toolbar.to_any())
-        } else {
-            None
-        }
-    }
-
-    fn update_active_toolbar(&mut self, cx: &mut ViewContext<Self>) {
-        let active_item = self.items.get(self.active_item_index);
-        for (toolbar_type_id, toolbar) in &self.toolbars {
-            let visible = toolbar.active_item_changed(active_item.cloned(), cx);
-            if Some(*toolbar_type_id) == self.active_toolbar_type {
-                self.active_toolbar_visible = visible;
-            }
-        }
+    fn update_toolbar(&mut self, cx: &mut ViewContext<Self>) {
+        let active_item = self
+            .items
+            .get(self.active_item_index)
+            .map(|item| item.as_ref());
+        self.toolbar.update(cx, |toolbar, cx| {
+            toolbar.set_active_pane_item(active_item, cx);
+        });
     }
 
     fn render_tabs(&self, cx: &mut RenderContext<Self>) -> ElementBox {
@@ -713,11 +640,7 @@ impl View for Pane {
         EventHandler::new(if let Some(active_item) = self.active_item() {
             Flex::column()
                 .with_child(self.render_tabs(cx))
-                .with_children(
-                    self.active_toolbar()
-                        .as_ref()
-                        .map(|view| ChildView::new(view).boxed()),
-                )
+                .with_child(ChildView::new(&self.toolbar).boxed())
                 .with_child(ChildView::new(active_item).flexible(1., true).boxed())
                 .boxed()
         } else {
@@ -737,24 +660,6 @@ impl View for Pane {
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
         self.focus_active_item(cx);
-    }
-}
-
-impl<T: Toolbar> ToolbarHandle for ViewHandle<T> {
-    fn active_item_changed(
-        &self,
-        item: Option<Box<dyn ItemHandle>>,
-        cx: &mut MutableAppContext,
-    ) -> bool {
-        self.update(cx, |this, cx| this.active_item_changed(item, cx))
-    }
-
-    fn on_dismiss(&self, cx: &mut MutableAppContext) {
-        self.update(cx, |this, cx| this.on_dismiss(cx));
-    }
-
-    fn to_any(&self) -> AnyViewHandle {
-        self.into()
     }
 }
 
