@@ -2,6 +2,7 @@
 /zed.xcworkspace
 .DS_Store
 /script/node_modules
+/styles/node_modules
 /crates/server/.env.toml
 /crates/server/static/styles.css
 /vendor/bin
