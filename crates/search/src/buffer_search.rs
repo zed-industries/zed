@@ -19,26 +19,30 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
         Binding::new("cmd-f", Deploy(true), Some("Editor && mode == full")),
         Binding::new("cmd-e", Deploy(false), Some("Editor && mode == full")),
-        Binding::new("escape", Dismiss, Some("SearchBar")),
-        Binding::new("cmd-f", FocusEditor, Some("SearchBar")),
-        Binding::new("enter", SelectMatch(Direction::Next), Some("SearchBar")),
+        Binding::new("escape", Dismiss, Some("BufferSearchBar")),
+        Binding::new("cmd-f", FocusEditor, Some("BufferSearchBar")),
+        Binding::new(
+            "enter",
+            SelectMatch(Direction::Next),
+            Some("BufferSearchBar"),
+        ),
         Binding::new(
             "shift-enter",
             SelectMatch(Direction::Prev),
-            Some("SearchBar"),
+            Some("BufferSearchBar"),
         ),
         Binding::new("cmd-g", SelectMatch(Direction::Next), Some("Pane")),
         Binding::new("cmd-shift-G", SelectMatch(Direction::Prev), Some("Pane")),
     ]);
-    cx.add_action(SearchBar::deploy);
-    cx.add_action(SearchBar::dismiss);
-    cx.add_action(SearchBar::focus_editor);
-    cx.add_action(SearchBar::toggle_search_option);
-    cx.add_action(SearchBar::select_match);
-    cx.add_action(SearchBar::select_match_on_pane);
+    cx.add_action(BufferSearchBar::deploy);
+    cx.add_action(BufferSearchBar::dismiss);
+    cx.add_action(BufferSearchBar::focus_editor);
+    cx.add_action(BufferSearchBar::toggle_search_option);
+    cx.add_action(BufferSearchBar::select_match);
+    cx.add_action(BufferSearchBar::select_match_on_pane);
 }
 
-pub struct SearchBar {
+pub struct BufferSearchBar {
     query_editor: ViewHandle<Editor>,
     active_editor: Option<ViewHandle<Editor>>,
     active_match_index: Option<usize>,
@@ -52,13 +56,13 @@ pub struct SearchBar {
     dismissed: bool,
 }
 
-impl Entity for SearchBar {
+impl Entity for BufferSearchBar {
     type Event = ();
 }
 
-impl View for SearchBar {
+impl View for BufferSearchBar {
     fn ui_name() -> &'static str {
-        "SearchBar"
+        "BufferSearchBar"
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
@@ -132,7 +136,7 @@ impl View for SearchBar {
     }
 }
 
-impl ToolbarItemView for SearchBar {
+impl ToolbarItemView for BufferSearchBar {
     fn set_active_pane_item(&mut self, item: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
         cx.notify();
         self.active_editor_subscription.take();
@@ -151,7 +155,7 @@ impl ToolbarItemView for SearchBar {
     }
 }
 
-impl SearchBar {
+impl BufferSearchBar {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let query_editor =
             cx.add_view(|cx| Editor::auto_height(2, Some(|theme| theme.search.editor.clone()), cx));
@@ -295,7 +299,7 @@ impl SearchBar {
     }
 
     fn deploy(pane: &mut Pane, Deploy(focus): &Deploy, cx: &mut ViewContext<Pane>) {
-        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<SearchBar>() {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
             if search_bar.update(cx, |search_bar, cx| search_bar.show(*focus, cx)) {
                 return;
             }
@@ -354,7 +358,7 @@ impl SearchBar {
     }
 
     fn select_match_on_pane(pane: &mut Pane, action: &SelectMatch, cx: &mut ViewContext<Pane>) {
-        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<SearchBar>() {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
             search_bar.update(cx, |search_bar, cx| search_bar.select_match(action, cx));
         }
     }
@@ -548,7 +552,7 @@ mod tests {
         });
 
         let search_bar = cx.add_view(Default::default(), |cx| {
-            let mut search_bar = SearchBar::new(cx);
+            let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar
         });

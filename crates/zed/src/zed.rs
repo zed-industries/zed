@@ -22,7 +22,7 @@ pub use lsp;
 use project::Project;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
-use search::SearchBar;
+use search::{BufferSearchBar, ProjectSearchBar};
 use std::{path::PathBuf, sync::Arc};
 pub use workspace;
 use workspace::{AppState, Settings, Workspace, WorkspaceParams};
@@ -113,8 +113,10 @@ pub fn build_workspace(
                 let breadcrumbs = cx.add_view(|_| Breadcrumbs::new());
                 toolbar.add_left_item(breadcrumbs, cx);
 
-                let search_bar = cx.add_view(|cx| SearchBar::new(cx));
-                toolbar.add_right_item(search_bar, cx);
+                let buffer_search_bar = cx.add_view(|cx| BufferSearchBar::new(cx));
+                toolbar.add_right_item(buffer_search_bar, cx);
+                let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
+                toolbar.add_right_item(project_search_bar, cx);
             })
         });
     })
