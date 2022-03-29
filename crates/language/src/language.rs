@@ -8,7 +8,7 @@ mod tests;
 
 use anyhow::{anyhow, Context, Result};
 use client::http::{self, HttpClient};
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use futures::{
     future::{BoxFuture, Shared},
     FutureExt, TryFutureExt,
@@ -67,8 +67,11 @@ pub struct GitHubLspBinaryVersion {
     pub url: http::Url,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct LanguageServerName(pub Arc<str>);
+
 pub trait LspAdapter: 'static + Send + Sync {
-    fn name(&self) -> &'static str;
+    fn name(&self) -> LanguageServerName;
     fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,
@@ -159,7 +162,6 @@ pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
     pub(crate) adapter: Option<Arc<dyn LspAdapter>>,
-    lsp_binary_path: Mutex<Option<Shared<BoxFuture<'static, Result<PathBuf, Arc<anyhow::Error>>>>>>,
 }
 
 pub struct Grammar {
@@ -186,6 +188,12 @@ pub struct LanguageRegistry {
     lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
     lsp_binary_statuses_rx: async_broadcast::Receiver<(Arc<Language>, LanguageServerBinaryStatus)>,
     login_shell_env_loaded: Shared<Task<()>>,
+    lsp_binary_paths: Mutex<
+        HashMap<
+            LanguageServerName,
+            Shared<BoxFuture<'static, Result<PathBuf, Arc<anyhow::Error>>>>,
+        >,
+    >,
 }
 
 impl LanguageRegistry {
@@ -197,6 +205,7 @@ impl LanguageRegistry {
             lsp_binary_statuses_tx,
             lsp_binary_statuses_rx,
             login_shell_env_loaded: login_shell_env_loaded.shared(),
+            lsp_binary_paths: Default::default(),
         }
     }
 
@@ -246,7 +255,7 @@ impl LanguageRegistry {
     }
 
     pub fn start_language_server(
-        &self,
+        self: &Arc<Self>,
         language: Arc<Language>,
         root_path: Arc<Path>,
         http_client: Arc<dyn HttpClient>,
@@ -291,16 +300,18 @@ impl LanguageRegistry {
             .ok_or_else(|| anyhow!("language server download directory has not been assigned"))
             .log_err()?;
 
+        let this = self.clone();
         let adapter = language.adapter.clone()?;
         let background = cx.background().clone();
         let lsp_binary_statuses = self.lsp_binary_statuses_tx.clone();
         let login_shell_env_loaded = self.login_shell_env_loaded.clone();
         Some(cx.background().spawn(async move {
             login_shell_env_loaded.await;
-            let server_binary_path = language
-                .lsp_binary_path
+            let server_binary_path = this
+                .lsp_binary_paths
                 .lock()
-                .get_or_insert_with(|| {
+                .entry(adapter.name())
+                .or_insert_with(|| {
                     get_server_binary_path(
                         adapter.clone(),
                         language.clone(),
@@ -342,7 +353,7 @@ async fn get_server_binary_path(
     download_dir: Arc<Path>,
     statuses: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
 ) -> Result<PathBuf> {
-    let container_dir = download_dir.join(adapter.name());
+    let container_dir = download_dir.join(adapter.name().0.as_ref());
     if !container_dir.exists() {
         smol::fs::create_dir_all(&container_dir)
             .await
@@ -415,8 +426,11 @@ impl Language {
                 })
             }),
             adapter: None,
-            lsp_binary_path: Default::default(),
         }
+    }
+
+    pub fn lsp_adapter(&self) -> Option<Arc<dyn LspAdapter>> {
+        self.adapter.clone()
     }
 
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {

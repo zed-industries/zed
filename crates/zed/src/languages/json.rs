@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use client::http::HttpClient;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use language::LspAdapter;
+use language::{LanguageServerName, LspAdapter};
 use serde::Deserialize;
 use serde_json::json;
 use smol::fs;
@@ -16,8 +16,8 @@ impl JsonLspAdapter {
 }
 
 impl LspAdapter for JsonLspAdapter {
-    fn name(&self) -> &'static str {
-        "vscode-json-languageserver"
+    fn name(&self) -> LanguageServerName {
+        LanguageServerName("vscode-json-languageserver".into())
     }
 
     fn server_args(&self) -> &[&str] {

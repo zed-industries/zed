@@ -18,8 +18,8 @@ use language::{
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, Anchor, Bias, Buffer, CodeAction, CodeLabel, Completion, Diagnostic,
     DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _, Language, LanguageRegistry,
-    LocalFile, OffsetRangeExt, Operation, Patch, PointUtf16, TextBufferSnapshot, ToLspPosition,
-    ToOffset, ToPointUtf16, Transaction,
+    LanguageServerName, LocalFile, LspAdapter, OffsetRangeExt, Operation, Patch, PointUtf16,
+    TextBufferSnapshot, ToLspPosition, ToOffset, ToPointUtf16, Transaction,
 };
 use lsp::{DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer};
 use lsp_command::*;
@@ -57,8 +57,10 @@ pub struct Project {
     worktrees: Vec<WorktreeHandle>,
     active_entry: Option<ProjectEntryId>,
     languages: Arc<LanguageRegistry>,
-    language_servers: HashMap<(WorktreeId, Arc<str>), Arc<LanguageServer>>,
-    started_language_servers: HashMap<(WorktreeId, Arc<str>), Task<Option<Arc<LanguageServer>>>>,
+    language_servers:
+        HashMap<(WorktreeId, LanguageServerName), (Arc<dyn LspAdapter>, Arc<LanguageServer>)>,
+    started_language_servers:
+        HashMap<(WorktreeId, LanguageServerName), Task<Option<Arc<LanguageServer>>>>,
     language_server_statuses: BTreeMap<usize, LanguageServerStatus>,
     language_server_settings: Arc<Mutex<serde_json::Value>>,
     next_language_server_id: usize,
@@ -185,7 +187,7 @@ pub struct DocumentHighlight {
 pub struct Symbol {
     pub source_worktree_id: WorktreeId,
     pub worktree_id: WorktreeId,
-    pub language_name: String,
+    pub language_server_name: LanguageServerName,
     pub path: PathBuf,
     pub label: CodeLabel,
     pub name: String,
@@ -957,8 +959,8 @@ impl Project {
     fn open_local_buffer_via_lsp(
         &mut self,
         abs_path: lsp::Url,
-        lang_name: Arc<str>,
-        lang_server: Arc<LanguageServer>,
+        lsp_adapter: Arc<dyn LspAdapter>,
+        lsp_server: Arc<LanguageServer>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
         cx.spawn(|this, mut cx| async move {
@@ -976,8 +978,10 @@ impl Project {
                     })
                     .await?;
                 this.update(&mut cx, |this, cx| {
-                    this.language_servers
-                        .insert((worktree.read(cx).id(), lang_name), lang_server);
+                    this.language_servers.insert(
+                        (worktree.read(cx).id(), lsp_adapter.name()),
+                        (lsp_adapter, lsp_server),
+                    );
                 });
                 (worktree, PathBuf::new())
             };
@@ -1120,7 +1124,7 @@ impl Project {
                     }
                 }
 
-                if let Some(server) = language_server {
+                if let Some((_, server)) = language_server {
                     server
                         .notify::<lsp::notification::DidOpenTextDocument>(
                             lsp::DidOpenTextDocumentParams {
@@ -1153,7 +1157,7 @@ impl Project {
                     if let Some(file) = File::from_dyn(buffer.file()) {
                         if file.is_local() {
                             let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
-                            if let Some(server) = this.language_server_for_buffer(buffer, cx) {
+                            if let Some((_, server)) = this.language_server_for_buffer(buffer, cx) {
                                 server
                                     .notify::<lsp::notification::DidCloseTextDocument>(
                                         lsp::DidCloseTextDocumentParams {
@@ -1189,7 +1193,7 @@ impl Project {
                 cx.background().spawn(request).detach_and_log_err(cx);
             }
             BufferEvent::Edited { .. } => {
-                let language_server = self
+                let (_, language_server) = self
                     .language_server_for_buffer(buffer.read(cx), cx)?
                     .clone();
                 let buffer = buffer.read(cx);
@@ -1262,11 +1266,11 @@ impl Project {
     fn language_servers_for_worktree(
         &self,
         worktree_id: WorktreeId,
-    ) -> impl Iterator<Item = (&str, &Arc<LanguageServer>)> {
+    ) -> impl Iterator<Item = &(Arc<dyn LspAdapter>, Arc<LanguageServer>)> {
         self.language_servers.iter().filter_map(
-            move |((language_server_worktree_id, language_name), server)| {
+            move |((language_server_worktree_id, _), server)| {
                 if *language_server_worktree_id == worktree_id {
-                    Some((language_name.as_ref(), server))
+                    Some(server)
                 } else {
                     None
                 }
@@ -1302,7 +1306,12 @@ impl Project {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
-        let key = (worktree_id, language.name());
+        let adapter = if let Some(adapter) = language.lsp_adapter() {
+            adapter
+        } else {
+            return;
+        };
+        let key = (worktree_id, adapter.name());
         self.started_language_servers
             .entry(key.clone())
             .or_insert_with(|| {
@@ -1416,7 +1425,7 @@ impl Project {
                     let language_server = language_server.initialize().await.log_err()?;
                     this.update(&mut cx, |this, cx| {
                         this.language_servers
-                            .insert(key.clone(), language_server.clone());
+                            .insert(key.clone(), (adapter, language_server.clone()));
                         this.language_server_statuses.insert(
                             server_id,
                             LanguageServerStatus {
@@ -1459,7 +1468,10 @@ impl Project {
                                 } else {
                                     continue;
                                 };
-                                if (file.worktree.read(cx).id(), language.name()) != key {
+                                if file.worktree.read(cx).id() != key.0
+                                    || language.lsp_adapter().map(|a| a.name())
+                                        != Some(key.1.clone())
+                                {
                                     continue;
                                 }
 
@@ -1675,7 +1687,7 @@ impl Project {
     }
 
     pub fn set_language_server_settings(&mut self, settings: serde_json::Value) {
-        for server in self.language_servers.values() {
+        for (_, server) in self.language_servers.values() {
             server
                 .notify::<lsp::notification::DidChangeConfiguration>(
                     lsp::DidChangeConfigurationParams {
@@ -1925,7 +1937,7 @@ impl Project {
             let buffer = buffer_handle.read(cx);
             if let Some(file) = File::from_dyn(buffer.file()) {
                 if let Some(buffer_abs_path) = file.as_local().map(|f| f.abs_path(cx)) {
-                    if let Some(server) = self.language_server_for_buffer(buffer, cx) {
+                    if let Some((_, server)) = self.language_server_for_buffer(buffer, cx) {
                         local_buffers.push((buffer_handle, buffer_abs_path, server.clone()));
                     }
                 } else {
@@ -2062,25 +2074,24 @@ impl Project {
     pub fn symbols(&self, query: &str, cx: &mut ModelContext<Self>) -> Task<Result<Vec<Symbol>>> {
         if self.is_local() {
             let mut language_servers = HashMap::default();
-            for ((worktree_id, language_name), language_server) in self.language_servers.iter() {
-                if let Some((worktree, language)) = self
+            for ((worktree_id, _), (lsp_adapter, language_server)) in self.language_servers.iter() {
+                if let Some(worktree) = self
                     .worktree_for_id(*worktree_id, cx)
                     .and_then(|worktree| worktree.read(cx).as_local())
-                    .zip(self.languages.get_language(language_name))
                 {
                     language_servers
                         .entry(Arc::as_ptr(language_server))
                         .or_insert((
+                            lsp_adapter.clone(),
                             language_server.clone(),
                             *worktree_id,
                             worktree.abs_path().clone(),
-                            language.clone(),
                         ));
                 }
             }
 
             let mut requests = Vec::new();
-            for (language_server, _, _, _) in language_servers.values() {
+            for (_, language_server, _, _) in language_servers.values() {
                 requests.push(language_server.request::<lsp::request::WorkspaceSymbol>(
                     lsp::WorkspaceSymbolParams {
                         query: query.to_string(),
@@ -2095,7 +2106,7 @@ impl Project {
                 let mut symbols = Vec::new();
                 if let Some(this) = this.upgrade(&cx) {
                     this.read_with(&cx, |this, cx| {
-                        for ((_, source_worktree_id, worktree_abs_path, language), lsp_symbols) in
+                        for ((adapter, _, source_worktree_id, worktree_abs_path), lsp_symbols) in
                             language_servers.into_values().zip(responses)
                         {
                             symbols.extend(lsp_symbols.into_iter().flatten().filter_map(
@@ -2112,8 +2123,13 @@ impl Project {
                                         path = relativize_path(&worktree_abs_path, &abs_path);
                                     }
 
-                                    let label = language
-                                        .label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
+                                    let label = this
+                                        .languages
+                                        .select_language(&path)
+                                        .and_then(|language| {
+                                            language
+                                                .label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
+                                        })
                                         .unwrap_or_else(|| {
                                             CodeLabel::plain(lsp_symbol.name.clone(), None)
                                         });
@@ -2122,7 +2138,7 @@ impl Project {
                                     Some(Symbol {
                                         source_worktree_id,
                                         worktree_id,
-                                        language_name: language.name().to_string(),
+                                        language_server_name: adapter.name(),
                                         name: lsp_symbol.name,
                                         kind: lsp_symbol.kind,
                                         label,
@@ -2169,9 +2185,9 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
         if self.is_local() {
-            let language_server = if let Some(server) = self.language_servers.get(&(
+            let (lsp_adapter, language_server) = if let Some(server) = self.language_servers.get(&(
                 symbol.source_worktree_id,
-                Arc::from(symbol.language_name.as_str()),
+                symbol.language_server_name.clone(),
             )) {
                 server.clone()
             } else {
@@ -2196,12 +2212,7 @@ impl Project {
                 return Task::ready(Err(anyhow!("invalid symbol path")));
             };
 
-            self.open_local_buffer_via_lsp(
-                symbol_uri,
-                Arc::from(symbol.language_name.as_str()),
-                language_server,
-                cx,
-            )
+            self.open_local_buffer_via_lsp(symbol_uri, lsp_adapter, language_server, cx)
         } else if let Some(project_id) = self.remote_id() {
             let request = self.client.request(proto::OpenBufferForSymbol {
                 project_id,
@@ -2242,7 +2253,7 @@ impl Project {
 
         if worktree.read(cx).as_local().is_some() {
             let buffer_abs_path = buffer_abs_path.unwrap();
-            let lang_server =
+            let (_, lang_server) =
                 if let Some(server) = self.language_server_for_buffer(source_buffer, cx) {
                     server.clone()
                 } else {
@@ -2356,7 +2367,8 @@ impl Project {
         let buffer_id = buffer.remote_id();
 
         if self.is_local() {
-            let lang_server = if let Some(server) = self.language_server_for_buffer(buffer, cx) {
+            let (_, lang_server) = if let Some(server) = self.language_server_for_buffer(buffer, cx)
+            {
                 server.clone()
             } else {
                 return Task::ready(Ok(Default::default()));
@@ -2447,7 +2459,8 @@ impl Project {
 
         if worktree.read(cx).as_local().is_some() {
             let buffer_abs_path = buffer_abs_path.unwrap();
-            let lang_server = if let Some(server) = self.language_server_for_buffer(buffer, cx) {
+            let (_, lang_server) = if let Some(server) = self.language_server_for_buffer(buffer, cx)
+            {
                 server.clone()
             } else {
                 return Task::ready(Ok(Default::default()));
@@ -2534,16 +2547,12 @@ impl Project {
     ) -> Task<Result<ProjectTransaction>> {
         if self.is_local() {
             let buffer = buffer_handle.read(cx);
-            let lang_name = if let Some(lang) = buffer.language() {
-                lang.name()
-            } else {
-                return Task::ready(Ok(Default::default()));
-            };
-            let lang_server = if let Some(server) = self.language_server_for_buffer(buffer, cx) {
-                server.clone()
-            } else {
-                return Task::ready(Ok(Default::default()));
-            };
+            let (lsp_adapter, lang_server) =
+                if let Some(server) = self.language_server_for_buffer(buffer, cx) {
+                    server.clone()
+                } else {
+                    return Task::ready(Ok(Default::default()));
+                };
             let range = action.range.to_point_utf16(buffer);
 
             cx.spawn(|this, mut cx| async move {
@@ -2580,7 +2589,7 @@ impl Project {
                         this,
                         edit,
                         push_to_history,
-                        lang_name,
+                        lsp_adapter,
                         lang_server,
                         &mut cx,
                     )
@@ -2616,7 +2625,7 @@ impl Project {
         this: ModelHandle<Self>,
         edit: lsp::WorkspaceEdit,
         push_to_history: bool,
-        language_name: Arc<str>,
+        lsp_adapter: Arc<dyn LspAdapter>,
         language_server: Arc<LanguageServer>,
         cx: &mut AsyncAppContext,
     ) -> Result<ProjectTransaction> {
@@ -2693,7 +2702,7 @@ impl Project {
                         .update(cx, |this, cx| {
                             this.open_local_buffer_via_lsp(
                                 op.text_document.uri,
-                                language_name.clone(),
+                                lsp_adapter.clone(),
                                 language_server.clone(),
                                 cx,
                             )
@@ -2988,7 +2997,7 @@ impl Project {
         let buffer = buffer_handle.read(cx);
         if self.is_local() {
             let file = File::from_dyn(buffer.file()).and_then(File::as_local);
-            if let Some((file, language_server)) =
+            if let Some((file, (_, language_server))) =
                 file.zip(self.language_server_for_buffer(buffer, cx).cloned())
             {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), cx);
@@ -4086,9 +4095,8 @@ impl Project {
     }
 
     fn deserialize_symbol(&self, serialized_symbol: proto::Symbol) -> Result<Symbol> {
-        let language = self
-            .languages
-            .get_language(&serialized_symbol.language_name);
+        let source_worktree_id = WorktreeId::from_proto(serialized_symbol.source_worktree_id);
+        let worktree_id = WorktreeId::from_proto(serialized_symbol.worktree_id);
         let start = serialized_symbol
             .start
             .ok_or_else(|| anyhow!("invalid start"))?;
@@ -4096,15 +4104,17 @@ impl Project {
             .end
             .ok_or_else(|| anyhow!("invalid end"))?;
         let kind = unsafe { mem::transmute(serialized_symbol.kind) };
+        let path = PathBuf::from(serialized_symbol.path);
+        let language = self.languages.select_language(&path);
         Ok(Symbol {
-            source_worktree_id: WorktreeId::from_proto(serialized_symbol.source_worktree_id),
-            worktree_id: WorktreeId::from_proto(serialized_symbol.worktree_id),
-            language_name: serialized_symbol.language_name.clone(),
+            source_worktree_id,
+            worktree_id,
+            language_server_name: LanguageServerName(serialized_symbol.language_server_name.into()),
             label: language
                 .and_then(|language| language.label_for_symbol(&serialized_symbol.name, kind))
                 .unwrap_or_else(|| CodeLabel::plain(serialized_symbol.name.clone(), None)),
             name: serialized_symbol.name,
-            path: PathBuf::from(serialized_symbol.path),
+            path,
             range: PointUtf16::new(start.row, start.column)..PointUtf16::new(end.row, end.column),
             kind,
             signature: serialized_symbol
@@ -4349,10 +4359,11 @@ impl Project {
         &self,
         buffer: &Buffer,
         cx: &AppContext,
-    ) -> Option<&Arc<LanguageServer>> {
+    ) -> Option<&(Arc<dyn LspAdapter>, Arc<LanguageServer>)> {
         if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
             let worktree_id = file.worktree_id(cx);
-            self.language_servers.get(&(worktree_id, language.name()))
+            self.language_servers
+                .get(&(worktree_id, language.lsp_adapter()?.name()))
         } else {
             None
         }
@@ -4466,7 +4477,7 @@ impl Entity for Project {
         let shutdown_futures = self
             .language_servers
             .drain()
-            .filter_map(|(_, server)| server.shutdown())
+            .filter_map(|(_, (_, server))| server.shutdown())
             .collect::<Vec<_>>();
         Some(
             async move {
@@ -4537,7 +4548,7 @@ fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
     proto::Symbol {
         source_worktree_id: symbol.source_worktree_id.to_proto(),
         worktree_id: symbol.worktree_id.to_proto(),
-        language_name: symbol.language_name.clone(),
+        language_server_name: symbol.language_server_name.0.to_string(),
         name: symbol.name.clone(),
         kind: unsafe { mem::transmute(symbol.kind) },
         path: symbol.path.to_string_lossy().to_string(),

@@ -3,7 +3,7 @@ use client::http::{self, HttpClient, Method};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 pub use language::*;
 use smol::fs::{self, File};
-use std::{any::Any, path::PathBuf, str, sync::Arc};
+use std::{any::Any, path::PathBuf, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
 use super::GithubRelease;
@@ -11,8 +11,8 @@ use super::GithubRelease;
 pub struct CLspAdapter;
 
 impl super::LspAdapter for CLspAdapter {
-    fn name(&self) -> &'static str {
-        "clangd"
+    fn name(&self) -> LanguageServerName {
+        LanguageServerName("clangd".into())
     }
 
     fn fetch_latest_server_version(

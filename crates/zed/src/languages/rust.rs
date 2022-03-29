@@ -14,8 +14,8 @@ use super::GithubRelease;
 pub struct RustLspAdapter;
 
 impl LspAdapter for RustLspAdapter {
-    fn name(&self) -> &'static str {
-        "rust-analyzer"
+    fn name(&self) -> LanguageServerName {
+        LanguageServerName("rust-analyzer".into())
     }
 
     fn fetch_latest_server_version(
