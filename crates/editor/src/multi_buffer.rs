@@ -2264,6 +2264,33 @@ impl MultiBufferSnapshot {
         ))
     }
 
+    pub fn symbols_containing<T: ToOffset>(
+        &self,
+        offset: T,
+        theme: Option<&SyntaxTheme>,
+    ) -> Option<(BufferSnapshot, Vec<OutlineItem<Anchor>>)> {
+        let anchor = self.anchor_before(offset);
+        let excerpt_id = anchor.excerpt_id();
+        let excerpt = self.excerpt(excerpt_id)?;
+        Some((
+            excerpt.buffer.clone(),
+            excerpt
+                .buffer
+                .symbols_containing(anchor.text_anchor, theme)
+                .into_iter()
+                .flatten()
+                .map(|item| OutlineItem {
+                    depth: item.depth,
+                    range: self.anchor_in_excerpt(excerpt_id.clone(), item.range.start)
+                        ..self.anchor_in_excerpt(excerpt_id.clone(), item.range.end),
+                    text: item.text,
+                    highlight_ranges: item.highlight_ranges,
+                    name_ranges: item.name_ranges,
+                })
+                .collect(),
+        ))
+    }
+
     fn excerpt<'a>(&'a self, excerpt_id: &'a ExcerptId) -> Option<&'a Excerpt> {
         let mut cursor = self.excerpts.cursor::<Option<&ExcerptId>>();
         cursor.seek(&Some(excerpt_id), Bias::Left, &());

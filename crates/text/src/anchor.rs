@@ -4,7 +4,7 @@ use anyhow::Result;
 use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::Bias;
 
-#[derive(Clone, Eq, PartialEq, Debug, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
 pub struct Anchor {
     pub timestamp: clock::Local,
     pub offset: usize,
