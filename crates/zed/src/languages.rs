@@ -1,4 +1,4 @@
-use client::http::{self, HttpClient, Method};
+use client::http;
 use gpui::Task;
 pub use language::*;
 use rust_embed::RustEmbed;
@@ -53,7 +53,7 @@ pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegi
         (
             "tsx",
             tree_sitter_typescript::language_tsx(),
-            None, //
+            Some(Arc::new(typescript::TypeScriptLspAdapter)),
         ),
         (
             "typescript",

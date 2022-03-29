@@ -20,6 +20,7 @@ use parking_lot::{Mutex, RwLock};
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
+    any::Any,
     cell::RefCell,
     ops::Range,
     path::{Path, PathBuf},
@@ -61,9 +62,9 @@ pub trait ToLspPosition {
     fn to_lsp_position(self) -> lsp::Position;
 }
 
-pub struct LspBinaryVersion {
+pub struct GitHubLspBinaryVersion {
     pub name: String,
-    pub url: Option<http::Url>,
+    pub url: http::Url,
 }
 
 pub trait LspAdapter: 'static + Send + Sync {
@@ -71,10 +72,10 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,
-    ) -> BoxFuture<'static, Result<LspBinaryVersion>>;
+    ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>>;
     fn fetch_server_binary(
         &self,
-        version: LspBinaryVersion,
+        version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
     ) -> BoxFuture<'static, Result<PathBuf>>;

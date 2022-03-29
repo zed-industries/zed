@@ -2278,11 +2278,12 @@ impl Project {
                     Ok(completions
                         .into_iter()
                         .filter_map(|lsp_completion| {
-                            let (old_range, new_text) = match lsp_completion.text_edit.as_ref()? {
-                                lsp::CompletionTextEdit::Edit(edit) => {
+                            let (old_range, new_text) = match lsp_completion.text_edit.as_ref() {
+                                Some(lsp::CompletionTextEdit::Edit(edit)) => {
                                     (range_from_lsp(edit.range), edit.new_text.clone())
                                 }
-                                lsp::CompletionTextEdit::InsertAndReplace(_) => {
+                                None => (position..position, lsp_completion.label.clone()),
+                                Some(lsp::CompletionTextEdit::InsertAndReplace(_)) => {
                                     log::info!("unsupported insert/replace completion");
                                     return None;
                                 }
@@ -2307,6 +2308,7 @@ impl Project {
                                     lsp_completion,
                                 })
                             } else {
+                                log::info!("completion out of expected range");
                                 None
                             }
                         })

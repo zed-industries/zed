@@ -3,7 +3,7 @@ use client::http::{self, HttpClient, Method};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 pub use language::*;
 use smol::fs::{self, File};
-use std::{path::PathBuf, str, sync::Arc};
+use std::{any::Any, path::PathBuf, str, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
 use super::GithubRelease;
@@ -18,7 +18,7 @@ impl super::LspAdapter for CLspAdapter {
     fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,
-    ) -> BoxFuture<'static, Result<LspBinaryVersion>> {
+    ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
         async move {
             let release = http
                 .send(
@@ -43,20 +43,21 @@ impl super::LspAdapter for CLspAdapter {
                 .iter()
                 .find(|asset| asset.name == asset_name)
                 .ok_or_else(|| anyhow!("no release found matching {:?}", asset_name))?;
-            Ok(LspBinaryVersion {
+            Ok(Box::new(GitHubLspBinaryVersion {
                 name: release.name,
-                url: Some(asset.browser_download_url.clone()),
-            })
+                url: asset.browser_download_url.clone(),
+            }) as Box<_>)
         }
         .boxed()
     }
 
     fn fetch_server_binary(
         &self,
-        version: LspBinaryVersion,
+        version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
     ) -> BoxFuture<'static, Result<PathBuf>> {
+        let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         async move {
             let zip_path = container_dir.join(format!("clangd_{}.zip", version.name));
             let version_dir = container_dir.join(format!("clangd_{}", version.name));
@@ -65,7 +66,7 @@ impl super::LspAdapter for CLspAdapter {
             if fs::metadata(&binary_path).await.is_err() {
                 let response = http
                     .send(
-                        surf::RequestBuilder::new(Method::Get, version.url.unwrap())
+                        surf::RequestBuilder::new(Method::Get, version.url)
                             .middleware(surf::middleware::Redirect::default())
                             .build(),
                     )

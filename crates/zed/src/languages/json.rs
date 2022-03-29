@@ -1,12 +1,12 @@
 use anyhow::{anyhow, Context, Result};
 use client::http::HttpClient;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use language::{LspAdapter, LspBinaryVersion};
+use language::LspAdapter;
 use serde::Deserialize;
 use serde_json::json;
 use smol::fs;
-use std::{path::PathBuf, sync::Arc};
-use util::ResultExt;
+use std::{any::Any, path::PathBuf, sync::Arc};
+use util::{ResultExt, TryFutureExt};
 
 pub struct JsonLspAdapter;
 
@@ -27,7 +27,7 @@ impl LspAdapter for JsonLspAdapter {
     fn fetch_latest_server_version(
         &self,
         _: Arc<dyn HttpClient>,
-    ) -> BoxFuture<'static, Result<LspBinaryVersion>> {
+    ) -> BoxFuture<'static, Result<Box<dyn 'static + Any + Send>>> {
         async move {
             #[derive(Deserialize)]
             struct NpmInfo {
@@ -43,25 +43,24 @@ impl LspAdapter for JsonLspAdapter {
             }
             let mut info: NpmInfo = serde_json::from_slice(&output.stdout)?;
 
-            Ok(LspBinaryVersion {
-                name: info
-                    .versions
+            Ok(Box::new(
+                info.versions
                     .pop()
                     .ok_or_else(|| anyhow!("no versions found in npm info"))?,
-                url: Default::default(),
-            })
+            ) as Box<_>)
         }
         .boxed()
     }
 
     fn fetch_server_binary(
         &self,
-        version: LspBinaryVersion,
+        version: Box<dyn 'static + Send + Any>,
         _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
     ) -> BoxFuture<'static, Result<PathBuf>> {
+        let version = version.downcast::<String>().unwrap();
         async move {
-            let version_dir = container_dir.join(&version.name);
+            let version_dir = container_dir.join(version.as_str());
             fs::create_dir_all(&version_dir)
                 .await
                 .context("failed to create version directory")?;
@@ -71,7 +70,7 @@ impl LspAdapter for JsonLspAdapter {
                 let output = smol::process::Command::new("npm")
                     .current_dir(&version_dir)
                     .arg("install")
-                    .arg(format!("vscode-json-languageserver@{}", version.name))
+                    .arg(format!("vscode-json-languageserver@{}", version))
                     .output()
                     .await
                     .context("failed to run npm install")?;
