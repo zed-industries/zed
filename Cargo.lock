@@ -5416,6 +5416,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-typescript"
+version = "0.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e8ed0ecb931cdff13c6a13f45ccd615156e2779d9ffb0395864e05505e6e86d"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "ttf-parser"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6025,6 +6035,7 @@ dependencies = [
  "tree-sitter-json",
  "tree-sitter-markdown",
  "tree-sitter-rust",
+ "tree-sitter-typescript",
  "unindent",
  "url",
  "util",

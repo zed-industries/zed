@@ -556,6 +556,11 @@ pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegi
             Some(Arc::new(RustLspAdapter)),
         ),
         (
+            "tsx",
+            tree_sitter_typescript::language_tsx(),
+            None, //
+        ),
+        (
             "typescript",
             tree_sitter_typescript::language_typescript(),
             None, //
@@ -578,17 +583,26 @@ fn language(
     )
     .unwrap();
     let mut language = Language::new(config, Some(grammar));
-    if let Some(query) = load_query(&format!("{}/highlights.scm", name)) {
-        language = language.with_highlights_query(query.as_ref()).unwrap();
+
+    if let Some(query) = load_query(name, "/highlights") {
+        language = language
+            .with_highlights_query(query.as_ref())
+            .expect("failed to evaluate highlights query");
     }
-    if let Some(query) = load_query(&format!("{}/brackets.scm", name)) {
-        language = language.with_brackets_query(query.as_ref()).unwrap();
+    if let Some(query) = load_query(name, "/brackets") {
+        language = language
+            .with_brackets_query(query.as_ref())
+            .expect("failed to load brackets query");
     }
-    if let Some(query) = load_query(&format!("{}/indents.scm", name)) {
-        language = language.with_indents_query(query.as_ref()).unwrap();
+    if let Some(query) = load_query(name, "/indents") {
+        language = language
+            .with_indents_query(query.as_ref())
+            .expect("failed to load indents query");
     }
-    if let Some(query) = load_query(&format!("{}/outline.scm", name)) {
-        language = language.with_outline_query(query.as_ref()).unwrap();
+    if let Some(query) = load_query(name, "/outline") {
+        language = language
+            .with_outline_query(query.as_ref())
+            .expect("failed to load outline query");
     }
     if let Some(lsp_adapter) = lsp_adapter {
         language = language.with_lsp_adapter(lsp_adapter)
@@ -596,11 +610,23 @@ fn language(
     language
 }
 
-fn load_query(path: &str) -> Option<Cow<'static, str>> {
-    LanguageDir::get(path).map(|item| match item.data {
-        Cow::Borrowed(s) => Cow::Borrowed(str::from_utf8(s).unwrap()),
-        Cow::Owned(s) => Cow::Owned(String::from_utf8(s).unwrap()),
-    })
+fn load_query(name: &str, filename_prefix: &str) -> Option<Cow<'static, str>> {
+    let mut result = None;
+    for path in LanguageDir::iter() {
+        if let Some(remainder) = path.strip_prefix(name) {
+            if remainder.starts_with(filename_prefix) {
+                let contents = match LanguageDir::get(path.as_ref()).unwrap().data {
+                    Cow::Borrowed(s) => Cow::Borrowed(str::from_utf8(s).unwrap()),
+                    Cow::Owned(s) => Cow::Owned(String::from_utf8(s).unwrap()),
+                };
+                match &mut result {
+                    None => result = Some(contents),
+                    Some(r) => r.to_mut().push_str(contents.as_ref()),
+                }
+            }
+        }
+    }
+    result
 }
 
 #[cfg(test)]
