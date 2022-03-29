@@ -1,3 +1,5 @@
+import { colorRamp } from "./lib";
+
 export type Color = string;
 export type Weight =
   | "thin"
@@ -85,6 +87,50 @@ export default interface Theme {
       value: Color;
     };
     feature: {
+      value: Color;
+    };
+    ok: {
+      value: Color;
+    };
+    error: {
+      value: Color;
+    };
+    warning: {
+      value: Color;
+    };
+    info: {
+      value: Color;
+    };
+  };
+  iconColor: {
+    primary: {
+      value: Color;
+    };
+    secondary: {
+      value: Color;
+    };
+    muted: {
+      value: Color;
+    };
+    placeholder: {
+      value: Color;
+    };
+    active: {
+      value: Color;
+    };
+    feature: {
+      value: Color;
+    };
+    ok: {
+      value: Color;
+    };
+    error: {
+      value: Color;
+    };
+    warning: {
+      value: Color;
+    };
+    info: {
       value: Color;
     };
   };

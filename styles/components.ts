@@ -1,5 +1,6 @@
 import chroma from "chroma-js";
-import core, { Color } from "./core";
+import core from "./core";
+import { Color } from "./lib";
 import Theme, { BackgroundColor, Weight } from "./theme";
 
 export function text(
@@ -19,11 +20,29 @@ export function text(
   };
 }
 
-export function border(theme: Theme, color: keyof Theme["borderColor"]) {
+export interface BorderOptions {
+  width?: number;
+  top?: boolean;
+  bottom?: boolean;
+  left?: boolean;
+  right?: boolean;
+  overlay?: boolean;
+}
+
+export function border(
+  theme: Theme,
+  color: keyof Theme["borderColor"],
+  options?: BorderOptions
+) {
   return {
     color: theme.borderColor[color].value,
     width: 1,
+    ...options,
   };
+}
+
+export function iconColor(theme: Theme, color: keyof Theme["iconColor"]) {
+  return theme.iconColor[color].value;
 }
 
 export interface Player {
