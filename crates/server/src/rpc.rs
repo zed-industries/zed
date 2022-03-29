@@ -2050,7 +2050,7 @@ mod tests {
                 LanguageConfig {
                     name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
-                    language_server: Some(language_server_config),
+                    language_server: language_server_config,
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
@@ -2279,7 +2279,7 @@ mod tests {
                 LanguageConfig {
                     name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
-                    language_server: Some(language_server_config),
+                    language_server: language_server_config,
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
@@ -2474,7 +2474,7 @@ mod tests {
                 LanguageConfig {
                     name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
-                    language_server: Some(language_server_config),
+                    language_server: language_server_config,
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
@@ -2589,7 +2589,7 @@ mod tests {
                 LanguageConfig {
                     name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
-                    language_server: Some(language_server_config),
+                    language_server: language_server_config,
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
@@ -2732,7 +2732,7 @@ mod tests {
                 LanguageConfig {
                     name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
-                    language_server: Some(language_server_config),
+                    language_server: language_server_config,
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
@@ -2972,7 +2972,7 @@ mod tests {
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: Some(language_server_config),
+                language_server: language_server_config,
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
@@ -3119,7 +3119,7 @@ mod tests {
                 LanguageConfig {
                     name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
-                    language_server: Some(language_server_config),
+                    language_server: language_server_config,
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
@@ -3252,7 +3252,7 @@ mod tests {
                 LanguageConfig {
                     name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
-                    language_server: Some(language_server_config),
+                    language_server: language_server_config,
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
@@ -3349,7 +3349,7 @@ mod tests {
                 LanguageConfig {
                     name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
-                    language_server: Some(language_server_config),
+                    language_server: language_server_config,
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
@@ -3585,7 +3585,7 @@ mod tests {
                 LanguageConfig {
                     name: "Rust".into(),
                     path_suffixes: vec!["rs".to_string()],
-                    language_server: Some(language_server_config),
+                    language_server: language_server_config,
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::language()),
@@ -5456,7 +5456,7 @@ mod tests {
                     LanguageConfig {
                         name: "Rust".into(),
                         path_suffixes: vec!["rs".to_string()],
-                        language_server: Some(language_server_config),
+                        language_server: language_server_config,
                         ..Default::default()
                     },
                     None,

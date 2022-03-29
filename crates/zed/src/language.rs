@@ -555,6 +555,11 @@ pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegi
             tree_sitter_rust::language(),
             Some(Arc::new(RustLspAdapter)),
         ),
+        (
+            "typescript",
+            tree_sitter_typescript::language_typescript(),
+            None, //
+        ),
     ] {
         languages.add(Arc::new(language(name, grammar, lsp_adapter)));
     }

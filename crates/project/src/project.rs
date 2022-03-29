@@ -1599,14 +1599,8 @@ impl Project {
                         ),
                     );
                 }
-                self.update_diagnostics(
-                    params,
-                    language
-                        .disk_based_diagnostic_sources()
-                        .unwrap_or(&Default::default()),
-                    cx,
-                )
-                .log_err();
+                self.update_diagnostics(params, language.disk_based_diagnostic_sources(), cx)
+                    .log_err();
                 if disk_diagnostics_token.is_none() {
                     self.disk_based_diagnostics_finished(cx);
                     self.broadcast_language_server_update(
@@ -4697,7 +4691,7 @@ mod tests {
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: Some(rust_lsp_config),
+                language_server: rust_lsp_config,
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
@@ -4706,7 +4700,7 @@ mod tests {
             LanguageConfig {
                 name: "JSON".into(),
                 path_suffixes: vec!["json".to_string()],
-                language_server: Some(json_lsp_config),
+                language_server: json_lsp_config,
                 ..Default::default()
             },
             None,
@@ -4906,7 +4900,7 @@ mod tests {
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: Some(language_server_config),
+                language_server: language_server_config,
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
@@ -5023,7 +5017,7 @@ mod tests {
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: Some(lsp_config),
+                language_server: lsp_config,
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
@@ -5394,7 +5388,7 @@ mod tests {
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: Some(lsp_config),
+                language_server: lsp_config,
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
@@ -5744,7 +5738,7 @@ mod tests {
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: Some(language_server_config),
+                language_server: language_server_config,
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
@@ -6680,7 +6674,7 @@ mod tests {
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: Some(language_server_config),
+                language_server: language_server_config,
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),

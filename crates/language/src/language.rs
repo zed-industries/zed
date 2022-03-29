@@ -51,7 +51,7 @@ lazy_static! {
             brackets: Default::default(),
             autoclose_before: Default::default(),
             line_comment: None,
-            language_server: None,
+            language_server: Default::default(),
         },
         None,
     ));
@@ -113,7 +113,8 @@ pub struct LanguageConfig {
     #[serde(default)]
     pub autoclose_before: String,
     pub line_comment: Option<String>,
-    pub language_server: Option<LanguageServerConfig>,
+    #[serde(default)]
+    pub language_server: LanguageServerConfig,
 }
 
 impl Default for LanguageConfig {
@@ -251,20 +252,12 @@ impl LanguageRegistry {
         cx: &mut MutableAppContext,
     ) -> Option<Task<Result<lsp::LanguageServer>>> {
         #[cfg(any(test, feature = "test-support"))]
-        if language
-            .config
-            .language_server
-            .as_ref()
-            .and_then(|config| config.fake_config.as_ref())
-            .is_some()
-        {
+        if language.config.language_server.fake_config.is_some() {
             let language = language.clone();
             return Some(cx.spawn(|mut cx| async move {
                 let fake_config = language
                     .config
                     .language_server
-                    .as_ref()
-                    .unwrap()
                     .fake_config
                     .as_ref()
                     .unwrap();
@@ -478,18 +471,15 @@ impl Language {
         self.config.line_comment.as_deref()
     }
 
-    pub fn disk_based_diagnostic_sources(&self) -> Option<&HashSet<String>> {
-        self.config
-            .language_server
-            .as_ref()
-            .map(|config| &config.disk_based_diagnostic_sources)
+    pub fn disk_based_diagnostic_sources(&self) -> &HashSet<String> {
+        &self.config.language_server.disk_based_diagnostic_sources
     }
 
     pub fn disk_based_diagnostics_progress_token(&self) -> Option<&String> {
         self.config
             .language_server
+            .disk_based_diagnostics_progress_token
             .as_ref()
-            .and_then(|config| config.disk_based_diagnostics_progress_token.as_ref())
     }
 
     pub fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams) {
