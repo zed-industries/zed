@@ -1,5 +1,5 @@
 pub mod assets;
-pub mod language;
+pub mod languages;
 pub mod menus;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -557,7 +557,7 @@ mod tests {
             assert_eq!(editor.title(cx), "untitled");
             assert!(Arc::ptr_eq(
                 editor.language(cx).unwrap(),
-                &language::PLAIN_TEXT
+                &languages::PLAIN_TEXT
             ));
             editor.handle_input(&editor::Input("hi".into()), cx);
             assert!(editor.is_dirty(cx));
@@ -647,7 +647,7 @@ mod tests {
         editor.update(cx, |editor, cx| {
             assert!(Arc::ptr_eq(
                 editor.language(cx).unwrap(),
-                &language::PLAIN_TEXT
+                &languages::PLAIN_TEXT
             ));
             editor.handle_input(&editor::Input("hi".into()), cx);
             assert!(editor.is_dirty(cx.as_ref()));
