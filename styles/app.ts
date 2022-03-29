@@ -1,147 +1,12 @@
-import { selectorModal } from "./selector-modal";
+import { backgroundColor } from "./components";
+import selectorModal from "./selector-modal";
+import workspace from "./workspace";
 import Theme from "./theme";
 
 export default function app(theme: Theme): Object {
   return {
     selector: selectorModal(theme),
-    workspace: {
-      background: "$surface.500",
-      leaderBorderOpacity: 0.7,
-      leader_border_width: 2.0,
-      active_tab: {
-        background: "$surface.300",
-        extends: "$workspace.tab",
-        text: "$text.primary",
-        border: {
-          bottom: false,
-        },
-      },
-      left_sidebar: {
-        extends: "$workspace.sidebar",
-        border: {
-          color: "$border.primary",
-          right: true,
-          width: 1,
-        },
-      },
-      pane_divider: {
-        color: "$border.primary",
-        width: 1,
-      },
-      right_sidebar: {
-        extends: "$workspace.sidebar",
-        border: {
-          color: "$border.primary",
-          left: true,
-          width: 1,
-        },
-      },
-      sidebar: {
-        width: 30,
-        active_item: {
-          extends: "$workspace.sidebar.item",
-          icon_color: "$text.primary.color",
-        },
-        border: {
-          color: "$border.primary",
-          right: true,
-          width: 1,
-        },
-        item: {
-          height: "$workspace.tab.height",
-          icon_color: "$text.muted.color",
-          icon_size: 18,
-        },
-        resize_handle: {
-          background: "$border.primary",
-          padding: {
-            left: 1,
-          },
-        },
-      },
-      status_bar: {
-        cursor_position: "$text.muted",
-        diagnostic_message: "$text.muted",
-        height: 24,
-        item_spacing: 8,
-        lsp_message: "$text.muted",
-        padding: {
-          left: 6,
-          right: 6,
-        },
-      },
-      tab: {
-        height: 34,
-        icon_close: "$text.muted.color",
-        icon_close_active: "$text.primary.color",
-        icon_conflict: "$status.warn",
-        icon_dirty: "$status.info",
-        icon_width: 8,
-        spacing: 10,
-        text: "$text.muted",
-        border: {
-          bottom: true,
-          color: "$border.primary",
-          left: true,
-          overlay: true,
-          width: 1,
-        },
-        padding: {
-          left: 12,
-          right: 12,
-        },
-      },
-      titlebar: {
-        avatar_width: 18,
-        height: 32,
-        share_icon_active_color: "$text.primary.color",
-        share_icon_color: "$text.muted.color",
-        title: "$text.primary",
-        avatar: {
-          corner_radius: 10,
-          border: {
-            color: "#00000088",
-            width: 1,
-          },
-        },
-        avatar_ribbon: {
-          background: "#ff0000",
-          height: 3,
-          width: 12,
-        },
-        border: {
-          bottom: true,
-          color: "$border.primary",
-          width: 1,
-        },
-        hovered_sign_in_prompt: {
-          color: "$text.secondary.color",
-          extends: "$workspace.titlebar.sign_in_prompt",
-        },
-        offline_icon: {
-          color: "$text.muted.color",
-          width: 16,
-          padding: {
-            right: 4,
-          },
-        },
-        outdated_warning: {
-          extends: "$text.muted",
-          size: 13,
-        },
-        sign_in_prompt: {
-          extends: "$text.muted",
-          size: 13,
-          underline: true,
-          padding: {
-            right: 8,
-          },
-        },
-      },
-      toolbar: {
-        height: 44,
-      },
-    },
+    workspace: workspace(theme),
     chat_panel: {
       extends: "$panel",
       channel_name: {
@@ -205,7 +70,7 @@ export default function app(theme: Theme): Object {
         extends: "$chat_panel.sign_in_prompt",
       },
       input_editor: {
-        background: "$surface.300",
+        background: backgroundColor(theme, 300),
         corner_radius: 6,
         placeholder_text: "$text.muted",
         selection: "$selection.host",
@@ -306,7 +171,7 @@ export default function app(theme: Theme): Object {
     },
     editor: {
       active_line_background: "$state.active_line",
-      background: "$surface.300",
+      background: backgroundColor(theme, 300),
       code_actions_indicator: "$text.muted.color",
       diff_background_deleted: "$state.deleted_line",
       diff_background_inserted: "$state.inserted_line",
@@ -314,7 +179,7 @@ export default function app(theme: Theme): Object {
       document_highlight_write_background: "#99999916",
       error_color: "$status.bad",
       guest_selections: "$selection.guests",
-      gutter_background: "$surface.300",
+      gutter_background: backgroundColor(theme, 300),
       gutter_padding_factor: 2.5,
       highlighted_line_background: "$state.highlighted_line",
       line_number: "$text.muted.color",
@@ -502,7 +367,7 @@ export default function app(theme: Theme): Object {
       },
     },
     project_diagnostics: {
-      background: "$surface.300",
+      background: backgroundColor(theme, 300),
       tab_icon_spacing: 4,
       tab_icon_width: 13,
       tab_summary_spacing: 10,
@@ -547,7 +412,7 @@ export default function app(theme: Theme): Object {
       },
     },
     search: {
-      background: "$surface.300",
+      background: backgroundColor(theme, 300),
       match_background: "$state.highlighted_line",
       tab_icon_spacing: 4,
       tab_icon_width: 14,
@@ -599,7 +464,7 @@ export default function app(theme: Theme): Object {
         padding: 6,
       },
       option_button: {
-        background: "$surface.300",
+        background: backgroundColor(theme, 300),
         corner_radius: 6,
         extends: "$text.secondary",
         border: {
