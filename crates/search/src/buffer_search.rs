@@ -77,12 +77,40 @@ impl View for SearchBar {
             };
             Flex::row()
                 .with_child(
-                    ChildView::new(&self.query_editor)
+                    Flex::row()
+                        .with_child(
+                            ChildView::new(&self.query_editor)
+                                .flexible(1., true)
+                                .boxed(),
+                        )
+                        .with_children(self.active_editor.as_ref().and_then(|editor| {
+                            let matches = self.editors_with_matches.get(&editor.downgrade())?;
+                            let message = if let Some(match_ix) = self.active_match_index {
+                                format!("{}/{}", match_ix + 1, matches.len())
+                            } else {
+                                "No matches".to_string()
+                            };
+
+                            Some(
+                                Label::new(message, theme.search.match_index.text.clone())
+                                    .contained()
+                                    .with_style(theme.search.match_index.container)
+                                    .aligned()
+                                    .boxed(),
+                            )
+                        }))
                         .contained()
                         .with_style(editor_container)
                         .aligned()
                         .constrained()
                         .with_max_width(theme.search.max_editor_width)
+                        .boxed(),
+                )
+                .with_child(
+                    Flex::row()
+                        .with_child(self.render_nav_button("<", Direction::Prev, cx))
+                        .with_child(self.render_nav_button(">", Direction::Next, cx))
+                        .aligned()
                         .boxed(),
                 )
                 .with_child(
@@ -99,29 +127,6 @@ impl View for SearchBar {
                         .aligned()
                         .boxed(),
                 )
-                .with_child(
-                    Flex::row()
-                        .with_child(self.render_nav_button("<", Direction::Prev, cx))
-                        .with_child(self.render_nav_button(">", Direction::Next, cx))
-                        .aligned()
-                        .boxed(),
-                )
-                .with_children(self.active_editor.as_ref().and_then(|editor| {
-                    let matches = self.editors_with_matches.get(&editor.downgrade())?;
-                    let message = if let Some(match_ix) = self.active_match_index {
-                        format!("{}/{}", match_ix + 1, matches.len())
-                    } else {
-                        "No matches".to_string()
-                    };
-
-                    Some(
-                        Label::new(message, theme.search.match_index.text.clone())
-                            .contained()
-                            .with_style(theme.search.match_index.container)
-                            .aligned()
-                            .boxed(),
-                    )
-                }))
                 .named("search bar")
         }
     }

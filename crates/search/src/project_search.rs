@@ -572,12 +572,38 @@ impl ProjectSearchView {
         };
         Flex::row()
             .with_child(
-                ChildView::new(&self.query_editor)
+                Flex::row()
+                    .with_child(
+                        ChildView::new(&self.query_editor)
+                            .flexible(1., true)
+                            .boxed(),
+                    )
+                    .with_children(self.active_match_index.map(|match_ix| {
+                        Label::new(
+                            format!(
+                                "{}/{}",
+                                match_ix + 1,
+                                self.model.read(cx).match_ranges.len()
+                            ),
+                            theme.search.match_index.text.clone(),
+                        )
+                        .contained()
+                        .with_style(theme.search.match_index.container)
+                        .aligned()
+                        .boxed()
+                    }))
                     .contained()
                     .with_style(editor_container)
                     .aligned()
                     .constrained()
                     .with_max_width(theme.search.max_editor_width)
+                    .boxed(),
+            )
+            .with_child(
+                Flex::row()
+                    .with_child(self.render_nav_button("<", Direction::Prev, cx))
+                    .with_child(self.render_nav_button(">", Direction::Next, cx))
+                    .aligned()
                     .boxed(),
             )
             .with_child(
@@ -590,29 +616,6 @@ impl ProjectSearchView {
                     .aligned()
                     .boxed(),
             )
-            .with_children({
-                self.active_match_index.into_iter().flat_map(|match_ix| {
-                    [
-                        Flex::row()
-                            .with_child(self.render_nav_button("<", Direction::Prev, cx))
-                            .with_child(self.render_nav_button(">", Direction::Next, cx))
-                            .aligned()
-                            .boxed(),
-                        Label::new(
-                            format!(
-                                "{}/{}",
-                                match_ix + 1,
-                                self.model.read(cx).match_ranges.len()
-                            ),
-                            theme.search.match_index.text.clone(),
-                        )
-                        .contained()
-                        .with_style(theme.search.match_index.container)
-                        .aligned()
-                        .boxed(),
-                    ]
-                })
-            })
             .contained()
             .with_style(theme.workspace.toolbar.container)
             .constrained()
