@@ -534,71 +534,68 @@ impl LspAdapter for JsonLspAdapter {
 
 pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegistry {
     let languages = LanguageRegistry::new(login_shell_env_loaded);
-    languages.add(Arc::new(c()));
-    languages.add(Arc::new(json()));
-    languages.add(Arc::new(rust()));
-    languages.add(Arc::new(markdown()));
+    for (name, grammar, lsp_adapter) in [
+        (
+            "c",
+            tree_sitter_c::language(),
+            Some(Arc::new(CLspAdapter) as Arc<dyn LspAdapter>),
+        ),
+        (
+            "json",
+            tree_sitter_json::language(),
+            Some(Arc::new(JsonLspAdapter)),
+        ),
+        (
+            "markdown",
+            tree_sitter_markdown::language(),
+            None, //
+        ),
+        (
+            "rust",
+            tree_sitter_rust::language(),
+            Some(Arc::new(RustLspAdapter)),
+        ),
+    ] {
+        languages.add(Arc::new(language(name, grammar, lsp_adapter)));
+    }
     languages
 }
 
-fn rust() -> Language {
-    let grammar = tree_sitter_rust::language();
-    let config = toml::from_slice(&LanguageDir::get("rust/config.toml").unwrap().data).unwrap();
-    Language::new(config, Some(grammar))
-        .with_highlights_query(load_query("rust/highlights.scm").as_ref())
-        .unwrap()
-        .with_brackets_query(load_query("rust/brackets.scm").as_ref())
-        .unwrap()
-        .with_indents_query(load_query("rust/indents.scm").as_ref())
-        .unwrap()
-        .with_outline_query(load_query("rust/outline.scm").as_ref())
-        .unwrap()
-        .with_lsp_adapter(RustLspAdapter)
+fn language(
+    name: &str,
+    grammar: tree_sitter::Language,
+    lsp_adapter: Option<Arc<dyn LspAdapter>>,
+) -> Language {
+    let config = toml::from_slice(
+        &LanguageDir::get(&format!("{}/config.toml", name))
+            .unwrap()
+            .data,
+    )
+    .unwrap();
+    let mut language = Language::new(config, Some(grammar));
+    if let Some(query) = load_query(&format!("{}/highlights.scm", name)) {
+        language = language.with_highlights_query(query.as_ref()).unwrap();
+    }
+    if let Some(query) = load_query(&format!("{}/brackets.scm", name)) {
+        language = language.with_brackets_query(query.as_ref()).unwrap();
+    }
+    if let Some(query) = load_query(&format!("{}/indents.scm", name)) {
+        language = language.with_indents_query(query.as_ref()).unwrap();
+    }
+    if let Some(query) = load_query(&format!("{}/outline.scm", name)) {
+        language = language.with_outline_query(query.as_ref()).unwrap();
+    }
+    if let Some(lsp_adapter) = lsp_adapter {
+        language = language.with_lsp_adapter(lsp_adapter)
+    }
+    language
 }
 
-fn c() -> Language {
-    let grammar = tree_sitter_c::language();
-    let config = toml::from_slice(&LanguageDir::get("c/config.toml").unwrap().data).unwrap();
-    Language::new(config, Some(grammar))
-        .with_highlights_query(load_query("c/highlights.scm").as_ref())
-        .unwrap()
-        .with_brackets_query(load_query("c/brackets.scm").as_ref())
-        .unwrap()
-        .with_indents_query(load_query("c/indents.scm").as_ref())
-        .unwrap()
-        .with_outline_query(load_query("c/outline.scm").as_ref())
-        .unwrap()
-        .with_lsp_adapter(CLspAdapter)
-}
-
-fn json() -> Language {
-    let grammar = tree_sitter_json::language();
-    let config = toml::from_slice(&LanguageDir::get("json/config.toml").unwrap().data).unwrap();
-    Language::new(config, Some(grammar))
-        .with_highlights_query(load_query("json/highlights.scm").as_ref())
-        .unwrap()
-        .with_brackets_query(load_query("json/brackets.scm").as_ref())
-        .unwrap()
-        .with_indents_query(load_query("json/indents.scm").as_ref())
-        .unwrap()
-        .with_outline_query(load_query("json/outline.scm").as_ref())
-        .unwrap()
-        .with_lsp_adapter(JsonLspAdapter)
-}
-
-fn markdown() -> Language {
-    let grammar = tree_sitter_markdown::language();
-    let config = toml::from_slice(&LanguageDir::get("markdown/config.toml").unwrap().data).unwrap();
-    Language::new(config, Some(grammar))
-        .with_highlights_query(load_query("markdown/highlights.scm").as_ref())
-        .unwrap()
-}
-
-fn load_query(path: &str) -> Cow<'static, str> {
-    match LanguageDir::get(path).unwrap().data {
+fn load_query(path: &str) -> Option<Cow<'static, str>> {
+    LanguageDir::get(path).map(|item| match item.data {
         Cow::Borrowed(s) => Cow::Borrowed(str::from_utf8(s).unwrap()),
         Cow::Owned(s) => Cow::Owned(String::from_utf8(s).unwrap()),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -651,7 +648,11 @@ mod tests {
 
     #[test]
     fn test_rust_label_for_completion() {
-        let language = rust();
+        let language = language(
+            "rust",
+            tree_sitter_rust::language(),
+            Some(Arc::new(RustLspAdapter)),
+        );
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new(vec![
             ("type".into(), Color::green().into()),
@@ -726,7 +727,11 @@ mod tests {
 
     #[test]
     fn test_rust_label_for_symbol() {
-        let language = rust();
+        let language = language(
+            "rust",
+            tree_sitter_rust::language(),
+            Some(Arc::new(RustLspAdapter)),
+        );
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new(vec![
             ("type".into(), Color::green().into()),

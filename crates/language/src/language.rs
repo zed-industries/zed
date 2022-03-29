@@ -465,8 +465,8 @@ impl Language {
         Ok(self)
     }
 
-    pub fn with_lsp_adapter(mut self, lsp_adapter: impl LspAdapter) -> Self {
-        self.adapter = Some(Arc::new(lsp_adapter));
+    pub fn with_lsp_adapter(mut self, lsp_adapter: Arc<dyn LspAdapter>) -> Self {
+        self.adapter = Some(lsp_adapter);
         self
     }
 
