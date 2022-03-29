@@ -1684,7 +1684,8 @@ impl BufferSnapshot {
         theme: Option<&SyntaxTheme>,
     ) -> Option<Vec<OutlineItem<Anchor>>> {
         let position = position.to_offset(&self);
-        let mut items = self.outline_items_containing(position - 1..position + 1, theme)?;
+        let mut items =
+            self.outline_items_containing(position.saturating_sub(1)..position + 1, theme)?;
         let mut prev_depth = None;
         items.retain(|item| {
             let result = prev_depth.map_or(true, |prev_depth| item.depth > prev_depth);
