@@ -245,6 +245,7 @@ impl LanguageRegistry {
 
     pub fn start_language_server(
         &self,
+        server_id: usize,
         language: Arc<Language>,
         root_path: Arc<Path>,
         http_client: Arc<dyn HttpClient>,
@@ -324,6 +325,7 @@ impl LanguageRegistry {
             let server_binary_path = server_binary_path.await?;
             let server_args = adapter.server_args();
             let server = lsp::LanguageServer::new(
+                server_id,
                 &server_binary_path,
                 server_args,
                 &root_path,

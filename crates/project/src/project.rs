@@ -1308,6 +1308,7 @@ impl Project {
             .or_insert_with(|| {
                 let server_id = post_inc(&mut self.next_language_server_id);
                 let language_server = self.languages.start_language_server(
+                    server_id,
                     language.clone(),
                     worktree_path,
                     self.client.http_client(),
@@ -1505,6 +1506,51 @@ impl Project {
                     Some(language_server)
                 })
             });
+    }
+
+    pub fn restart_language_server_for_buffer(
+        &mut self,
+        buffer: &ModelHandle<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<()> {
+        let file = File::from_dyn(buffer.read(cx).file())?;
+        let worktree = file.worktree.read(cx).as_local()?;
+        let worktree_id = worktree.id();
+        let worktree_abs_path = worktree.abs_path().clone();
+        let full_path = buffer.read(cx).file()?.full_path(cx);
+        let language = self.languages.select_language(&full_path)?;
+        self.restart_language_server(worktree_id, worktree_abs_path, language, cx);
+
+        None
+    }
+
+    fn restart_language_server(
+        &mut self,
+        worktree_id: WorktreeId,
+        worktree_path: Arc<Path>,
+        language: Arc<Language>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let key = (worktree_id, language.name());
+        let server_to_shutdown = self.language_servers.remove(&key);
+        self.started_language_servers.remove(&key);
+        server_to_shutdown
+            .as_ref()
+            .map(|server| self.language_server_statuses.remove(&server.server_id()));
+        cx.spawn_weak(|this, mut cx| async move {
+            if let Some(this) = this.upgrade(&cx) {
+                if let Some(server_to_shutdown) = server_to_shutdown {
+                    if let Some(shutdown_task) = server_to_shutdown.shutdown() {
+                        shutdown_task.await;
+                    }
+                }
+
+                this.update(&mut cx, |this, cx| {
+                    this.start_language_server(worktree_id, worktree_path, language, cx);
+                });
+            }
+        })
+        .detach();
     }
 
     fn on_lsp_event(

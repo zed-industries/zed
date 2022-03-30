@@ -34,6 +34,7 @@ type NotificationHandler =
 type ResponseHandler = Box<dyn Send + FnOnce(Result<&str, Error>)>;
 
 pub struct LanguageServer {
+    server_id: usize,
     next_id: AtomicUsize,
     outbound_tx: channel::Sender<Vec<u8>>,
     name: String,
@@ -113,6 +114,7 @@ struct Error {
 
 impl LanguageServer {
     pub fn new(
+        server_id: usize,
         binary_path: &Path,
         args: &[&str],
         root_path: &Path,
@@ -133,7 +135,8 @@ impl LanguageServer {
             .spawn()?;
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
-        let mut server = Self::new_internal(stdin, stdout, root_path, options, background);
+        let mut server =
+            Self::new_internal(server_id, stdin, stdout, root_path, options, background);
         if let Some(name) = binary_path.file_name() {
             server.name = name.to_string_lossy().to_string();
         }
@@ -141,6 +144,7 @@ impl LanguageServer {
     }
 
     fn new_internal<Stdin, Stdout>(
+        server_id: usize,
         stdin: Stdin,
         stdout: Stdout,
         root_path: &Path,
@@ -240,6 +244,7 @@ impl LanguageServer {
         });
 
         Self {
+            server_id,
             notification_handlers,
             response_handlers,
             name: Default::default(),
@@ -446,6 +451,10 @@ impl LanguageServer {
         &self.capabilities
     }
 
+    pub fn server_id(&self) -> usize {
+        self.server_id
+    }
+
     pub fn request<T: request::Request>(
         self: &Arc<Self>,
         params: T::Params,
@@ -606,8 +615,14 @@ impl LanguageServer {
         });
 
         let executor = cx.background().clone();
-        let server =
-            Self::new_internal(stdin_writer, stdout_reader, Path::new("/"), None, executor);
+        let server = Self::new_internal(
+            0,
+            stdin_writer,
+            stdout_reader,
+            Path::new("/"),
+            None,
+            executor,
+        );
         (server, fake)
     }
 }

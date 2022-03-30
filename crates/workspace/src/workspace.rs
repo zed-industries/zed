@@ -80,6 +80,7 @@ action!(Save);
 action!(DebugElements);
 action!(ActivatePreviousPane);
 action!(ActivateNextPane);
+action!(RestartLanguageServer);
 
 pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     pane::init(cx);
@@ -118,6 +119,9 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     });
     cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
         workspace.activate_next_pane(cx)
+    });
+    cx.add_action(|workspace: &mut Workspace, _: &RestartLanguageServer, cx| {
+        workspace.restart_language_server(cx)
     });
     cx.add_bindings(vec![
         Binding::new("ctrl-alt-cmd-f", FollowNextCollaborator, None),
@@ -1418,6 +1422,8 @@ impl Workspace {
         }
         None
     }
+
+    fn restart_language_server(&mut self, cx: &mut ViewContext<Self>) {}
 
     fn render_connection_status(&self, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
         let theme = &cx.global::<Settings>().theme;
