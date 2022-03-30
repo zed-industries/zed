@@ -361,7 +361,6 @@ tab_icon_spacing = 4
 tab_summary_spacing = 10
 
 [search]
-max_editor_width = 250
 match_background = "$state.highlighted_line"
 results_status = { extends = "$text.0", size = 18 }
 tab_icon_width = 14
@@ -396,6 +395,7 @@ extends = "$text.2"
 padding = 6
 
 [search.editor]
+max_width = 250
 background = "$surface.0"
 corner_radius = 6
 padding = { left = 13, right = 13, top = 3, bottom = 3 }

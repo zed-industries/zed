@@ -77,7 +77,7 @@ impl View for BufferSearchBar {
             let editor_container = if self.query_contains_error {
                 theme.search.invalid_editor
             } else {
-                theme.search.editor.container
+                theme.search.editor.input.container
             };
             Flex::row()
                 .with_child(
@@ -107,7 +107,7 @@ impl View for BufferSearchBar {
                         .with_style(editor_container)
                         .aligned()
                         .constrained()
-                        .with_max_width(theme.search.max_editor_width)
+                        .with_max_width(theme.search.editor.max_width)
                         .boxed(),
                 )
                 .with_child(
@@ -157,8 +157,9 @@ impl ToolbarItemView for BufferSearchBar {
 
 impl BufferSearchBar {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let query_editor =
-            cx.add_view(|cx| Editor::auto_height(2, Some(|theme| theme.search.editor.clone()), cx));
+        let query_editor = cx.add_view(|cx| {
+            Editor::auto_height(2, Some(|theme| theme.search.editor.input.clone()), cx)
+        });
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
 

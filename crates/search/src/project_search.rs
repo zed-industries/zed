@@ -328,7 +328,8 @@ impl ProjectSearchView {
             .detach();
 
         let query_editor = cx.add_view(|cx| {
-            let mut editor = Editor::single_line(Some(|theme| theme.search.editor.clone()), cx);
+            let mut editor =
+                Editor::single_line(Some(|theme| theme.search.editor.input.clone()), cx);
             editor.set_text(query_text, cx);
             editor
         });
@@ -685,7 +686,7 @@ impl View for ProjectSearchBar {
             let editor_container = if search.query_contains_error {
                 theme.search.invalid_editor
             } else {
-                theme.search.editor.container
+                theme.search.editor.input.container
             };
             Flex::row()
                 .with_child(
@@ -713,7 +714,7 @@ impl View for ProjectSearchBar {
                         .with_style(editor_container)
                         .aligned()
                         .constrained()
-                        .with_max_width(theme.search.max_editor_width)
+                        .with_max_width(theme.search.editor.max_width)
                         .boxed(),
                 )
                 .with_child(
