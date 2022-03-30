@@ -3,10 +3,12 @@ import core from "./core";
 import { Color } from "./lib";
 import Theme, { BackgroundColor, Weight } from "./theme";
 
+export type TextColor = keyof Theme["textColor"];
+
 export function text(
   theme: Theme,
   fontFamily: keyof typeof core.fontFamily,
-  color: keyof Theme["textColor"],
+  color: TextColor,
   properties?: { size?: keyof typeof core["fontSize"]; weight?: Weight }
 ) {
   const sizeKey = properties.size || fontFamily === "sans" ? "sm" : "md";
