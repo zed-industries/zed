@@ -4871,14 +4871,11 @@ impl Editor {
     }
 
     fn restart_language_server(&mut self, _: &RestartLanguageServer, cx: &mut ViewContext<Self>) {
-        let project = self.project.clone();
-        if let Some(project) = project {
+        if let Some(project) = self.project.clone() {
             self.buffer.update(cx, |multi_buffer, cx| {
-                for buffer in multi_buffer.all_buffers() {
-                    project.update(cx, |project, cx| {
-                        project.restart_language_server_for_buffer(&buffer, cx);
-                    });
-                }
+                project.update(cx, |project, cx| {
+                    project.restart_language_servers_for_buffers(multi_buffer.all_buffers(), cx);
+                });
             })
         }
     }

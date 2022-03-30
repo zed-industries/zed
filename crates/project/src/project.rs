@@ -1508,18 +1508,26 @@ impl Project {
             });
     }
 
-    pub fn restart_language_server_for_buffer(
+    pub fn restart_language_servers_for_buffers(
         &mut self,
-        buffer: &ModelHandle<Buffer>,
+        buffers: impl IntoIterator<Item = ModelHandle<Buffer>>,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
-        let file = File::from_dyn(buffer.read(cx).file())?;
-        let worktree = file.worktree.read(cx).as_local()?;
-        let worktree_id = worktree.id();
-        let worktree_abs_path = worktree.abs_path().clone();
-        let full_path = buffer.read(cx).file()?.full_path(cx);
-        let language = self.languages.select_language(&full_path)?;
-        self.restart_language_server(worktree_id, worktree_abs_path, language, cx);
+        let language_server_lookup_info: HashSet<(WorktreeId, Arc<Path>, PathBuf)> = buffers
+            .into_iter()
+            .filter_map(|buffer| {
+                let file = File::from_dyn(buffer.read(cx).file())?;
+                let worktree = file.worktree.read(cx).as_local()?;
+                let worktree_id = worktree.id();
+                let worktree_abs_path = worktree.abs_path().clone();
+                let full_path = file.full_path(cx);
+                Some((worktree_id, worktree_abs_path, full_path))
+            })
+            .collect();
+        for (worktree_id, worktree_abs_path, full_path) in language_server_lookup_info {
+            let language = self.languages.select_language(&full_path)?;
+            self.restart_language_server(worktree_id, worktree_abs_path, language, cx);
+        }
 
         None
     }
