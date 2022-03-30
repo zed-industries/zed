@@ -1,11 +1,10 @@
-use client::http;
 use gpui::Task;
 pub use language::*;
 use rust_embed::RustEmbed;
-use serde::Deserialize;
 use std::{borrow::Cow, str, sync::Arc};
 
 mod c;
+mod installation;
 mod json;
 mod rust;
 mod typescript;
@@ -14,18 +13,6 @@ mod typescript;
 #[folder = "src/languages"]
 #[exclude = "*.rs"]
 struct LanguageDir;
-
-#[derive(Deserialize)]
-struct GithubRelease {
-    name: String,
-    assets: Vec<GithubReleaseAsset>,
-}
-
-#[derive(Deserialize)]
-struct GithubReleaseAsset {
-    name: String,
-    browser_download_url: http::Url,
-}
 
 pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegistry {
     let languages = LanguageRegistry::new(login_shell_env_loaded);

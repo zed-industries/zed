@@ -1,8 +1,8 @@
+use super::installation::{npm_install_packages, npm_package_latest_version};
 use anyhow::{anyhow, Context, Result};
 use client::http::HttpClient;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use language::{LanguageServerName, LspAdapter};
-use serde::Deserialize;
 use serde_json::json;
 use smol::fs;
 use std::{any::Any, path::PathBuf, sync::Arc};
@@ -33,37 +33,9 @@ impl LspAdapter for TypeScriptLspAdapter {
         _: Arc<dyn HttpClient>,
     ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
         async move {
-            #[derive(Deserialize)]
-            struct NpmInfo {
-                versions: Vec<String>,
-            }
-
-            let typescript_output = smol::process::Command::new("npm")
-                .args(["info", "typescript", "--json"])
-                .output()
-                .await?;
-            if !typescript_output.status.success() {
-                Err(anyhow!("failed to execute npm info"))?;
-            }
-            let mut typescript_info: NpmInfo = serde_json::from_slice(&typescript_output.stdout)?;
-
-            let server_output = smol::process::Command::new("npm")
-                .args(["info", "typescript-language-server", "--json"])
-                .output()
-                .await?;
-            if !server_output.status.success() {
-                Err(anyhow!("failed to execute npm info"))?;
-            }
-            let mut server_info: NpmInfo = serde_json::from_slice(&server_output.stdout)?;
-
             Ok(Box::new(Versions {
-                typescript_version: typescript_info
-                    .versions
-                    .pop()
-                    .ok_or_else(|| anyhow!("no versions found in typescript npm info"))?,
-                server_version: server_info.versions.pop().ok_or_else(|| {
-                    anyhow!("no versions found in typescript language server npm info")
-                })?,
+                typescript_version: npm_package_latest_version("typescript").await?,
+                server_version: npm_package_latest_version("typescript-language-server").await?,
             }) as Box<_>)
         }
         .boxed()
@@ -87,20 +59,17 @@ impl LspAdapter for TypeScriptLspAdapter {
             let binary_path = version_dir.join(Self::BIN_PATH);
 
             if fs::metadata(&binary_path).await.is_err() {
-                let output = smol::process::Command::new("npm")
-                    .current_dir(&version_dir)
-                    .arg("install")
-                    .arg(format!("typescript@{}", versions.typescript_version))
-                    .arg(format!(
-                        "typescript-language-server@{}",
-                        versions.server_version
-                    ))
-                    .output()
-                    .await
-                    .context("failed to run npm install")?;
-                if !output.status.success() {
-                    Err(anyhow!("failed to install typescript-language-server"))?;
-                }
+                npm_install_packages(
+                    [
+                        ("typescript", versions.typescript_version.as_str()),
+                        (
+                            "typescript-language-server",
+                            &versions.server_version.as_str(),
+                        ),
+                    ],
+                    &version_dir,
+                )
+                .await?;
 
                 if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
                     while let Some(entry) = entries.next().await {

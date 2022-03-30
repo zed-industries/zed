@@ -1,6 +1,7 @@
+use super::installation::{latest_github_release, GitHubLspBinaryVersion};
 use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
-use client::http::{self, HttpClient, Method};
+use client::http::{HttpClient, Method};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 pub use language::*;
 use lazy_static::lazy_static;
@@ -8,8 +9,6 @@ use regex::Regex;
 use smol::fs::{self, File};
 use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
 use util::{ResultExt, TryFutureExt};
-
-use super::GithubRelease;
 
 pub struct RustLspAdapter;
 
@@ -23,33 +22,11 @@ impl LspAdapter for RustLspAdapter {
         http: Arc<dyn HttpClient>,
     ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
         async move {
-            let release = http
-            .send(
-                surf::RequestBuilder::new(
-                    Method::Get,
-                    http::Url::parse(
-                        "https://api.github.com/repos/rust-analyzer/rust-analyzer/releases/latest",
-                    )
-                    .unwrap(),
-                )
-                .middleware(surf::middleware::Redirect::default())
-                .build(),
-            )
-            .await
-            .map_err(|err| anyhow!("error fetching latest release: {}", err))?
-            .body_json::<GithubRelease>()
-            .await
-            .map_err(|err| anyhow!("error parsing latest release: {}", err))?;
-            let asset_name = format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH);
-            let asset = release
-                .assets
-                .iter()
-                .find(|asset| asset.name == asset_name)
-                .ok_or_else(|| anyhow!("no release found matching {:?}", asset_name))?;
-            Ok(Box::new(GitHubLspBinaryVersion {
-                name: release.name,
-                url: asset.browser_download_url.clone(),
-            }) as Box<_>)
+            let version = latest_github_release("rust-analyzer/rust-analyzer", http, |_| {
+                format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH)
+            })
+            .await?;
+            Ok(Box::new(version) as Box<_>)
         }
         .boxed()
     }

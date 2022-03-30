@@ -1,12 +1,11 @@
+use super::installation::{latest_github_release, GitHubLspBinaryVersion};
 use anyhow::{anyhow, Result};
-use client::http::{self, HttpClient, Method};
+use client::http::{HttpClient, Method};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 pub use language::*;
 use smol::fs::{self, File};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::{ResultExt, TryFutureExt};
-
-use super::GithubRelease;
 
 pub struct CLspAdapter;
 
@@ -20,33 +19,11 @@ impl super::LspAdapter for CLspAdapter {
         http: Arc<dyn HttpClient>,
     ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
         async move {
-            let release = http
-                .send(
-                    surf::RequestBuilder::new(
-                        Method::Get,
-                        http::Url::parse(
-                            "https://api.github.com/repos/clangd/clangd/releases/latest",
-                        )
-                        .unwrap(),
-                    )
-                    .middleware(surf::middleware::Redirect::default())
-                    .build(),
-                )
-                .await
-                .map_err(|err| anyhow!("error fetching latest release: {}", err))?
-                .body_json::<GithubRelease>()
-                .await
-                .map_err(|err| anyhow!("error parsing latest release: {}", err))?;
-            let asset_name = format!("clangd-mac-{}.zip", release.name);
-            let asset = release
-                .assets
-                .iter()
-                .find(|asset| asset.name == asset_name)
-                .ok_or_else(|| anyhow!("no release found matching {:?}", asset_name))?;
-            Ok(Box::new(GitHubLspBinaryVersion {
-                name: release.name,
-                url: asset.browser_download_url.clone(),
-            }) as Box<_>)
+            let version = latest_github_release("clangd/clangd", http, |release_name| {
+                format!("clangd-mac-{release_name}.zip")
+            })
+            .await?;
+            Ok(Box::new(version) as Box<_>)
         }
         .boxed()
     }

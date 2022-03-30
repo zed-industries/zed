@@ -7,7 +7,7 @@ pub mod proto;
 mod tests;
 
 use anyhow::{anyhow, Context, Result};
-use client::http::{self, HttpClient};
+use client::http::HttpClient;
 use collections::HashMap;
 use futures::{
     future::{BoxFuture, Shared},
@@ -59,11 +59,6 @@ lazy_static! {
 
 pub trait ToLspPosition {
     fn to_lsp_position(self) -> lsp::Position;
-}
-
-pub struct GitHubLspBinaryVersion {
-    pub name: String,
-    pub url: http::Url,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
