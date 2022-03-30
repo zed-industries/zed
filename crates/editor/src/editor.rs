@@ -6438,13 +6438,12 @@ pub fn styled_runs_for_code_label<'a>(
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use gpui::{
         geometry::rect::RectF,
         platform::{WindowBounds, WindowOptions},
     };
-    use language::{LanguageConfig, LanguageServerConfig};
+    use language::{FakeLspAdapter, LanguageConfig};
     use lsp::FakeLanguageServer;
     use project::FakeFs;
     use smol::stream::StreamExt;
@@ -8880,26 +8879,27 @@ mod tests {
         cx.foreground().forbid_parking();
         cx.update(populate_settings);
 
-        let (mut language_server_config, mut fake_servers) = LanguageServerConfig::fake();
-        language_server_config.set_fake_capabilities(lsp::ServerCapabilities {
-            document_formatting_provider: Some(lsp::OneOf::Left(true)),
-            ..Default::default()
-        });
-        let language = Arc::new(Language::new(
+        let mut language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: language_server_config,
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        ));
+        );
+        let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
 
         let fs = FakeFs::new(cx.background().clone());
         fs.insert_file("/file.rs", Default::default()).await;
 
         let project = Project::test(fs, cx);
-        project.update(cx, |project, _| project.languages().add(language));
+        project.update(cx, |project, _| project.languages().add(Arc::new(language)));
 
         let worktree_id = project
             .update(cx, |project, cx| {
@@ -8913,6 +8913,8 @@ mod tests {
             .update(cx, |project, cx| project.open_buffer((worktree_id, ""), cx))
             .await
             .unwrap();
+
+        cx.foreground().start_waiting();
         let mut fake_server = fake_servers.next().await.unwrap();
 
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
@@ -8934,6 +8936,7 @@ mod tests {
             })
             .next()
             .await;
+        cx.foreground().start_waiting();
         save.await.unwrap();
         assert_eq!(
             editor.read_with(cx, |editor, cx| editor.text(cx)),
@@ -8955,6 +8958,7 @@ mod tests {
         });
         let save = cx.update(|cx| editor.save(project.clone(), cx));
         cx.foreground().advance_clock(items::FORMAT_TIMEOUT);
+        cx.foreground().start_waiting();
         save.await.unwrap();
         assert_eq!(
             editor.read_with(cx, |editor, cx| editor.text(cx)),
@@ -8967,23 +8971,24 @@ mod tests {
     async fn test_completion(cx: &mut gpui::TestAppContext) {
         cx.update(populate_settings);
 
-        let (mut language_server_config, mut fake_servers) = LanguageServerConfig::fake();
-        language_server_config.set_fake_capabilities(lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions {
-                trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
-                ..Default::default()
-            }),
-            ..Default::default()
-        });
-        let language = Arc::new(Language::new(
+        let mut language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: language_server_config,
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        ));
+        );
+        let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
 
         let text = "
             one
@@ -8996,7 +9001,7 @@ mod tests {
         fs.insert_file("/file.rs", text).await;
 
         let project = Project::test(fs, cx);
-        project.update(cx, |project, _| project.languages().add(language));
+        project.update(cx, |project, _| project.languages().add(Arc::new(language)));
 
         let worktree_id = project
             .update(cx, |project, cx| {

@@ -4606,8 +4606,8 @@ mod tests {
     use futures::StreamExt;
     use gpui::test::subscribe;
     use language::{
-        tree_sitter_rust, Diagnostic, LanguageConfig, LanguageServerConfig, OffsetRangeExt, Point,
-        ToPoint,
+        tree_sitter_rust, Diagnostic, FakeLspAdapter, LanguageConfig, LanguageServerConfig,
+        OffsetRangeExt, Point, ToPoint,
     };
     use lsp::Url;
     use serde_json::json;
@@ -4683,41 +4683,44 @@ mod tests {
     async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
 
-        let (mut rust_lsp_config, mut fake_rust_servers) = LanguageServerConfig::fake();
-        let (mut json_lsp_config, mut fake_json_servers) = LanguageServerConfig::fake();
-        rust_lsp_config.set_fake_capabilities(lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions {
-                trigger_characters: Some(vec![".".to_string(), "::".to_string()]),
-                ..Default::default()
-            }),
-            ..Default::default()
-        });
-        json_lsp_config.set_fake_capabilities(lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions {
-                trigger_characters: Some(vec![":".to_string()]),
-                ..Default::default()
-            }),
-            ..Default::default()
-        });
-
-        let rust_language = Arc::new(Language::new(
+        let mut rust_language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: rust_lsp_config,
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        ));
-        let json_language = Arc::new(Language::new(
+        );
+        let mut json_language = Language::new(
             LanguageConfig {
                 name: "JSON".into(),
                 path_suffixes: vec!["json".to_string()],
-                language_server: json_lsp_config,
                 ..Default::default()
             },
             None,
-        ));
+        );
+        let mut fake_rust_servers = rust_language.set_fake_lsp_adapter(FakeLspAdapter {
+            name: "the-rust-language-server",
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string(), "::".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let mut fake_json_servers = json_language.set_fake_lsp_adapter(FakeLspAdapter {
+            name: "the-json-language-server",
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![":".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -4733,8 +4736,8 @@ mod tests {
 
         let project = Project::test(fs, cx);
         project.update(cx, |project, _| {
-            project.languages.add(rust_language);
-            project.languages.add(json_language);
+            project.languages.add(Arc::new(rust_language));
+            project.languages.add(Arc::new(json_language));
         });
 
         let worktree_id = project
@@ -4903,21 +4906,20 @@ mod tests {
     async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
 
-        let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
-        let progress_token = language_server_config
-            .disk_based_diagnostics_progress_token
-            .clone()
-            .unwrap();
-
-        let language = Arc::new(Language::new(
+        let progress_token = "the-progress-token".to_string();
+        let mut language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: language_server_config,
+                language_server: LanguageServerConfig {
+                    disk_based_diagnostics_progress_token: Some(progress_token.clone()),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        ));
+        );
+        let mut fake_servers = language.set_fake_lsp_adapter(Default::default());
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -4930,7 +4932,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs, cx);
-        project.update(cx, |project, _| project.languages.add(language));
+        project.update(cx, |project, _| project.languages.add(Arc::new(language)));
 
         let (tree, _) = project
             .update(cx, |project, cx| {
@@ -5022,19 +5024,20 @@ mod tests {
     async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
 
-        let (mut lsp_config, mut fake_servers) = LanguageServerConfig::fake();
-        lsp_config
-            .disk_based_diagnostic_sources
-            .insert("disk".to_string());
-        let language = Arc::new(Language::new(
+        // let (mut lsp_config, mut fake_servers) = LanguageServerConfig::fake();
+        let mut language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: lsp_config,
+                language_server: LanguageServerConfig {
+                    disk_based_diagnostic_sources: ["disk".to_string()].into_iter().collect(),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        ));
+        );
+        let mut fake_servers = language.set_fake_lsp_adapter(Default::default());
 
         let text = "
             fn a() { A }
@@ -5047,7 +5050,7 @@ mod tests {
         fs.insert_tree("/dir", json!({ "a.rs": text })).await;
 
         let project = Project::test(fs, cx);
-        project.update(cx, |project, _| project.languages.add(language));
+        project.update(cx, |project, _| project.languages.add(Arc::new(language)));
 
         let worktree_id = project
             .update(cx, |project, cx| {
@@ -5396,16 +5399,15 @@ mod tests {
     async fn test_edits_from_lsp_with_past_version(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
 
-        let (lsp_config, mut fake_servers) = LanguageServerConfig::fake();
-        let language = Arc::new(Language::new(
+        let mut language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: lsp_config,
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        ));
+        );
+        let mut fake_servers = language.set_fake_lsp_adapter(Default::default());
 
         let text = "
             fn a() {
@@ -5430,7 +5432,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs, cx);
-        project.update(cx, |project, _| project.languages.add(language));
+        project.update(cx, |project, _| project.languages.add(Arc::new(language)));
 
         let worktree_id = project
             .update(cx, |project, cx| {
@@ -5746,16 +5748,15 @@ mod tests {
 
     #[gpui::test]
     async fn test_definition(cx: &mut gpui::TestAppContext) {
-        let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
-        let language = Arc::new(Language::new(
+        let mut language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: language_server_config,
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        ));
+        );
+        let mut fake_servers = language.set_fake_lsp_adapter(Default::default());
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -5768,9 +5769,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs, cx);
-        project.update(cx, |project, _| {
-            Arc::get_mut(&mut project.languages).unwrap().add(language);
-        });
+        project.update(cx, |project, _| project.languages.add(Arc::new(language)));
 
         let (tree, _) = project
             .update(cx, |project, cx| {
@@ -6682,16 +6681,15 @@ mod tests {
     async fn test_rename(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
 
-        let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
-        let language = Arc::new(Language::new(
+        let mut language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: language_server_config,
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        ));
+        );
+        let mut fake_servers = language.set_fake_lsp_adapter(Default::default());
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -6704,9 +6702,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), cx);
-        project.update(cx, |project, _| {
-            Arc::get_mut(&mut project.languages).unwrap().add(language);
-        });
+        project.update(cx, |project, _| project.languages.add(Arc::new(language)));
 
         let (tree, _) = project
             .update(cx, |project, cx| {

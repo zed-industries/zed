@@ -138,16 +138,13 @@ impl Default for LanguageConfig {
 pub struct LanguageServerConfig {
     pub disk_based_diagnostic_sources: HashSet<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
-    #[cfg(any(test, feature = "test-support"))]
-    #[serde(skip)]
-    fake_config: Option<FakeLanguageServerConfig>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
-struct FakeLanguageServerConfig {
-    servers_tx: mpsc::UnboundedSender<lsp::FakeLanguageServer>,
-    capabilities: lsp::ServerCapabilities,
-    initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
+pub struct FakeLspAdapter {
+    pub name: &'static str,
+    pub capabilities: lsp::ServerCapabilities,
+    pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -162,6 +159,12 @@ pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
     pub(crate) adapter: Option<Arc<dyn LspAdapter>>,
+
+    #[cfg(any(test, feature = "test-support"))]
+    fake_adapter: Option<(
+        mpsc::UnboundedSender<lsp::FakeLanguageServer>,
+        Arc<FakeLspAdapter>,
+    )>,
 }
 
 pub struct Grammar {
@@ -262,26 +265,22 @@ impl LanguageRegistry {
         cx: &mut MutableAppContext,
     ) -> Option<Task<Result<lsp::LanguageServer>>> {
         #[cfg(any(test, feature = "test-support"))]
-        if language.config.language_server.fake_config.is_some() {
+        if language.fake_adapter.is_some() {
             let language = language.clone();
             return Some(cx.spawn(|mut cx| async move {
-                let fake_config = language
-                    .config
-                    .language_server
-                    .fake_config
-                    .as_ref()
-                    .unwrap();
+                let (servers_tx, fake_adapter) = language.fake_adapter.as_ref().unwrap();
                 let (server, mut fake_server) = cx.update(|cx| {
                     lsp::LanguageServer::fake_with_capabilities(
-                        fake_config.capabilities.clone(),
+                        fake_adapter.capabilities.clone(),
                         cx,
                     )
                 });
-                if let Some(initializer) = &fake_config.initializer {
+
+                if let Some(initializer) = &fake_adapter.initializer {
                     initializer(&mut fake_server);
                 }
 
-                let servers_tx = fake_config.servers_tx.clone();
+                let servers_tx = servers_tx.clone();
                 cx.background()
                     .spawn(async move {
                         fake_server
@@ -426,6 +425,9 @@ impl Language {
                 })
             }),
             adapter: None,
+
+            #[cfg(any(test, feature = "test-support"))]
+            fake_adapter: None,
         }
     }
 
@@ -476,6 +478,18 @@ impl Language {
     pub fn with_lsp_adapter(mut self, lsp_adapter: Arc<dyn LspAdapter>) -> Self {
         self.adapter = Some(lsp_adapter);
         self
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_fake_lsp_adapter(
+        &mut self,
+        fake_lsp_adapter: FakeLspAdapter,
+    ) -> mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
+        let (servers_tx, servers_rx) = mpsc::unbounded();
+        let adapter = Arc::new(fake_lsp_adapter);
+        self.fake_adapter = Some((servers_tx, adapter.clone()));
+        self.adapter = Some(adapter);
+        servers_rx
     }
 
     pub fn name(&self) -> Arc<str> {
@@ -601,33 +615,42 @@ impl CodeLabel {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl LanguageServerConfig {
-    pub fn fake() -> (Self, mpsc::UnboundedReceiver<lsp::FakeLanguageServer>) {
-        let (servers_tx, servers_rx) = mpsc::unbounded();
-        (
-            Self {
-                fake_config: Some(FakeLanguageServerConfig {
-                    servers_tx,
-                    capabilities: lsp::LanguageServer::full_capabilities(),
-                    initializer: None,
-                }),
-                disk_based_diagnostics_progress_token: Some("fakeServer/check".to_string()),
-                ..Default::default()
-            },
-            servers_rx,
-        )
+impl Default for FakeLspAdapter {
+    fn default() -> Self {
+        Self {
+            name: "the-fake-language-server",
+            capabilities: lsp::LanguageServer::full_capabilities(),
+            initializer: None,
+        }
+    }
+}
+
+impl LspAdapter for FakeLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        LanguageServerName(self.name.into())
     }
 
-    pub fn set_fake_capabilities(&mut self, capabilities: lsp::ServerCapabilities) {
-        self.fake_config.as_mut().unwrap().capabilities = capabilities;
+    fn fetch_latest_server_version(
+        &self,
+        _: Arc<dyn HttpClient>,
+    ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
+        unreachable!();
     }
 
-    pub fn set_fake_initializer(
-        &mut self,
-        initializer: impl 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer),
-    ) {
-        self.fake_config.as_mut().unwrap().initializer = Some(Box::new(initializer));
+    fn fetch_server_binary(
+        &self,
+        _: Box<dyn 'static + Send + Any>,
+        _: Arc<dyn HttpClient>,
+        _: PathBuf,
+    ) -> BoxFuture<'static, Result<PathBuf>> {
+        unreachable!();
     }
+
+    fn cached_server_binary(&self, _: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
+        unreachable!();
+    }
+
+    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 }
 
 impl ToLspPosition for PointUtf16 {
