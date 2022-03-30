@@ -52,6 +52,10 @@ export default interface Theme {
     100: BackgroundColor;
     300: BackgroundColor;
     500: BackgroundColor;
+    ok: BackgroundColor;
+    error: BackgroundColor;
+    warning: BackgroundColor;
+    info: BackgroundColor;
   };
   borderColor: {
     primary: {
@@ -134,6 +138,66 @@ export default interface Theme {
       value: Color;
     };
   };
+  editor: {
+    background: {
+      value: Color;
+    };
+    indent_guide: {
+      value: Color;
+    };
+    indent_guide_active: {
+      value: Color;
+    };
+    line: {
+      active: {
+        value: Color;
+      };
+      highlighted: {
+        value: Color;
+      };
+      inserted: {
+        value: Color;
+      };
+      deleted: {
+        value: Color;
+      };
+      modified: {
+        value: Color;
+      };
+    };
+    highlight: {
+      selection: {
+        value: Color;
+      };
+      occurrence: {
+        value: Color;
+      };
+      activeOccurrence: {
+        value: Color;
+      };
+      matchingBracket: {
+        value: Color;
+      };
+      match: {
+        value: Color;
+      };
+      activeMatch: {
+        value: Color;
+      };
+      related: {
+        value: Color;
+      };
+    };
+    gutter: {
+      primary: {
+        value: Color;
+      };
+      active: {
+        value: Color;
+      };
+    };
+  };
+
   syntax: {
     primary: SyntaxHighlightStyle;
     comment: SyntaxHighlightStyle;
@@ -151,6 +215,7 @@ export default interface Theme {
     boolean: SyntaxHighlightStyle;
     predictive: SyntaxHighlightStyle;
   };
+
   player: {
     1: Player;
     2: Player;

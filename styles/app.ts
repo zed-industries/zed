@@ -1,13 +1,15 @@
 import { backgroundColor } from "./components";
 import selectorModal from "./selector-modal";
 import workspace from "./workspace";
+import editor from "./editor";
 import Theme from "./theme";
 
 export default function app(theme: Theme): Object {
   return {
     selector: selectorModal(theme),
     workspace: workspace(theme),
-    chat_panel: {
+    editor: editor(theme),
+    chatPanel: {
       extends: "$panel",
       channel_name: {
         extends: "$text.primary",
@@ -167,203 +169,6 @@ export default function app(theme: Theme): Object {
       },
       unshared_project: {
         extends: "$contacts_panel.project",
-      },
-    },
-    editor: {
-      active_line_background: "$state.active_line",
-      background: backgroundColor(theme, 300),
-      code_actions_indicator: "$text.muted.color",
-      diff_background_deleted: "$state.deleted_line",
-      diff_background_inserted: "$state.inserted_line",
-      document_highlight_read_background: "#99999920",
-      document_highlight_write_background: "#99999916",
-      error_color: "$status.bad",
-      guest_selections: "$selection.guests",
-      gutter_background: backgroundColor(theme, 300),
-      gutter_padding_factor: 2.5,
-      highlighted_line_background: "$state.highlighted_line",
-      line_number: "$text.muted.color",
-      line_number_active: "$text.primary.color",
-      rename_fade: 0.6,
-      selection: "$selection.host",
-      text_color: "$text.secondary.color",
-      unnecessary_code_fade: 0.5,
-      autocomplete: {
-        background: "$surface.100",
-        corner_radius: 6,
-        padding: 6,
-        border: {
-          color: "$border.secondary",
-          width: 2,
-        },
-        hovered_item: {
-          background: "$state.hover",
-          extends: "$editor.autocomplete.item",
-        },
-        item: {
-          corner_radius: 6,
-          padding: {
-            bottom: 2,
-            left: 6,
-            right: 6,
-            top: 2,
-          },
-        },
-        margin: {
-          left: -14,
-        },
-        match_highlight: {
-          color: "$editor.syntax.keyword.color",
-          weight: "$editor.syntax.keyword.weight",
-        },
-        selected_item: {
-          background: "$state.selected",
-          extends: "$editor.autocomplete.item",
-        },
-      },
-      diagnostic_header: {
-        background: "$editor.background",
-        icon_width_factor: 1.5,
-        text_scale_factor: 0.857,
-        border: {
-          bottom: true,
-          color: "$border.secondary",
-          top: true,
-          width: 1,
-        },
-        code: {
-          extends: "$text.muted",
-          size: 14,
-          margin: {
-            left: 10,
-          },
-        },
-        message: {
-          highlight_text: {
-            extends: "$text.primary",
-            size: 14,
-            weight: "bold",
-          },
-          text: {
-            extends: "$text.secondary",
-            size: 14,
-          },
-        },
-      },
-      diagnostic_path_header: {
-        background: "$state.active_line",
-        text_scale_factor: 0.857,
-        filename: {
-          extends: "$text.primary",
-          size: 14,
-        },
-        path: {
-          extends: "$text.muted",
-          size: 14,
-          margin: {
-            left: 12,
-          },
-        },
-      },
-      error_diagnostic: {
-        text_scale_factor: 0.857,
-        header: {
-          border: {
-            color: "$border.primary",
-            top: true,
-            width: 1,
-          },
-        },
-        message: {
-          highlight_text: {
-            color: "$status.bad",
-            extends: "$text.secondary",
-            size: 14,
-            weight: "bold",
-          },
-          text: {
-            color: "$status.bad",
-            extends: "$text.secondary",
-            size: 14,
-          },
-        },
-      },
-      hint_diagnostic: {
-        extends: "$editor.error_diagnostic",
-        message: {
-          highlight_text: {
-            color: "$status.info",
-          },
-          text: {
-            color: "$status.info",
-          },
-        },
-      },
-      information_diagnostic: {
-        extends: "$editor.error_diagnostic",
-        message: {
-          highlight_text: {
-            color: "$status.info",
-          },
-          text: {
-            color: "$status.info",
-          },
-        },
-      },
-      invalid_error_diagnostic: {
-        extends: "$editor.error_diagnostic",
-        message: {
-          highlight_text: {
-            color: "$text.muted.color",
-          },
-          text: {
-            color: "$text.muted.color",
-          },
-        },
-      },
-      invalid_hint_diagnostic: {
-        extends: "$editor.hint_diagnostic",
-        message: {
-          highlight_text: {
-            color: "$text.muted.color",
-          },
-          text: {
-            color: "$text.muted.color",
-          },
-        },
-      },
-      invalid_information_diagnostic: {
-        extends: "$editor.information_diagnostic",
-        message: {
-          highlight_text: {
-            color: "$text.muted.color",
-          },
-          text: {
-            color: "$text.muted.color",
-          },
-        },
-      },
-      invalid_warning_diagnostic: {
-        extends: "$editor.warning_diagnostic",
-        message: {
-          highlight_text: {
-            color: "$text.muted.color",
-          },
-          text: {
-            color: "$text.muted.color",
-          },
-        },
-      },
-      warning_diagnostic: {
-        extends: "$editor.error_diagnostic",
-        message: {
-          highlight_text: {
-            color: "$status.warn",
-          },
-          text: {
-            color: "$status.warn",
-          },
-        },
       },
     },
     project_diagnostics: {
