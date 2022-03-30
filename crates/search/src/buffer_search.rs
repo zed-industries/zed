@@ -554,6 +554,7 @@ mod tests {
         let search_bar = cx.add_view(Default::default(), |cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.show(false, cx);
             search_bar
         });
 
