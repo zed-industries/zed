@@ -1317,6 +1317,7 @@ impl Project {
             .or_insert_with(|| {
                 let server_id = post_inc(&mut self.next_language_server_id);
                 let language_server = self.languages.start_language_server(
+                    server_id,
                     language.clone(),
                     worktree_path,
                     self.client.http_client(),
@@ -1517,6 +1518,64 @@ impl Project {
                     Some(language_server)
                 })
             });
+    }
+
+    pub fn restart_language_servers_for_buffers(
+        &mut self,
+        buffers: impl IntoIterator<Item = ModelHandle<Buffer>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<()> {
+        let language_server_lookup_info: HashSet<(WorktreeId, Arc<Path>, PathBuf)> = buffers
+            .into_iter()
+            .filter_map(|buffer| {
+                let file = File::from_dyn(buffer.read(cx).file())?;
+                let worktree = file.worktree.read(cx).as_local()?;
+                let worktree_id = worktree.id();
+                let worktree_abs_path = worktree.abs_path().clone();
+                let full_path = file.full_path(cx);
+                Some((worktree_id, worktree_abs_path, full_path))
+            })
+            .collect();
+        for (worktree_id, worktree_abs_path, full_path) in language_server_lookup_info {
+            let language = self.languages.select_language(&full_path)?;
+            self.restart_language_server(worktree_id, worktree_abs_path, language, cx);
+        }
+
+        None
+    }
+
+    fn restart_language_server(
+        &mut self,
+        worktree_id: WorktreeId,
+        worktree_path: Arc<Path>,
+        language: Arc<Language>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let adapter = if let Some(adapter) = language.lsp_adapter() {
+            adapter
+        } else {
+            return;
+        };
+        let key = (worktree_id, adapter.name());
+        let server_to_shutdown = self.language_servers.remove(&key);
+        self.started_language_servers.remove(&key);
+        server_to_shutdown
+            .as_ref()
+            .map(|(_, server)| self.language_server_statuses.remove(&server.server_id()));
+        cx.spawn_weak(|this, mut cx| async move {
+            if let Some(this) = this.upgrade(&cx) {
+                if let Some((_, server_to_shutdown)) = server_to_shutdown {
+                    if let Some(shutdown_task) = server_to_shutdown.shutdown() {
+                        shutdown_task.await;
+                    }
+                }
+
+                this.update(&mut cx, |this, cx| {
+                    this.start_language_server(worktree_id, worktree_path, language, cx);
+                });
+            }
+        })
+        .detach();
     }
 
     fn on_lsp_event(
@@ -4604,7 +4663,7 @@ impl Item for Buffer {
 mod tests {
     use super::{Event, *};
     use fs::RealFs;
-    use futures::StreamExt;
+    use futures::{future, StreamExt};
     use gpui::test::subscribe;
     use language::{
         tree_sitter_rust, Diagnostic, FakeLspAdapter, LanguageConfig, OffsetRangeExt, Point,
@@ -4614,7 +4673,7 @@ mod tests {
     use serde_json::json;
     use std::{cell::RefCell, os::unix, path::PathBuf, rc::Rc};
     use unindent::Unindent as _;
-    use util::test::temp_tree;
+    use util::{assert_set_eq, test::temp_tree};
     use worktree::WorktreeHandle as _;
 
     #[gpui::test]
@@ -4813,8 +4872,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Another language server is started up, and it is notified about
-        // all three open buffers.
+        // A json language server is started up and is only notified about the json buffer.
         let mut fake_json_server = fake_json_servers.next().await.unwrap();
         assert_eq!(
             fake_json_server
@@ -4886,6 +4944,65 @@ mod tests {
             lsp::TextDocumentIdentifier::new(
                 lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap()
             )
+        );
+
+        // Restart language servers
+        project.update(cx, |project, cx| {
+            project.restart_language_servers_for_buffers(
+                vec![rust_buffer.clone(), json_buffer.clone()],
+                cx,
+            );
+        });
+
+        let mut rust_shutdown_requests = fake_rust_server
+            .handle_request::<lsp::request::Shutdown, _, _>(|_, _| future::ready(()));
+        let mut json_shutdown_requests = fake_json_server
+            .handle_request::<lsp::request::Shutdown, _, _>(|_, _| future::ready(()));
+        futures::join!(rust_shutdown_requests.next(), json_shutdown_requests.next());
+
+        let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
+        let mut fake_json_server = fake_json_servers.next().await.unwrap();
+
+        // Ensure both rust documents are reopened in new rust language server without worrying about order
+        assert_set_eq!(
+            [
+                fake_rust_server
+                    .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                    .await
+                    .text_document,
+                fake_rust_server
+                    .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                    .await
+                    .text_document,
+            ],
+            [
+                lsp::TextDocumentItem {
+                    uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+                    version: 1,
+                    text: rust_buffer.read_with(cx, |buffer, _| buffer.text()),
+                    language_id: Default::default()
+                },
+                lsp::TextDocumentItem {
+                    uri: lsp::Url::from_file_path("/the-root/test2.rs").unwrap(),
+                    version: 1,
+                    text: rust_buffer2.read_with(cx, |buffer, _| buffer.text()),
+                    language_id: Default::default()
+                },
+            ]
+        );
+
+        // Ensure json document is reopened in new json language server
+        assert_eq!(
+            fake_json_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentItem {
+                uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+                version: 0,
+                text: json_buffer.read_with(cx, |buffer, _| buffer.text()),
+                language_id: Default::default()
+            }
         );
 
         // Close notifications are reported only to servers matching the buffer's language.

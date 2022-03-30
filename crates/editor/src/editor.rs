@@ -141,6 +141,7 @@ action!(ToggleCodeActions, bool);
 action!(ConfirmCompletion, Option<usize>);
 action!(ConfirmCodeAction, Option<usize>);
 action!(OpenExcerpts);
+action!(RestartLanguageServer);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -302,6 +303,7 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("ctrl-space", ShowCompletions, Some("Editor")),
         Binding::new("cmd-.", ToggleCodeActions(false), Some("Editor")),
         Binding::new("alt-enter", OpenExcerpts, Some("Editor")),
+        Binding::new("cmd-f10", RestartLanguageServer, Some("Editor")),
     ]);
 
     cx.add_action(Editor::open_new);
@@ -377,6 +379,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::show_completions);
     cx.add_action(Editor::toggle_code_actions);
     cx.add_action(Editor::open_excerpts);
+    cx.add_action(Editor::restart_language_server);
     cx.add_async_action(Editor::confirm_completion);
     cx.add_async_action(Editor::confirm_code_action);
     cx.add_async_action(Editor::rename);
@@ -4865,6 +4868,16 @@ impl Editor {
     #[cfg(any(test, feature = "test-support"))]
     pub fn pending_rename(&self) -> Option<&RenameState> {
         self.pending_rename.as_ref()
+    }
+
+    fn restart_language_server(&mut self, _: &RestartLanguageServer, cx: &mut ViewContext<Self>) {
+        if let Some(project) = self.project.clone() {
+            self.buffer.update(cx, |multi_buffer, cx| {
+                project.update(cx, |project, cx| {
+                    project.restart_language_servers_for_buffers(multi_buffer.all_buffers(), cx);
+                });
+            })
+        }
     }
 
     fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {
