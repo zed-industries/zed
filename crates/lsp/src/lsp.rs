@@ -681,17 +681,13 @@ impl FakeLanguageServer {
         let output_task = cx.background().spawn(async move {
             let mut stdout = smol::io::BufWriter::new(stdout);
             while let Some(message) = outgoing_rx.next().await {
-                stdout
-                    .write_all(CONTENT_LEN_HEADER.as_bytes())
-                    .await
-                    .unwrap();
+                stdout.write_all(CONTENT_LEN_HEADER.as_bytes()).await?;
                 stdout
                     .write_all((format!("{}", message.len())).as_bytes())
-                    .await
-                    .unwrap();
-                stdout.write_all("\r\n\r\n".as_bytes()).await.unwrap();
-                stdout.write_all(&message).await.unwrap();
-                stdout.flush().await.unwrap();
+                    .await?;
+                stdout.write_all("\r\n\r\n".as_bytes()).await?;
+                stdout.write_all(&message).await?;
+                stdout.flush().await?;
             }
             Ok(())
         });

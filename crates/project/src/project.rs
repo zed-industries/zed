@@ -4650,7 +4650,7 @@ impl Item for Buffer {
 mod tests {
     use super::{Event, *};
     use fs::RealFs;
-    use futures::StreamExt;
+    use futures::{future, StreamExt};
     use gpui::test::subscribe;
     use language::{
         tree_sitter_rust, Diagnostic, LanguageConfig, LanguageServerConfig, OffsetRangeExt, Point,
@@ -4856,8 +4856,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Another language server is started up, and it is notified about
-        // all three open buffers.
+        // A json language server is started up and is only notified about the json buffer.
         let mut fake_json_server = fake_json_servers.next().await.unwrap();
         assert_eq!(
             fake_json_server
@@ -4929,6 +4928,67 @@ mod tests {
             lsp::TextDocumentIdentifier::new(
                 lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap()
             )
+        );
+
+        // Restart language servers
+        project.update(cx, |project, cx| {
+            project.restart_language_servers_for_buffers(
+                vec![rust_buffer.clone(), json_buffer.clone()],
+                cx,
+            );
+        });
+
+        let mut rust_shutdown_requests = fake_rust_server
+            .handle_request::<lsp::request::Shutdown, _, _>(|_, _| future::ready(()));
+        let mut json_shutdown_requests = fake_json_server
+            .handle_request::<lsp::request::Shutdown, _, _>(|_, _| future::ready(()));
+        futures::join!(rust_shutdown_requests.next(), json_shutdown_requests.next());
+
+        let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
+        let mut fake_json_server = fake_json_servers.next().await.unwrap();
+
+        // Ensure both rust documents are reopened in new rust language server without worrying about order
+        let mut opened_items = vec![
+            fake_rust_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document,
+            fake_rust_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document,
+        ];
+        opened_items.sort_by_key(|item| item.uri.clone());
+        assert_eq!(
+            opened_items,
+            [
+                lsp::TextDocumentItem {
+                    uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+                    version: 1,
+                    text: rust_buffer.read_with(cx, |buffer, _| buffer.text()),
+                    language_id: Default::default()
+                },
+                lsp::TextDocumentItem {
+                    uri: lsp::Url::from_file_path("/the-root/test2.rs").unwrap(),
+                    version: 1,
+                    text: rust_buffer2.read_with(cx, |buffer, _| buffer.text()),
+                    language_id: Default::default()
+                },
+            ]
+        );
+
+        // Ensure json document is reopened in new json language server
+        assert_eq!(
+            fake_json_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentItem {
+                uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+                version: 0,
+                text: json_buffer.read_with(cx, |buffer, _| buffer.text()),
+                language_id: Default::default()
+            }
         );
 
         // Close notifications are reported only to servers matching the buffer's language.
