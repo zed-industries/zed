@@ -4660,7 +4660,7 @@ mod tests {
     use serde_json::json;
     use std::{cell::RefCell, os::unix, path::PathBuf, rc::Rc};
     use unindent::Unindent as _;
-    use util::test::temp_tree;
+    use util::{assert_set_eq, test::temp_tree};
     use worktree::WorktreeHandle as _;
 
     #[gpui::test]
@@ -4948,19 +4948,17 @@ mod tests {
         let mut fake_json_server = fake_json_servers.next().await.unwrap();
 
         // Ensure both rust documents are reopened in new rust language server without worrying about order
-        let mut opened_items = vec![
-            fake_rust_server
-                .receive_notification::<lsp::notification::DidOpenTextDocument>()
-                .await
-                .text_document,
-            fake_rust_server
-                .receive_notification::<lsp::notification::DidOpenTextDocument>()
-                .await
-                .text_document,
-        ];
-        opened_items.sort_by_key(|item| item.uri.clone());
-        assert_eq!(
-            opened_items,
+        assert_set_eq!(
+            [
+                fake_rust_server
+                    .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                    .await
+                    .text_document,
+                fake_rust_server
+                    .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                    .await
+                    .text_document,
+            ],
             [
                 lsp::TextDocumentItem {
                     uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
