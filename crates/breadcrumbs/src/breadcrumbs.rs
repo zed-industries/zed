@@ -68,7 +68,7 @@ impl View for Breadcrumbs {
             .with_child(Label::new(filename.to_string(), theme.breadcrumbs.text.clone()).boxed())
             .with_children(symbols.into_iter().flat_map(|symbol| {
                 [
-                    Label::new(" > ".to_string(), theme.breadcrumbs.text.clone()).boxed(),
+                    Label::new(" 〉 ".to_string(), theme.breadcrumbs.text.clone()).boxed(),
                     Text::new(symbol.text, theme.breadcrumbs.text.clone())
                         .with_highlights(symbol.highlight_ranges)
                         .boxed(),
