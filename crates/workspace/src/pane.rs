@@ -612,7 +612,7 @@ impl Pane {
                 Empty::new()
                     .contained()
                     .with_border(theme.workspace.tab.container.border)
-                    .flexible(0., true)
+                    .flex(0., true)
                     .named("filler"),
             );
 
@@ -641,7 +641,7 @@ impl View for Pane {
             Flex::column()
                 .with_child(self.render_tabs(cx))
                 .with_child(ChildView::new(&self.toolbar).boxed())
-                .with_child(ChildView::new(active_item).flexible(1., true).boxed())
+                .with_child(ChildView::new(active_item).flex(1., true).boxed())
                 .boxed()
         } else {
             Empty::new().boxed()

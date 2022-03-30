@@ -82,11 +82,7 @@ impl View for BufferSearchBar {
             Flex::row()
                 .with_child(
                     Flex::row()
-                        .with_child(
-                            ChildView::new(&self.query_editor)
-                                .flexible(1., true)
-                                .boxed(),
-                        )
+                        .with_child(ChildView::new(&self.query_editor).flex(1., true).boxed())
                         .with_children(self.active_editor.as_ref().and_then(|editor| {
                             let matches = self.editors_with_matches.get(&editor.downgrade())?;
                             let message = if let Some(match_ix) = self.active_match_index {

@@ -310,7 +310,11 @@ impl View for ThemeSelector {
                                 .with_style(theme.selector.input_editor.container)
                                 .boxed(),
                         )
-                        .with_child(Flexible::new(1.0, false, self.render_matches(cx)).boxed())
+                        .with_child(
+                            FlexItem::new(self.render_matches(cx))
+                                .flex(1., false)
+                                .boxed(),
+                        )
                         .boxed(),
                 )
                 .with_style(theme.selector.container)

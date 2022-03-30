@@ -1946,36 +1946,35 @@ impl View for Workspace {
                                 if let Some(element) =
                                     self.left_sidebar.render_active_item(&theme, cx)
                                 {
-                                    content.add_child(Flexible::new(0.8, false, element).boxed());
+                                    content
+                                        .add_child(FlexItem::new(element).flex(0.8, false).boxed());
                                 }
                                 content.add_child(
                                     Flex::column()
                                         .with_child(
-                                            Flexible::new(
-                                                1.,
-                                                true,
-                                                self.center.render(
-                                                    &theme,
-                                                    &self.follower_states_by_leader,
-                                                    self.project.read(cx).collaborators(),
-                                                ),
-                                            )
+                                            FlexItem::new(self.center.render(
+                                                &theme,
+                                                &self.follower_states_by_leader,
+                                                self.project.read(cx).collaborators(),
+                                            ))
+                                            .flex(1., true)
                                             .boxed(),
                                         )
                                         .with_child(ChildView::new(&self.status_bar).boxed())
-                                        .flexible(1., true)
+                                        .flex(1., true)
                                         .boxed(),
                                 );
                                 if let Some(element) =
                                     self.right_sidebar.render_active_item(&theme, cx)
                                 {
-                                    content.add_child(Flexible::new(0.8, false, element).boxed());
+                                    content
+                                        .add_child(FlexItem::new(element).flex(0.8, false).boxed());
                                 }
                                 content.add_child(self.right_sidebar.render(&theme, cx));
                                 content.boxed()
                             })
                             .with_children(self.modal.as_ref().map(|m| ChildView::new(m).boxed()))
-                            .flexible(1.0, true)
+                            .flex(1.0, true)
                             .boxed(),
                     )
                     .contained()

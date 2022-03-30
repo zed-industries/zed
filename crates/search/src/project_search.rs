@@ -164,12 +164,10 @@ impl View for ProjectSearchView {
                 .aligned()
                 .contained()
                 .with_background_color(theme.editor.background)
-                .flexible(1., true)
+                .flex(1., true)
                 .boxed()
         } else {
-            ChildView::new(&self.results_editor)
-                .flexible(1., true)
-                .boxed()
+            ChildView::new(&self.results_editor).flex(1., true).boxed()
         }
     }
 
@@ -691,11 +689,7 @@ impl View for ProjectSearchBar {
             Flex::row()
                 .with_child(
                     Flex::row()
-                        .with_child(
-                            ChildView::new(&search.query_editor)
-                                .flexible(1., true)
-                                .boxed(),
-                        )
+                        .with_child(ChildView::new(&search.query_editor).flex(1., true).boxed())
                         .with_children(search.active_match_index.map(|match_ix| {
                             Label::new(
                                 format!(
