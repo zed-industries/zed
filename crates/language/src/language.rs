@@ -8,7 +8,7 @@ mod tests;
 
 use anyhow::{anyhow, Context, Result};
 use client::http::{self, HttpClient};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use futures::{
     future::{BoxFuture, Shared},
     FutureExt, TryFutureExt,
@@ -52,7 +52,6 @@ lazy_static! {
             brackets: Default::default(),
             autoclose_before: Default::default(),
             line_comment: None,
-            language_server: Default::default(),
         },
         None,
     ));
@@ -100,6 +99,14 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn initialization_options(&self) -> Option<Value> {
         None
     }
+
+    fn disk_based_diagnostic_sources(&self) -> &'static [&'static str] {
+        Default::default()
+    }
+
+    fn disk_based_diagnostics_progress_token(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -117,8 +124,6 @@ pub struct LanguageConfig {
     #[serde(default)]
     pub autoclose_before: String,
     pub line_comment: Option<String>,
-    #[serde(default)]
-    pub language_server: LanguageServerConfig,
 }
 
 impl Default for LanguageConfig {
@@ -129,15 +134,8 @@ impl Default for LanguageConfig {
             brackets: Default::default(),
             autoclose_before: Default::default(),
             line_comment: Default::default(),
-            language_server: Default::default(),
         }
     }
-}
-
-#[derive(Default, Deserialize)]
-pub struct LanguageServerConfig {
-    pub disk_based_diagnostic_sources: HashSet<String>,
-    pub disk_based_diagnostics_progress_token: Option<String>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -145,6 +143,8 @@ pub struct FakeLspAdapter {
     pub name: &'static str,
     pub capabilities: lsp::ServerCapabilities,
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
+    pub disk_based_diagnostics_progress_token: Option<&'static str>,
+    pub disk_based_diagnostics_sources: &'static [&'static str],
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -500,15 +500,16 @@ impl Language {
         self.config.line_comment.as_deref()
     }
 
-    pub fn disk_based_diagnostic_sources(&self) -> &HashSet<String> {
-        &self.config.language_server.disk_based_diagnostic_sources
+    pub fn disk_based_diagnostic_sources(&self) -> &'static [&'static str] {
+        self.adapter.as_ref().map_or(&[] as &[_], |adapter| {
+            adapter.disk_based_diagnostic_sources()
+        })
     }
 
-    pub fn disk_based_diagnostics_progress_token(&self) -> Option<&String> {
-        self.config
-            .language_server
-            .disk_based_diagnostics_progress_token
+    pub fn disk_based_diagnostics_progress_token(&self) -> Option<&'static str> {
+        self.adapter
             .as_ref()
+            .and_then(|adapter| adapter.disk_based_diagnostics_progress_token())
     }
 
     pub fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams) {
@@ -621,10 +622,13 @@ impl Default for FakeLspAdapter {
             name: "the-fake-language-server",
             capabilities: lsp::LanguageServer::full_capabilities(),
             initializer: None,
+            disk_based_diagnostics_progress_token: None,
+            disk_based_diagnostics_sources: &[],
         }
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl LspAdapter for FakeLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName(self.name.into())
@@ -651,6 +655,14 @@ impl LspAdapter for FakeLspAdapter {
     }
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+
+    fn disk_based_diagnostic_sources(&self) -> &'static [&'static str] {
+        self.disk_based_diagnostics_sources
+    }
+
+    fn disk_based_diagnostics_progress_token(&self) -> Option<&'static str> {
+        self.disk_based_diagnostics_progress_token
+    }
 }
 
 impl ToLspPosition for PointUtf16 {

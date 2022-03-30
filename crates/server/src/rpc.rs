@@ -5001,6 +5001,7 @@ mod tests {
                     });
                 }
             })),
+            ..Default::default()
         });
         host_language_registry.add(Arc::new(language));
 

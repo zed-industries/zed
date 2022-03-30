@@ -112,6 +112,14 @@ impl LspAdapter for RustLspAdapter {
         .boxed()
     }
 
+    fn disk_based_diagnostic_sources(&self) -> &'static [&'static str] {
+        &["rustc"]
+    }
+
+    fn disk_based_diagnostics_progress_token(&self) -> Option<&'static str> {
+        Some("rustAnalyzer/cargo check")
+    }
+
     fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
         lazy_static! {
             static ref REGEX: Regex = Regex::new("(?m)`([^`]+)\n`$").unwrap();

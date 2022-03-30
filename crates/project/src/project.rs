@@ -1536,7 +1536,7 @@ impl Project {
 
         match event {
             LanguageServerEvent::WorkStart { token } => {
-                if Some(&token) == disk_diagnostics_token {
+                if Some(token.as_str()) == disk_diagnostics_token {
                     language_server_status.pending_diagnostic_updates += 1;
                     if language_server_status.pending_diagnostic_updates == 1 {
                         self.disk_based_diagnostics_started(cx);
@@ -1558,7 +1558,7 @@ impl Project {
                 }
             }
             LanguageServerEvent::WorkProgress { token, progress } => {
-                if Some(&token) != disk_diagnostics_token {
+                if Some(token.as_str()) != disk_diagnostics_token {
                     self.on_lsp_work_progress(
                         language_server_id,
                         token.clone(),
@@ -1578,7 +1578,7 @@ impl Project {
                 }
             }
             LanguageServerEvent::WorkEnd { token } => {
-                if Some(&token) == disk_diagnostics_token {
+                if Some(token.as_str()) == disk_diagnostics_token {
                     language_server_status.pending_diagnostic_updates -= 1;
                     if language_server_status.pending_diagnostic_updates == 0 {
                         self.disk_based_diagnostics_finished(cx);
@@ -1708,7 +1708,7 @@ impl Project {
     pub fn update_diagnostics(
         &mut self,
         params: lsp::PublishDiagnosticsParams,
-        disk_based_sources: &HashSet<String>,
+        disk_based_sources: &[&str],
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let abs_path = params
@@ -1751,8 +1751,9 @@ impl Project {
                 );
             } else {
                 let group_id = post_inc(&mut next_group_id);
-                let is_disk_based =
-                    source.map_or(false, |source| disk_based_sources.contains(source));
+                let is_disk_based = source.map_or(false, |source| {
+                    disk_based_sources.contains(&source.as_str())
+                });
 
                 sources_by_group_id.insert(group_id, source);
                 primary_diagnostic_group_ids
@@ -4606,8 +4607,8 @@ mod tests {
     use futures::StreamExt;
     use gpui::test::subscribe;
     use language::{
-        tree_sitter_rust, Diagnostic, FakeLspAdapter, LanguageConfig, LanguageServerConfig,
-        OffsetRangeExt, Point, ToPoint,
+        tree_sitter_rust, Diagnostic, FakeLspAdapter, LanguageConfig, OffsetRangeExt, Point,
+        ToPoint,
     };
     use lsp::Url;
     use serde_json::json;
@@ -4906,20 +4907,20 @@ mod tests {
     async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
 
-        let progress_token = "the-progress-token".to_string();
+        let progress_token = "the-progress-token";
         let mut language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: LanguageServerConfig {
-                    disk_based_diagnostics_progress_token: Some(progress_token.clone()),
-                    ..Default::default()
-                },
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
         );
-        let mut fake_servers = language.set_fake_lsp_adapter(Default::default());
+        let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+            disk_based_diagnostics_progress_token: Some(progress_token),
+            disk_based_diagnostics_sources: &["disk"],
+            ..Default::default()
+        });
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -4956,15 +4957,15 @@ mod tests {
         let mut events = subscribe(&project, cx);
 
         let mut fake_server = fake_servers.next().await.unwrap();
-        fake_server.start_progress(&progress_token).await;
+        fake_server.start_progress(progress_token).await;
         assert_eq!(
             events.next().await.unwrap(),
             Event::DiskBasedDiagnosticsStarted
         );
 
-        fake_server.start_progress(&progress_token).await;
-        fake_server.end_progress(&progress_token).await;
-        fake_server.start_progress(&progress_token).await;
+        fake_server.start_progress(progress_token).await;
+        fake_server.end_progress(progress_token).await;
+        fake_server.start_progress(progress_token).await;
 
         fake_server.notify::<lsp::notification::PublishDiagnostics>(
             lsp::PublishDiagnosticsParams {
@@ -4983,8 +4984,8 @@ mod tests {
             Event::DiagnosticsUpdated((worktree_id, Path::new("a.rs")).into())
         );
 
-        fake_server.end_progress(&progress_token).await;
-        fake_server.end_progress(&progress_token).await;
+        fake_server.end_progress(progress_token).await;
+        fake_server.end_progress(progress_token).await;
         assert_eq!(
             events.next().await.unwrap(),
             Event::DiskBasedDiagnosticsUpdated
@@ -5024,20 +5025,18 @@ mod tests {
     async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
 
-        // let (mut lsp_config, mut fake_servers) = LanguageServerConfig::fake();
         let mut language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: LanguageServerConfig {
-                    disk_based_diagnostic_sources: ["disk".to_string()].into_iter().collect(),
-                    ..Default::default()
-                },
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
         );
-        let mut fake_servers = language.set_fake_lsp_adapter(Default::default());
+        let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+            disk_based_diagnostics_sources: &["disk"],
+            ..Default::default()
+        });
 
         let text = "
             fn a() { A }
@@ -6551,9 +6550,7 @@ mod tests {
         };
 
         project
-            .update(cx, |p, cx| {
-                p.update_diagnostics(message, &Default::default(), cx)
-            })
+            .update(cx, |p, cx| p.update_diagnostics(message, &[], cx))
             .unwrap();
         let buffer = buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
