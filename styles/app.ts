@@ -4,6 +4,7 @@ import workspace from "./workspace";
 import editor from "./editor";
 import Theme from "./theme";
 import projectPanel from "./project-panel";
+import chatPanel from "./chat-panel";
 
 export const panel = {
   padding: { top: 12, left: 12, bottom: 12, right: 12 },
@@ -30,116 +31,7 @@ export default function app(theme: Theme): Object {
       },
     },
     projectPanel: projectPanel(theme),
-    chatPanel: {
-      extends: "$panel",
-      channelName: {
-        extends: "$text.primary",
-        weight: "bold",
-      },
-      channelNameHash: {
-        text: "$text.muted",
-        padding: {
-          right: 8,
-        },
-      },
-      channelSelect: {
-        activeItem: {
-          extends: "$chatPanel.channel_select.item",
-          name: "$text.primary",
-        },
-        header: {
-          extends: "$chat_panel.channel_select.activeItem",
-          padding: {
-            bottom: 4,
-            left: 0,
-          },
-        },
-        hoveredActiveItem: {
-          extends: "$chatPanel.channelSelect.hoveredItem",
-          name: "$text.primary",
-        },
-        hoveredItem: {
-          background: "$state.hover",
-          cornerRadius: 6,
-          extends: "$chat_panel.channelSelect.item",
-        },
-        item: {
-          name: "$text.secondary",
-          padding: 4,
-          hash: {
-            extends: "$text.muted",
-            margin: {
-              right: 8,
-            },
-          },
-        },
-        menu: {
-          background: "$surface.500",
-          cornerRadius: 6,
-          padding: 4,
-          border: {
-            color: "$border.primary",
-            width: 1,
-          },
-          shadow: {
-            blur: 16,
-            color: "$shadow.0",
-            offset: [0, 2],
-          },
-        },
-      },
-      hoveredSignInPrompt: {
-        color: "$text.secondary.color",
-        extends: "$chatPanel.signInPrompt",
-      },
-      inputEditor: {
-        background: backgroundColor(theme, 300),
-        cornerRadius: 6,
-        placeholderText: "$text.muted",
-        selection: "$selection.host",
-        text: "$text.primary",
-        border: {
-          color: "$border.primary",
-          width: 1,
-        },
-        padding: {
-          bottom: 7,
-          left: 8,
-          right: 8,
-          top: 7,
-        },
-      },
-      message: {
-        body: "$text.secondary",
-        timestamp: "$text.muted",
-        padding: {
-          bottom: 6,
-        },
-        sender: {
-          extends: "$text.primary",
-          weight: "bold",
-          margin: {
-            right: 8,
-          },
-        },
-      },
-      pendingMessage: {
-        extends: "$chatPanel.message",
-        body: {
-          color: "$text.muted.color",
-        },
-        sender: {
-          color: "$text.muted.color",
-        },
-        timestamp: {
-          color: "$text.muted.color",
-        },
-      },
-      signInPrompt: {
-        extends: "$text.primary",
-        underline: true,
-      },
-    },
+    chatPanel: chatPanel(theme),
     contactsPanel: {
       extends: "$panel",
       hostRowHeight: 28,
