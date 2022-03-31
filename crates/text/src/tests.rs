@@ -165,6 +165,15 @@ fn test_line_len() {
 }
 
 #[test]
+fn test_common_prefix_at_positionn() {
+    let buffer = Buffer::new(0, 0, History::new("a = (bcd)".into()));
+    assert_eq!(
+        buffer.common_prefix_at_position(Point::new(0, 8), "bcdef"),
+        Point::new(0, 5)..Point::new(0, 8)
+    )
+}
+
+#[test]
 fn test_text_summary_for_range() {
     let buffer = Buffer::new(0, 0, History::new("ab\nefg\nhklm\nnopqrs\ntuvwxyz".into()));
     assert_eq!(

@@ -1508,6 +1508,13 @@ impl BufferSnapshot {
                 .eq(needle.bytes())
     }
 
+    pub fn common_prefix_at_position<T>(&self, position: T, needle: &str) -> Range<T>
+    where
+        T: TextDimension + ToOffset,
+    {
+        todo!()
+    }
+
     pub fn text(&self) -> String {
         self.visible_text.to_string()
     }

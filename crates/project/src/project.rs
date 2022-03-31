@@ -2363,7 +2363,10 @@ impl Project {
                                 Some(lsp::CompletionTextEdit::Edit(edit)) => {
                                     (range_from_lsp(edit.range), edit.new_text.clone())
                                 }
-                                None => (position..position, lsp_completion.label.clone()),
+                                None => (
+                                    this.common_prefix_at_position(position, &lsp_completion.label),
+                                    lsp_completion.label.clone(),
+                                ),
                                 Some(lsp::CompletionTextEdit::InsertAndReplace(_)) => {
                                     log::info!("unsupported insert/replace completion");
                                     return None;
