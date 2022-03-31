@@ -4,7 +4,7 @@ import {
   iconColor,
   player,
   text,
-  TextColor,
+  TextColor
 } from "./components";
 import Theme from "./theme";
 
@@ -89,7 +89,7 @@ export default function editor(theme: Theme) {
     diagnosticHeader: {
       background: theme.editor.background.value,
       iconWidthFactor: 1.5,
-      textScaleFactor: 0.857,
+      textScaleFactor: 0.857, // NateQ: Will we need dynamic sizing for text? If so let's create tokens for these.
       border: border(theme, "secondary", {
         bottom: true,
         top: true,

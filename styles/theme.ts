@@ -71,6 +71,18 @@ export default interface Theme {
     active: {
       value: Color;
     };
+    ok: {
+      value: Color;
+    };
+    error: {
+      value: Color;
+    };
+    warning: {
+      value: Color;
+    };
+    info: {
+      value: Color;
+    };
   };
   textColor: {
     primary: {
