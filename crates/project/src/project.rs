@@ -2046,7 +2046,12 @@ impl Project {
                     language_server
                         .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
                             text_document,
-                            options: Default::default(),
+                            options: lsp::FormattingOptions {
+                                tab_size: 4,
+                                insert_spaces: true,
+                                insert_final_newline: Some(true),
+                                ..Default::default()
+                            },
                             work_done_progress_params: Default::default(),
                         })
                         .await?
@@ -2064,7 +2069,12 @@ impl Project {
                             lsp::DocumentRangeFormattingParams {
                                 text_document,
                                 range: lsp::Range::new(buffer_start, buffer_end),
-                                options: Default::default(),
+                                options: lsp::FormattingOptions {
+                                    tab_size: 4,
+                                    insert_spaces: true,
+                                    insert_final_newline: Some(true),
+                                    ..Default::default()
+                                },
                                 work_done_progress_params: Default::default(),
                             },
                         )

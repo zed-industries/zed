@@ -181,6 +181,7 @@ impl LanguageServer {
 
                         buffer.resize(message_len, 0);
                         stdout.read_exact(&mut buffer).await?;
+                        log::trace!("incoming message:{}", String::from_utf8_lossy(&buffer));
 
                         if let Ok(AnyNotification { id, method, params }) =
                             serde_json::from_slice(&buffer)
@@ -229,6 +230,7 @@ impl LanguageServer {
                 let _clear_response_handlers = ClearResponseHandlers(response_handlers);
                 let mut content_len_buffer = Vec::new();
                 while let Ok(message) = outbound_rx.recv().await {
+                    log::trace!("outgoing message:{}", String::from_utf8_lossy(&message));
                     content_len_buffer.clear();
                     write!(content_len_buffer, "{}", message.len()).unwrap();
                     stdin.write_all(CONTENT_LEN_HEADER.as_bytes()).await?;
