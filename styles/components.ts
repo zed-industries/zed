@@ -41,7 +41,7 @@ export function border(
   options?: BorderOptions
 ) {
   return {
-    color: theme.borderColor[color].value,
+    color: borderColor(theme, color),
     width: 1,
     ...options,
   };
