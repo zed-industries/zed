@@ -9,7 +9,11 @@ export function text(
   theme: Theme,
   fontFamily: keyof typeof core.fontFamily,
   color: TextColor,
-  properties?: { size?: keyof typeof core["fontSize"]; weight?: Weight }
+  properties?: {
+    size?: keyof typeof core["fontSize"];
+    weight?: Weight;
+    underline?: boolean;
+  }
 ) {
   const sizeKey = properties.size || fontFamily === "sans" ? "sm" : "md";
   const size = core.fontSize[sizeKey].value;
@@ -74,7 +78,7 @@ export function backgroundColor(
   return theme.backgroundColor[name][state || "base"].value;
 }
 
-export function shadow(theme) {
+export function shadow(theme: Theme) {
   return {
     blur: 16,
     color: chroma("black").alpha(theme.shadowAlpha.value).hex(),
