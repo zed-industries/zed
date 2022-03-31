@@ -662,18 +662,21 @@ impl LspAdapter for FakeLspAdapter {
     }
 }
 
-impl ToLspPosition for PointUtf16 {
-    fn to_lsp_position(self) -> lsp::Position {
-        lsp::Position::new(self.row, self.column)
-    }
+pub fn point_to_lsp(point: PointUtf16) -> lsp::Position {
+    lsp::Position::new(point.row, point.column)
 }
 
 pub fn point_from_lsp(point: lsp::Position) -> PointUtf16 {
     PointUtf16::new(point.line, point.character)
 }
 
+pub fn range_to_lsp(range: Range<PointUtf16>) -> lsp::Range {
+    lsp::Range {
+        start: point_to_lsp(range.start),
+        end: point_to_lsp(range.end),
+    }
+}
+
 pub fn range_from_lsp(range: lsp::Range) -> Range<PointUtf16> {
-    let start = PointUtf16::new(range.start.line, range.start.character);
-    let end = PointUtf16::new(range.end.line, range.end.character);
-    start..end
+    point_from_lsp(range.start)..point_from_lsp(range.end)
 }

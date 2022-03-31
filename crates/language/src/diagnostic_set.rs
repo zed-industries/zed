@@ -34,6 +34,23 @@ pub struct Summary {
     count: usize,
 }
 
+impl<T> DiagnosticEntry<T> {
+    // Used to provide diagnostic context to lsp codeAction request
+    pub fn to_lsp_diagnostic_stub(&self) -> lsp::Diagnostic {
+        let code = self
+            .diagnostic
+            .code
+            .clone()
+            .map(lsp::NumberOrString::String);
+
+        lsp::Diagnostic {
+            code,
+            severity: Some(self.diagnostic.severity),
+            ..Default::default()
+        }
+    }
+}
+
 impl DiagnosticSet {
     pub fn from_sorted_entries<I>(iter: I, buffer: &text::BufferSnapshot) -> Self
     where

@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use client::{proto, PeerId};
 use gpui::{AppContext, AsyncAppContext, ModelHandle};
 use language::{
-    point_from_lsp,
+    point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
-    range_from_lsp, Anchor, Bias, Buffer, PointUtf16, ToLspPosition, ToPointUtf16,
+    range_from_lsp, Anchor, Bias, Buffer, PointUtf16, ToPointUtf16,
 };
 use lsp::{DocumentHighlightKind, ServerCapabilities};
 use std::{cmp::Reverse, ops::Range, path::Path};
@@ -91,7 +91,7 @@ impl LspCommand for PrepareRename {
             text_document: lsp::TextDocumentIdentifier {
                 uri: lsp::Url::from_file_path(path).unwrap(),
             },
-            position: self.position.to_lsp_position(),
+            position: point_to_lsp(self.position),
         }
     }
 
@@ -208,7 +208,7 @@ impl LspCommand for PerformRename {
                 text_document: lsp::TextDocumentIdentifier {
                     uri: lsp::Url::from_file_path(path).unwrap(),
                 },
-                position: self.position.to_lsp_position(),
+                position: point_to_lsp(self.position),
             },
             new_name: self.new_name.clone(),
             work_done_progress_params: Default::default(),
@@ -325,7 +325,7 @@ impl LspCommand for GetDefinition {
                 text_document: lsp::TextDocumentIdentifier {
                     uri: lsp::Url::from_file_path(path).unwrap(),
                 },
-                position: self.position.to_lsp_position(),
+                position: point_to_lsp(self.position),
             },
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
@@ -497,7 +497,7 @@ impl LspCommand for GetReferences {
                 text_document: lsp::TextDocumentIdentifier {
                     uri: lsp::Url::from_file_path(path).unwrap(),
                 },
-                position: self.position.to_lsp_position(),
+                position: point_to_lsp(self.position),
             },
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
@@ -659,7 +659,7 @@ impl LspCommand for GetDocumentHighlights {
                 text_document: lsp::TextDocumentIdentifier {
                     uri: lsp::Url::from_file_path(path).unwrap(),
                 },
-                position: self.position.to_lsp_position(),
+                position: point_to_lsp(self.position),
             },
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),

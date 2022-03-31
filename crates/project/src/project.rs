@@ -15,11 +15,12 @@ use gpui::{
     MutableAppContext, Task, UpgradeModelHandle, WeakModelHandle,
 };
 use language::{
+    point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
-    range_from_lsp, Anchor, Bias, Buffer, CodeAction, CodeLabel, Completion, Diagnostic,
-    DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _, Language, LanguageRegistry,
-    LanguageServerName, LocalFile, LspAdapter, OffsetRangeExt, Operation, Patch, PointUtf16,
-    TextBufferSnapshot, ToLspPosition, ToOffset, ToPointUtf16, Transaction,
+    range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CodeAction, CodeLabel, Completion,
+    Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _, Language,
+    LanguageRegistry, LanguageServerName, LocalFile, LspAdapter, OffsetRangeExt, Operation, Patch,
+    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
 };
 use lsp::{DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer};
 use lsp_command::*;
@@ -1215,8 +1216,8 @@ impl Project {
                             .collect();
                         lsp::TextDocumentContentChangeEvent {
                             range: Some(lsp::Range::new(
-                                edit_start.to_lsp_position(),
-                                edit_end.to_lsp_position(),
+                                point_to_lsp(edit_start),
+                                point_to_lsp(edit_end),
                             )),
                             range_length: None,
                             text: new_text,
@@ -2061,9 +2062,8 @@ impl Project {
                     .map_or(false, |provider| *provider != lsp::OneOf::Left(false))
                 {
                     let buffer_start = lsp::Position::new(0, 0);
-                    let buffer_end = buffer
-                        .read_with(&cx, |buffer, _| buffer.max_point_utf16())
-                        .to_lsp_position();
+                    let buffer_end =
+                        buffer.read_with(&cx, |buffer, _| point_to_lsp(buffer.max_point_utf16()));
                     language_server
                         .request::<lsp::request::RangeFormatting>(
                             lsp::DocumentRangeFormattingParams {
@@ -2337,7 +2337,7 @@ impl Project {
                             lsp::TextDocumentIdentifier::new(
                                 lsp::Url::from_file_path(buffer_abs_path).unwrap(),
                             ),
-                            position.to_lsp_position(),
+                            point_to_lsp(position),
                         ),
                         context: Default::default(),
                         work_done_progress_params: Default::default(),
@@ -2511,7 +2511,7 @@ impl Project {
         }
     }
 
-    pub fn code_actions<T: ToOffset>(
+    pub fn code_actions<T: Clone + ToOffset>(
         &self,
         buffer_handle: &ModelHandle<Buffer>,
         range: Range<T>,
@@ -2519,6 +2519,11 @@ impl Project {
     ) -> Task<Result<Vec<CodeAction>>> {
         let buffer_handle = buffer_handle.clone();
         let buffer = buffer_handle.read(cx);
+        let snapshot = buffer.snapshot();
+        let relevant_diagnostics = snapshot
+            .diagnostics_in_range::<usize, usize>(range.to_offset(&snapshot), false)
+            .map(|entry| entry.to_lsp_diagnostic_stub())
+            .collect();
         let buffer_id = buffer.remote_id();
         let worktree;
         let buffer_abs_path;
@@ -2539,10 +2544,7 @@ impl Project {
                 return Task::ready(Ok(Default::default()));
             };
 
-            let lsp_range = lsp::Range::new(
-                range.start.to_point_utf16(buffer).to_lsp_position(),
-                range.end.to_point_utf16(buffer).to_lsp_position(),
-            );
+            let lsp_range = range_to_lsp(range.to_point_utf16(buffer));
             cx.foreground().spawn(async move {
                 if !lang_server.capabilities().code_action_provider.is_some() {
                     return Ok(Default::default());
@@ -2557,11 +2559,12 @@ impl Project {
                         work_done_progress_params: Default::default(),
                         partial_result_params: Default::default(),
                         context: lsp::CodeActionContext {
-                            diagnostics: Default::default(),
+                            diagnostics: relevant_diagnostics,
                             only: Some(vec![
                                 lsp::CodeActionKind::QUICKFIX,
                                 lsp::CodeActionKind::REFACTOR,
                                 lsp::CodeActionKind::REFACTOR_EXTRACT,
+                                lsp::CodeActionKind::SOURCE,
                             ]),
                         },
                     })
@@ -2636,11 +2639,7 @@ impl Project {
                     .and_then(|d| d.get_mut("codeActionParams"))
                     .and_then(|d| d.get_mut("range"))
                 {
-                    *lsp_range = serde_json::to_value(&lsp::Range::new(
-                        range.start.to_lsp_position(),
-                        range.end.to_lsp_position(),
-                    ))
-                    .unwrap();
+                    *lsp_range = serde_json::to_value(&range_to_lsp(range)).unwrap();
                     action.lsp_action = lang_server
                         .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
                         .await?;

@@ -1088,8 +1088,8 @@ mod tests {
     };
     use gpui::{executor, geometry::vector::vec2f, ModelHandle, TestAppContext, ViewHandle};
     use language::{
-        tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig,
-        LanguageRegistry, OffsetRangeExt, Point, ToLspPosition,
+        range_to_lsp, tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
+        LanguageConfig, LanguageRegistry, OffsetRangeExt, Point,
     };
     use lsp::{self, FakeLanguageServer};
     use parking_lot::Mutex;
@@ -4979,14 +4979,9 @@ mod tests {
                                     for _ in 0..highlight_count {
                                         let range =
                                             buffer.random_byte_range(prev_end, &mut *rng.lock());
-                                        let start = buffer
-                                            .offset_to_point_utf16(range.start)
-                                            .to_lsp_position();
-                                        let end = buffer
-                                            .offset_to_point_utf16(range.end)
-                                            .to_lsp_position();
+
                                         highlights.push(lsp::DocumentHighlight {
-                                            range: lsp::Range::new(start, end),
+                                            range: range_to_lsp(range.to_point_utf16(buffer)),
                                             kind: Some(lsp::DocumentHighlightKind::READ),
                                         });
                                         prev_end = range.end;
