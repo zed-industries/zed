@@ -83,7 +83,13 @@ impl View for BufferSearchBar {
         Flex::row()
             .with_child(
                 Flex::row()
-                    .with_child(ChildView::new(&self.query_editor).flex(1., true).boxed())
+                    .with_child(
+                        ChildView::new(&self.query_editor)
+                            .aligned()
+                            .left()
+                            .flex(1., true)
+                            .boxed(),
+                    )
                     .with_children(self.active_editor.as_ref().and_then(|editor| {
                         let matches = self.editors_with_matches.get(&editor.downgrade())?;
                         let message = if let Some(match_ix) = self.active_match_index {
@@ -104,7 +110,9 @@ impl View for BufferSearchBar {
                     .with_style(editor_container)
                     .aligned()
                     .constrained()
+                    .with_min_width(theme.search.editor.min_width)
                     .with_max_width(theme.search.editor.max_width)
+                    .flex(1., false)
                     .boxed(),
             )
             .with_child(
@@ -124,6 +132,8 @@ impl View for BufferSearchBar {
                     .aligned()
                     .boxed(),
             )
+            .contained()
+            .with_style(theme.search.container)
             .named("search bar")
     }
 }

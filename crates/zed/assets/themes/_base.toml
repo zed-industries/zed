@@ -87,13 +87,15 @@ lsp_message = "$text.2"
 [workspace.toolbar]
 background = "$surface.1"
 border = { color = "$border.0", width = 1, left = false, right = false, bottom = true, top = false }
-height = 44
+height = 34
 item_spacing = 8
-padding.left = 8
+padding.left = 16
 padding.right = 8
+padding.bottom = 4
 
 [breadcrumbs]
-text = "$text.1"
+extends = "$text.1"
+padding = { left = 6 }
 
 [panel]
 padding = { top = 12, left = 12, bottom = 12, right = 12 }
@@ -395,15 +397,16 @@ extends = "$text.2"
 padding = 6
 
 [search.editor]
-max_width = 250
+min_width = 200
+max_width = 500
 background = "$surface.0"
 corner_radius = 6
-padding = { left = 13, right = 13, top = 3, bottom = 3 }
-margin = { top = 5, bottom = 5, left = 5, right = 5 }
+padding = { left = 14, right = 14, top = 3, bottom = 3 }
+margin = { right = 5 }
 text = "$text.0"
 placeholder_text = "$text.2"
 selection = "$selection.host"
-border = { width = 1, color = "$border.0" }
+border = { width = 1, color = "$border.0", overlay = true }
 
 [search.invalid_editor]
 extends = "$search.editor"

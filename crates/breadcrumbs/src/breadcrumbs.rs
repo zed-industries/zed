@@ -75,6 +75,8 @@ impl View for Breadcrumbs {
                         .boxed(),
                 ]
             }))
+            .contained()
+            .with_style(theme.breadcrumbs.container)
             .boxed()
     }
 }

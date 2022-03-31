@@ -26,7 +26,7 @@ pub struct Theme {
     pub editor: Editor,
     pub search: Search,
     pub project_diagnostics: ProjectDiagnostics,
-    pub breadcrumbs: Breadcrumbs,
+    pub breadcrumbs: ContainedText,
 }
 
 #[derive(Deserialize, Default)]
@@ -123,6 +123,7 @@ pub struct Search {
 pub struct FindEditor {
     #[serde(flatten)]
     pub input: FieldEditor,
+    pub min_width: f32,
     pub max_width: f32,
 }
 
@@ -276,11 +277,6 @@ pub struct ProjectDiagnostics {
     pub tab_icon_width: f32,
     pub tab_icon_spacing: f32,
     pub tab_summary_spacing: f32,
-}
-
-#[derive(Clone, Deserialize, Default)]
-pub struct Breadcrumbs {
-    pub text: TextStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]

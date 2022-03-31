@@ -127,7 +127,7 @@ impl Toolbar {
             }
         })
         .detach();
-        self.items.push((Box::new(item), dbg!(location)));
+        self.items.push((Box::new(item), location));
         cx.notify();
     }
 
