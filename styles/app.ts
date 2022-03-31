@@ -1,10 +1,10 @@
-import { backgroundColor, text } from "./components";
-import selectorModal from "./selector-modal";
-import workspace from "./workspace";
-import editor from "./editor";
-import Theme from "./theme";
-import projectPanel from "./project-panel";
 import chatPanel from "./chat-panel";
+import { backgroundColor, border, borderColor, player, text } from "./components";
+import editor from "./editor";
+import projectPanel from "./project-panel";
+import selectorModal from "./selector-modal";
+import Theme from "./theme";
+import workspace from "./workspace";
 
 export const panel = {
   padding: { top: 12, left: 12, bottom: 12, right: 12 },
@@ -35,27 +35,27 @@ export default function app(theme: Theme): Object {
     contactsPanel: {
       extends: "$panel",
       hostRowHeight: 28,
-      treeBranchColor: "$surface.100",
+      treeBranchColor: borderColor(theme, "muted"),
       treeBranchWidth: 1,
       hostAvatar: {
         cornerRadius: 10,
         width: 18,
       },
       hostUsername: {
-        extends: "$text.primary",
+        ...text(theme, "mono", "muted"),
         padding: {
           left: 8,
         },
       },
       hoveredSharedProject: {
-        background: "$state.hover",
-        cornerRadius: 6,
         extends: "$contacts_panel.sharedProject",
+        background: theme.editor.line.active.value,
+        cornerRadius: 6,
       },
       hoveredUnsharedProject: {
-        background: "$state.hover",
-        cornerRadius: 6,
         extends: "$contacts_panel.unsharedProject",
+        background: theme.editor.line.active.value,
+        cornerRadius: 6,
       },
       project: {
         guestAvatarSpacing: 4,
@@ -65,7 +65,7 @@ export default function app(theme: Theme): Object {
           width: 14,
         },
         name: {
-          extends: "$text.secondary",
+          extends: text(theme, "mono", "secondary"),
           margin: {
             right: 6,
           },
@@ -77,7 +77,7 @@ export default function app(theme: Theme): Object {
       sharedProject: {
         extends: "$contactsPanel.project",
         name: {
-          color: "$text.primary.color",
+          color: text(theme, "mono", "primary"),
         },
       },
       unsharedProject: {
@@ -86,28 +86,25 @@ export default function app(theme: Theme): Object {
     },
     search: {
       background: backgroundColor(theme, 300),
-      matchBackground: "$state.highlightedLine",
+      matchBackground: theme.editor.highlight.match,
       tabIconSpacing: 4,
       tabIconWidth: 14,
       activeHoveredOptionButton: {
-        background: "$surface.100",
         extends: "$search.option_button",
+        background: backgroundColor(theme, 100),
       },
       activeOptionButton: {
-        background: "$surface.100",
         extends: "$search.option_button",
+        background: backgroundColor(theme, 100),
       },
       editor: {
-        background: "$surface.500",
+        background: backgroundColor(theme, 500),
         cornerRadius: 6,
         maxWidth: 400,
-        placeholderText: "$text.muted",
-        selection: "$selection.host",
-        text: "$text.primary",
-        border: {
-          color: "$border.primary",
-          width: 1,
-        },
+        placeholderText: text(theme, "mono", "placeholder"),
+        selection: player(theme, 1).selection,
+        text: text(theme, "mono", "primary"),
+        border: border(theme, "primary"),
         margin: {
           bottom: 5,
           left: 5,
@@ -122,28 +119,22 @@ export default function app(theme: Theme): Object {
         },
       },
       hoveredOptionButton: {
-        background: "$surface.100",
         extends: "$search.optionButton",
+        background: backgroundColor(theme, 100),
       },
       invalidEditor: {
         extends: "$search.editor",
-        border: {
-          color: "$status.bad",
-          width: 1,
-        },
+        border: border(theme, "error"),
       },
       matchIndex: {
-        extends: "$text.secondary",
+        ...text(theme, "mono", "secondary"),
         padding: 6,
       },
       optionButton: {
+        ...text(theme, "mono", "secondary"),
         background: backgroundColor(theme, 300),
         cornerRadius: 6,
-        extends: "$text.secondary",
-        border: {
-          color: "$border.primary",
-          width: 1,
-        },
+        border: border(theme, "primary"),
         margin: {
           left: 1,
           right: 1,
@@ -162,7 +153,7 @@ export default function app(theme: Theme): Object {
         },
       },
       resultsStatus: {
-        extends: "$text.primary",
+        ...text(theme, "mono", "primary"),
         size: 18,
       },
     },

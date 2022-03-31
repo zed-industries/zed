@@ -47,6 +47,10 @@ export function border(
   };
 }
 
+export function borderColor(theme: Theme, color: keyof Theme["borderColor"]) {
+  return theme.borderColor[color].value;
+}
+
 export function iconColor(theme: Theme, color: keyof Theme["iconColor"]) {
   return theme.iconColor[color].value;
 }

@@ -42,8 +42,8 @@ export default function workspace(theme: Theme) {
   };
 
   const sidebarItem = {
-    height: "$workspace.tab.height",
-    iconColor: "$text.muted.color",
+    height: 32,
+    iconColor: iconColor(theme, "secondary"),
     iconSize: 18,
   };
   const sidebar = {
