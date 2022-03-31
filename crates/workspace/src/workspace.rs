@@ -48,7 +48,7 @@ use std::{
     },
 };
 use theme::{Theme, ThemeRegistry};
-pub use toolbar::ToolbarItemView;
+pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
 
 type ProjectItemBuilders = HashMap<

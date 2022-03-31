@@ -1,7 +1,7 @@
 pub use buffer_search::BufferSearchBar;
 use editor::{Anchor, MultiBufferSnapshot};
 use gpui::{action, MutableAppContext};
-pub use project_search::ProjectSearchBar;
+pub use project_search::{ProjectSearchBar, ProjectSearchView};
 use std::{
     cmp::{self, Ordering},
     ops::Range,

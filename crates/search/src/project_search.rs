@@ -16,7 +16,9 @@ use std::{
     path::PathBuf,
 };
 use util::ResultExt as _;
-use workspace::{Item, ItemNavHistory, Pane, Settings, ToolbarItemView, Workspace};
+use workspace::{
+    Item, ItemNavHistory, Pane, Settings, ToolbarItemLocation, ToolbarItemView, Workspace,
+};
 
 action!(Deploy);
 action!(Search);
@@ -56,7 +58,7 @@ struct ProjectSearch {
     active_query: Option<SearchQuery>,
 }
 
-struct ProjectSearchView {
+pub struct ProjectSearchView {
     model: ModelHandle<ProjectSearch>,
     query_editor: ViewHandle<Editor>,
     results_editor: ViewHandle<Editor>,
@@ -136,7 +138,7 @@ impl ProjectSearch {
     }
 }
 
-enum ViewEvent {
+pub enum ViewEvent {
     UpdateTab,
 }
 
@@ -748,14 +750,17 @@ impl ToolbarItemView for ProjectSearchBar {
         &mut self,
         active_pane_item: Option<&dyn workspace::ItemHandle>,
         cx: &mut ViewContext<Self>,
-    ) {
+    ) -> ToolbarItemLocation {
+        cx.notify();
         self.subscription = None;
         self.active_project_search = None;
         if let Some(search) = active_pane_item.and_then(|i| i.downcast::<ProjectSearchView>()) {
             self.subscription = Some(cx.observe(&search, |_, _, cx| cx.notify()));
             self.active_project_search = Some(search);
+            ToolbarItemLocation::PrimaryLeft
+        } else {
+            ToolbarItemLocation::Hidden
         }
-        cx.notify();
     }
 }
 

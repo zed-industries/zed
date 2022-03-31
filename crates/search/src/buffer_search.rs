@@ -8,12 +8,16 @@ use gpui::{
 use language::OffsetRangeExt;
 use project::search::SearchQuery;
 use std::ops::Range;
-use workspace::{ItemHandle, Pane, Settings, ToolbarItemView};
+use workspace::{ItemHandle, Pane, Settings, ToolbarItemLocation, ToolbarItemView};
 
 action!(Deploy, bool);
 action!(Dismiss);
 action!(FocusEditor);
 action!(ToggleSearchOption, SearchOption);
+
+pub enum Event {
+    UpdateLocation,
+}
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
@@ -57,7 +61,7 @@ pub struct BufferSearchBar {
 }
 
 impl Entity for BufferSearchBar {
-    type Event = ();
+    type Event = Event;
 }
 
 impl View for BufferSearchBar {
@@ -70,70 +74,66 @@ impl View for BufferSearchBar {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        if self.dismissed || self.active_editor.is_none() {
-            Empty::new().boxed()
+        let theme = cx.global::<Settings>().theme.clone();
+        let editor_container = if self.query_contains_error {
+            theme.search.invalid_editor
         } else {
-            let theme = cx.global::<Settings>().theme.clone();
-            let editor_container = if self.query_contains_error {
-                theme.search.invalid_editor
-            } else {
-                theme.search.editor.input.container
-            };
-            Flex::row()
-                .with_child(
-                    Flex::row()
-                        .with_child(ChildView::new(&self.query_editor).flex(1., true).boxed())
-                        .with_children(self.active_editor.as_ref().and_then(|editor| {
-                            let matches = self.editors_with_matches.get(&editor.downgrade())?;
-                            let message = if let Some(match_ix) = self.active_match_index {
-                                format!("{}/{}", match_ix + 1, matches.len())
-                            } else {
-                                "No matches".to_string()
-                            };
+            theme.search.editor.input.container
+        };
+        Flex::row()
+            .with_child(
+                Flex::row()
+                    .with_child(ChildView::new(&self.query_editor).flex(1., true).boxed())
+                    .with_children(self.active_editor.as_ref().and_then(|editor| {
+                        let matches = self.editors_with_matches.get(&editor.downgrade())?;
+                        let message = if let Some(match_ix) = self.active_match_index {
+                            format!("{}/{}", match_ix + 1, matches.len())
+                        } else {
+                            "No matches".to_string()
+                        };
 
-                            Some(
-                                Label::new(message, theme.search.match_index.text.clone())
-                                    .contained()
-                                    .with_style(theme.search.match_index.container)
-                                    .aligned()
-                                    .boxed(),
-                            )
-                        }))
-                        .contained()
-                        .with_style(editor_container)
-                        .aligned()
-                        .constrained()
-                        .with_max_width(theme.search.editor.max_width)
-                        .boxed(),
-                )
-                .with_child(
-                    Flex::row()
-                        .with_child(self.render_nav_button("<", Direction::Prev, cx))
-                        .with_child(self.render_nav_button(">", Direction::Next, cx))
-                        .aligned()
-                        .boxed(),
-                )
-                .with_child(
-                    Flex::row()
-                        .with_child(self.render_search_option(
-                            "Case",
-                            SearchOption::CaseSensitive,
-                            cx,
-                        ))
-                        .with_child(self.render_search_option("Word", SearchOption::WholeWord, cx))
-                        .with_child(self.render_search_option("Regex", SearchOption::Regex, cx))
-                        .contained()
-                        .with_style(theme.search.option_button_group)
-                        .aligned()
-                        .boxed(),
-                )
-                .named("search bar")
-        }
+                        Some(
+                            Label::new(message, theme.search.match_index.text.clone())
+                                .contained()
+                                .with_style(theme.search.match_index.container)
+                                .aligned()
+                                .boxed(),
+                        )
+                    }))
+                    .contained()
+                    .with_style(editor_container)
+                    .aligned()
+                    .constrained()
+                    .with_max_width(theme.search.editor.max_width)
+                    .boxed(),
+            )
+            .with_child(
+                Flex::row()
+                    .with_child(self.render_nav_button("<", Direction::Prev, cx))
+                    .with_child(self.render_nav_button(">", Direction::Next, cx))
+                    .aligned()
+                    .boxed(),
+            )
+            .with_child(
+                Flex::row()
+                    .with_child(self.render_search_option("Case", SearchOption::CaseSensitive, cx))
+                    .with_child(self.render_search_option("Word", SearchOption::WholeWord, cx))
+                    .with_child(self.render_search_option("Regex", SearchOption::Regex, cx))
+                    .contained()
+                    .with_style(theme.search.option_button_group)
+                    .aligned()
+                    .boxed(),
+            )
+            .named("search bar")
     }
 }
 
 impl ToolbarItemView for BufferSearchBar {
-    fn set_active_pane_item(&mut self, item: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+    fn set_active_pane_item(
+        &mut self,
+        item: Option<&dyn ItemHandle>,
+        cx: &mut ViewContext<Self>,
+    ) -> ToolbarItemLocation {
         cx.notify();
         self.active_editor_subscription.take();
         self.active_editor.take();
@@ -145,8 +145,20 @@ impl ToolbarItemView for BufferSearchBar {
                     Some(cx.subscribe(&editor, Self::on_active_editor_event));
                 self.active_editor = Some(editor);
                 self.update_matches(false, cx);
-                return;
+                if !self.dismissed {
+                    return ToolbarItemLocation::Secondary;
+                }
             }
+        }
+
+        ToolbarItemLocation::Hidden
+    }
+
+    fn location_for_event(&self, _: &Self::Event, _: ToolbarItemLocation) -> ToolbarItemLocation {
+        if self.active_editor.is_some() && !self.dismissed {
+            ToolbarItemLocation::Secondary
+        } else {
+            ToolbarItemLocation::Hidden
         }
     }
 }
@@ -186,6 +198,7 @@ impl BufferSearchBar {
         if let Some(active_editor) = self.active_editor.as_ref() {
             cx.focus(active_editor);
         }
+        cx.emit(Event::UpdateLocation);
         cx.notify();
     }
 
@@ -234,6 +247,7 @@ impl BufferSearchBar {
 
         self.dismissed = false;
         cx.notify();
+        cx.emit(Event::UpdateLocation);
         true
     }
 

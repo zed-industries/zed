@@ -111,12 +111,11 @@ pub fn build_workspace(
         pane.update(cx, |pane, cx| {
             pane.toolbar().update(cx, |toolbar, cx| {
                 let breadcrumbs = cx.add_view(|_| Breadcrumbs::new());
-                toolbar.add_left_item(breadcrumbs, cx);
-
+                toolbar.add_item(breadcrumbs, cx);
                 let buffer_search_bar = cx.add_view(|cx| BufferSearchBar::new(cx));
-                toolbar.add_right_item(buffer_search_bar, cx);
+                toolbar.add_item(buffer_search_bar, cx);
                 let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
-                toolbar.add_right_item(project_search_bar, cx);
+                toolbar.add_item(project_search_bar, cx);
             })
         });
     })

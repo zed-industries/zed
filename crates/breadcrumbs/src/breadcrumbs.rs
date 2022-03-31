@@ -3,9 +3,10 @@ use gpui::{
     elements::*, AppContext, Entity, RenderContext, Subscription, View, ViewContext, ViewHandle,
 };
 use language::{BufferSnapshot, OutlineItem};
+use search::ProjectSearchView;
 use std::borrow::Cow;
 use theme::SyntaxTheme;
-use workspace::{ItemHandle, Settings, ToolbarItemView};
+use workspace::{ItemHandle, Settings, ToolbarItemLocation, ToolbarItemView};
 
 pub struct Breadcrumbs {
     editor: Option<ViewHandle<Editor>>,
@@ -83,17 +84,29 @@ impl ToolbarItemView for Breadcrumbs {
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
-    ) {
+    ) -> ToolbarItemLocation {
+        cx.notify();
         self.editor_subscription = None;
         self.editor = None;
-        if let Some(editor) = active_pane_item.and_then(|i| i.act_as::<Editor>(cx)) {
-            self.editor_subscription = Some(cx.subscribe(&editor, |_, _, event, cx| match event {
-                editor::Event::BufferEdited => cx.notify(),
-                editor::Event::SelectionsChanged { local } if *local => cx.notify(),
-                _ => {}
-            }));
-            self.editor = Some(editor);
+        if let Some(item) = active_pane_item {
+            if let Some(editor) = item.act_as::<Editor>(cx) {
+                self.editor_subscription =
+                    Some(cx.subscribe(&editor, |_, _, event, cx| match event {
+                        editor::Event::BufferEdited => cx.notify(),
+                        editor::Event::SelectionsChanged { local } if *local => cx.notify(),
+                        _ => {}
+                    }));
+                self.editor = Some(editor);
+                if item.downcast::<ProjectSearchView>().is_some() {
+                    ToolbarItemLocation::Secondary
+                } else {
+                    ToolbarItemLocation::PrimaryLeft
+                }
+            } else {
+                ToolbarItemLocation::Hidden
+            }
+        } else {
+            ToolbarItemLocation::Hidden
         }
-        cx.notify();
     }
 }
