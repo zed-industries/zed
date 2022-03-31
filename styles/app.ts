@@ -1,46 +1,67 @@
-import { backgroundColor } from "./components";
+import { backgroundColor, text } from "./components";
 import selectorModal from "./selector-modal";
 import workspace from "./workspace";
 import editor from "./editor";
 import Theme from "./theme";
+import projectPanel from "./project-panel";
+
+export const panel = {
+  padding: { top: 12, left: 12, bottom: 12, right: 12 },
+};
 
 export default function app(theme: Theme): Object {
   return {
     selector: selectorModal(theme),
     workspace: workspace(theme),
     editor: editor(theme),
+    projectDiagnostics: {
+      background: backgroundColor(theme, 300),
+      tabIconSpacing: 4,
+      tabIconWidth: 13,
+      tabSummarySpacing: 10,
+      emptyMessage: {
+        ...text(theme, "sans", "primary", { size: "lg" }),
+      },
+      statusBarItem: {
+        ...text(theme, "sans", "muted"),
+        margin: {
+          right: 10,
+        },
+      },
+    },
+    projectPanel: projectPanel(theme),
     chatPanel: {
       extends: "$panel",
-      channel_name: {
+      channelName: {
         extends: "$text.primary",
         weight: "bold",
       },
-      channel_name_hash: {
+      channelNameHash: {
         text: "$text.muted",
         padding: {
           right: 8,
         },
       },
-      channel_select: {
-        active_item: {
-          extends: "$chat_panel.channel_select.item",
+      channelSelect: {
+        activeItem: {
+          extends: "$chatPanel.channel_select.item",
           name: "$text.primary",
         },
         header: {
-          extends: "$chat_panel.channel_select.active_item",
+          extends: "$chat_panel.channel_select.activeItem",
           padding: {
             bottom: 4,
             left: 0,
           },
         },
-        hovered_active_item: {
-          extends: "$chat_panel.channel_select.hovered_item",
+        hoveredActiveItem: {
+          extends: "$chatPanel.channelSelect.hoveredItem",
           name: "$text.primary",
         },
-        hovered_item: {
+        hoveredItem: {
           background: "$state.hover",
-          corner_radius: 6,
-          extends: "$chat_panel.channel_select.item",
+          cornerRadius: 6,
+          extends: "$chat_panel.channelSelect.item",
         },
         item: {
           name: "$text.secondary",
@@ -54,7 +75,7 @@ export default function app(theme: Theme): Object {
         },
         menu: {
           background: "$surface.500",
-          corner_radius: 6,
+          cornerRadius: 6,
           padding: 4,
           border: {
             color: "$border.primary",
@@ -67,14 +88,14 @@ export default function app(theme: Theme): Object {
           },
         },
       },
-      hovered_sign_in_prompt: {
+      hoveredSignInPrompt: {
         color: "$text.secondary.color",
-        extends: "$chat_panel.sign_in_prompt",
+        extends: "$chatPanel.signInPrompt",
       },
-      input_editor: {
+      inputEditor: {
         background: backgroundColor(theme, 300),
-        corner_radius: 6,
-        placeholder_text: "$text.muted",
+        cornerRadius: 6,
+        placeholderText: "$text.muted",
         selection: "$selection.host",
         text: "$text.primary",
         border: {
@@ -102,8 +123,8 @@ export default function app(theme: Theme): Object {
           },
         },
       },
-      pending_message: {
-        extends: "$chat_panel.message",
+      pendingMessage: {
+        extends: "$chatPanel.message",
         body: {
           color: "$text.muted.color",
         },
@@ -114,41 +135,41 @@ export default function app(theme: Theme): Object {
           color: "$text.muted.color",
         },
       },
-      sign_in_prompt: {
+      signInPrompt: {
         extends: "$text.primary",
         underline: true,
       },
     },
-    contacts_panel: {
+    contactsPanel: {
       extends: "$panel",
-      host_row_height: 28,
-      tree_branch_color: "$surface.100",
-      tree_branch_width: 1,
-      host_avatar: {
-        corner_radius: 10,
+      hostRowHeight: 28,
+      treeBranchColor: "$surface.100",
+      treeBranchWidth: 1,
+      hostAvatar: {
+        cornerRadius: 10,
         width: 18,
       },
-      host_username: {
+      hostUsername: {
         extends: "$text.primary",
         padding: {
           left: 8,
         },
       },
-      hovered_shared_project: {
+      hoveredSharedProject: {
         background: "$state.hover",
-        corner_radius: 6,
-        extends: "$contacts_panel.shared_project",
+        cornerRadius: 6,
+        extends: "$contacts_panel.sharedProject",
       },
-      hovered_unshared_project: {
+      hoveredUnsharedProject: {
         background: "$state.hover",
-        corner_radius: 6,
-        extends: "$contacts_panel.unshared_project",
+        cornerRadius: 6,
+        extends: "$contacts_panel.unsharedProject",
       },
       project: {
-        guest_avatar_spacing: 4,
+        guestAvatarSpacing: 4,
         height: 24,
-        guest_avatar: {
-          corner_radius: 8,
+        guestAvatar: {
+          cornerRadius: 8,
           width: 14,
         },
         name: {
@@ -161,79 +182,34 @@ export default function app(theme: Theme): Object {
           left: 8,
         },
       },
-      shared_project: {
-        extends: "$contacts_panel.project",
+      sharedProject: {
+        extends: "$contactsPanel.project",
         name: {
           color: "$text.primary.color",
         },
       },
-      unshared_project: {
-        extends: "$contacts_panel.project",
-      },
-    },
-    project_diagnostics: {
-      background: backgroundColor(theme, 300),
-      tab_icon_spacing: 4,
-      tab_icon_width: 13,
-      tab_summary_spacing: 10,
-      empty_message: {
-        extends: "$text.primary",
-        size: 18,
-      },
-      status_bar_item: {
-        extends: "$text.muted",
-        margin: {
-          right: 10,
-        },
-      },
-    },
-    project_panel: {
-      extends: "$panel",
-      entry: {
-        height: 22,
-        icon_color: "$text.muted.color",
-        icon_size: 8,
-        icon_spacing: 8,
-        text: "$text.secondary",
-      },
-      hovered_entry: {
-        background: "$state.hover",
-        extends: "$project_panel.entry",
-      },
-      hovered_selected_entry: {
-        extends: "$project_panel.hovered_entry",
-        text: {
-          extends: "$text.primary",
-        },
-      },
-      padding: {
-        top: 6,
-      },
-      selected_entry: {
-        extends: "$project_panel.entry",
-        text: {
-          extends: "$text.primary",
-        },
+      unsharedProject: {
+        extends: "$contactsPanel.project",
       },
     },
     search: {
       background: backgroundColor(theme, 300),
-      match_background: "$state.highlighted_line",
-      tab_icon_spacing: 4,
-      tab_icon_width: 14,
-      active_hovered_option_button: {
+      matchBackground: "$state.highlightedLine",
+      tabIconSpacing: 4,
+      tabIconWidth: 14,
+      activeHoveredOptionButton: {
         background: "$surface.100",
         extends: "$search.option_button",
       },
-      active_option_button: {
+      activeOptionButton: {
         background: "$surface.100",
         extends: "$search.option_button",
       },
       editor: {
         background: "$surface.500",
-        corner_radius: 6,
-        max_width: 400,
-        placeholder_text: "$text.muted",
+        cornerRadius: 6,
+        maxWidth: 400,
+        placeholderText: "$text.muted",
         selection: "$selection.host",
         text: "$text.primary",
         border: {
@@ -253,24 +229,24 @@ export default function app(theme: Theme): Object {
           top: 3,
         },
       },
-      hovered_option_button: {
+      hoveredOptionButton: {
         background: "$surface.100",
-        extends: "$search.option_button",
+        extends: "$search.optionButton",
       },
-      invalid_editor: {
+      invalidEditor: {
         extends: "$search.editor",
         border: {
           color: "$status.bad",
           width: 1,
         },
       },
-      match_index: {
+      matchIndex: {
         extends: "$text.secondary",
         padding: 6,
       },
-      option_button: {
+      optionButton: {
         background: backgroundColor(theme, 300),
-        corner_radius: 6,
+        cornerRadius: 6,
         extends: "$text.secondary",
         border: {
           color: "$border.primary",
@@ -287,13 +263,13 @@ export default function app(theme: Theme): Object {
           top: 1,
         },
       },
-      option_button_group: {
+      optionButtonGroup: {
         padding: {
           left: 2,
           right: 2,
         },
       },
-      results_status: {
+      resultsStatus: {
         extends: "$text.primary",
         size: 18,
       },

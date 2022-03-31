@@ -1,5 +1,3 @@
-import { colorRamp } from "./lib";
-
 export type Color = string;
 export type Weight =
   | "thin"
@@ -36,7 +34,7 @@ export interface BackgroundColor {
   base: {
     value: Color;
   };
-  hover: {
+  hovered: {
     value: Color;
   };
   active: {

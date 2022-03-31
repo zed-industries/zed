@@ -28,14 +28,11 @@ export default function editor(theme: Theme) {
         }),
       },
       message: {
-        text: {
-          ...text(theme, "sans", color),
-          size: 14,
-        },
-        highlightText: {
-          ...text(theme, "sans", color, { weight: "bold" }),
-          size: 14,
-        },
+        text: text(theme, "sans", color, { size: "sm" }),
+        highlightText: text(theme, "sans", color, {
+          size: "sm",
+          weight: "bold",
+        }),
       },
     };
   }
@@ -75,7 +72,7 @@ export default function editor(theme: Theme) {
       item: autocompleteItem,
       hoveredItem: {
         ...autocompleteItem,
-        background: backgroundColor(theme, 100, "hover"),
+        background: backgroundColor(theme, 100, "hovered"),
       },
       margin: {
         left: -14,
@@ -98,34 +95,25 @@ export default function editor(theme: Theme) {
         top: true,
       }),
       code: {
-        ...text(theme, "mono", "muted"),
-        size: 14,
+        ...text(theme, "mono", "muted", { size: "sm" }),
         margin: {
           left: 10,
         },
       },
       message: {
-        highlightText: {
-          ...text(theme, "sans", "primary"),
-          size: 14,
+        highlightText: text(theme, "sans", "primary", {
+          size: "sm",
           weight: "bold",
-        },
-        text: {
-          ...text(theme, "sans", "secondary"),
-          size: 14,
-        },
+        }),
+        text: text(theme, "sans", "secondary", { size: "sm" }),
       },
     },
     diagnosticPathHeader: {
       background: theme.editor.line.active,
       textScaleFactor: 0.857,
-      filename: {
-        ...text(theme, "mono", "primary"),
-        size: 14,
-      },
+      filename: text(theme, "mono", "primary", { size: "sm" }),
       path: {
-        ...text(theme, "mono", "muted"),
-        size: 14,
+        ...text(theme, "mono", "muted", { size: "sm" }),
         margin: {
           left: 12,
         },
