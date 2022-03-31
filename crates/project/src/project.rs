@@ -2364,7 +2364,7 @@ impl Project {
                                     (range_from_lsp(edit.range), edit.new_text.clone())
                                 }
                                 None => (
-                                    this.common_prefix_at_position(position, &lsp_completion.label),
+                                    this.common_prefix_at(position, &lsp_completion.label),
                                     lsp_completion.label.clone(),
                                 ),
                                 Some(lsp::CompletionTextEdit::InsertAndReplace(_)) => {

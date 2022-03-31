@@ -7,6 +7,7 @@ use std::{
     iter::Iterator,
     time::{Duration, Instant},
 };
+use util::test::marked_text_ranges;
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -166,10 +167,13 @@ fn test_line_len() {
 
 #[test]
 fn test_common_prefix_at_positionn() {
-    let buffer = Buffer::new(0, 0, History::new("a = (bcd)".into()));
+    let (text, ranges) = marked_text_ranges("a = [bcd]");
+    let buffer = Buffer::new(0, 0, History::new(text.into()));
+    let snapshot = &buffer.snapshot();
+    let expected_range = ranges[0].to_offset(&snapshot);
     assert_eq!(
-        buffer.common_prefix_at_position(Point::new(0, 8), "bcdef"),
-        Point::new(0, 5)..Point::new(0, 8)
+        buffer.common_prefix_at(expected_range.end, "bcdef"),
+        expected_range
     )
 }
 

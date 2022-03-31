@@ -1508,11 +1508,34 @@ impl BufferSnapshot {
                 .eq(needle.bytes())
     }
 
-    pub fn common_prefix_at_position<T>(&self, position: T, needle: &str) -> Range<T>
+    pub fn common_prefix_at<T>(&self, position: T, needle: &str) -> Range<T>
     where
-        T: TextDimension + ToOffset,
+        T: Clone + ToOffset + FromAnchor,
     {
-        todo!()
+        let position_offset = position.to_offset(self);
+        // Get byte indices and char counts for every character in needle in reverse order
+        let char_indices = needle
+            .char_indices()
+            .map(|(index, _)| index)
+            .chain(std::iter::once(needle.len()))
+            .enumerate()
+            // Don't test any prefixes that are bigger than the requested position
+            .take_while(|(_, prefix_length)| *prefix_length <= position_offset);
+
+        let start = char_indices
+            // Compute the prefix string and prefix start location
+            .map(move |(byte_position, char_length)| {
+                (position_offset - char_length, &needle[..byte_position])
+            })
+            // Only take strings when the prefix is contained at the expected prefix position
+            .filter(|(prefix_offset, prefix)| self.contains_str_at(prefix_offset, prefix))
+            // Convert offset to T
+            .map(|(prefix_offset, _)| T::from_anchor(&self.anchor_before(prefix_offset), self))
+            .last()
+            // If no prefix matches, return the passed in position to create an empty range
+            .unwrap_or(position.clone());
+
+        start..position
     }
 
     pub fn text(&self) -> String {
