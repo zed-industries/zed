@@ -1,8 +1,7 @@
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
-    proto, BracketPair, Grammar, Language, LanguageConfig, LanguageRegistry, LanguageServerConfig,
-    PLAIN_TEXT,
+    proto, BracketPair, Grammar, Language, LanguageConfig, LanguageRegistry, PLAIN_TEXT,
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},

@@ -231,7 +231,7 @@ message GetProjectSymbolsResponse {
 message Symbol {
     uint64 source_worktree_id = 1;
     uint64 worktree_id = 2;
-    string language_name = 3;
+    string language_server_name = 3;
     string name = 4;
     int32 kind = 5;
     string path = 6;

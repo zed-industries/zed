@@ -2593,6 +2593,8 @@ impl Editor {
                     }
                 }
             }
+        } else {
+            return Ok(());
         }
 
         let mut ranges_to_highlight = Vec::new();
@@ -6451,13 +6453,12 @@ pub fn styled_runs_for_code_label<'a>(
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use gpui::{
         geometry::rect::RectF,
         platform::{WindowBounds, WindowOptions},
     };
-    use language::{LanguageConfig, LanguageServerConfig};
+    use language::{FakeLspAdapter, LanguageConfig};
     use lsp::FakeLanguageServer;
     use project::FakeFs;
     use smol::stream::StreamExt;
@@ -8893,26 +8894,27 @@ mod tests {
         cx.foreground().forbid_parking();
         cx.update(populate_settings);
 
-        let (mut language_server_config, mut fake_servers) = LanguageServerConfig::fake();
-        language_server_config.set_fake_capabilities(lsp::ServerCapabilities {
-            document_formatting_provider: Some(lsp::OneOf::Left(true)),
-            ..Default::default()
-        });
-        let language = Arc::new(Language::new(
+        let mut language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: Some(language_server_config),
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        ));
+        );
+        let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
 
         let fs = FakeFs::new(cx.background().clone());
         fs.insert_file("/file.rs", Default::default()).await;
 
         let project = Project::test(fs, cx);
-        project.update(cx, |project, _| project.languages().add(language));
+        project.update(cx, |project, _| project.languages().add(Arc::new(language)));
 
         let worktree_id = project
             .update(cx, |project, cx| {
@@ -8926,7 +8928,9 @@ mod tests {
             .update(cx, |project, cx| project.open_buffer((worktree_id, ""), cx))
             .await
             .unwrap();
-        let mut fake_server = fake_servers.next().await.unwrap();
+
+        cx.foreground().start_waiting();
+        let fake_server = fake_servers.next().await.unwrap();
 
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, cx));
@@ -8940,13 +8944,14 @@ mod tests {
                     params.text_document.uri,
                     lsp::Url::from_file_path("/file.rs").unwrap()
                 );
-                Some(vec![lsp::TextEdit::new(
+                Ok(Some(vec![lsp::TextEdit::new(
                     lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
                     ", ".to_string(),
-                )])
+                )]))
             })
             .next()
             .await;
+        cx.foreground().start_waiting();
         save.await.unwrap();
         assert_eq!(
             editor.read_with(cx, |editor, cx| editor.text(cx)),
@@ -8968,6 +8973,7 @@ mod tests {
         });
         let save = cx.update(|cx| editor.save(project.clone(), cx));
         cx.foreground().advance_clock(items::FORMAT_TIMEOUT);
+        cx.foreground().start_waiting();
         save.await.unwrap();
         assert_eq!(
             editor.read_with(cx, |editor, cx| editor.text(cx)),
@@ -8980,23 +8986,24 @@ mod tests {
     async fn test_completion(cx: &mut gpui::TestAppContext) {
         cx.update(populate_settings);
 
-        let (mut language_server_config, mut fake_servers) = LanguageServerConfig::fake();
-        language_server_config.set_fake_capabilities(lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions {
-                trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
-                ..Default::default()
-            }),
-            ..Default::default()
-        });
-        let language = Arc::new(Language::new(
+        let mut language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: Some(language_server_config),
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        ));
+        );
+        let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
 
         let text = "
             one
@@ -9009,7 +9016,7 @@ mod tests {
         fs.insert_file("/file.rs", text).await;
 
         let project = Project::test(fs, cx);
-        project.update(cx, |project, _| project.languages().add(language));
+        project.update(cx, |project, _| project.languages().add(Arc::new(language)));
 
         let worktree_id = project
             .update(cx, |project, cx| {
@@ -9168,7 +9175,7 @@ mod tests {
                         params.text_document_position.position,
                         lsp::Position::new(position.row, position.column)
                     );
-                    Some(lsp::CompletionResponse::Array(
+                    Ok(Some(lsp::CompletionResponse::Array(
                         completions
                             .iter()
                             .map(|(range, new_text)| lsp::CompletionItem {
@@ -9183,7 +9190,7 @@ mod tests {
                                 ..Default::default()
                             })
                             .collect(),
-                    ))
+                    )))
                 }
             })
             .next()
@@ -9197,7 +9204,7 @@ mod tests {
             fake.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _| {
                 let edit = edit.clone();
                 async move {
-                    lsp::CompletionItem {
+                    Ok(lsp::CompletionItem {
                         additional_text_edits: edit.map(|(range, new_text)| {
                             vec![lsp::TextEdit::new(
                                 lsp::Range::new(
@@ -9208,7 +9215,7 @@ mod tests {
                             )]
                         }),
                         ..Default::default()
-                    }
+                    })
                 }
             })
             .next()

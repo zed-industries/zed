@@ -1508,6 +1508,30 @@ impl BufferSnapshot {
                 .eq(needle.bytes())
     }
 
+    pub fn common_prefix_at<T>(&self, position: T, needle: &str) -> Range<T>
+    where
+        T: ToOffset + TextDimension,
+    {
+        let offset = position.to_offset(self);
+        let common_prefix_len = needle
+            .char_indices()
+            .map(|(index, _)| index)
+            .chain([needle.len()])
+            .take_while(|&len| len <= offset)
+            .filter(|&len| {
+                let left = self
+                    .chars_for_range(offset - len..offset)
+                    .flat_map(|c| char::to_lowercase(c));
+                let right = needle[..len].chars().flat_map(|c| char::to_lowercase(c));
+                left.eq(right)
+            })
+            .last()
+            .unwrap_or(0);
+        let start_offset = offset - common_prefix_len;
+        let start = self.text_summary_for_range(0..start_offset);
+        start..position
+    }
+
     pub fn text(&self) -> String {
         self.visible_text.to_string()
     }
