@@ -7,7 +7,6 @@ use std::{
     iter::Iterator,
     time::{Duration, Instant},
 };
-use util::test::marked_text_ranges;
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -167,14 +166,51 @@ fn test_line_len() {
 
 #[test]
 fn test_common_prefix_at_positionn() {
-    let (text, ranges) = marked_text_ranges("a = [bcd]");
+    let text = "a = str; b = δα";
     let buffer = Buffer::new(0, 0, History::new(text.into()));
-    let snapshot = &buffer.snapshot();
-    let expected_range = ranges[0].to_offset(&snapshot);
+
+    let offset1 = offset_after(text, "str");
+    let offset2 = offset_after(text, "δα");
+
+    // the preceding word is a prefix of the suggestion
     assert_eq!(
-        buffer.common_prefix_at(expected_range.end, "bcdef"),
-        expected_range
-    )
+        buffer.common_prefix_at(offset1, "string"),
+        range_of(text, "str"),
+    );
+    // a suffix of the preceding word is a prefix of the suggestion
+    assert_eq!(
+        buffer.common_prefix_at(offset1, "tree"),
+        range_of(text, "tr"),
+    );
+    // the preceding word is a substring of the suggestion, but not a prefix
+    assert_eq!(
+        buffer.common_prefix_at(offset1, "astro"),
+        empty_range_after(text, "str"),
+    );
+
+    // prefix matching is case insenstive.
+    assert_eq!(
+        buffer.common_prefix_at(offset1, "Strαngε"),
+        range_of(text, "str"),
+    );
+    assert_eq!(
+        buffer.common_prefix_at(offset2, "ΔΑΜΝ"),
+        range_of(text, "δα"),
+    );
+
+    fn offset_after(text: &str, part: &str) -> usize {
+        text.find(part).unwrap() + part.len()
+    }
+
+    fn empty_range_after(text: &str, part: &str) -> Range<usize> {
+        let offset = offset_after(text, part);
+        offset..offset
+    }
+
+    fn range_of(text: &str, part: &str) -> Range<usize> {
+        let start = text.find(part).unwrap();
+        start..start + part.len()
+    }
 }
 
 #[test]

@@ -1510,31 +1510,25 @@ impl BufferSnapshot {
 
     pub fn common_prefix_at<T>(&self, position: T, needle: &str) -> Range<T>
     where
-        T: Clone + ToOffset + FromAnchor,
+        T: ToOffset + TextDimension,
     {
-        let position_offset = position.to_offset(self);
-        // Get byte indices and char counts for every character in needle in reverse order
-        let char_indices = needle
+        let offset = position.to_offset(self);
+        let common_prefix_len = needle
             .char_indices()
             .map(|(index, _)| index)
-            .chain(std::iter::once(needle.len()))
-            .enumerate()
-            // Don't test any prefixes that are bigger than the requested position
-            .take_while(|(_, prefix_length)| *prefix_length <= position_offset);
-
-        let start = char_indices
-            // Compute the prefix string and prefix start location
-            .map(move |(byte_position, char_length)| {
-                (position_offset - char_length, &needle[..byte_position])
+            .chain([needle.len()])
+            .take_while(|&len| len <= offset)
+            .filter(|&len| {
+                let left = self
+                    .chars_for_range(offset - len..offset)
+                    .flat_map(|c| char::to_lowercase(c));
+                let right = needle[..len].chars().flat_map(|c| char::to_lowercase(c));
+                left.eq(right)
             })
-            // Only take strings when the prefix is contained at the expected prefix position
-            .filter(|(prefix_offset, prefix)| self.contains_str_at(prefix_offset, prefix))
-            // Convert offset to T
-            .map(|(prefix_offset, _)| T::from_anchor(&self.anchor_before(prefix_offset), self))
             .last()
-            // If no prefix matches, return the passed in position to create an empty range
-            .unwrap_or(position.clone());
-
+            .unwrap_or(0);
+        let start_offset = offset - common_prefix_len;
+        let start = self.text_summary_for_range(0..start_offset);
         start..position
     }
 
