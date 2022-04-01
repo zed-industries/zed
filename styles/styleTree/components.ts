@@ -15,7 +15,7 @@ export function text(
     underline?: boolean;
   }
 ) {
-  const sizeKey = properties.size || fontFamily === "sans" ? "sm" : "md";
+  const sizeKey = properties?.size || fontFamily === "sans" ? "sm" : "md";
   const size = core.fontSize[sizeKey].value;
 
   return {
