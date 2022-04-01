@@ -127,7 +127,15 @@ export default function workspace(theme: Theme) {
       },
     },
     toolbar: {
-      height: 44,
+      height: 34,
+      background: backgroundColor(theme, 300),
+      border: border(theme, "primary", { bottom: true }),
+      itemSpacing: 8,
+      padding: { left: 16, right: 8, top: 4, bottom: 4 },
+    },
+    breadcrumbs: {
+      ...text(theme, "mono", "secondary"),
+      padding: { left: 6 },
     },
   };
 }
