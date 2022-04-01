@@ -270,6 +270,7 @@ impl Project {
         client.add_model_message_handler(Self::handle_update_worktree);
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_model_request_handler(Self::handle_apply_code_action);
+        client.add_model_request_handler(Self::handle_reload_buffers);
         client.add_model_request_handler(Self::handle_format_buffers);
         client.add_model_request_handler(Self::handle_get_code_actions);
         client.add_model_request_handler(Self::handle_get_completions);
@@ -1973,6 +1974,70 @@ impl Project {
         Ok(())
     }
 
+    pub fn reload_buffers(
+        &self,
+        buffers: HashSet<ModelHandle<Buffer>>,
+        push_to_history: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ProjectTransaction>> {
+        let mut local_buffers = Vec::new();
+        let mut remote_buffers = None;
+        for buffer_handle in buffers {
+            let buffer = buffer_handle.read(cx);
+            if buffer.is_dirty() {
+                if let Some(file) = File::from_dyn(buffer.file()) {
+                    if file.is_local() {
+                        local_buffers.push(buffer_handle);
+                    } else {
+                        remote_buffers.get_or_insert(Vec::new()).push(buffer_handle);
+                    }
+                }
+            }
+        }
+
+        let remote_buffers = self.remote_id().zip(remote_buffers);
+        let client = self.client.clone();
+
+        cx.spawn(|this, mut cx| async move {
+            let mut project_transaction = ProjectTransaction::default();
+
+            if let Some((project_id, remote_buffers)) = remote_buffers {
+                let response = client
+                    .request(proto::ReloadBuffers {
+                        project_id,
+                        buffer_ids: remote_buffers
+                            .iter()
+                            .map(|buffer| buffer.read_with(&cx, |buffer, _| buffer.remote_id()))
+                            .collect(),
+                    })
+                    .await?
+                    .transaction
+                    .ok_or_else(|| anyhow!("missing transaction"))?;
+                project_transaction = this
+                    .update(&mut cx, |this, cx| {
+                        this.deserialize_project_transaction(response, push_to_history, cx)
+                    })
+                    .await?;
+            }
+
+            for buffer in local_buffers {
+                let transaction = buffer
+                    .update(&mut cx, |buffer, cx| buffer.reload(cx))
+                    .await?;
+                buffer.update(&mut cx, |buffer, cx| {
+                    if let Some(transaction) = transaction {
+                        if !push_to_history {
+                            buffer.forget_transaction(transaction.id);
+                        }
+                        project_transaction.0.insert(cx.handle(), transaction);
+                    }
+                });
+            }
+
+            Ok(project_transaction)
+        })
+    }
+
     pub fn format(
         &self,
         buffers: HashSet<ModelHandle<Buffer>>,
@@ -3664,6 +3729,35 @@ impl Project {
             buffer_id,
             version: serialize_version(&saved_version),
             mtime: Some(mtime.into()),
+        })
+    }
+
+    async fn handle_reload_buffers(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::ReloadBuffers>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ReloadBuffersResponse> {
+        let sender_id = envelope.original_sender_id()?;
+        let reload = this.update(&mut cx, |this, cx| {
+            let mut buffers = HashSet::default();
+            for buffer_id in &envelope.payload.buffer_ids {
+                buffers.insert(
+                    this.opened_buffers
+                        .get(buffer_id)
+                        .map(|buffer| buffer.upgrade(cx).unwrap())
+                        .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?,
+                );
+            }
+            Ok::<_, anyhow::Error>(this.reload_buffers(buffers, false, cx))
+        })?;
+
+        let project_transaction = reload.await?;
+        let project_transaction = this.update(&mut cx, |this, cx| {
+            this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
+        });
+        Ok(proto::ReloadBuffersResponse {
+            transaction: Some(project_transaction),
         })
     }
 

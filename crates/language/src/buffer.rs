@@ -498,6 +498,30 @@ impl Buffer {
         cx.notify();
     }
 
+    pub fn reload(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<Option<Transaction>>> {
+        cx.spawn(|this, mut cx| async move {
+            if let Some((new_mtime, new_text)) = this.read_with(&cx, |this, cx| {
+                let file = this.file.as_ref()?.as_local()?;
+                Some((file.mtime(), file.load(cx)))
+            }) {
+                let new_text = new_text.await?;
+                let diff = this
+                    .read_with(&cx, |this, cx| this.diff(new_text.into(), cx))
+                    .await;
+                this.update(&mut cx, |this, cx| {
+                    if let Some(transaction) = this.apply_diff(diff, cx).cloned() {
+                        this.did_reload(this.version(), new_mtime, cx);
+                        Ok(Some(transaction))
+                    } else {
+                        Ok(None)
+                    }
+                })
+            } else {
+                Ok(None)
+            }
+        })
+    }
+
     pub fn did_reload(
         &mut self,
         version: clock::Global,
@@ -543,29 +567,8 @@ impl Buffer {
                 file_changed = true;
 
                 if !self.is_dirty() {
-                    task = cx.spawn(|this, mut cx| {
-                        async move {
-                            let new_text = this.read_with(&cx, |this, cx| {
-                                this.file
-                                    .as_ref()
-                                    .and_then(|file| file.as_local().map(|f| f.load(cx)))
-                            });
-                            if let Some(new_text) = new_text {
-                                let new_text = new_text.await?;
-                                let diff = this
-                                    .read_with(&cx, |this, cx| this.diff(new_text.into(), cx))
-                                    .await;
-                                this.update(&mut cx, |this, cx| {
-                                    if this.apply_diff(diff, cx) {
-                                        this.did_reload(this.version(), new_mtime, cx);
-                                    }
-                                });
-                            }
-                            Ok(())
-                        }
-                        .log_err()
-                        .map(drop)
-                    });
+                    let reload = self.reload(cx).log_err().map(drop);
+                    task = cx.foreground().spawn(reload);
                 }
             }
         }
@@ -902,8 +905,13 @@ impl Buffer {
         })
     }
 
-    pub(crate) fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> bool {
+    pub(crate) fn apply_diff(
+        &mut self,
+        diff: Diff,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<&Transaction> {
         if self.version == diff.base_version {
+            self.finalize_last_transaction();
             self.start_transaction();
             let mut offset = diff.start_offset;
             for (tag, len) in diff.changes {
@@ -924,10 +932,13 @@ impl Buffer {
                     }
                 }
             }
-            self.end_transaction(cx);
-            true
+            if self.end_transaction(cx).is_some() {
+                self.finalize_last_transaction()
+            } else {
+                None
+            }
         } else {
-            false
+            None
         }
     }
 
