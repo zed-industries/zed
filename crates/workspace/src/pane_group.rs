@@ -248,7 +248,7 @@ impl PaneAxis {
                     member = Container::new(member).with_border(border).boxed();
                 }
 
-                Flexible::new(1.0, true, member).boxed()
+                FlexItem::new(member).flex(1.0, true).boxed()
             }))
             .boxed()
     }

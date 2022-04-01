@@ -78,7 +78,11 @@ impl View for FileFinder {
                                 .with_style(settings.theme.selector.input_editor.container)
                                 .boxed(),
                         )
-                        .with_child(Flexible::new(1.0, false, self.render_matches(cx)).boxed())
+                        .with_child(
+                            FlexItem::new(self.render_matches(cx))
+                                .flex(1., false)
+                                .boxed(),
+                        )
                         .boxed(),
                 )
                 .with_style(settings.theme.selector.container)
@@ -166,23 +170,19 @@ impl FileFinder {
                 //     .boxed(),
                 // )
                 .with_child(
-                    Flexible::new(
-                        1.0,
-                        false,
-                        Flex::column()
-                            .with_child(
-                                Label::new(file_name.to_string(), style.label.clone())
-                                    .with_highlights(file_name_positions)
-                                    .boxed(),
-                            )
-                            .with_child(
-                                Label::new(full_path, style.label.clone())
-                                    .with_highlights(full_path_positions)
-                                    .boxed(),
-                            )
-                            .boxed(),
-                    )
-                    .boxed(),
+                    Flex::column()
+                        .with_child(
+                            Label::new(file_name.to_string(), style.label.clone())
+                                .with_highlights(file_name_positions)
+                                .boxed(),
+                        )
+                        .with_child(
+                            Label::new(full_path, style.label.clone())
+                                .with_highlights(full_path_positions)
+                                .boxed(),
+                        )
+                        .flex(1., false)
+                        .boxed(),
                 )
                 .boxed(),
         )

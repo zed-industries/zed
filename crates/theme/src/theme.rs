@@ -26,6 +26,7 @@ pub struct Theme {
     pub editor: Editor,
     pub search: Search,
     pub project_diagnostics: ProjectDiagnostics,
+    pub breadcrumbs: ContainedText,
 }
 
 #[derive(Deserialize, Default)]
@@ -94,7 +95,10 @@ pub struct Tab {
 
 #[derive(Clone, Deserialize, Default)]
 pub struct Toolbar {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
     pub height: f32,
+    pub item_spacing: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -119,6 +123,7 @@ pub struct Search {
 pub struct FindEditor {
     #[serde(flatten)]
     pub input: FieldEditor,
+    pub min_width: f32,
     pub max_width: f32,
 }
 

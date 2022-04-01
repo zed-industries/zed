@@ -4,6 +4,7 @@ pub mod menus;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+use breadcrumbs::Breadcrumbs;
 use chat_panel::ChatPanel;
 pub use client;
 pub use contacts_panel;
@@ -21,6 +22,7 @@ pub use lsp;
 use project::Project;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
+use search::{BufferSearchBar, ProjectSearchBar};
 use std::{path::PathBuf, sync::Arc};
 pub use workspace;
 use workspace::{AppState, Settings, Workspace, WorkspaceParams};
@@ -104,6 +106,21 @@ pub fn build_workspace(
     app_state: &Arc<AppState>,
     cx: &mut ViewContext<Workspace>,
 ) -> Workspace {
+    cx.subscribe(&cx.handle(), |_, _, event, cx| {
+        let workspace::Event::PaneAdded(pane) = event;
+        pane.update(cx, |pane, cx| {
+            pane.toolbar().update(cx, |toolbar, cx| {
+                let breadcrumbs = cx.add_view(|_| Breadcrumbs::new());
+                toolbar.add_item(breadcrumbs, cx);
+                let buffer_search_bar = cx.add_view(|cx| BufferSearchBar::new(cx));
+                toolbar.add_item(buffer_search_bar, cx);
+                let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
+                toolbar.add_item(project_search_bar, cx);
+            })
+        });
+    })
+    .detach();
+
     let workspace_params = WorkspaceParams {
         project,
         client: app_state.client.clone(),

@@ -77,7 +77,11 @@ impl View for OutlineView {
                     .with_style(settings.theme.selector.input_editor.container)
                     .boxed(),
             )
-            .with_child(Flexible::new(1.0, false, self.render_matches(cx)).boxed())
+            .with_child(
+                FlexItem::new(self.render_matches(cx))
+                    .flex(1.0, false)
+                    .boxed(),
+            )
             .contained()
             .with_style(settings.theme.selector.container)
             .constrained()

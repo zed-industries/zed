@@ -1674,6 +1674,32 @@ impl BufferSnapshot {
     }
 
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
+        self.outline_items_containing(0..self.len(), theme)
+            .map(Outline::new)
+    }
+
+    pub fn symbols_containing<T: ToOffset>(
+        &self,
+        position: T,
+        theme: Option<&SyntaxTheme>,
+    ) -> Option<Vec<OutlineItem<Anchor>>> {
+        let position = position.to_offset(&self);
+        let mut items =
+            self.outline_items_containing(position.saturating_sub(1)..position + 1, theme)?;
+        let mut prev_depth = None;
+        items.retain(|item| {
+            let result = prev_depth.map_or(true, |prev_depth| item.depth > prev_depth);
+            prev_depth = Some(item.depth);
+            result
+        });
+        Some(items)
+    }
+
+    fn outline_items_containing(
+        &self,
+        range: Range<usize>,
+        theme: Option<&SyntaxTheme>,
+    ) -> Option<Vec<OutlineItem<Anchor>>> {
         let tree = self.tree.as_ref()?;
         let grammar = self
             .language
@@ -1681,6 +1707,7 @@ impl BufferSnapshot {
             .and_then(|language| language.grammar.as_ref())?;
 
         let mut cursor = QueryCursorHandle::new();
+        cursor.set_byte_range(range);
         let matches = cursor.matches(
             &grammar.outline_query,
             tree.root_node(),
@@ -1773,12 +1800,7 @@ impl BufferSnapshot {
                 })
             })
             .collect::<Vec<_>>();
-
-        if items.is_empty() {
-            None
-        } else {
-            Some(Outline::new(items))
-        }
+        Some(items)
     }
 
     pub fn enclosing_bracket_ranges<T: ToOffset>(

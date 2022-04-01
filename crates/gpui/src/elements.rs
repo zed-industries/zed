@@ -139,11 +139,18 @@ pub trait Element {
         Expanded::new(self.boxed())
     }
 
-    fn flexible(self, flex: f32, expanded: bool) -> Flexible
+    fn flex(self, flex: f32, expanded: bool) -> FlexItem
     where
         Self: 'static + Sized,
     {
-        Flexible::new(flex, expanded, self.boxed())
+        FlexItem::new(self.boxed()).flex(flex, expanded)
+    }
+
+    fn flex_float(self) -> FlexItem
+    where
+        Self: 'static + Sized,
+    {
+        FlexItem::new(self.boxed()).float()
     }
 }
 

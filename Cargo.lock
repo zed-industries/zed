@@ -720,6 +720,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "breadcrumbs"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "editor",
+ "gpui",
+ "language",
+ "search",
+ "theme",
+ "workspace",
+]
+
+[[package]]
 name = "brotli"
 version = "3.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5963,6 +5976,7 @@ dependencies = [
  "async-compression",
  "async-recursion",
  "async-trait",
+ "breadcrumbs",
  "chat_panel",
  "client",
  "clock",
