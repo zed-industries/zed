@@ -1,32 +1,8 @@
-export interface NumberToken {
-    value: number,
-    type: "number"
-}
-
-export type Color = string;
-export interface ColorToken {
-    value: Color;
-    type: "color";
-    step?: number
-}
-export type Weight =
-    | "thin"
-    | "extra_light"
-    | "light"
-    | "normal"
-    | "medium"
-    | "semibold"
-    | "bold"
-    | "extra_bold"
-    | "black";
-export interface WeightToken {
-    value: Weight,
-    type: "fontWeight"
-}
+import { FontWeightToken, ColorToken, NumberToken } from "../tokens";
 
 export interface SyntaxHighlightStyle {
     color: ColorToken;
-    weight: WeightToken;
+    weight: FontWeightToken;
 }
 
 export interface Player {
@@ -43,7 +19,7 @@ export interface BackgroundColor {
     focused: ColorToken;
 }
 
-export interface Syntax { 
+export interface Syntax {
     primary: SyntaxHighlightStyle;
     comment: SyntaxHighlightStyle;
     punctuation: SyntaxHighlightStyle;
@@ -59,6 +35,13 @@ export interface Syntax {
     number: SyntaxHighlightStyle;
     boolean: SyntaxHighlightStyle;
     predictive: SyntaxHighlightStyle;
+    // TODO: Either move the following or rename
+    title: SyntaxHighlightStyle;
+    emphasis: SyntaxHighlightStyle;
+    emphasisStrong: SyntaxHighlightStyle;
+    linkUrl: SyntaxHighlightStyle;
+    linkText: SyntaxHighlightStyle;
+    listMarker: SyntaxHighlightStyle;
 };
 
 export default interface Theme {

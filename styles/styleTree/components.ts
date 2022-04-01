@@ -1,25 +1,25 @@
 import chroma from "chroma-js";
-import Theme, { BackgroundColor, Weight } from "../themes/theme";
-import core from "../tokens/core";
+import Theme, { BackgroundColor } from "../themes/theme";
+import { fontFamilies, fontSizes, FontWeight } from "../tokens";
 import { Color } from "../utils/color";
 
 export type TextColor = keyof Theme["textColor"];
 
 export function text(
   theme: Theme,
-  fontFamily: keyof typeof core.fontFamily,
+  fontFamily: keyof typeof fontFamilies,
   color: TextColor,
   properties?: {
-    size?: keyof typeof core["fontSize"];
-    weight?: Weight;
+    size?: keyof typeof fontSizes;
+    weight?: FontWeight;
     underline?: boolean;
   }
 ) {
   const sizeKey = properties?.size || fontFamily === "sans" ? "sm" : "md";
-  const size = core.fontSize[sizeKey].value;
+  const size = fontSizes[sizeKey].value;
 
   return {
-    family: core.fontFamily[fontFamily],
+    family: fontFamilies[fontFamily].value,
     color: theme.textColor[color].value,
     ...properties,
     size,
