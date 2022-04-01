@@ -102,6 +102,7 @@ impl Server {
             .add_request_handler(Server::forward_project_request::<proto::ApplyCodeAction>)
             .add_request_handler(Server::forward_project_request::<proto::PrepareRename>)
             .add_request_handler(Server::forward_project_request::<proto::PerformRename>)
+            .add_request_handler(Server::forward_project_request::<proto::ReloadBuffers>)
             .add_request_handler(Server::forward_project_request::<proto::FormatBuffers>)
             .add_request_handler(Server::update_buffer)
             .add_message_handler(Server::update_buffer_file)
@@ -1089,7 +1090,7 @@ mod tests {
     use gpui::{executor, geometry::vector::vec2f, ModelHandle, TestAppContext, ViewHandle};
     use language::{
         range_to_lsp, tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
-        LanguageConfig, LanguageRegistry, OffsetRangeExt, Point,
+        LanguageConfig, LanguageRegistry, OffsetRangeExt, Point, Rope,
     };
     use lsp::{self, FakeLanguageServer};
     use parking_lot::Mutex;
@@ -2456,6 +2457,123 @@ mod tests {
                 buffer.text() == "use d::SomeTrait;\nfn main() { a.first_method() }"
             })
             .await;
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_reloading_buffer_manually(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+        cx_a.foreground().forbid_parking();
+        let lang_registry = Arc::new(LanguageRegistry::test());
+        let fs = FakeFs::new(cx_a.background());
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
+
+        // Share a project as client A
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "a.rs": "let one = 1;",
+            }),
+        )
+        .await;
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let (worktree_a, _) = project_a
+            .update(cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/a", true, cx)
+            })
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
+        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
+        let buffer_a = project_a
+            .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
+            .await
+            .unwrap();
+
+        // Join the worktree as client B.
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        let buffer_b = cx_b
+            .background()
+            .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
+            .await
+            .unwrap();
+        buffer_b.update(cx_b, |buffer, cx| {
+            buffer.edit([4..7], "six", cx);
+            buffer.edit([10..11], "6", cx);
+            assert_eq!(buffer.text(), "let six = 6;");
+            assert!(buffer.is_dirty());
+            assert!(!buffer.has_conflict());
+        });
+        buffer_a
+            .condition(cx_a, |buffer, _| buffer.text() == "let six = 6;")
+            .await;
+
+        fs.save(Path::new("/a/a.rs"), &Rope::from("let seven = 7;"))
+            .await
+            .unwrap();
+        buffer_a
+            .condition(cx_a, |buffer, _| buffer.has_conflict())
+            .await;
+        buffer_b
+            .condition(cx_b, |buffer, _| buffer.has_conflict())
+            .await;
+
+        project_b
+            .update(cx_b, |project, cx| {
+                project.reload_buffers(HashSet::from_iter([buffer_b.clone()]), true, cx)
+            })
+            .await
+            .unwrap();
+        buffer_a.read_with(cx_a, |buffer, _| {
+            assert_eq!(buffer.text(), "let seven = 7;");
+            assert!(!buffer.is_dirty());
+            assert!(!buffer.has_conflict());
+        });
+        buffer_b.read_with(cx_b, |buffer, _| {
+            assert_eq!(buffer.text(), "let seven = 7;");
+            assert!(!buffer.is_dirty());
+            assert!(!buffer.has_conflict());
+        });
+
+        buffer_a.update(cx_a, |buffer, cx| {
+            // Undoing on the host is a no-op when the reload was initiated by the guest.
+            buffer.undo(cx);
+            assert_eq!(buffer.text(), "let seven = 7;");
+            assert!(!buffer.is_dirty());
+            assert!(!buffer.has_conflict());
+        });
+        buffer_b.update(cx_b, |buffer, cx| {
+            // Undoing on the guest rolls back the buffer to before it was reloaded but the conflict gets cleared.
+            buffer.undo(cx);
+            assert_eq!(buffer.text(), "let six = 6;");
+            assert!(buffer.is_dirty());
+            assert!(!buffer.has_conflict());
+        });
     }
 
     #[gpui::test(iterations = 10)]

@@ -280,6 +280,15 @@ impl Item for ProjectSearchView {
         unreachable!("save_as should not have been called")
     }
 
+    fn reload(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        self.results_editor
+            .update(cx, |editor, cx| editor.reload(project, cx))
+    }
+
     fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,

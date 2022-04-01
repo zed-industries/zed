@@ -237,6 +237,11 @@ pub trait Item: View {
         abs_path: PathBuf,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>>;
+    fn reload(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>>;
     fn should_activate_item_on_event(_: &Self::Event) -> bool {
         false
     }
@@ -380,6 +385,8 @@ pub trait ItemHandle: 'static + fmt::Debug {
         abs_path: PathBuf,
         cx: &mut MutableAppContext,
     ) -> Task<Result<()>>;
+    fn reload(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext)
+        -> Task<Result<()>>;
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle>;
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
 }
@@ -490,7 +497,8 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             }
 
             if T::should_close_item_on_event(event) {
-                pane.update(cx, |pane, cx| pane.close_item(item.id(), cx));
+                pane.update(cx, |pane, cx| pane.close_item(item.id(), cx))
+                    .detach();
                 return;
             }
 
@@ -529,6 +537,14 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         cx: &mut MutableAppContext,
     ) -> Task<anyhow::Result<()>> {
         self.update(cx, |item, cx| item.save_as(project, abs_path, cx))
+    }
+
+    fn reload(
+        &self,
+        project: ModelHandle<Project>,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<()>> {
+        self.update(cx, |item, cx| item.reload(project, cx))
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
@@ -722,7 +738,7 @@ impl Workspace {
         })
         .detach();
 
-        let pane = cx.add_view(|cx| Pane::new(cx));
+        let pane = cx.add_view(|cx| Pane::new(params.project.clone(), cx));
         let pane_id = pane.id();
         cx.observe(&pane, move |me, _, cx| {
             let active_entry = me.active_project_path(cx);
@@ -1054,7 +1070,7 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane = cx.add_view(|cx| Pane::new(cx));
+        let pane = cx.add_view(|cx| Pane::new(self.project.clone(), cx));
         let pane_id = pane.id();
         cx.observe(&pane, move |me, _, cx| {
             let active_entry = me.active_project_path(cx);

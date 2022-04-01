@@ -48,43 +48,45 @@ message Envelope {
         SaveBuffer save_buffer = 40;
         BufferSaved buffer_saved = 41;
         BufferReloaded buffer_reloaded = 42;
-        FormatBuffers format_buffers = 43;
-        FormatBuffersResponse format_buffers_response = 44;
-        GetCompletions get_completions = 45;
-        GetCompletionsResponse get_completions_response = 46;
-        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 47;
-        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 48;
-        GetCodeActions get_code_actions = 49;
-        GetCodeActionsResponse get_code_actions_response = 50;
-        ApplyCodeAction apply_code_action = 51;
-        ApplyCodeActionResponse apply_code_action_response = 52;
-        PrepareRename prepare_rename = 53;
-        PrepareRenameResponse prepare_rename_response = 54;
-        PerformRename perform_rename = 55;
-        PerformRenameResponse perform_rename_response = 56;
-        SearchProject search_project = 57;
-        SearchProjectResponse search_project_response = 58;
+        ReloadBuffers reload_buffers = 43;
+        ReloadBuffersResponse reload_buffers_response = 44;
+        FormatBuffers format_buffers = 45;
+        FormatBuffersResponse format_buffers_response = 46;
+        GetCompletions get_completions = 47;
+        GetCompletionsResponse get_completions_response = 48;
+        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 49;
+        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 50;
+        GetCodeActions get_code_actions = 51;
+        GetCodeActionsResponse get_code_actions_response = 52;
+        ApplyCodeAction apply_code_action = 53;
+        ApplyCodeActionResponse apply_code_action_response = 54;
+        PrepareRename prepare_rename = 55;
+        PrepareRenameResponse prepare_rename_response = 56;
+        PerformRename perform_rename = 57;
+        PerformRenameResponse perform_rename_response = 58;
+        SearchProject search_project = 59;
+        SearchProjectResponse search_project_response = 60;
 
-        GetChannels get_channels = 59;
-        GetChannelsResponse get_channels_response = 60;
-        JoinChannel join_channel = 61;
-        JoinChannelResponse join_channel_response = 62;
-        LeaveChannel leave_channel = 63;
-        SendChannelMessage send_channel_message = 64;
-        SendChannelMessageResponse send_channel_message_response = 65;
-        ChannelMessageSent channel_message_sent = 66;
-        GetChannelMessages get_channel_messages = 67;
-        GetChannelMessagesResponse get_channel_messages_response = 68;
+        GetChannels get_channels = 61;
+        GetChannelsResponse get_channels_response = 62;
+        JoinChannel join_channel = 63;
+        JoinChannelResponse join_channel_response = 64;
+        LeaveChannel leave_channel = 65;
+        SendChannelMessage send_channel_message = 66;
+        SendChannelMessageResponse send_channel_message_response = 67;
+        ChannelMessageSent channel_message_sent = 68;
+        GetChannelMessages get_channel_messages = 69;
+        GetChannelMessagesResponse get_channel_messages_response = 70;
 
-        UpdateContacts update_contacts = 69;
+        UpdateContacts update_contacts = 71;
 
-        GetUsers get_users = 70;
-        GetUsersResponse get_users_response = 71;
+        GetUsers get_users = 72;
+        GetUsersResponse get_users_response = 73;
 
-        Follow follow = 72;
-        FollowResponse follow_response = 73;
-        UpdateFollowers update_followers = 74;
-        Unfollow unfollow = 75;
+        Follow follow = 74;
+        FollowResponse follow_response = 75;
+        UpdateFollowers update_followers = 76;
+        Unfollow unfollow = 77;
     }
 }
 
@@ -297,6 +299,15 @@ message BufferReloaded {
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
     Timestamp mtime = 4;
+}
+
+message ReloadBuffers {
+    uint64 project_id = 1;
+    repeated uint64 buffer_ids = 2;
+}
+
+message ReloadBuffersResponse {
+    ProjectTransaction transaction = 1;
 }
 
 message FormatBuffers {

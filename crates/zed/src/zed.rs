@@ -683,6 +683,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_pane_actions(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+
         cx.update(|cx| pane::init(cx));
         let app_state = cx.update(test_app_state);
         app_state
@@ -740,7 +742,9 @@ mod tests {
             assert_eq!(pane2_item.project_path(cx.as_ref()), Some(file1.clone()));
 
             cx.dispatch_action(window_id, vec![pane_2.id()], &workspace::CloseActiveItem);
-            let workspace = workspace.read(cx);
+        });
+        cx.foreground().run_until_parked();
+        workspace.read_with(cx, |workspace, _| {
             assert_eq!(workspace.panes().len(), 1);
             assert_eq!(workspace.active_pane(), &pane_1);
         });
@@ -867,12 +871,15 @@ mod tests {
 
         // Go forward to an item that has been closed, ensuring it gets re-opened at the same
         // location.
-        workspace.update(cx, |workspace, cx| {
-            workspace
-                .active_pane()
-                .update(cx, |pane, cx| pane.close_item(editor3.id(), cx));
-            drop(editor3);
-        });
+        workspace
+            .update(cx, |workspace, cx| {
+                let editor3_id = editor3.id();
+                drop(editor3);
+                workspace
+                    .active_pane()
+                    .update(cx, |pane, cx| pane.close_item(editor3_id, cx))
+            })
+            .await;
         workspace
             .update(cx, |w, cx| Pane::go_forward(w, None, cx))
             .await;
@@ -884,15 +891,17 @@ mod tests {
         // Go back to an item that has been closed and removed from disk, ensuring it gets skipped.
         workspace
             .update(cx, |workspace, cx| {
+                let editor2_id = editor2.id();
+                drop(editor2);
                 workspace
                     .active_pane()
-                    .update(cx, |pane, cx| pane.close_item(editor2.id(), cx));
-                drop(editor2);
-                app_state
-                    .fs
-                    .as_fake()
-                    .remove_file(Path::new("/root/a/file2"), Default::default())
+                    .update(cx, |pane, cx| pane.close_item(editor2_id, cx))
             })
+            .await;
+        app_state
+            .fs
+            .as_fake()
+            .remove_file(Path::new("/root/a/file2"), Default::default())
             .await
             .unwrap();
         workspace

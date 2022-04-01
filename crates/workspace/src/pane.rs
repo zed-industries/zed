@@ -1,16 +1,17 @@
 use super::{ItemHandle, SplitDirection};
 use crate::{toolbar::Toolbar, Item, Settings, WeakItemHandle, Workspace};
 use collections::{HashMap, VecDeque};
+use futures::StreamExt;
 use gpui::{
     action,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     keymap::Binding,
     platform::{CursorStyle, NavigationDirection},
-    AppContext, Entity, MutableAppContext, Quad, RenderContext, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AppContext, Entity, ModelHandle, MutableAppContext, PromptLevel, Quad, RenderContext, Task,
+    View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use project::{ProjectEntryId, ProjectPath};
+use project::{Project, ProjectEntryId, ProjectPath};
 use std::{any::Any, cell::RefCell, cmp, mem, rc::Rc};
 use util::ResultExt;
 
@@ -37,13 +38,13 @@ pub fn init(cx: &mut MutableAppContext) {
         pane.activate_next_item(cx);
     });
     cx.add_action(|pane: &mut Pane, _: &CloseActiveItem, cx| {
-        pane.close_active_item(cx);
+        pane.close_active_item(cx).detach();
     });
     cx.add_action(|pane: &mut Pane, _: &CloseInactiveItems, cx| {
-        pane.close_inactive_items(cx);
+        pane.close_inactive_items(cx).detach();
     });
     cx.add_action(|pane: &mut Pane, action: &CloseItem, cx| {
-        pane.close_item(action.0, cx);
+        pane.close_item(action.0, cx).detach();
     });
     cx.add_action(|pane: &mut Pane, action: &Split, cx| {
         pane.split(action.0, cx);
@@ -97,6 +98,7 @@ pub struct Pane {
     active_item_index: usize,
     nav_history: Rc<RefCell<NavHistory>>,
     toolbar: ViewHandle<Toolbar>,
+    project: ModelHandle<Project>,
 }
 
 pub struct ItemNavHistory {
@@ -132,12 +134,13 @@ pub struct NavigationEntry {
 }
 
 impl Pane {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
         Self {
             items: Vec::new(),
             active_item_index: 0,
             nav_history: Default::default(),
             toolbar: cx.add_view(|_| Toolbar::new()),
+            project,
         }
     }
 
@@ -403,65 +406,137 @@ impl Pane {
         self.activate_item(index, true, cx);
     }
 
-    pub fn close_active_item(&mut self, cx: &mut ViewContext<Self>) {
-        if !self.items.is_empty() {
+    pub fn close_active_item(&mut self, cx: &mut ViewContext<Self>) -> Task<()> {
+        if self.items.is_empty() {
+            Task::ready(())
+        } else {
             self.close_item(self.items[self.active_item_index].id(), cx)
         }
     }
 
-    pub fn close_inactive_items(&mut self, cx: &mut ViewContext<Self>) {
-        if !self.items.is_empty() {
+    pub fn close_inactive_items(&mut self, cx: &mut ViewContext<Self>) -> Task<()> {
+        if self.items.is_empty() {
+            Task::ready(())
+        } else {
             let active_item_id = self.items[self.active_item_index].id();
-            self.close_items(cx, |id| id != active_item_id);
+            self.close_items(cx, move |id| id != active_item_id)
         }
     }
 
-    pub fn close_item(&mut self, view_id_to_close: usize, cx: &mut ViewContext<Self>) {
-        self.close_items(cx, |view_id| view_id == view_id_to_close);
+    pub fn close_item(&mut self, view_id_to_close: usize, cx: &mut ViewContext<Self>) -> Task<()> {
+        self.close_items(cx, move |view_id| view_id == view_id_to_close)
     }
 
     pub fn close_items(
         &mut self,
         cx: &mut ViewContext<Self>,
-        should_close: impl Fn(usize) -> bool,
-    ) {
-        let mut item_ix = 0;
-        let mut new_active_item_index = self.active_item_index;
-        self.items.retain(|item| {
-            if should_close(item.id()) {
-                if item_ix == self.active_item_index {
-                    item.deactivated(cx);
+        should_close: impl 'static + Fn(usize) -> bool,
+    ) -> Task<()> {
+        const CONFLICT_MESSAGE: &'static str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
+        const DIRTY_MESSAGE: &'static str =
+            "This file contains unsaved edits. Do you want to save it?";
+
+        let project = self.project.clone();
+        cx.spawn(|this, mut cx| async move {
+            while let Some(item_to_close_ix) = this.read_with(&cx, |this, _| {
+                this.items.iter().position(|item| should_close(item.id()))
+            }) {
+                let item =
+                    this.read_with(&cx, |this, _| this.items[item_to_close_ix].boxed_clone());
+                if cx.read(|cx| item.can_save(cx)) {
+                    if cx.read(|cx| item.has_conflict(cx)) {
+                        let mut answer = this.update(&mut cx, |this, cx| {
+                            this.activate_item(item_to_close_ix, true, cx);
+                            cx.prompt(
+                                PromptLevel::Warning,
+                                CONFLICT_MESSAGE,
+                                &["Overwrite", "Discard", "Cancel"],
+                            )
+                        });
+
+                        match answer.next().await {
+                            Some(0) => {
+                                if cx
+                                    .update(|cx| item.save(project.clone(), cx))
+                                    .await
+                                    .log_err()
+                                    .is_none()
+                                {
+                                    break;
+                                }
+                            }
+                            Some(1) => {
+                                if cx
+                                    .update(|cx| item.reload(project.clone(), cx))
+                                    .await
+                                    .log_err()
+                                    .is_none()
+                                {
+                                    break;
+                                }
+                            }
+                            _ => break,
+                        }
+                    } else if cx.read(|cx| item.is_dirty(cx)) {
+                        let mut answer = this.update(&mut cx, |this, cx| {
+                            this.activate_item(item_to_close_ix, true, cx);
+                            cx.prompt(
+                                PromptLevel::Warning,
+                                DIRTY_MESSAGE,
+                                &["Save", "Don't Save", "Cancel"],
+                            )
+                        });
+
+                        match answer.next().await {
+                            Some(0) => {
+                                if cx
+                                    .update(|cx| item.save(project.clone(), cx))
+                                    .await
+                                    .log_err()
+                                    .is_none()
+                                {
+                                    break;
+                                }
+                            }
+                            Some(1) => {}
+                            _ => break,
+                        }
+                    }
                 }
 
-                if item_ix < self.active_item_index {
-                    new_active_item_index -= 1;
-                }
+                this.update(&mut cx, |this, cx| {
+                    if let Some(item_ix) = this.items.iter().position(|i| i.id() == item.id()) {
+                        this.items.remove(item_ix);
+                        if item_ix == this.active_item_index {
+                            item.deactivated(cx);
+                        }
+                        if item_ix < this.active_item_index {
+                            this.active_item_index -= 1;
+                        }
+                        this.active_item_index =
+                            cmp::min(this.active_item_index, this.items.len().saturating_sub(1));
 
-                let mut nav_history = self.nav_history.borrow_mut();
-                if let Some(path) = item.project_path(cx) {
-                    nav_history.paths_by_item.insert(item.id(), path);
-                } else {
-                    nav_history.paths_by_item.remove(&item.id());
-                }
-
-                item_ix += 1;
-                false
-            } else {
-                item_ix += 1;
-                true
+                        let mut nav_history = this.nav_history.borrow_mut();
+                        if let Some(path) = item.project_path(cx) {
+                            nav_history.paths_by_item.insert(item.id(), path);
+                        } else {
+                            nav_history.paths_by_item.remove(&item.id());
+                        }
+                    }
+                });
             }
-        });
 
-        if self.items.is_empty() {
-            cx.emit(Event::Remove);
-        } else {
-            self.active_item_index = cmp::min(new_active_item_index, self.items.len() - 1);
-            self.focus_active_item(cx);
-            self.activate(cx);
-        }
-        self.update_toolbar(cx);
-
-        cx.notify();
+            this.update(&mut cx, |this, cx| {
+                if this.items.is_empty() {
+                    cx.emit(Event::Remove);
+                } else {
+                    this.focus_active_item(cx);
+                    this.activate(cx);
+                }
+                this.update_toolbar(cx);
+                cx.notify();
+            })
+        })
     }
 
     pub fn focus_active_item(&mut self, cx: &mut ViewContext<Self>) {
@@ -740,6 +815,168 @@ impl NavHistory {
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
                 });
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::WorkspaceParams;
+
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn test_close_items(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let params = cx.update(WorkspaceParams::test);
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
+        let item1 = cx.add_view(window_id, |_| TestItem::new(false, true));
+        let item2 = cx.add_view(window_id, |_| TestItem::new(true, true));
+        let item3 = cx.add_view(window_id, |_| TestItem::new(false, true));
+        let item4 = cx.add_view(window_id, |_| TestItem::new(true, false));
+        let pane = workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(item1.clone()), cx);
+            workspace.add_item(Box::new(item3.clone()), cx);
+            workspace.add_item(Box::new(item4.clone()), cx);
+            workspace.add_item(Box::new(item2.clone()), cx);
+            assert_eq!(workspace.active_item(cx).unwrap().id(), item2.id());
+
+            workspace.active_pane().clone()
+        });
+
+        let close_items = pane.update(cx, |pane, cx| {
+            let item1_id = item1.id();
+            let item3_id = item3.id();
+            let item4_id = item4.id();
+            pane.close_items(cx, move |id| {
+                id == item1_id || id == item3_id || id == item4_id
+            })
+        });
+
+        cx.foreground().run_until_parked();
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items.len(), 4);
+            assert_eq!(pane.active_item().unwrap().id(), item1.id());
+        });
+
+        cx.simulate_prompt_answer(window_id, 0);
+        cx.foreground().run_until_parked();
+        pane.read_with(cx, |pane, cx| {
+            assert_eq!(item1.read(cx).save_count, 1);
+            assert_eq!(item1.read(cx).reload_count, 0);
+            assert_eq!(pane.items.len(), 3);
+            assert_eq!(pane.active_item().unwrap().id(), item3.id());
+        });
+
+        cx.simulate_prompt_answer(window_id, 1);
+        cx.foreground().run_until_parked();
+        pane.read_with(cx, |pane, cx| {
+            assert_eq!(item3.read(cx).save_count, 0);
+            assert_eq!(item3.read(cx).reload_count, 1);
+            assert_eq!(pane.items.len(), 2);
+            assert_eq!(pane.active_item().unwrap().id(), item4.id());
+        });
+
+        cx.simulate_prompt_answer(window_id, 0);
+        close_items.await;
+        pane.read_with(cx, |pane, cx| {
+            assert_eq!(item4.read(cx).save_count, 1);
+            assert_eq!(item4.read(cx).reload_count, 0);
+            assert_eq!(pane.items.len(), 1);
+            assert_eq!(pane.active_item().unwrap().id(), item2.id());
+        });
+    }
+
+    struct TestItem {
+        is_dirty: bool,
+        has_conflict: bool,
+        save_count: usize,
+        reload_count: usize,
+    }
+
+    impl TestItem {
+        fn new(is_dirty: bool, has_conflict: bool) -> Self {
+            Self {
+                save_count: 0,
+                reload_count: 0,
+                is_dirty,
+                has_conflict,
+            }
+        }
+    }
+
+    impl Entity for TestItem {
+        type Event = ();
+    }
+
+    impl View for TestItem {
+        fn ui_name() -> &'static str {
+            "TestItem"
+        }
+
+        fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+            Empty::new().boxed()
+        }
+    }
+
+    impl Item for TestItem {
+        fn tab_content(&self, _: &theme::Tab, _: &AppContext) -> ElementBox {
+            Empty::new().boxed()
+        }
+
+        fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
+            None
+        }
+
+        fn project_entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
+            None
+        }
+
+        fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
+
+        fn is_dirty(&self, _: &AppContext) -> bool {
+            self.is_dirty
+        }
+
+        fn has_conflict(&self, _: &AppContext) -> bool {
+            self.has_conflict
+        }
+
+        fn can_save(&self, _: &AppContext) -> bool {
+            true
+        }
+
+        fn save(
+            &mut self,
+            _: ModelHandle<Project>,
+            _: &mut ViewContext<Self>,
+        ) -> Task<anyhow::Result<()>> {
+            self.save_count += 1;
+            Task::ready(Ok(()))
+        }
+
+        fn can_save_as(&self, _: &AppContext) -> bool {
+            false
+        }
+
+        fn save_as(
+            &mut self,
+            _: ModelHandle<Project>,
+            _: std::path::PathBuf,
+            _: &mut ViewContext<Self>,
+        ) -> Task<anyhow::Result<()>> {
+            unreachable!()
+        }
+
+        fn reload(
+            &mut self,
+            _: ModelHandle<Project>,
+            _: &mut ViewContext<Self>,
+        ) -> Task<anyhow::Result<()>> {
+            self.reload_count += 1;
+            Task::ready(Ok(()))
         }
     }
 }
