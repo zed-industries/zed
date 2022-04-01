@@ -487,6 +487,10 @@ impl ProjectSearchView {
             cx.notify();
         }
     }
+
+    pub fn has_matches(&self) -> bool {
+        self.active_match_index.is_some()
+    }
 }
 
 impl ProjectSearchBar {

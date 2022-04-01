@@ -2,8 +2,9 @@ use crate::{active_match_index, match_index_for_direction, Direction, SearchOpti
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, Anchor, Autoscroll, Bias, Editor};
 use gpui::{
-    action, elements::*, keymap::Binding, platform::CursorStyle, Entity, MutableAppContext,
-    RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    action, elements::*, keymap::Binding, platform::CursorStyle, AppContext, Entity,
+    MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use language::OffsetRangeExt;
 use project::search::SearchQuery;
@@ -164,7 +165,12 @@ impl ToolbarItemView for BufferSearchBar {
         ToolbarItemLocation::Hidden
     }
 
-    fn location_for_event(&self, _: &Self::Event, _: ToolbarItemLocation) -> ToolbarItemLocation {
+    fn location_for_event(
+        &self,
+        _: &Self::Event,
+        _: ToolbarItemLocation,
+        _: &AppContext,
+    ) -> ToolbarItemLocation {
         if self.active_editor.is_some() && !self.dismissed {
             ToolbarItemLocation::Secondary
         } else {

@@ -8,16 +8,22 @@ use std::borrow::Cow;
 use theme::SyntaxTheme;
 use workspace::{ItemHandle, Settings, ToolbarItemLocation, ToolbarItemView};
 
+pub enum Event {
+    UpdateLocation,
+}
+
 pub struct Breadcrumbs {
     editor: Option<ViewHandle<Editor>>,
-    editor_subscription: Option<Subscription>,
+    project_search: Option<ViewHandle<ProjectSearchView>>,
+    subscriptions: Vec<Subscription>,
 }
 
 impl Breadcrumbs {
     pub fn new() -> Self {
         Self {
             editor: Default::default(),
-            editor_subscription: Default::default(),
+            subscriptions: Default::default(),
+            project_search: Default::default(),
         }
     }
 
@@ -42,7 +48,7 @@ impl Breadcrumbs {
 }
 
 impl Entity for Breadcrumbs {
-    type Event = ();
+    type Event = Event;
 }
 
 impl View for Breadcrumbs {
@@ -90,19 +96,30 @@ impl ToolbarItemView for Breadcrumbs {
         cx: &mut ViewContext<Self>,
     ) -> ToolbarItemLocation {
         cx.notify();
-        self.editor_subscription = None;
+        self.subscriptions.clear();
         self.editor = None;
+        self.project_search = None;
         if let Some(item) = active_pane_item {
             if let Some(editor) = item.act_as::<Editor>(cx) {
-                self.editor_subscription =
-                    Some(cx.subscribe(&editor, |_, _, event, cx| match event {
+                self.subscriptions
+                    .push(cx.subscribe(&editor, |_, _, event, cx| match event {
                         editor::Event::BufferEdited => cx.notify(),
                         editor::Event::SelectionsChanged { local } if *local => cx.notify(),
                         _ => {}
                     }));
                 self.editor = Some(editor);
-                if item.downcast::<ProjectSearchView>().is_some() {
-                    ToolbarItemLocation::Secondary
+                if let Some(project_search) = item.downcast::<ProjectSearchView>() {
+                    self.subscriptions
+                        .push(cx.subscribe(&project_search, |_, _, _, cx| {
+                            cx.emit(Event::UpdateLocation);
+                        }));
+                    self.project_search = Some(project_search.clone());
+
+                    if project_search.read(cx).has_matches() {
+                        ToolbarItemLocation::Secondary
+                    } else {
+                        ToolbarItemLocation::Hidden
+                    }
                 } else {
                     ToolbarItemLocation::PrimaryLeft
                 }
@@ -111,6 +128,23 @@ impl ToolbarItemView for Breadcrumbs {
             }
         } else {
             ToolbarItemLocation::Hidden
+        }
+    }
+
+    fn location_for_event(
+        &self,
+        _: &Event,
+        current_location: ToolbarItemLocation,
+        cx: &AppContext,
+    ) -> ToolbarItemLocation {
+        if let Some(project_search) = self.project_search.as_ref() {
+            if project_search.read(cx).has_matches() {
+                ToolbarItemLocation::Secondary
+            } else {
+                ToolbarItemLocation::Hidden
+            }
+        } else {
+            current_location
         }
     }
 }

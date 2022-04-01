@@ -1,7 +1,7 @@
 use crate::{ItemHandle, Settings};
 use gpui::{
-    elements::*, AnyViewHandle, ElementBox, Entity, MutableAppContext, RenderContext, View,
-    ViewContext, ViewHandle,
+    elements::*, AnyViewHandle, AppContext, ElementBox, Entity, MutableAppContext, RenderContext,
+    View, ViewContext, ViewHandle,
 };
 
 pub trait ToolbarItemView: View {
@@ -15,6 +15,7 @@ pub trait ToolbarItemView: View {
         &self,
         _event: &Self::Event,
         current_location: ToolbarItemLocation,
+        _cx: &AppContext,
     ) -> ToolbarItemLocation {
         current_location
     }
@@ -121,7 +122,9 @@ impl Toolbar {
             if let Some((_, current_location)) =
                 this.items.iter_mut().find(|(i, _)| i.id() == item.id())
             {
-                let new_location = item.read(cx).location_for_event(event, *current_location);
+                let new_location = item
+                    .read(cx)
+                    .location_for_event(event, *current_location, cx);
                 if new_location != *current_location {
                     *current_location = new_location;
                     cx.notify();
