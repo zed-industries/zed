@@ -1,5 +1,5 @@
+import Theme from "../themes/theme";
 import { backgroundColor, border, player, shadow, text } from "./components";
-import Theme from "./theme";
 
 export default function selectorModal(theme: Theme): Object {
   const item = {

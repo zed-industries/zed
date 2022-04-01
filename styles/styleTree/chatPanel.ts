@@ -1,3 +1,4 @@
+import Theme from "../themes/theme";
 import { panel } from "./app";
 import {
   backgroundColor,
@@ -5,9 +6,8 @@ import {
   player,
   shadow,
   text,
-  TextColor,
+  TextColor
 } from "./components";
-import Theme from "./theme";
 
 export default function chatPanel(theme: Theme) {
   function channelSelectItem(

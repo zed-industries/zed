@@ -1,10 +1,10 @@
-import chatPanel from "./chat-panel";
+import Theme from "../themes/theme";
+import chatPanel from "./chatPanel";
 import { backgroundColor, borderColor, text } from "./components";
 import editor from "./editor";
-import projectPanel from "./project-panel";
+import projectPanel from "./projectPanel";
 import search from "./search";
-import selectorModal from "./selector-modal";
-import Theme from "./theme";
+import selectorModal from "./selectorModal";
 import workspace from "./workspace";
 
 export const panel = {
