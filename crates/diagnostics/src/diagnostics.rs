@@ -478,6 +478,14 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         self.editor.save(project, cx)
     }
 
+    fn reload(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        self.editor.reload(project, cx)
+    }
+
     fn can_save_as(&self, _: &AppContext) -> bool {
         false
     }
