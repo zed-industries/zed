@@ -1,92 +1,50 @@
-use anyhow::{anyhow, Context, Result};
+use super::installation::{latest_github_release, GitHubLspBinaryVersion};
+use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
-use client::http::{self, HttpClient, Method};
+use client::http::{HttpClient, Method};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use gpui::Task;
 pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
-use rust_embed::RustEmbed;
-use serde::Deserialize;
-use serde_json::json;
 use smol::fs::{self, File};
-use std::{borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
+use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
-#[derive(RustEmbed)]
-#[folder = "languages"]
-struct LanguageDir;
-
-struct RustLspAdapter;
-struct CLspAdapter;
-struct JsonLspAdapter;
-
-#[derive(Deserialize)]
-struct GithubRelease {
-    name: String,
-    assets: Vec<GithubReleaseAsset>,
-}
-
-#[derive(Deserialize)]
-struct GithubReleaseAsset {
-    name: String,
-    browser_download_url: http::Url,
-}
+pub struct RustLspAdapter;
 
 impl LspAdapter for RustLspAdapter {
-    fn name(&self) -> &'static str {
-        "rust-analyzer"
+    fn name(&self) -> LanguageServerName {
+        LanguageServerName("rust-analyzer".into())
     }
 
     fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,
-    ) -> BoxFuture<'static, Result<LspBinaryVersion>> {
+    ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
         async move {
-            let release = http
-            .send(
-                surf::RequestBuilder::new(
-                    Method::Get,
-                    http::Url::parse(
-                        "https://api.github.com/repos/rust-analyzer/rust-analyzer/releases/latest",
-                    )
-                    .unwrap(),
-                )
-                .middleware(surf::middleware::Redirect::default())
-                .build(),
-            )
-            .await
-            .map_err(|err| anyhow!("error fetching latest release: {}", err))?
-            .body_json::<GithubRelease>()
-            .await
-            .map_err(|err| anyhow!("error parsing latest release: {}", err))?;
-            let asset_name = format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH);
-            let asset = release
-                .assets
-                .iter()
-                .find(|asset| asset.name == asset_name)
-                .ok_or_else(|| anyhow!("no release found matching {:?}", asset_name))?;
-            Ok(LspBinaryVersion {
-                name: release.name,
-                url: Some(asset.browser_download_url.clone()),
+            let version = latest_github_release("rust-analyzer/rust-analyzer", http, |_| {
+                format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH)
             })
+            .await?;
+            Ok(Box::new(version) as Box<_>)
         }
         .boxed()
     }
 
     fn fetch_server_binary(
         &self,
-        version: LspBinaryVersion,
+        version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
     ) -> BoxFuture<'static, Result<PathBuf>> {
         async move {
+            let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
             let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
 
             if fs::metadata(&destination_path).await.is_err() {
                 let response = http
                     .send(
-                        surf::RequestBuilder::new(Method::Get, version.url.unwrap())
+                        surf::RequestBuilder::new(Method::Get, version.url)
                             .middleware(surf::middleware::Redirect::default())
                             .build(),
                     )
@@ -129,6 +87,14 @@ impl LspAdapter for RustLspAdapter {
         }
         .log_err()
         .boxed()
+    }
+
+    fn disk_based_diagnostic_sources(&self) -> &'static [&'static str] {
+        &["rustc"]
+    }
+
+    fn disk_based_diagnostics_progress_token(&self) -> Option<&'static str> {
+        Some("rustAnalyzer/cargo check")
     }
 
     fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
@@ -287,325 +253,11 @@ impl LspAdapter for RustLspAdapter {
     }
 }
 
-impl LspAdapter for CLspAdapter {
-    fn name(&self) -> &'static str {
-        "clangd"
-    }
-
-    fn fetch_latest_server_version(
-        &self,
-        http: Arc<dyn HttpClient>,
-    ) -> BoxFuture<'static, Result<LspBinaryVersion>> {
-        async move {
-            let release = http
-                .send(
-                    surf::RequestBuilder::new(
-                        Method::Get,
-                        http::Url::parse(
-                            "https://api.github.com/repos/clangd/clangd/releases/latest",
-                        )
-                        .unwrap(),
-                    )
-                    .middleware(surf::middleware::Redirect::default())
-                    .build(),
-                )
-                .await
-                .map_err(|err| anyhow!("error fetching latest release: {}", err))?
-                .body_json::<GithubRelease>()
-                .await
-                .map_err(|err| anyhow!("error parsing latest release: {}", err))?;
-            let asset_name = format!("clangd-mac-{}.zip", release.name);
-            let asset = release
-                .assets
-                .iter()
-                .find(|asset| asset.name == asset_name)
-                .ok_or_else(|| anyhow!("no release found matching {:?}", asset_name))?;
-            Ok(LspBinaryVersion {
-                name: release.name,
-                url: Some(asset.browser_download_url.clone()),
-            })
-        }
-        .boxed()
-    }
-
-    fn fetch_server_binary(
-        &self,
-        version: LspBinaryVersion,
-        http: Arc<dyn HttpClient>,
-        container_dir: PathBuf,
-    ) -> BoxFuture<'static, Result<PathBuf>> {
-        async move {
-            let zip_path = container_dir.join(format!("clangd_{}.zip", version.name));
-            let version_dir = container_dir.join(format!("clangd_{}", version.name));
-            let binary_path = version_dir.join("bin/clangd");
-
-            if fs::metadata(&binary_path).await.is_err() {
-                let response = http
-                    .send(
-                        surf::RequestBuilder::new(Method::Get, version.url.unwrap())
-                            .middleware(surf::middleware::Redirect::default())
-                            .build(),
-                    )
-                    .await
-                    .map_err(|err| anyhow!("error downloading release: {}", err))?;
-                let mut file = File::create(&zip_path).await?;
-                if !response.status().is_success() {
-                    Err(anyhow!(
-                        "download failed with status {}",
-                        response.status().to_string()
-                    ))?;
-                }
-                futures::io::copy(response, &mut file).await?;
-
-                let unzip_status = smol::process::Command::new("unzip")
-                    .current_dir(&container_dir)
-                    .arg(&zip_path)
-                    .output()
-                    .await?
-                    .status;
-                if !unzip_status.success() {
-                    Err(anyhow!("failed to unzip clangd archive"))?;
-                }
-
-                if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
-                    while let Some(entry) = entries.next().await {
-                        if let Some(entry) = entry.log_err() {
-                            let entry_path = entry.path();
-                            if entry_path.as_path() != version_dir {
-                                fs::remove_dir_all(&entry_path).await.log_err();
-                            }
-                        }
-                    }
-                }
-            }
-
-            Ok(binary_path)
-        }
-        .boxed()
-    }
-
-    fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
-        async move {
-            let mut last_clangd_dir = None;
-            let mut entries = fs::read_dir(&container_dir).await?;
-            while let Some(entry) = entries.next().await {
-                let entry = entry?;
-                if entry.file_type().await?.is_dir() {
-                    last_clangd_dir = Some(entry.path());
-                }
-            }
-            let clangd_dir = last_clangd_dir.ok_or_else(|| anyhow!("no cached binary"))?;
-            let clangd_bin = clangd_dir.join("bin/clangd");
-            if clangd_bin.exists() {
-                Ok(clangd_bin)
-            } else {
-                Err(anyhow!(
-                    "missing clangd binary in directory {:?}",
-                    clangd_dir
-                ))
-            }
-        }
-        .log_err()
-        .boxed()
-    }
-
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
-}
-
-impl JsonLspAdapter {
-    const BIN_PATH: &'static str =
-        "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
-}
-
-impl LspAdapter for JsonLspAdapter {
-    fn name(&self) -> &'static str {
-        "vscode-json-languageserver"
-    }
-
-    fn server_args(&self) -> &[&str] {
-        &["--stdio"]
-    }
-
-    fn fetch_latest_server_version(
-        &self,
-        _: Arc<dyn HttpClient>,
-    ) -> BoxFuture<'static, Result<LspBinaryVersion>> {
-        async move {
-            #[derive(Deserialize)]
-            struct NpmInfo {
-                versions: Vec<String>,
-            }
-
-            let output = smol::process::Command::new("npm")
-                .args(["info", "vscode-json-languageserver", "--json"])
-                .output()
-                .await?;
-            if !output.status.success() {
-                Err(anyhow!("failed to execute npm info"))?;
-            }
-            let mut info: NpmInfo = serde_json::from_slice(&output.stdout)?;
-
-            Ok(LspBinaryVersion {
-                name: info
-                    .versions
-                    .pop()
-                    .ok_or_else(|| anyhow!("no versions found in npm info"))?,
-                url: Default::default(),
-            })
-        }
-        .boxed()
-    }
-
-    fn fetch_server_binary(
-        &self,
-        version: LspBinaryVersion,
-        _: Arc<dyn HttpClient>,
-        container_dir: PathBuf,
-    ) -> BoxFuture<'static, Result<PathBuf>> {
-        async move {
-            let version_dir = container_dir.join(&version.name);
-            fs::create_dir_all(&version_dir)
-                .await
-                .context("failed to create version directory")?;
-            let binary_path = version_dir.join(Self::BIN_PATH);
-
-            if fs::metadata(&binary_path).await.is_err() {
-                let output = smol::process::Command::new("npm")
-                    .current_dir(&version_dir)
-                    .arg("install")
-                    .arg(format!("vscode-json-languageserver@{}", version.name))
-                    .output()
-                    .await
-                    .context("failed to run npm install")?;
-                if !output.status.success() {
-                    Err(anyhow!("failed to install vscode-json-languageserver"))?;
-                }
-
-                if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
-                    while let Some(entry) = entries.next().await {
-                        if let Some(entry) = entry.log_err() {
-                            let entry_path = entry.path();
-                            if entry_path.as_path() != version_dir {
-                                fs::remove_dir_all(&entry_path).await.log_err();
-                            }
-                        }
-                    }
-                }
-            }
-
-            Ok(binary_path)
-        }
-        .boxed()
-    }
-
-    fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
-        async move {
-            let mut last_version_dir = None;
-            let mut entries = fs::read_dir(&container_dir).await?;
-            while let Some(entry) = entries.next().await {
-                let entry = entry?;
-                if entry.file_type().await?.is_dir() {
-                    last_version_dir = Some(entry.path());
-                }
-            }
-            let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
-            let bin_path = last_version_dir.join(Self::BIN_PATH);
-            if bin_path.exists() {
-                Ok(bin_path)
-            } else {
-                Err(anyhow!(
-                    "missing executable in directory {:?}",
-                    last_version_dir
-                ))
-            }
-        }
-        .log_err()
-        .boxed()
-    }
-
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
-
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "provideFormatter": true
-        }))
-    }
-}
-
-pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegistry {
-    let languages = LanguageRegistry::new(login_shell_env_loaded);
-    languages.add(Arc::new(c()));
-    languages.add(Arc::new(json()));
-    languages.add(Arc::new(rust()));
-    languages.add(Arc::new(markdown()));
-    languages
-}
-
-fn rust() -> Language {
-    let grammar = tree_sitter_rust::language();
-    let config = toml::from_slice(&LanguageDir::get("rust/config.toml").unwrap().data).unwrap();
-    Language::new(config, Some(grammar))
-        .with_highlights_query(load_query("rust/highlights.scm").as_ref())
-        .unwrap()
-        .with_brackets_query(load_query("rust/brackets.scm").as_ref())
-        .unwrap()
-        .with_indents_query(load_query("rust/indents.scm").as_ref())
-        .unwrap()
-        .with_outline_query(load_query("rust/outline.scm").as_ref())
-        .unwrap()
-        .with_lsp_adapter(RustLspAdapter)
-}
-
-fn c() -> Language {
-    let grammar = tree_sitter_c::language();
-    let config = toml::from_slice(&LanguageDir::get("c/config.toml").unwrap().data).unwrap();
-    Language::new(config, Some(grammar))
-        .with_highlights_query(load_query("c/highlights.scm").as_ref())
-        .unwrap()
-        .with_brackets_query(load_query("c/brackets.scm").as_ref())
-        .unwrap()
-        .with_indents_query(load_query("c/indents.scm").as_ref())
-        .unwrap()
-        .with_outline_query(load_query("c/outline.scm").as_ref())
-        .unwrap()
-        .with_lsp_adapter(CLspAdapter)
-}
-
-fn json() -> Language {
-    let grammar = tree_sitter_json::language();
-    let config = toml::from_slice(&LanguageDir::get("json/config.toml").unwrap().data).unwrap();
-    Language::new(config, Some(grammar))
-        .with_highlights_query(load_query("json/highlights.scm").as_ref())
-        .unwrap()
-        .with_brackets_query(load_query("json/brackets.scm").as_ref())
-        .unwrap()
-        .with_indents_query(load_query("json/indents.scm").as_ref())
-        .unwrap()
-        .with_outline_query(load_query("json/outline.scm").as_ref())
-        .unwrap()
-        .with_lsp_adapter(JsonLspAdapter)
-}
-
-fn markdown() -> Language {
-    let grammar = tree_sitter_markdown::language();
-    let config = toml::from_slice(&LanguageDir::get("markdown/config.toml").unwrap().data).unwrap();
-    Language::new(config, Some(grammar))
-        .with_highlights_query(load_query("markdown/highlights.scm").as_ref())
-        .unwrap()
-}
-
-fn load_query(path: &str) -> Cow<'static, str> {
-    match LanguageDir::get(path).unwrap().data {
-        Cow::Borrowed(s) => Cow::Borrowed(str::from_utf8(s).unwrap()),
-        Cow::Owned(s) => Cow::Owned(String::from_utf8(s).unwrap()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::languages::{language, LspAdapter};
     use gpui::color::Color;
-    use language::LspAdapter;
     use theme::SyntaxTheme;
 
     #[test]
@@ -651,7 +303,11 @@ mod tests {
 
     #[test]
     fn test_rust_label_for_completion() {
-        let language = rust();
+        let language = language(
+            "rust",
+            tree_sitter_rust::language(),
+            Some(Arc::new(RustLspAdapter)),
+        );
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new(vec![
             ("type".into(), Color::green().into()),
@@ -726,7 +382,11 @@ mod tests {
 
     #[test]
     fn test_rust_label_for_symbol() {
-        let language = rust();
+        let language = language(
+            "rust",
+            tree_sitter_rust::language(),
+            Some(Arc::new(RustLspAdapter)),
+        );
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new(vec![
             ("type".into(), Color::green().into()),

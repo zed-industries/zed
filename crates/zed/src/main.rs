@@ -19,7 +19,7 @@ use workspace::{
     AppState, OpenNew, OpenParams, OpenPaths, Settings,
 };
 use zed::{
-    self, assets::Assets, build_window_options, build_workspace, fs::RealFs, language, menus,
+    self, assets::Assets, build_window_options, build_workspace, fs::RealFs, languages, menus,
 };
 
 fn main() {
@@ -34,7 +34,7 @@ fn main() {
     let default_settings = Settings::new("Zed Mono", &app.font_cache(), theme)
         .unwrap()
         .with_overrides(
-            language::PLAIN_TEXT.name(),
+            languages::PLAIN_TEXT.name(),
             settings::LanguageOverride {
                 soft_wrap: Some(settings::SoftWrap::PreferredLineLength),
                 ..Default::default()
@@ -60,7 +60,7 @@ fn main() {
     app.run(move |cx| {
         let http = http::client();
         let client = client::Client::new(http.clone());
-        let mut languages = language::build_language_registry(login_shell_env_loaded);
+        let mut languages = languages::build_language_registry(login_shell_env_loaded);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
         let channel_list =
             cx.add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx));

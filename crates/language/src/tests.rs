@@ -927,7 +927,6 @@ fn rust_lang() -> Language {
         LanguageConfig {
             name: "Rust".into(),
             path_suffixes: vec!["rs".to_string()],
-            language_server: None,
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
