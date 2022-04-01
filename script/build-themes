@@ -1,0 +1,7 @@
+#!/bin/bash
+
+set -e
+
+cd styles
+npm install
+npm run build
