@@ -39,11 +39,7 @@ impl Breadcrumbs {
             .read(cx)
             .read(cx)
             .symbols_containing(cursor, Some(theme))?;
-        if buffer.path().is_none() && symbols.is_empty() {
-            None
-        } else {
-            Some((buffer, symbols))
-        }
+        Some((buffer, symbols))
     }
 }
 
