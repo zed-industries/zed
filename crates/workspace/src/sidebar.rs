@@ -138,7 +138,7 @@ impl Sidebar {
                     let width = self.width.clone();
                     move |size, _| *width.borrow_mut() = size.x()
                 })
-                .flexible(1., false)
+                .flex(1., false)
                 .boxed(),
             );
             if matches!(self.side, Side::Left) {

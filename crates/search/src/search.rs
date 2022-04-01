@@ -1,13 +1,14 @@
+pub use buffer_search::BufferSearchBar;
+use editor::{Anchor, MultiBufferSnapshot};
+use gpui::{action, MutableAppContext};
+pub use project_search::{ProjectSearchBar, ProjectSearchView};
 use std::{
     cmp::{self, Ordering},
     ops::Range,
 };
 
-use editor::{Anchor, MultiBufferSnapshot};
-use gpui::{action, MutableAppContext};
-
-mod buffer_search;
-mod project_search;
+pub mod buffer_search;
+pub mod project_search;
 
 pub fn init(cx: &mut MutableAppContext) {
     buffer_search::init(cx);

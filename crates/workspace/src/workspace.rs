@@ -5,6 +5,7 @@ pub mod pane_group;
 pub mod settings;
 pub mod sidebar;
 mod status_bar;
+mod toolbar;
 
 use anyhow::{anyhow, Context, Result};
 use client::{
@@ -47,6 +48,7 @@ use std::{
     },
 };
 use theme::{Theme, ThemeRegistry};
+pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
 
 type ProjectItemBuilders = HashMap<
@@ -650,6 +652,10 @@ impl WorkspaceParams {
     }
 }
 
+pub enum Event {
+    PaneAdded(ViewHandle<Pane>),
+}
+
 pub struct Workspace {
     weak_self: WeakViewHandle<Self>,
     client: Arc<Client>,
@@ -716,7 +722,7 @@ impl Workspace {
         })
         .detach();
 
-        let pane = cx.add_view(|_| Pane::new());
+        let pane = cx.add_view(|cx| Pane::new(cx));
         let pane_id = pane.id();
         cx.observe(&pane, move |me, _, cx| {
             let active_entry = me.active_project_path(cx);
@@ -729,6 +735,7 @@ impl Workspace {
         })
         .detach();
         cx.focus(&pane);
+        cx.emit(Event::PaneAdded(pane.clone()));
 
         let status_bar = cx.add_view(|cx| StatusBar::new(&pane, cx));
         let mut current_user = params.user_store.read(cx).watch_current_user().clone();
@@ -1047,7 +1054,7 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane = cx.add_view(|_| Pane::new());
+        let pane = cx.add_view(|cx| Pane::new(cx));
         let pane_id = pane.id();
         cx.observe(&pane, move |me, _, cx| {
             let active_entry = me.active_project_path(cx);
@@ -1061,6 +1068,7 @@ impl Workspace {
         .detach();
         self.panes.push(pane.clone());
         self.activate_pane(pane.clone(), cx);
+        cx.emit(Event::PaneAdded(pane.clone()));
         pane
     }
 
@@ -1916,7 +1924,7 @@ impl Workspace {
 }
 
 impl Entity for Workspace {
-    type Event = ();
+    type Event = Event;
 }
 
 impl View for Workspace {
@@ -1938,36 +1946,35 @@ impl View for Workspace {
                                 if let Some(element) =
                                     self.left_sidebar.render_active_item(&theme, cx)
                                 {
-                                    content.add_child(Flexible::new(0.8, false, element).boxed());
+                                    content
+                                        .add_child(FlexItem::new(element).flex(0.8, false).boxed());
                                 }
                                 content.add_child(
                                     Flex::column()
                                         .with_child(
-                                            Flexible::new(
-                                                1.,
-                                                true,
-                                                self.center.render(
-                                                    &theme,
-                                                    &self.follower_states_by_leader,
-                                                    self.project.read(cx).collaborators(),
-                                                ),
-                                            )
+                                            FlexItem::new(self.center.render(
+                                                &theme,
+                                                &self.follower_states_by_leader,
+                                                self.project.read(cx).collaborators(),
+                                            ))
+                                            .flex(1., true)
                                             .boxed(),
                                         )
                                         .with_child(ChildView::new(&self.status_bar).boxed())
-                                        .flexible(1., true)
+                                        .flex(1., true)
                                         .boxed(),
                                 );
                                 if let Some(element) =
                                     self.right_sidebar.render_active_item(&theme, cx)
                                 {
-                                    content.add_child(Flexible::new(0.8, false, element).boxed());
+                                    content
+                                        .add_child(FlexItem::new(element).flex(0.8, false).boxed());
                                 }
                                 content.add_child(self.right_sidebar.render(&theme, cx));
                                 content.boxed()
                             })
                             .with_children(self.modal.as_ref().map(|m| ChildView::new(m).boxed()))
-                            .flexible(1.0, true)
+                            .flex(1.0, true)
                             .boxed(),
                     )
                     .contained()

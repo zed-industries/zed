@@ -34,7 +34,7 @@ impl Flex {
 
     fn layout_flex_children(
         &mut self,
-        expanded: bool,
+        layout_expanded: bool,
         constraint: SizeConstraint,
         remaining_space: &mut f32,
         remaining_flex: &mut f32,
@@ -44,32 +44,33 @@ impl Flex {
         let cross_axis = self.axis.invert();
         for child in &mut self.children {
             if let Some(metadata) = child.metadata::<FlexParentData>() {
-                if metadata.expanded != expanded {
-                    continue;
-                }
+                if let Some((flex, expanded)) = metadata.flex {
+                    if expanded != layout_expanded {
+                        continue;
+                    }
 
-                let flex = metadata.flex;
-                let child_max = if *remaining_flex == 0.0 {
-                    *remaining_space
-                } else {
-                    let space_per_flex = *remaining_space / *remaining_flex;
-                    space_per_flex * flex
-                };
-                let child_min = if expanded { child_max } else { 0. };
-                let child_constraint = match self.axis {
-                    Axis::Horizontal => SizeConstraint::new(
-                        vec2f(child_min, constraint.min.y()),
-                        vec2f(child_max, constraint.max.y()),
-                    ),
-                    Axis::Vertical => SizeConstraint::new(
-                        vec2f(constraint.min.x(), child_min),
-                        vec2f(constraint.max.x(), child_max),
-                    ),
-                };
-                let child_size = child.layout(child_constraint, cx);
-                *remaining_space -= child_size.along(self.axis);
-                *remaining_flex -= flex;
-                *cross_axis_max = cross_axis_max.max(child_size.along(cross_axis));
+                    let child_max = if *remaining_flex == 0.0 {
+                        *remaining_space
+                    } else {
+                        let space_per_flex = *remaining_space / *remaining_flex;
+                        space_per_flex * flex
+                    };
+                    let child_min = if expanded { child_max } else { 0. };
+                    let child_constraint = match self.axis {
+                        Axis::Horizontal => SizeConstraint::new(
+                            vec2f(child_min, constraint.min.y()),
+                            vec2f(child_max, constraint.max.y()),
+                        ),
+                        Axis::Vertical => SizeConstraint::new(
+                            vec2f(constraint.min.x(), child_min),
+                            vec2f(constraint.max.x(), child_max),
+                        ),
+                    };
+                    let child_size = child.layout(child_constraint, cx);
+                    *remaining_space -= child_size.along(self.axis);
+                    *remaining_flex -= flex;
+                    *cross_axis_max = cross_axis_max.max(child_size.along(cross_axis));
+                }
             }
         }
     }
@@ -82,7 +83,7 @@ impl Extend<ElementBox> for Flex {
 }
 
 impl Element for Flex {
-    type LayoutState = bool;
+    type LayoutState = f32;
     type PaintState = ();
 
     fn layout(
@@ -96,8 +97,11 @@ impl Element for Flex {
         let cross_axis = self.axis.invert();
         let mut cross_axis_max: f32 = 0.0;
         for child in &mut self.children {
-            if let Some(metadata) = child.metadata::<FlexParentData>() {
-                *total_flex.get_or_insert(0.) += metadata.flex;
+            if let Some(flex) = child
+                .metadata::<FlexParentData>()
+                .and_then(|metadata| metadata.flex.map(|(flex, _)| flex))
+            {
+                *total_flex.get_or_insert(0.) += flex;
             } else {
                 let child_constraint = match self.axis {
                     Axis::Horizontal => SizeConstraint::new(
@@ -115,12 +119,12 @@ impl Element for Flex {
             }
         }
 
+        let mut remaining_space = constraint.max_along(self.axis) - fixed_space;
         let mut size = if let Some(mut remaining_flex) = total_flex {
-            if constraint.max_along(self.axis).is_infinite() {
+            if remaining_space.is_infinite() {
                 panic!("flex contains flexible children but has an infinite constraint along the flex axis");
             }
 
-            let mut remaining_space = constraint.max_along(self.axis) - fixed_space;
             self.layout_flex_children(
                 false,
                 constraint,
@@ -156,38 +160,47 @@ impl Element for Flex {
             size.set_y(size.y().max(constraint.min.y()));
         }
 
-        let mut overflowing = false;
         if size.x() > constraint.max.x() {
             size.set_x(constraint.max.x());
-            overflowing = true;
         }
         if size.y() > constraint.max.y() {
             size.set_y(constraint.max.y());
-            overflowing = true;
         }
 
-        (size, overflowing)
+        (size, remaining_space)
     }
 
     fn paint(
         &mut self,
         bounds: RectF,
         visible_bounds: RectF,
-        overflowing: &mut Self::LayoutState,
+        remaining_space: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        if *overflowing {
+        let overflowing = *remaining_space < 0.;
+        if overflowing {
             cx.scene.push_layer(Some(bounds));
         }
         let mut child_origin = bounds.origin();
         for child in &mut self.children {
+            if *remaining_space > 0. {
+                if let Some(metadata) = child.metadata::<FlexParentData>() {
+                    if metadata.float {
+                        match self.axis {
+                            Axis::Horizontal => child_origin += vec2f(*remaining_space, 0.0),
+                            Axis::Vertical => child_origin += vec2f(0.0, *remaining_space),
+                        }
+                        *remaining_space = 0.;
+                    }
+                }
+            }
             child.paint(child_origin, visible_bounds, cx);
             match self.axis {
                 Axis::Horizontal => child_origin += vec2f(child.size().x(), 0.0),
                 Axis::Vertical => child_origin += vec2f(0.0, child.size().y()),
             }
         }
-        if *overflowing {
+        if overflowing {
             cx.scene.pop_layer();
         }
     }
@@ -224,25 +237,38 @@ impl Element for Flex {
 }
 
 struct FlexParentData {
-    flex: f32,
-    expanded: bool,
+    flex: Option<(f32, bool)>,
+    float: bool,
 }
 
-pub struct Flexible {
+pub struct FlexItem {
     metadata: FlexParentData,
     child: ElementBox,
 }
 
-impl Flexible {
-    pub fn new(flex: f32, expanded: bool, child: ElementBox) -> Self {
-        Flexible {
-            metadata: FlexParentData { flex, expanded },
+impl FlexItem {
+    pub fn new(child: ElementBox) -> Self {
+        FlexItem {
+            metadata: FlexParentData {
+                flex: None,
+                float: false,
+            },
             child,
         }
     }
+
+    pub fn flex(mut self, flex: f32, expanded: bool) -> Self {
+        self.metadata.flex = Some((flex, expanded));
+        self
+    }
+
+    pub fn float(mut self) -> Self {
+        self.metadata.float = true;
+        self
+    }
 }
 
-impl Element for Flexible {
+impl Element for FlexItem {
     type LayoutState = ();
     type PaintState = ();
 

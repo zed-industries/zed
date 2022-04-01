@@ -212,7 +212,7 @@ impl ContactsPanel {
                                         }));
                                     }
                                 })
-                                .flexible(1., true)
+                                .flex(1., true)
                                 .boxed()
                             })
                             .constrained()

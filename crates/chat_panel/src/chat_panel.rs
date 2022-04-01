@@ -219,7 +219,7 @@ impl ChatPanel {
             Empty::new().boxed()
         };
 
-        Flexible::new(1., true, messages).boxed()
+        FlexItem::new(messages).flex(1., true).boxed()
     }
 
     fn render_message(&self, message: &ChannelMessage, cx: &AppContext) -> ElementBox {

@@ -2,43 +2,52 @@ use crate::{active_match_index, match_index_for_direction, Direction, SearchOpti
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, Anchor, Autoscroll, Bias, Editor};
 use gpui::{
-    action, elements::*, keymap::Binding, platform::CursorStyle, Entity, MutableAppContext,
-    RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    action, elements::*, keymap::Binding, platform::CursorStyle, AppContext, Entity,
+    MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use language::OffsetRangeExt;
 use project::search::SearchQuery;
 use std::ops::Range;
-use workspace::{ItemHandle, Pane, Settings, Toolbar, Workspace};
+use workspace::{ItemHandle, Pane, Settings, ToolbarItemLocation, ToolbarItemView};
 
 action!(Deploy, bool);
 action!(Dismiss);
 action!(FocusEditor);
 action!(ToggleSearchOption, SearchOption);
 
+pub enum Event {
+    UpdateLocation,
+}
+
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
         Binding::new("cmd-f", Deploy(true), Some("Editor && mode == full")),
         Binding::new("cmd-e", Deploy(false), Some("Editor && mode == full")),
-        Binding::new("escape", Dismiss, Some("SearchBar")),
-        Binding::new("cmd-f", FocusEditor, Some("SearchBar")),
-        Binding::new("enter", SelectMatch(Direction::Next), Some("SearchBar")),
+        Binding::new("escape", Dismiss, Some("BufferSearchBar")),
+        Binding::new("cmd-f", FocusEditor, Some("BufferSearchBar")),
+        Binding::new(
+            "enter",
+            SelectMatch(Direction::Next),
+            Some("BufferSearchBar"),
+        ),
         Binding::new(
             "shift-enter",
             SelectMatch(Direction::Prev),
-            Some("SearchBar"),
+            Some("BufferSearchBar"),
         ),
         Binding::new("cmd-g", SelectMatch(Direction::Next), Some("Pane")),
         Binding::new("cmd-shift-G", SelectMatch(Direction::Prev), Some("Pane")),
     ]);
-    cx.add_action(SearchBar::deploy);
-    cx.add_action(SearchBar::dismiss);
-    cx.add_action(SearchBar::focus_editor);
-    cx.add_action(SearchBar::toggle_search_option);
-    cx.add_action(SearchBar::select_match);
-    cx.add_action(SearchBar::select_match_on_pane);
+    cx.add_action(BufferSearchBar::deploy);
+    cx.add_action(BufferSearchBar::dismiss);
+    cx.add_action(BufferSearchBar::focus_editor);
+    cx.add_action(BufferSearchBar::toggle_search_option);
+    cx.add_action(BufferSearchBar::select_match);
+    cx.add_action(BufferSearchBar::select_match_on_pane);
 }
 
-struct SearchBar {
+pub struct BufferSearchBar {
     query_editor: ViewHandle<Editor>,
     active_editor: Option<ViewHandle<Editor>>,
     active_match_index: Option<usize>,
@@ -52,13 +61,13 @@ struct SearchBar {
     dismissed: bool,
 }
 
-impl Entity for SearchBar {
-    type Event = ();
+impl Entity for BufferSearchBar {
+    type Event = Event;
 }
 
-impl View for SearchBar {
+impl View for BufferSearchBar {
     fn ui_name() -> &'static str {
-        "SearchBar"
+        "BufferSearchBar"
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
@@ -74,12 +83,44 @@ impl View for SearchBar {
         };
         Flex::row()
             .with_child(
-                ChildView::new(&self.query_editor)
+                Flex::row()
+                    .with_child(
+                        ChildView::new(&self.query_editor)
+                            .aligned()
+                            .left()
+                            .flex(1., true)
+                            .boxed(),
+                    )
+                    .with_children(self.active_editor.as_ref().and_then(|editor| {
+                        let matches = self.editors_with_matches.get(&editor.downgrade())?;
+                        let message = if let Some(match_ix) = self.active_match_index {
+                            format!("{}/{}", match_ix + 1, matches.len())
+                        } else {
+                            "No matches".to_string()
+                        };
+
+                        Some(
+                            Label::new(message, theme.search.match_index.text.clone())
+                                .contained()
+                                .with_style(theme.search.match_index.container)
+                                .aligned()
+                                .boxed(),
+                        )
+                    }))
                     .contained()
                     .with_style(editor_container)
                     .aligned()
                     .constrained()
+                    .with_min_width(theme.search.editor.min_width)
                     .with_max_width(theme.search.editor.max_width)
+                    .flex(1., false)
+                    .boxed(),
+            )
+            .with_child(
+                Flex::row()
+                    .with_child(self.render_nav_button("<", Direction::Prev, cx))
+                    .with_child(self.render_nav_button(">", Direction::Next, cx))
+                    .aligned()
                     .boxed(),
             )
             .with_child(
@@ -92,43 +133,19 @@ impl View for SearchBar {
                     .aligned()
                     .boxed(),
             )
-            .with_child(
-                Flex::row()
-                    .with_child(self.render_nav_button("<", Direction::Prev, cx))
-                    .with_child(self.render_nav_button(">", Direction::Next, cx))
-                    .aligned()
-                    .boxed(),
-            )
-            .with_children(self.active_editor.as_ref().and_then(|editor| {
-                let matches = self.editors_with_matches.get(&editor.downgrade())?;
-                let message = if let Some(match_ix) = self.active_match_index {
-                    format!("{}/{}", match_ix + 1, matches.len())
-                } else {
-                    "No matches".to_string()
-                };
-
-                Some(
-                    Label::new(message, theme.search.match_index.text.clone())
-                        .contained()
-                        .with_style(theme.search.match_index.container)
-                        .aligned()
-                        .boxed(),
-                )
-            }))
             .contained()
             .with_style(theme.search.container)
-            .constrained()
-            .with_height(theme.workspace.toolbar.height)
             .named("search bar")
     }
 }
 
-impl Toolbar for SearchBar {
-    fn active_item_changed(
+impl ToolbarItemView for BufferSearchBar {
+    fn set_active_pane_item(
         &mut self,
-        item: Option<Box<dyn ItemHandle>>,
+        item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
-    ) -> bool {
+    ) -> ToolbarItemLocation {
+        cx.notify();
         self.active_editor_subscription.take();
         self.active_editor.take();
         self.pending_search.take();
@@ -139,26 +156,31 @@ impl Toolbar for SearchBar {
                     Some(cx.subscribe(&editor, Self::on_active_editor_event));
                 self.active_editor = Some(editor);
                 self.update_matches(false, cx);
-                return true;
+                if !self.dismissed {
+                    return ToolbarItemLocation::Secondary;
+                }
             }
         }
-        false
+
+        ToolbarItemLocation::Hidden
     }
 
-    fn on_dismiss(&mut self, cx: &mut ViewContext<Self>) {
-        self.dismissed = true;
-        for (editor, _) in &self.editors_with_matches {
-            if let Some(editor) = editor.upgrade(cx) {
-                editor.update(cx, |editor, cx| {
-                    editor.clear_background_highlights::<Self>(cx)
-                });
-            }
+    fn location_for_event(
+        &self,
+        _: &Self::Event,
+        _: ToolbarItemLocation,
+        _: &AppContext,
+    ) -> ToolbarItemLocation {
+        if self.active_editor.is_some() && !self.dismissed {
+            ToolbarItemLocation::Secondary
+        } else {
+            ToolbarItemLocation::Hidden
         }
     }
 }
 
-impl SearchBar {
-    fn new(cx: &mut ViewContext<Self>) -> Self {
+impl BufferSearchBar {
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let query_editor = cx.add_view(|cx| {
             Editor::auto_height(2, Some(|theme| theme.search.editor.input.clone()), cx)
         });
@@ -176,8 +198,73 @@ impl SearchBar {
             regex: false,
             pending_search: None,
             query_contains_error: false,
-            dismissed: false,
+            dismissed: true,
         }
+    }
+
+    fn dismiss(&mut self, _: &Dismiss, cx: &mut ViewContext<Self>) {
+        self.dismissed = true;
+        for (editor, _) in &self.editors_with_matches {
+            if let Some(editor) = editor.upgrade(cx) {
+                editor.update(cx, |editor, cx| {
+                    editor.clear_background_highlights::<Self>(cx)
+                });
+            }
+        }
+        if let Some(active_editor) = self.active_editor.as_ref() {
+            cx.focus(active_editor);
+        }
+        cx.emit(Event::UpdateLocation);
+        cx.notify();
+    }
+
+    fn show(&mut self, focus: bool, cx: &mut ViewContext<Self>) -> bool {
+        let editor = if let Some(editor) = self.active_editor.clone() {
+            editor
+        } else {
+            return false;
+        };
+
+        let display_map = editor
+            .update(cx, |editor, cx| editor.snapshot(cx))
+            .display_snapshot;
+        let selection = editor
+            .read(cx)
+            .newest_selection_with_snapshot::<usize>(&display_map.buffer_snapshot);
+
+        let mut text: String;
+        if selection.start == selection.end {
+            let point = selection.start.to_display_point(&display_map);
+            let range = editor::movement::surrounding_word(&display_map, point);
+            let range = range.start.to_offset(&display_map, Bias::Left)
+                ..range.end.to_offset(&display_map, Bias::Right);
+            text = display_map.buffer_snapshot.text_for_range(range).collect();
+            if text.trim().is_empty() {
+                text = String::new();
+            }
+        } else {
+            text = display_map
+                .buffer_snapshot
+                .text_for_range(selection.start..selection.end)
+                .collect();
+        }
+
+        if !text.is_empty() {
+            self.set_query(&text, cx);
+        }
+
+        if focus {
+            let query_editor = self.query_editor.clone();
+            query_editor.update(cx, |query_editor, cx| {
+                query_editor.select_all(&editor::SelectAll, cx);
+            });
+            cx.focus_self();
+        }
+
+        self.dismissed = false;
+        cx.notify();
+        cx.emit(Event::UpdateLocation);
+        true
     }
 
     fn set_query(&mut self, query: &str, cx: &mut ViewContext<Self>) {
@@ -238,61 +325,13 @@ impl SearchBar {
         .boxed()
     }
 
-    fn deploy(workspace: &mut Workspace, Deploy(focus): &Deploy, cx: &mut ViewContext<Workspace>) {
-        workspace.active_pane().update(cx, |pane, cx| {
-            pane.show_toolbar(cx, |cx| SearchBar::new(cx));
-
-            if let Some(search_bar) = pane
-                .active_toolbar()
-                .and_then(|toolbar| toolbar.downcast::<Self>())
-            {
-                search_bar.update(cx, |search_bar, _| search_bar.dismissed = false);
-                let editor = pane.active_item().unwrap().act_as::<Editor>(cx).unwrap();
-                let display_map = editor
-                    .update(cx, |editor, cx| editor.snapshot(cx))
-                    .display_snapshot;
-                let selection = editor
-                    .read(cx)
-                    .newest_selection_with_snapshot::<usize>(&display_map.buffer_snapshot);
-
-                let mut text: String;
-                if selection.start == selection.end {
-                    let point = selection.start.to_display_point(&display_map);
-                    let range = editor::movement::surrounding_word(&display_map, point);
-                    let range = range.start.to_offset(&display_map, Bias::Left)
-                        ..range.end.to_offset(&display_map, Bias::Right);
-                    text = display_map.buffer_snapshot.text_for_range(range).collect();
-                    if text.trim().is_empty() {
-                        text = String::new();
-                    }
-                } else {
-                    text = display_map
-                        .buffer_snapshot
-                        .text_for_range(selection.start..selection.end)
-                        .collect();
-                }
-
-                if !text.is_empty() {
-                    search_bar.update(cx, |search_bar, cx| search_bar.set_query(&text, cx));
-                }
-
-                if *focus {
-                    let query_editor = search_bar.read(cx).query_editor.clone();
-                    query_editor.update(cx, |query_editor, cx| {
-                        query_editor.select_all(&editor::SelectAll, cx);
-                    });
-                    cx.focus(&search_bar);
-                }
-            } else {
-                cx.propagate_action();
+    fn deploy(pane: &mut Pane, Deploy(focus): &Deploy, cx: &mut ViewContext<Pane>) {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+            if search_bar.update(cx, |search_bar, cx| search_bar.show(*focus, cx)) {
+                return;
             }
-        });
-    }
-
-    fn dismiss(pane: &mut Pane, _: &Dismiss, cx: &mut ViewContext<Pane>) {
-        if pane.toolbar::<SearchBar>().is_some() {
-            pane.dismiss_toolbar(cx);
         }
+        cx.propagate_action();
     }
 
     fn focus_editor(&mut self, _: &FocusEditor, cx: &mut ViewContext<Self>) {
@@ -346,7 +385,7 @@ impl SearchBar {
     }
 
     fn select_match_on_pane(pane: &mut Pane, action: &SelectMatch, cx: &mut ViewContext<Pane>) {
-        if let Some(search_bar) = pane.toolbar::<SearchBar>() {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
             search_bar.update(cx, |search_bar, cx| search_bar.select_match(action, cx));
         }
     }
@@ -540,8 +579,9 @@ mod tests {
         });
 
         let search_bar = cx.add_view(Default::default(), |cx| {
-            let mut search_bar = SearchBar::new(cx);
-            search_bar.active_item_changed(Some(Box::new(editor.clone())), cx);
+            let mut search_bar = BufferSearchBar::new(cx);
+            search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.show(false, cx);
             search_bar
         });
 

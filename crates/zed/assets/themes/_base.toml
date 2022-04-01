@@ -85,7 +85,15 @@ diagnostic_message = "$text.2"
 lsp_message = "$text.2"
 
 [workspace.toolbar]
-height = 44
+background = "$surface.1"
+border = { color = "$border.0", width = 1, left = false, right = false, bottom = true, top = false }
+height = 34
+item_spacing = 8
+padding = { left = 16, right = 8, top = 4, bottom = 4 }
+
+[breadcrumbs]
+extends = "$text.1"
+padding = { left = 6 }
 
 [panel]
 padding = { top = 12, left = 12, bottom = 12, right = 12 }
@@ -354,7 +362,6 @@ tab_summary_spacing = 10
 
 [search]
 match_background = "$state.highlighted_line"
-background = "$surface.1"
 results_status = { extends = "$text.0", size = 18 }
 tab_icon_width = 14
 tab_icon_spacing = 4
@@ -384,15 +391,16 @@ extends = "$search.option_button"
 background = "$surface.2"
 
 [search.match_index]
-extends = "$text.1"
+extends = "$text.2"
 padding = 6
 
 [search.editor]
-max_width = 400
+min_width = 200
+max_width = 500
 background = "$surface.0"
 corner_radius = 6
-padding = { left = 13, right = 13, top = 3, bottom = 3 }
-margin = { top = 5, bottom = 5, left = 5, right = 5 }
+padding = { left = 14, right = 14, top = 3, bottom = 3 }
+margin = { right = 5 }
 text = "$text.0"
 placeholder_text = "$text.2"
 selection = "$selection.host"
