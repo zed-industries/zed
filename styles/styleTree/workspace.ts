@@ -137,5 +137,10 @@ export default function workspace(theme: Theme) {
       ...text(theme, "mono", "secondary"),
       padding: { left: 6 },
     },
+    disconnectedOverlay: {
+      ...text(theme, "sans", "primary"),
+      color: "#ffffff",
+      background: "#000000aa",
+    },
   };
 }

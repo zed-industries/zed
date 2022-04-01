@@ -19,8 +19,28 @@ export default function search(theme: Theme) {
     },
   };
 
+  const editor = {
+    background: backgroundColor(theme, 500),
+    cornerRadius: 6,
+    minWidth: 200,
+    maxWidth: 500,
+    placeholderText: text(theme, "mono", "placeholder"),
+    selection: player(theme, 1).selection,
+    text: text(theme, "mono", "primary"),
+    border: border(theme, "primary"),
+    margin: {
+      right: 5,
+    },
+    padding: {
+      top: 3,
+      bottom: 3,
+      left: 14,
+      right: 14,
+    },
+  };
+
   return {
-    matchBackground: theme.editor.highlight.match,
+    matchBackground: theme.editor.highlight.match.value,
     tabIconSpacing: 4,
     tabIconWidth: 14,
     activeHoveredOptionButton: {
@@ -31,31 +51,13 @@ export default function search(theme: Theme) {
       ...optionButton,
       background: backgroundColor(theme, 100),
     },
-    editor: {
-      background: backgroundColor(theme, 500),
-      cornerRadius: 6,
-      minWidth: 200,
-      maxWidth: 500,
-      placeholderText: text(theme, "mono", "placeholder"),
-      selection: player(theme, 1).selection,
-      text: text(theme, "mono", "primary"),
-      border: border(theme, "primary"),
-      margin: {
-        right: 5,
-      },
-      padding: {
-        top: 3,
-        bottom: 3,
-        left: 14,
-        right: 14,
-      },
-    },
+    editor,
     hoveredOptionButton: {
       ...optionButton,
       background: backgroundColor(theme, 100),
     },
     invalidEditor: {
-      extends: "$search.editor",
+      ...editor,
       border: border(theme, "error"),
     },
     matchIndex: {

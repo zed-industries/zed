@@ -24,7 +24,11 @@ export default function projectPanel(theme: Theme) {
       backgroundColor(theme, 300, "hovered")
     ),
     selectedEntry: entry(theme, "primary"),
-    hoveredSelectedEntry: entry(theme, "primary", "hovered"),
+    hoveredSelectedEntry: entry(
+      theme, 
+      "primary", 
+      backgroundColor(theme, 300, "hovered")
+    ),
     padding: {
       top: 6,
     },
