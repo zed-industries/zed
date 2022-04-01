@@ -64,6 +64,7 @@ pub struct Project {
         HashMap<(WorktreeId, LanguageServerName), Task<Option<Arc<LanguageServer>>>>,
     language_server_statuses: BTreeMap<usize, LanguageServerStatus>,
     language_server_settings: Arc<Mutex<serde_json::Value>>,
+    last_workspace_edits_by_language_server: HashMap<usize, ProjectTransaction>,
     next_language_server_id: usize,
     client: Arc<client::Client>,
     next_entry_id: Arc<AtomicUsize>,
@@ -346,6 +347,7 @@ impl Project {
                 language_servers: Default::default(),
                 started_language_servers: Default::default(),
                 language_server_statuses: Default::default(),
+                last_workspace_edits_by_language_server: Default::default(),
                 language_server_settings: Default::default(),
                 next_language_server_id: 0,
                 nonce: StdRng::from_entropy().gen(),
@@ -433,6 +435,7 @@ impl Project {
                         )
                     })
                     .collect(),
+                last_workspace_edits_by_language_server: Default::default(),
                 next_language_server_id: 0,
                 opened_buffers: Default::default(),
                 buffer_snapshots: Default::default(),
@@ -1736,18 +1739,21 @@ impl Project {
             }
             LanguageServerEvent::WorkspaceEdit(params) => {
                 let transaction = Self::deserialize_workspace_edit(
-                    this,
+                    this.clone(),
                     params.edit,
-                    false,
+                    true,
                     adapter.clone(),
                     language_server.clone(),
                     cx,
                 )
                 .await
                 .log_err();
-
-                // Check if there is a code action currently running, using the state that is
-                // set in `start_code_action`. If so, then store the transaction for later use.
+                this.update(cx, |this, _| {
+                    if let Some(transaction) = transaction {
+                        this.last_workspace_edits_by_language_server
+                            .insert(language_server_id, transaction);
+                    }
+                });
             }
         }
     }
@@ -2740,7 +2746,6 @@ impl Project {
                     )
                     .await
                 } else if let Some(command) = action.lsp_action.command {
-                    this.update(&mut cx, |this, _| this.start_code_action());
                     lang_server
                         .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
                             command: command.command,
@@ -2748,7 +2753,11 @@ impl Project {
                             ..Default::default()
                         })
                         .await?;
-                    Ok(this.update(&mut cx, |this, cx| this.finish_code_action(cx)))
+                    Ok(this.update(&mut cx, |this, _| {
+                        this.last_workspace_edits_by_language_server
+                            .remove(&lang_server.server_id())
+                            .unwrap_or_default()
+                    }))
                 } else {
                     Ok(ProjectTransaction::default())
                 }
@@ -2905,17 +2914,6 @@ impl Project {
         }
 
         Ok(project_transaction)
-    }
-
-    fn start_code_action(&mut self) {
-        // Set some state that will be read inside of `on_lsp_event` when handling a `WorkspaceEdit`
-        // event, and will cause the `ProjectTransaction` to be stored.
-    }
-
-    fn finish_code_action(&mut self, cx: &mut ModelContext<Self>) -> ProjectTransaction {
-        // Retrieve all stored `ProjectTransactions` that have been received since `start_code_action`
-        // was called, and combine them together.
-        Default::default()
     }
 
     pub fn prepare_rename<T: ToPointUtf16>(
@@ -6089,7 +6087,7 @@ mod tests {
         fs.insert_tree(
             "/dir",
             json!({
-                "a.ts": "",
+                "a.ts": "a",
             }),
         )
         .await;
@@ -6116,7 +6114,7 @@ mod tests {
 
         let actions = project.update(cx, |project, cx| project.code_actions(&buffer, 0..0, cx));
         fake_server
-            .handle_request::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
+            .handle_request::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
                 Ok(Some(vec![
                     lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
                         title: "The code action".into(),
@@ -6144,12 +6142,51 @@ mod tests {
             |action, _| async move { Ok(action) },
         );
         fake_server
-            .handle_request::<lsp::request::ExecuteCommand, _, _>(move |params, cx| async move {
-                // fake_server.send();
-                Ok(Some(json!(null)))
+            .handle_request::<lsp::request::ExecuteCommand, _, _>({
+                let fake = fake_server.clone();
+                move |params, _| {
+                    assert_eq!(params.command, "_the/command");
+                    let fake = fake.clone();
+                    async move {
+                        fake.server
+                            .request::<lsp::request::ApplyWorkspaceEdit>(
+                                lsp::ApplyWorkspaceEditParams {
+                                    label: None,
+                                    edit: lsp::WorkspaceEdit {
+                                        changes: Some(
+                                            [(
+                                                lsp::Url::from_file_path("/dir/a.ts").unwrap(),
+                                                vec![lsp::TextEdit {
+                                                    range: lsp::Range::new(
+                                                        lsp::Position::new(0, 0),
+                                                        lsp::Position::new(0, 0),
+                                                    ),
+                                                    new_text: "X".into(),
+                                                }],
+                                            )]
+                                            .into_iter()
+                                            .collect(),
+                                        ),
+                                        ..Default::default()
+                                    },
+                                },
+                            )
+                            .await
+                            .unwrap();
+                        Ok(Some(json!(null)))
+                    }
+                }
             })
             .next()
             .await;
+
+        let transaction = apply.await.unwrap();
+        assert!(transaction.0.contains_key(&buffer));
+        buffer.update(cx, |buffer, cx| {
+            assert_eq!(buffer.text(), "Xa");
+            buffer.undo(cx);
+            assert_eq!(buffer.text(), "a");
+        });
     }
 
     #[gpui::test]

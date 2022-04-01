@@ -563,8 +563,9 @@ impl Drop for Subscription {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[derive(Clone)]
 pub struct FakeLanguageServer {
-    server: Arc<LanguageServer>,
+    pub server: Arc<LanguageServer>,
     notifications_rx: channel::Receiver<(String, String)>,
 }
 
