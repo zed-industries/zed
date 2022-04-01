@@ -2331,6 +2331,13 @@ impl Project {
                 };
 
             cx.spawn(|_, cx| async move {
+                let clipped_position = source_buffer_handle
+                    .read_with(&cx, |this, _| this.clip_point_utf16(position, Bias::Left));
+                if clipped_position != position {
+                    log::info!("Completion position out of date");
+                    return Ok(Default::default());
+                }
+
                 let completions = lang_server
                     .request::<lsp::request::Completion>(lsp::CompletionParams {
                         text_document_position: lsp::TextDocumentPositionParams::new(
