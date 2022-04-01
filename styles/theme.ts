@@ -1,242 +1,146 @@
-export type Color = string;
-export type Weight =
-  | "thin"
-  | "extra_light"
-  | "light"
-  | "normal"
-  | "medium"
-  | "semibold"
-  | "bold"
-  | "extra_bold"
-  | "black";
-
-interface SyntaxHighlightStyle {
-  color: { value: Color };
-  weight: { value: Weight };
+export interface NumberToken {
+    value: number,
+    type: "number"
 }
 
-interface Player {
-  baseColor: {
+export type Color = string;
+export interface ColorToken {
     value: Color;
-  };
-  cursorColor: {
-    value: Color;
-  };
-  selectionColor: {
-    value: Color;
-  };
-  borderColor: {
-    value: Color;
-  };
+    type: "color";
+    step?: number
+}
+export type Weight =
+    | "thin"
+    | "extra_light"
+    | "light"
+    | "normal"
+    | "medium"
+    | "semibold"
+    | "bold"
+    | "extra_bold"
+    | "black";
+export interface WeightToken {
+    value: Weight,
+    type: "fontWeight"
+}
+
+export interface SyntaxHighlightStyle {
+    color: ColorToken;
+    weight: WeightToken;
+}
+
+export interface Player {
+    baseColor: ColorToken;
+    cursorColor: ColorToken;
+    selectionColor: ColorToken;
+    borderColor: ColorToken;
 }
 
 export interface BackgroundColor {
-  base: {
-    value: Color;
-  };
-  hovered: {
-    value: Color;
-  };
-  active: {
-    value: Color;
-  };
-  focused: {
-    value: Color;
-  };
+    base: ColorToken;
+    hovered: ColorToken;
+    active: ColorToken;
+    focused: ColorToken;
 }
 
 export default interface Theme {
-  backgroundColor: {
-    100: BackgroundColor;
-    300: BackgroundColor;
-    500: BackgroundColor;
-    ok: BackgroundColor;
-    error: BackgroundColor;
-    warning: BackgroundColor;
-    info: BackgroundColor;
-  };
-  borderColor: {
-    primary: {
-      value: Color;
+    backgroundColor: {
+        100: BackgroundColor;
+        300: BackgroundColor;
+        500: BackgroundColor;
+        ok: BackgroundColor;
+        error: BackgroundColor;
+        warning: BackgroundColor;
+        info: BackgroundColor;
     };
-    secondary: {
-      value: Color;
+    borderColor: {
+        primary: ColorToken;
+        secondary: ColorToken;
+        muted: ColorToken;
+        focused: ColorToken;
+        active: ColorToken;
+        ok: ColorToken;
+        error: ColorToken;
+        warning: ColorToken;
+        info: ColorToken;
     };
-    muted: {
-      value: Color;
+    textColor: {
+        primary: ColorToken;
+        secondary: ColorToken;
+        muted: ColorToken;
+        placeholder: ColorToken;
+        active: ColorToken;
+        feature: ColorToken;
+        ok: ColorToken;
+        error: ColorToken;
+        warning: ColorToken;
+        info: ColorToken;
     };
-    focused: {
-      value: Color;
+    iconColor: {
+        primary: ColorToken;
+        secondary: ColorToken;
+        muted: ColorToken;
+        placeholder: ColorToken;
+        active: ColorToken;
+        feature: ColorToken;
+        ok: ColorToken;
+        error: ColorToken;
+        warning: ColorToken;
+        info: ColorToken;
     };
-    active: {
-      value: Color;
+    editor: {
+        background: ColorToken;
+        indent_guide: ColorToken;
+        indent_guide_active: ColorToken;
+        line: {
+            active: ColorToken;
+            highlighted: ColorToken;
+            inserted: ColorToken;
+            deleted: ColorToken;
+            modified: ColorToken;
+        };
+        highlight: {
+            selection: ColorToken;
+            occurrence: ColorToken;
+            activeOccurrence: ColorToken;
+            matchingBracket: ColorToken;
+            match: ColorToken;
+            activeMatch: ColorToken;
+            related: ColorToken;
+        };
+        gutter: {
+            primary: ColorToken;
+            active: ColorToken;
+        };
     };
-    ok: {
-      value: Color;
-    };
-    error: {
-      value: Color;
-    };
-    warning: {
-      value: Color;
-    };
-    info: {
-      value: Color;
-    };
-  };
-  textColor: {
-    primary: {
-      value: Color;
-    };
-    secondary: {
-      value: Color;
-    };
-    muted: {
-      value: Color;
-    };
-    placeholder: {
-      value: Color;
-    };
-    active: {
-      value: Color;
-    };
-    feature: {
-      value: Color;
-    };
-    ok: {
-      value: Color;
-    };
-    error: {
-      value: Color;
-    };
-    warning: {
-      value: Color;
-    };
-    info: {
-      value: Color;
-    };
-  };
-  iconColor: {
-    primary: {
-      value: Color;
-    };
-    secondary: {
-      value: Color;
-    };
-    muted: {
-      value: Color;
-    };
-    placeholder: {
-      value: Color;
-    };
-    active: {
-      value: Color;
-    };
-    feature: {
-      value: Color;
-    };
-    ok: {
-      value: Color;
-    };
-    error: {
-      value: Color;
-    };
-    warning: {
-      value: Color;
-    };
-    info: {
-      value: Color;
-    };
-  };
-  editor: {
-    background: {
-      value: Color;
-    };
-    indent_guide: {
-      value: Color;
-    };
-    indent_guide_active: {
-      value: Color;
-    };
-    line: {
-      active: {
-        value: Color;
-      };
-      highlighted: {
-        value: Color;
-      };
-      inserted: {
-        value: Color;
-      };
-      deleted: {
-        value: Color;
-      };
-      modified: {
-        value: Color;
-      };
-    };
-    highlight: {
-      selection: {
-        value: Color;
-      };
-      occurrence: {
-        value: Color;
-      };
-      activeOccurrence: {
-        value: Color;
-      };
-      matchingBracket: {
-        value: Color;
-      };
-      match: {
-        value: Color;
-      };
-      activeMatch: {
-        value: Color;
-      };
-      related: {
-        value: Color;
-      };
-    };
-    gutter: {
-      primary: {
-        value: Color;
-      };
-      active: {
-        value: Color;
-      };
-    };
-  };
 
-  syntax: {
-    primary: SyntaxHighlightStyle;
-    comment: SyntaxHighlightStyle;
-    punctuation: SyntaxHighlightStyle;
-    constant: SyntaxHighlightStyle;
-    keyword: SyntaxHighlightStyle;
-    function: SyntaxHighlightStyle;
-    type: SyntaxHighlightStyle;
-    variant: SyntaxHighlightStyle;
-    property: SyntaxHighlightStyle;
-    enum: SyntaxHighlightStyle;
-    operator: SyntaxHighlightStyle;
-    string: SyntaxHighlightStyle;
-    number: SyntaxHighlightStyle;
-    boolean: SyntaxHighlightStyle;
-    predictive: SyntaxHighlightStyle;
-  };
+    syntax: {
+        primary: SyntaxHighlightStyle;
+        comment: SyntaxHighlightStyle;
+        punctuation: SyntaxHighlightStyle;
+        constant: SyntaxHighlightStyle;
+        keyword: SyntaxHighlightStyle;
+        function: SyntaxHighlightStyle;
+        type: SyntaxHighlightStyle;
+        variant: SyntaxHighlightStyle;
+        property: SyntaxHighlightStyle;
+        enum: SyntaxHighlightStyle;
+        operator: SyntaxHighlightStyle;
+        string: SyntaxHighlightStyle;
+        number: SyntaxHighlightStyle;
+        boolean: SyntaxHighlightStyle;
+        predictive: SyntaxHighlightStyle;
+    };
 
-  player: {
-    1: Player;
-    2: Player;
-    3: Player;
-    4: Player;
-    5: Player;
-    6: Player;
-    7: Player;
-    8: Player;
-  };
-  shadowAlpha: {
-    value: number;
-  };
+    player: {
+        1: Player;
+        2: Player;
+        3: Player;
+        4: Player;
+        5: Player;
+        6: Player;
+        7: Player;
+        8: Player;
+    };
+    shadowAlpha: NumberToken;
 }
