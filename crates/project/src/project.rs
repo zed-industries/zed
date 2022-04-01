@@ -2373,13 +2373,6 @@ impl Project {
                 };
 
             cx.spawn(|_, cx| async move {
-                let clipped_position = source_buffer_handle
-                    .read_with(&cx, |this, _| this.clip_point_utf16(position, Bias::Left));
-                if clipped_position != position {
-                    log::info!("Completion position out of date");
-                    return Ok(Default::default());
-                }
-
                 let completions = lang_server
                     .request::<lsp::request::Completion>(lsp::CompletionParams {
                         text_document_position: lsp::TextDocumentPositionParams::new(
@@ -2412,10 +2405,21 @@ impl Project {
                                 Some(lsp::CompletionTextEdit::Edit(edit)) => {
                                     (range_from_lsp(edit.range), edit.new_text.clone())
                                 }
-                                None => (
-                                    this.common_prefix_at(position, &lsp_completion.label),
-                                    lsp_completion.label.clone(),
-                                ),
+                                None => {
+                                    let clipped_position =
+                                        this.clip_point_utf16(position, Bias::Left);
+                                    if position != clipped_position {
+                                        log::info!("completion out of expected range");
+                                        return None;
+                                    }
+                                    (
+                                        this.common_prefix_at(
+                                            clipped_position,
+                                            &lsp_completion.label,
+                                        ),
+                                        lsp_completion.label.clone(),
+                                    )
+                                }
                                 Some(lsp::CompletionTextEdit::InsertAndReplace(_)) => {
                                     log::info!("unsupported insert/replace completion");
                                     return None;
