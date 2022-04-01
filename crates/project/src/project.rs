@@ -6049,8 +6049,8 @@ mod tests {
         }
     }
 
-    #[gpui::test(iterations = 100)]
-    async fn test_apply_code_action(cx: &mut gpui::TestAppContext) {
+    #[gpui::test(iterations = 10)]
+    async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
         let mut language = Language::new(
             LanguageConfig {
                 name: "TypeScript".into(),
@@ -6090,6 +6090,7 @@ mod tests {
 
         let fake_server = fake_language_servers.next().await.unwrap();
 
+        // Language server returns code actions that contain commands, and not edits.
         let actions = project.update(cx, |project, cx| project.code_actions(&buffer, 0..0, cx));
         fake_server
             .handle_request::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
@@ -6116,9 +6117,15 @@ mod tests {
         let apply = project.update(cx, |project, cx| {
             project.apply_code_action(buffer.clone(), action, true, cx)
         });
+
+        // Resolving the code action does not populate its edits. In absence of
+        // edits, we must execute the given command.
         fake_server.handle_request::<lsp::request::CodeActionResolveRequest, _, _>(
             |action, _| async move { Ok(action) },
         );
+
+        // While executing the command, the language server sends the editor
+        // a `workspaceEdit` request.
         fake_server
             .handle_request::<lsp::request::ExecuteCommand, _, _>({
                 let fake = fake_server.clone();
@@ -6158,6 +6165,8 @@ mod tests {
             .next()
             .await;
 
+        // Applying the code action returns a project transaction containing the edits
+        // sent by the language server in its `workspaceEdit` request.
         let transaction = apply.await.unwrap();
         assert!(transaction.0.contains_key(&buffer));
         buffer.update(cx, |buffer, cx| {
