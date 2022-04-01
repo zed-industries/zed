@@ -115,6 +115,29 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
+    fn label_for_completion(
+        &self,
+        item: &lsp::CompletionItem,
+        language: &language::Language,
+    ) -> Option<language::CodeLabel> {
+        use lsp::CompletionItemKind as Kind;
+        let len = item.label.len();
+        let grammar = language.grammar()?;
+        let highlight_id = match item.kind? {
+            Kind::CLASS | Kind::INTERFACE => grammar.highlight_id_for_name("type"),
+            Kind::CONSTRUCTOR => grammar.highlight_id_for_name("type"),
+            Kind::CONSTANT => grammar.highlight_id_for_name("constant"),
+            Kind::FUNCTION | Kind::METHOD => grammar.highlight_id_for_name("function"),
+            Kind::PROPERTY | Kind::FIELD => grammar.highlight_id_for_name("property"),
+            _ => None,
+        }?;
+        Some(language::CodeLabel {
+            text: item.label.clone(),
+            runs: vec![(0..len, highlight_id)],
+            filter_range: 0..len,
+        })
+    }
+
     fn initialization_options(&self) -> Option<serde_json::Value> {
         Some(json!({
             "provideFormatter": true
