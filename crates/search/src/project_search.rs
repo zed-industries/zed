@@ -769,7 +769,9 @@ impl ToolbarItemView for ProjectSearchBar {
         if let Some(search) = active_pane_item.and_then(|i| i.downcast::<ProjectSearchView>()) {
             self.subscription = Some(cx.observe(&search, |_, _, cx| cx.notify()));
             self.active_project_search = Some(search);
-            ToolbarItemLocation::PrimaryLeft
+            ToolbarItemLocation::PrimaryLeft {
+                flex: Some((1., false)),
+            }
         } else {
             ToolbarItemLocation::Hidden
         }

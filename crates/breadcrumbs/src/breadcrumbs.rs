@@ -117,7 +117,7 @@ impl ToolbarItemView for Breadcrumbs {
                         ToolbarItemLocation::Hidden
                     }
                 } else {
-                    ToolbarItemLocation::PrimaryLeft
+                    ToolbarItemLocation::PrimaryLeft { flex: None }
                 }
             } else {
                 ToolbarItemLocation::Hidden

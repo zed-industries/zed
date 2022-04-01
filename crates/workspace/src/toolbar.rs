@@ -31,11 +31,11 @@ trait ToolbarItemViewHandle {
     ) -> ToolbarItemLocation;
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum ToolbarItemLocation {
     Hidden,
-    PrimaryLeft,
-    PrimaryRight,
+    PrimaryLeft { flex: Option<(f32, bool)> },
+    PrimaryRight { flex: Option<(f32, bool)> },
     Secondary,
 }
 
@@ -61,44 +61,52 @@ impl View for Toolbar {
         let mut secondary_item = None;
 
         for (item, position) in &self.items {
-            match position {
+            match *position {
                 ToolbarItemLocation::Hidden => {}
-                ToolbarItemLocation::PrimaryLeft => primary_left_items.push(item),
-                ToolbarItemLocation::PrimaryRight => primary_right_items.push(item),
-                ToolbarItemLocation::Secondary => secondary_item = Some(item),
+                ToolbarItemLocation::PrimaryLeft { flex } => {
+                    let left_item = ChildView::new(item.as_ref())
+                        .aligned()
+                        .contained()
+                        .with_margin_right(theme.item_spacing);
+                    if let Some((flex, expanded)) = flex {
+                        primary_left_items.push(left_item.flex(flex, expanded).boxed());
+                    } else {
+                        primary_left_items.push(left_item.boxed());
+                    }
+                }
+                ToolbarItemLocation::PrimaryRight { flex } => {
+                    let right_item = ChildView::new(item.as_ref())
+                        .aligned()
+                        .contained()
+                        .with_margin_left(theme.item_spacing)
+                        .flex_float();
+                    if let Some((flex, expanded)) = flex {
+                        primary_right_items.push(right_item.flex(flex, expanded).boxed());
+                    } else {
+                        primary_right_items.push(right_item.boxed());
+                    }
+                }
+                ToolbarItemLocation::Secondary => {
+                    secondary_item = Some(
+                        ChildView::new(item.as_ref())
+                            .constrained()
+                            .with_height(theme.height)
+                            .boxed(),
+                    );
+                }
             }
         }
 
         Flex::column()
             .with_child(
                 Flex::row()
-                    .with_children(primary_left_items.iter().map(|i| {
-                        ChildView::new(i.as_ref())
-                            .aligned()
-                            .contained()
-                            .with_margin_right(theme.item_spacing)
-                            .flex(1., false)
-                            .boxed()
-                    }))
-                    .with_children(primary_right_items.iter().map(|i| {
-                        ChildView::new(i.as_ref())
-                            .aligned()
-                            .contained()
-                            .with_margin_left(theme.item_spacing)
-                            .flex_float()
-                            .flex(1., false)
-                            .boxed()
-                    }))
+                    .with_children(primary_left_items)
+                    .with_children(primary_right_items)
                     .constrained()
                     .with_height(theme.height)
                     .boxed(),
             )
-            .with_children(secondary_item.map(|item| {
-                ChildView::new(item.as_ref())
-                    .constrained()
-                    .with_height(theme.height)
-                    .boxed()
-            }))
+            .with_children(secondary_item)
             .contained()
             .with_style(theme.container)
             .boxed()
