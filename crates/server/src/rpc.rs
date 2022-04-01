@@ -2342,7 +2342,7 @@ mod tests {
             Editor::for_buffer(buffer_b.clone(), Some(project_b.clone()), cx)
         });
 
-        let mut fake_language_server = fake_language_servers.next().await.unwrap();
+        let fake_language_server = fake_language_servers.next().await.unwrap();
         buffer_b
             .condition(&cx_b, |buffer, _| !buffer.completion_triggers().is_empty())
             .await;
@@ -2368,7 +2368,7 @@ mod tests {
                     lsp::Position::new(0, 14),
                 );
 
-                Some(lsp::CompletionResponse::Array(vec![
+                Ok(Some(lsp::CompletionResponse::Array(vec![
                     lsp::CompletionItem {
                         label: "first_method(…)".into(),
                         detail: Some("fn(&mut self, B) -> C".into()),
@@ -2395,7 +2395,7 @@ mod tests {
                         insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
                         ..Default::default()
                     },
-                ]))
+                ])))
             })
             .next()
             .await
@@ -2425,7 +2425,7 @@ mod tests {
         fake_language_server.handle_request::<lsp::request::ResolveCompletionItem, _, _>(
             |params, _| async move {
                 assert_eq!(params.label, "first_method(…)");
-                lsp::CompletionItem {
+                Ok(lsp::CompletionItem {
                     label: "first_method(…)".into(),
                     detail: Some("fn(&mut self, B) -> C".into()),
                     text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
@@ -2441,7 +2441,7 @@ mod tests {
                     }]),
                     insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
                     ..Default::default()
-                }
+                })
             },
         );
 
@@ -2530,9 +2530,9 @@ mod tests {
             .await
             .unwrap();
 
-        let mut fake_language_server = fake_language_servers.next().await.unwrap();
+        let fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::Formatting, _, _>(|_, _| async move {
-            Some(vec![
+            Ok(Some(vec![
                 lsp::TextEdit {
                     range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
                     new_text: "h".to_string(),
@@ -2541,7 +2541,7 @@ mod tests {
                     range: lsp::Range::new(lsp::Position::new(0, 7), lsp::Position::new(0, 7)),
                     new_text: "y".to_string(),
                 },
-            ])
+            ]))
         });
 
         project_b
@@ -2637,12 +2637,14 @@ mod tests {
             .unwrap();
 
         // Request the definition of a symbol as the guest.
-        let mut fake_language_server = fake_language_servers.next().await.unwrap();
+        let fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(
             |_, _| async move {
-                Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
-                    lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
-                    lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                    lsp::Location::new(
+                        lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
+                        lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                    ),
                 )))
             },
         );
@@ -2669,9 +2671,11 @@ mod tests {
         // the previous call to `definition`.
         fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(
             |_, _| async move {
-                Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
-                    lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
-                    lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
+                Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                    lsp::Location::new(
+                        lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
+                        lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
+                    ),
                 )))
             },
         );
@@ -2778,14 +2782,14 @@ mod tests {
             .unwrap();
 
         // Request references to a symbol as the guest.
-        let mut fake_language_server = fake_language_servers.next().await.unwrap();
+        let fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::References, _, _>(
             |params, _| async move {
                 assert_eq!(
                     params.text_document_position.text_document.uri.as_str(),
                     "file:///root-1/one.rs"
                 );
-                Some(vec![
+                Ok(Some(vec![
                     lsp::Location {
                         uri: lsp::Url::from_file_path("/root-1/two.rs").unwrap(),
                         range: lsp::Range::new(
@@ -2807,7 +2811,7 @@ mod tests {
                             lsp::Position::new(0, 40),
                         ),
                     },
-                ])
+                ]))
             },
         );
 
@@ -3018,7 +3022,7 @@ mod tests {
             .unwrap();
 
         // Request document highlights as the guest.
-        let mut fake_language_server = fake_language_servers.next().await.unwrap();
+        let fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::DocumentHighlightRequest, _, _>(
             |params, _| async move {
                 assert_eq!(
@@ -3033,7 +3037,7 @@ mod tests {
                     params.text_document_position_params.position,
                     lsp::Position::new(0, 34)
                 );
-                Some(vec![
+                Ok(Some(vec![
                     lsp::DocumentHighlight {
                         kind: Some(lsp::DocumentHighlightKind::WRITE),
                         range: lsp::Range::new(
@@ -3055,7 +3059,7 @@ mod tests {
                             lsp::Position::new(0, 47),
                         ),
                     },
-                ])
+                ]))
             },
         );
 
@@ -3162,11 +3166,11 @@ mod tests {
             .await
             .unwrap();
 
-        let mut fake_language_server = fake_language_servers.next().await.unwrap();
+        let fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::WorkspaceSymbol, _, _>(
             |_, _| async move {
                 #[allow(deprecated)]
-                Some(vec![lsp::SymbolInformation {
+                Ok(Some(vec![lsp::SymbolInformation {
                     name: "TWO".into(),
                     location: lsp::Location {
                         uri: lsp::Url::from_file_path("/code/crate-2/two.rs").unwrap(),
@@ -3176,7 +3180,7 @@ mod tests {
                     tags: None,
                     container_name: None,
                     deprecated: None,
-                }])
+                }]))
             },
         );
 
@@ -3292,12 +3296,14 @@ mod tests {
             .await
             .unwrap();
 
-        let mut fake_language_server = fake_language_servers.next().await.unwrap();
+        let fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(
             |_, _| async move {
-                Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
-                    lsp::Url::from_file_path("/root/b.rs").unwrap(),
-                    lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                    lsp::Location::new(
+                        lsp::Url::from_file_path("/root/b.rs").unwrap(),
+                        lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                    ),
                 )))
             },
         );
@@ -3413,7 +3419,7 @@ mod tests {
                 );
                 assert_eq!(params.range.start, lsp::Position::new(0, 0));
                 assert_eq!(params.range.end, lsp::Position::new(0, 0));
-                None
+                Ok(None)
             })
             .next()
             .await;
@@ -3433,7 +3439,7 @@ mod tests {
                 assert_eq!(params.range.start, lsp::Position::new(1, 31));
                 assert_eq!(params.range.end, lsp::Position::new(1, 31));
 
-                Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
                     lsp::CodeAction {
                         title: "Inline into all callers".to_string(),
                         edit: Some(lsp::WorkspaceEdit {
@@ -3475,7 +3481,7 @@ mod tests {
                         })),
                         ..Default::default()
                     },
-                )])
+                )]))
             })
             .next()
             .await;
@@ -3498,7 +3504,7 @@ mod tests {
             .unwrap();
         fake_language_server.handle_request::<lsp::request::CodeActionResolveRequest, _, _>(
             |_, _| async move {
-                lsp::CodeAction {
+                Ok(lsp::CodeAction {
                     title: "Inline into all callers".to_string(),
                     edit: Some(lsp::WorkspaceEdit {
                         changes: Some(
@@ -3530,7 +3536,7 @@ mod tests {
                         ..Default::default()
                     }),
                     ..Default::default()
-                }
+                })
             },
         );
 
@@ -3637,7 +3643,7 @@ mod tests {
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
-        let mut fake_language_server = fake_language_servers.next().await.unwrap();
+        let fake_language_server = fake_language_servers.next().await.unwrap();
 
         // Move cursor to a location that can be renamed.
         let prepare_rename = editor_b.update(cx_b, |editor, cx| {
@@ -3649,10 +3655,10 @@ mod tests {
             .handle_request::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
                 assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
                 assert_eq!(params.position, lsp::Position::new(0, 7));
-                Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
                     lsp::Position::new(0, 6),
                     lsp::Position::new(0, 9),
-                )))
+                ))))
             })
             .next()
             .await
@@ -3686,7 +3692,7 @@ mod tests {
                     lsp::Position::new(0, 6)
                 );
                 assert_eq!(params.new_name, "THREE");
-                Some(lsp::WorkspaceEdit {
+                Ok(Some(lsp::WorkspaceEdit {
                     changes: Some(
                         [
                             (
@@ -3723,7 +3729,7 @@ mod tests {
                         .collect(),
                     ),
                     ..Default::default()
-                })
+                }))
             })
             .next()
             .await
@@ -4894,36 +4900,38 @@ mod tests {
                 move |fake_server: &mut FakeLanguageServer| {
                     fake_server.handle_request::<lsp::request::Completion, _, _>(
                         |_, _| async move {
-                            Some(lsp::CompletionResponse::Array(vec![lsp::CompletionItem {
-                                text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                    range: lsp::Range::new(
-                                        lsp::Position::new(0, 0),
-                                        lsp::Position::new(0, 0),
-                                    ),
-                                    new_text: "the-new-text".to_string(),
-                                })),
-                                ..Default::default()
-                            }]))
+                            Ok(Some(lsp::CompletionResponse::Array(vec![
+                                lsp::CompletionItem {
+                                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(0, 0),
+                                            lsp::Position::new(0, 0),
+                                        ),
+                                        new_text: "the-new-text".to_string(),
+                                    })),
+                                    ..Default::default()
+                                },
+                            ])))
                         },
                     );
 
                     fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
                         |_, _| async move {
-                            Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
                                 lsp::CodeAction {
                                     title: "the-code-action".to_string(),
                                     ..Default::default()
                                 },
-                            )])
+                            )]))
                         },
                     );
 
                     fake_server.handle_request::<lsp::request::PrepareRenameRequest, _, _>(
                         |params, _| async move {
-                            Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                            Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
                                 params.position,
                                 params.position,
-                            )))
+                            ))))
                         },
                     );
 
@@ -4941,7 +4949,7 @@ mod tests {
                                     .map(|_| files.choose(&mut *rng).unwrap())
                                     .collect::<Vec<_>>();
                                 log::info!("LSP: Returning definitions in files {:?}", &files);
-                                Some(lsp::GotoDefinitionResponse::Array(
+                                Ok(Some(lsp::GotoDefinitionResponse::Array(
                                     files
                                         .into_iter()
                                         .map(|file| lsp::Location {
@@ -4949,7 +4957,7 @@ mod tests {
                                             range: Default::default(),
                                         })
                                         .collect(),
-                                ))
+                                )))
                             }
                         }
                     });
@@ -4991,7 +4999,7 @@ mod tests {
                             } else {
                                 None
                             };
-                            async move { highlights }
+                            async move { Ok(highlights) }
                         }
                     });
                 }

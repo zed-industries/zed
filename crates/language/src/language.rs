@@ -263,14 +263,12 @@ impl LanguageRegistry {
         #[cfg(any(test, feature = "test-support"))]
         if language.fake_adapter.is_some() {
             let language = language.clone();
-            return Some(cx.spawn(|mut cx| async move {
+            return Some(cx.spawn(|cx| async move {
                 let (servers_tx, fake_adapter) = language.fake_adapter.as_ref().unwrap();
-                let (server, mut fake_server) = cx.update(|cx| {
-                    lsp::LanguageServer::fake_with_capabilities(
-                        fake_adapter.capabilities.clone(),
-                        cx,
-                    )
-                });
+                let (server, mut fake_server) = lsp::LanguageServer::fake_with_capabilities(
+                    fake_adapter.capabilities.clone(),
+                    cx.clone(),
+                );
 
                 if let Some(initializer) = &fake_adapter.initializer {
                     initializer(&mut fake_server);
@@ -297,10 +295,9 @@ impl LanguageRegistry {
 
         let this = self.clone();
         let adapter = language.adapter.clone()?;
-        let background = cx.background().clone();
         let lsp_binary_statuses = self.lsp_binary_statuses_tx.clone();
         let login_shell_env_loaded = self.login_shell_env_loaded.clone();
-        Some(cx.background().spawn(async move {
+        Some(cx.spawn(|cx| async move {
             login_shell_env_loaded.await;
             let server_binary_path = this
                 .lsp_binary_paths
@@ -328,8 +325,7 @@ impl LanguageRegistry {
                 &server_binary_path,
                 server_args,
                 &root_path,
-                adapter.initialization_options(),
-                background,
+                cx,
             )?;
             Ok(server)
         }))

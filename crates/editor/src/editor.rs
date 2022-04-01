@@ -8928,7 +8928,7 @@ mod tests {
             .unwrap();
 
         cx.foreground().start_waiting();
-        let mut fake_server = fake_servers.next().await.unwrap();
+        let fake_server = fake_servers.next().await.unwrap();
 
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, cx));
@@ -8942,10 +8942,10 @@ mod tests {
                     params.text_document.uri,
                     lsp::Url::from_file_path("/file.rs").unwrap()
                 );
-                Some(vec![lsp::TextEdit::new(
+                Ok(Some(vec![lsp::TextEdit::new(
                     lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
                     ", ".to_string(),
-                )])
+                )]))
             })
             .next()
             .await;
@@ -9173,7 +9173,7 @@ mod tests {
                         params.text_document_position.position,
                         lsp::Position::new(position.row, position.column)
                     );
-                    Some(lsp::CompletionResponse::Array(
+                    Ok(Some(lsp::CompletionResponse::Array(
                         completions
                             .iter()
                             .map(|(range, new_text)| lsp::CompletionItem {
@@ -9188,7 +9188,7 @@ mod tests {
                                 ..Default::default()
                             })
                             .collect(),
-                    ))
+                    )))
                 }
             })
             .next()
@@ -9202,7 +9202,7 @@ mod tests {
             fake.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _| {
                 let edit = edit.clone();
                 async move {
-                    lsp::CompletionItem {
+                    Ok(lsp::CompletionItem {
                         additional_text_edits: edit.map(|(range, new_text)| {
                             vec![lsp::TextEdit::new(
                                 lsp::Range::new(
@@ -9213,7 +9213,7 @@ mod tests {
                             )]
                         }),
                         ..Default::default()
-                    }
+                    })
                 }
             })
             .next()

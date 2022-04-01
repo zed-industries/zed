@@ -1325,7 +1325,7 @@ impl Project {
                     cx,
                 );
                 cx.spawn_weak(|this, mut cx| async move {
-                    let mut language_server = language_server?.await.log_err()?;
+                    let language_server = language_server?.await.log_err()?;
                     let this = this.upgrade(&cx)?;
                     let (language_server_events_tx, language_server_events_rx) =
                         smol::channel::unbounded();
@@ -1333,7 +1333,7 @@ impl Project {
                     language_server
                         .on_notification::<lsp::notification::PublishDiagnostics, _>({
                             let language_server_events_tx = language_server_events_tx.clone();
-                            move |params| {
+                            move |params, _| {
                                 language_server_events_tx
                                     .try_send(LanguageServerEvent::DiagnosticsUpdate(params))
                                     .ok();
@@ -1342,31 +1342,33 @@ impl Project {
                         .detach();
 
                     language_server
-                        .on_request::<lsp::request::WorkspaceConfiguration, _>({
+                        .on_request::<lsp::request::WorkspaceConfiguration, _, _>({
                             let settings = this
                                 .read_with(&cx, |this, _| this.language_server_settings.clone());
-                            move |params| {
-                                let settings = settings.lock();
-                                Ok(params
-                                    .items
-                                    .into_iter()
-                                    .map(|item| {
-                                        if let Some(section) = &item.section {
-                                            settings
-                                                .get(section)
-                                                .cloned()
-                                                .unwrap_or(serde_json::Value::Null)
-                                        } else {
-                                            settings.clone()
-                                        }
-                                    })
-                                    .collect())
+                            move |params, _| {
+                                let settings = settings.lock().clone();
+                                async move {
+                                    Ok(params
+                                        .items
+                                        .into_iter()
+                                        .map(|item| {
+                                            if let Some(section) = &item.section {
+                                                settings
+                                                    .get(section)
+                                                    .cloned()
+                                                    .unwrap_or(serde_json::Value::Null)
+                                            } else {
+                                                settings.clone()
+                                            }
+                                        })
+                                        .collect())
+                                }
                             }
                         })
                         .detach();
 
                     language_server
-                        .on_notification::<lsp::notification::Progress, _>(move |params| {
+                        .on_notification::<lsp::notification::Progress, _>(move |params, _| {
                             let token = match params.token {
                                 lsp::NumberOrString::String(token) => token,
                                 lsp::NumberOrString::Number(token) => {
@@ -1406,6 +1408,11 @@ impl Project {
                         })
                         .detach();
 
+                    let language_server = language_server
+                        .initialize(adapter.initialization_options())
+                        .await
+                        .log_err()?;
+
                     // Process all the LSP events.
                     cx.spawn(|mut cx| {
                         let this = this.downgrade();
@@ -1424,7 +1431,6 @@ impl Project {
                     })
                     .detach();
 
-                    let language_server = language_server.initialize().await.log_err()?;
                     this.update(&mut cx, |this, cx| {
                         this.language_servers
                             .insert(key.clone(), (adapter, language_server.clone()));
@@ -4974,9 +4980,9 @@ mod tests {
         });
 
         let mut rust_shutdown_requests = fake_rust_server
-            .handle_request::<lsp::request::Shutdown, _, _>(|_, _| future::ready(()));
+            .handle_request::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
         let mut json_shutdown_requests = fake_json_server
-            .handle_request::<lsp::request::Shutdown, _, _>(|_, _| future::ready(()));
+            .handle_request::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
         futures::join!(rust_shutdown_requests.next(), json_shutdown_requests.next());
 
         let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
@@ -5917,19 +5923,11 @@ mod tests {
             .await;
 
         let buffer = project
-            .update(cx, |project, cx| {
-                project.open_buffer(
-                    ProjectPath {
-                        worktree_id,
-                        path: Path::new("").into(),
-                    },
-                    cx,
-                )
-            })
+            .update(cx, |project, cx| project.open_buffer((worktree_id, ""), cx))
             .await
             .unwrap();
 
-        let mut fake_server = fake_servers.next().await.unwrap();
+        let fake_server = fake_servers.next().await.unwrap();
         fake_server.handle_request::<lsp::request::GotoDefinition, _, _>(|params, _| async move {
             let params = params.text_document_position_params;
             assert_eq!(
@@ -5938,9 +5936,11 @@ mod tests {
             );
             assert_eq!(params.position, lsp::Position::new(0, 22));
 
-            Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
-                lsp::Url::from_file_path("/dir/a.rs").unwrap(),
-                lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(
+                    lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+                    lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                ),
             )))
         });
 
@@ -6854,7 +6854,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut fake_server = fake_servers.next().await.unwrap();
+        let fake_server = fake_servers.next().await.unwrap();
 
         let response = project.update(cx, |project, cx| {
             project.prepare_rename(buffer.clone(), 7, cx)
@@ -6863,10 +6863,10 @@ mod tests {
             .handle_request::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
                 assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
                 assert_eq!(params.position, lsp::Position::new(0, 7));
-                Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
                     lsp::Position::new(0, 6),
                     lsp::Position::new(0, 9),
-                )))
+                ))))
             })
             .next()
             .await
@@ -6889,7 +6889,7 @@ mod tests {
                     lsp::Position::new(0, 7)
                 );
                 assert_eq!(params.new_name, "THREE");
-                Some(lsp::WorkspaceEdit {
+                Ok(Some(lsp::WorkspaceEdit {
                     changes: Some(
                         [
                             (
@@ -6926,7 +6926,7 @@ mod tests {
                         .collect(),
                     ),
                     ..Default::default()
-                })
+                }))
             })
             .next()
             .await
