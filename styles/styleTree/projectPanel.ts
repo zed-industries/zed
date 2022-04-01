@@ -1,7 +1,7 @@
 import { panel } from "./app";
 import { backgroundColor, iconColor, text, TextColor } from "./components";
-import Theme from "./theme";
-import { Color } from "./lib";
+import Theme from "../themes/theme";
+import { Color } from "../utils/color";
 
 export default function projectPanel(theme: Theme) {
   function entry(theme: Theme, textColor: TextColor, background?: Color) {

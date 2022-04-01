@@ -1,4 +1,4 @@
-import { colorRamp } from "./lib";
+import { colorRamp } from "../utils/color";
 
 export default {
     fontFamily: {

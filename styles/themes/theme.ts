@@ -43,6 +43,24 @@ export interface BackgroundColor {
     focused: ColorToken;
 }
 
+export interface Syntax { 
+    primary: SyntaxHighlightStyle;
+    comment: SyntaxHighlightStyle;
+    punctuation: SyntaxHighlightStyle;
+    constant: SyntaxHighlightStyle;
+    keyword: SyntaxHighlightStyle;
+    function: SyntaxHighlightStyle;
+    type: SyntaxHighlightStyle;
+    variant: SyntaxHighlightStyle;
+    property: SyntaxHighlightStyle;
+    enum: SyntaxHighlightStyle;
+    operator: SyntaxHighlightStyle;
+    string: SyntaxHighlightStyle;
+    number: SyntaxHighlightStyle;
+    boolean: SyntaxHighlightStyle;
+    predictive: SyntaxHighlightStyle;
+};
+
 export default interface Theme {
     backgroundColor: {
         100: BackgroundColor;
@@ -114,23 +132,7 @@ export default interface Theme {
         };
     };
 
-    syntax: {
-        primary: SyntaxHighlightStyle;
-        comment: SyntaxHighlightStyle;
-        punctuation: SyntaxHighlightStyle;
-        constant: SyntaxHighlightStyle;
-        keyword: SyntaxHighlightStyle;
-        function: SyntaxHighlightStyle;
-        type: SyntaxHighlightStyle;
-        variant: SyntaxHighlightStyle;
-        property: SyntaxHighlightStyle;
-        enum: SyntaxHighlightStyle;
-        operator: SyntaxHighlightStyle;
-        string: SyntaxHighlightStyle;
-        number: SyntaxHighlightStyle;
-        boolean: SyntaxHighlightStyle;
-        predictive: SyntaxHighlightStyle;
-    };
+    syntax: Syntax,
 
     player: {
         1: Player;
