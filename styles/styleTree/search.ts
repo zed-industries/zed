@@ -1,5 +1,5 @@
+import Theme from "../themes/theme";
 import { backgroundColor, border, player, text } from "./components";
-import Theme from "./theme";
 
 export default function search(theme: Theme) {
   const optionButton = {

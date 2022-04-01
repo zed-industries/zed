@@ -1,7 +1,7 @@
 import chroma from "chroma-js";
+import Theme, { BackgroundColor, Weight } from "../themes/theme";
 import core from "../tokens/core";
 import { Color } from "../utils/color";
-import Theme, { BackgroundColor, Weight } from "../themes/theme";
 
 export type TextColor = keyof Theme["textColor"];
 

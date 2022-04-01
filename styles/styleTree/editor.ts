@@ -1,3 +1,4 @@
+import Theme from "../themes/theme";
 import {
   backgroundColor,
   border,
@@ -6,7 +7,6 @@ import {
   text,
   TextColor
 } from "./components";
-import Theme from "./theme";
 
 export default function editor(theme: Theme) {
   const autocompleteItem = {
