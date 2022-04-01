@@ -2593,6 +2593,8 @@ impl Editor {
                     }
                 }
             }
+        } else {
+            return Ok(());
         }
 
         let mut ranges_to_highlight = Vec::new();
