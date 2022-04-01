@@ -62,6 +62,7 @@ export interface Syntax {
 };
 
 export default interface Theme {
+    name: string;
     backgroundColor: {
         100: BackgroundColor;
         300: BackgroundColor;
