@@ -1,442 +1,230 @@
 import core from "./core";
 import Theme from "./theme";
 
+const { color } = core;
+
 const backgroundColor = {
     100: {
-        base: {
-            value: core.color.neutral[999].value,
-        },
-        hovered: {
-            value: core.color.neutral[999].value,
-        },
-        active: {
-            value: core.color.neutral[999].value,
-        },
-        focused: {
-            value: core.color.neutral[999].value,
-        },
+        base: color.neutral[750],
+        hovered: color.neutral[750],
+        active: color.neutral[750],
+        focused: color.neutral[750],
     },
     300: {
-        base: {
-            value: core.color.neutral[999].value,
-        },
-        hovered: {
-            value: core.color.neutral[999].value,
-        },
-        active: {
-            value: core.color.neutral[999].value,
-        },
-        focused: {
-            value: core.color.neutral[999].value,
-        },
+        base: color.neutral[800],
+        hovered: color.neutral[800],
+        active: color.neutral[800],
+        focused: color.neutral[800],
     },
     500: {
-        base: {
-            value: core.color.neutral[999].value,
-        },
-        hovered: {
-            value: "#000000",
-        },
-        active: {
-            value: "#000000",
-        },
-        focused: {
-            value: "#000000",
-        },
+        base: color.neutral[900],
+        hovered: color.neutral[900],
+        active: color.neutral[900],
+        focused: color.neutral[900],
     },
     ok: {
-        base: {
-            value: "#000000",
-        },
-        hovered: {
-            value: "#000000",
-        },
-        active: {
-            value: "#000000",
-        },
-        focused: {
-            value: "#000000",
-        },
+        base: color.green[600],
+        hovered: color.green[600],
+        active: color.green[600],
+        focused: color.green[600],
     },
     error: {
-        base: {
-            value: "#000000",
-        },
-        hovered: {
-            value: "#000000",
-        },
-        active: {
-            value: "#000000",
-        },
-        focused: {
-            value: "#000000",
-        },
+        base: color.red[400],
+        hovered: color.red[400],
+        active: color.red[400],
+        focused: color.red[400],
     },
     warning: {
-        base: {
-            value: "#000000",
-        },
-        hovered: {
-            value: "#000000",
-        },
-        active: {
-            value: "#000000",
-        },
-        focused: {
-            value: "#000000",
-        },
+        base: color.amber[300],
+        hovered: color.amber[300],
+        active: color.amber[300],
+        focused: color.amber[300],
     },
     info: {
-        base: {
-            value: "#000000",
-        },
-        hovered: {
-            value: "#000000",
-        },
-        active: {
-            value: "#000000",
-        },
-        focused: {
-            value: "#000000",
-        },
+        base: color.blue[500],
+        hovered: color.blue[500],
+        active: color.blue[500],
+        focused: color.blue[500],
     },
 };
 
 const borderColor = {
-    primary: {
-        value: "#000000",
-    },
-    secondary: {
-        value: "#000000",
-    },
-    muted: {
-        value: "#000000",
-    },
-    focused: {
-        value: "#000000",
-    },
-    active: {
-        value: "#000000",
-    },
-    ok: {
-        value: "#000000",
-    },
-    error: {
-        value: "#000000",
-    },
-    warning: {
-        value: "#000000",
-    },
-    info: {
-        value: "#000000",
-    },
+    primary: color.neutral[850],
+    secondary: color.neutral[700],
+    muted: color.neutral[750],
+    focused: color.neutral[100],
+    active: color.neutral[500],
+    ok: color.neutral[999],
+    error: color.neutral[999],
+    warning: color.neutral[999],
+    info: color.neutral[999],
 };
 
 const textColor = {
-    primary: {
-        value: core.color.neutral[150].value,
-    },
-    secondary: {
-        value: core.color.neutral[350].value,
-    },
-    muted: {
-        value: core.color.neutral[550].value,
-    },
-    placeholder: {
-        value: core.color.neutral[750].value,
-    },
-    active: {
-        value: core.color.neutral[0].value,
-    },
-    feature: {
-        //TODO: (design) define feature and it's correct value
-        value: core.color.sky[500].value,
-    },
-    ok: {
-        value: core.color.green[600].value,
-    },
-    error: {
-        value: core.color.red[400].value,
-    },
-    warning: {
-        value: core.color.amber[300].value,
-    },
-    info: {
-        value: core.color.blue[500].value,
-    },
+    primary: color.neutral[150],
+    secondary: color.neutral[350],
+    muted: color.neutral[550],
+    placeholder: color.neutral[750],
+    active: color.neutral[0],
+    //TODO: (design) define feature and it's correct value
+    feature: color.sky[500],
+    ok: color.green[600],
+    error: color.red[400],
+    warning: color.amber[300],
+    info: color.blue[500],
 };
 
 const iconColor = {
-    primary: {
-        value: core.color.neutral[300].value,
-    },
-    secondary: {
-        value: core.color.neutral[500].value,
-    },
-    muted: {
-        value: core.color.neutral[600].value,
-    },
-    placeholder: {
-        value: core.color.neutral[700].value,
-    },
-    active: {
-        value: core.color.neutral[50].value,
-    },
-    feature: {
-        //TODO: (design) define feature and it's correct value
-        value: core.color.sky[500].value,
-    },
-    ok: {
-        value: core.color.green[600].value,
-    },
-    error: {
-        value: core.color.red[400].value,
-    },
-    warning: {
-        value: core.color.amber[300].value,
-    },
-    info: {
-        value: core.color.blue[500].value,
-    },
+    primary: color.neutral[300],
+    secondary: color.neutral[500],
+    muted: color.neutral[600],
+    placeholder: color.neutral[700],
+    active: color.neutral[50],
+    //TODO: (design) define feature and it's correct value
+    feature: color.sky[500],
+    ok: color.green[600],
+    error: color.red[400],
+    warning: color.amber[300],
+    info: color.blue[500],
 };
 
 const editor = {
-    background: {
-        value: backgroundColor[500].base.value,
-    },
-    indent_guide: {
-        value: core.color.neutral[999].value,
-    },
-    indent_guide_active: {
-        value: core.color.neutral[999].value,
-    },
+    background: backgroundColor[500].base,
+    indent_guide: color.neutral[999],
+    indent_guide_active: color.neutral[999],
     line: {
-        active: {
-            value: core.color.neutral[999].value,
-        },
-        highlighted: {
-            value: core.color.neutral[999].value,
-        },
-        inserted: {
-            value: core.color.neutral[999].value,
-        },
-        deleted: {
-            value: core.color.neutral[999].value,
-        },
-        modified: {
-            value: core.color.neutral[999].value,
-        },
+        active: color.neutral[999],
+        highlighted: color.neutral[999],
+        inserted: color.neutral[999],
+        deleted: color.neutral[999],
+        modified: color.neutral[999],
     },
     highlight: {
-        selection: {
-            value: core.color.neutral[999].value,
-        },
-        occurrence: {
-            value: core.color.neutral[999].value,
-        },
-        activeOccurrence: {
-            value: core.color.neutral[999].value,
-        },
-        matchingBracket: {
-            value: core.color.neutral[999].value,
-        },
-        match: {
-            value: core.color.neutral[999].value,
-        },
-        activeMatch: {
-            value: core.color.neutral[999].value,
-        },
-        related: {
-            value: core.color.neutral[999].value,
-        },
+        selection: color.neutral[999],
+        occurrence: color.neutral[999],
+        activeOccurrence: color.neutral[999],
+        matchingBracket: color.neutral[999],
+        match: color.neutral[999],
+        activeMatch: color.neutral[999],
+        related: color.neutral[999],
     },
     gutter: {
-        primary: {
-            value: core.color.neutral[999].value,
-        },
-        active: {
-            value: core.color.neutral[999].value,
-        },
+        primary: color.neutral[999],
+        active: color.neutral[999],
     },
 };
 
 const syntax = {
     primary: {
-        color: {
-            value: core.color.neutral[150]
-        },
+        color: textColor.primary,
         weight: { value: "normal" },
     },
     comment: {
-        color: { value: "000000" },
+        color: color.lime[200],
         weight: { value: "normal" },
     },
     punctuation: {
-        color: { value: "000000" },
+        color: textColor.primary,
         weight: { value: "normal" },
     },
     constant: {
-        color: { value: "000000" },
+        color: color.neutral[150],
         weight: { value: "normal" },
     },
     keyword: {
-        color: { value: "000000" },
+        color: color.sky[400],
         weight: { value: "normal" },
     },
     function: {
-        color: { value: "000000" },
+        color: color.yellow[200],
         weight: { value: "normal" },
     },
     type: {
-        color: { value: "000000" },
+        color: color.teal[300],
         weight: { value: "normal" },
     },
     variant: {
-        color: { value: "000000" },
+        color: color.teal[300],
         weight: { value: "normal" },
     },
     property: {
-        color: { value: "000000" },
+        color: color.sky[300],
         weight: { value: "normal" },
     },
     enum: {
-        color: { value: "000000" },
+        color: color.sky[400],
         weight: { value: "normal" },
     },
     operator: {
-        color: { value: "000000" },
+        color: color.sky[400],
         weight: { value: "normal" },
     },
     string: {
-        color: { value: "000000" },
+        color: color.orange[300],
         weight: { value: "normal" },
     },
     number: {
-        color: { value: "000000" },
+        color: color.neutral[150],
         weight: { value: "normal" },
     },
     boolean: {
-        color: { value: "000000" },
+        color: color.neutral[150],
         weight: { value: "normal" },
     },
     predictive: {
-        color: { value: "000000" },
+        color: textColor.muted,
         weight: { value: "normal" },
     },
 };
 
 const player = {
     1: {
-        baseColor: {
-            value: core.color.neutral[999].value,
-        },
-        cursorColor: {
-            value: core.color.neutral[999].value,
-        },
-        selectionColor: {
-            value: core.color.neutral[999].value,
-        },
-        borderColor: {
-            value: core.color.neutral[999].value,
-        },
+        baseColor: color.blue[600],
+        cursorColor: color.blue[600],
+        selectionColor: color.blue[600],
+        borderColor: color.blue[600],
     },
     2: {
-        baseColor: {
-            value: core.color.neutral[999].value,
-        },
-        cursorColor: {
-            value: core.color.neutral[999].value,
-        },
-        selectionColor: {
-            value: core.color.neutral[999].value,
-        },
-        borderColor: {
-            value: core.color.neutral[999].value,
-        },
+        baseColor: color.indigo[500],
+        cursorColor: color.indigo[500],
+        selectionColor: color.indigo[500],
+        borderColor: color.indigo[500],
     },
     3: {
-        baseColor: {
-            value: core.color.neutral[999].value,
-        },
-        cursorColor: {
-            value: core.color.neutral[999].value,
-        },
-        selectionColor: {
-            value: core.color.neutral[999].value,
-        },
-        borderColor: {
-            value: core.color.neutral[999].value,
-        },
+        baseColor: color.green[500],
+        cursorColor: color.green[500],
+        selectionColor: color.green[500],
+        borderColor: color.green[500],
     },
     4: {
-        baseColor: {
-            value: core.color.neutral[999].value,
-        },
-        cursorColor: {
-            value: core.color.neutral[999].value,
-        },
-        selectionColor: {
-            value: core.color.neutral[999].value,
-        },
-        borderColor: {
-            value: core.color.neutral[999].value,
-        },
+        baseColor: color.orange[500],
+        cursorColor: color.orange[500],
+        selectionColor: color.orange[500],
+        borderColor: color.orange[500],
     },
     5: {
-        baseColor: {
-            value: core.color.neutral[999].value,
-        },
-        cursorColor: {
-            value: core.color.neutral[999].value,
-        },
-        selectionColor: {
-            value: core.color.neutral[999].value,
-        },
-        borderColor: {
-            value: core.color.neutral[999].value,
-        },
+        baseColor: color.purple[500],
+        cursorColor: color.purple[500],
+        selectionColor: color.purple[500],
+        borderColor: color.purple[500],
     },
     6: {
-        baseColor: {
-            value: core.color.neutral[999].value,
-        },
-        cursorColor: {
-            value: core.color.neutral[999].value,
-        },
-        selectionColor: {
-            value: core.color.neutral[999].value,
-        },
-        borderColor: {
-            value: core.color.neutral[999].value,
-        },
+        baseColor: color.teal[400],
+        cursorColor: color.teal[400],
+        selectionColor: color.teal[400],
+        borderColor: color.teal[400],
     },
     7: {
-        baseColor: {
-            value: core.color.neutral[999].value,
-        },
-        cursorColor: {
-            value: core.color.neutral[999].value,
-        },
-        selectionColor: {
-            value: core.color.neutral[999].value,
-        },
-        borderColor: {
-            value: core.color.neutral[999].value,
-        },
+        baseColor: color.pink[400],
+        cursorColor: color.pink[400],
+        selectionColor: color.pink[400],
+        borderColor: color.pink[400],
     },
     8: {
-        baseColor: {
-            value: core.color.neutral[999].value,
-        },
-        cursorColor: {
-            value: core.color.neutral[999].value,
-        },
-        selectionColor: {
-            value: core.color.neutral[999].value,
-        },
-        borderColor: {
-            value: core.color.neutral[999].value,
-        },
+        baseColor: color.yellow[400],
+        cursorColor: color.yellow[400],
+        selectionColor: color.yellow[400],
+        borderColor: color.yellow[400],
     },
 };
 
