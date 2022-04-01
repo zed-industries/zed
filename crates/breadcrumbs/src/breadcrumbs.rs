@@ -77,6 +77,8 @@ impl View for Breadcrumbs {
             }))
             .contained()
             .with_style(theme.breadcrumbs.container)
+            .aligned()
+            .left()
             .boxed()
     }
 }

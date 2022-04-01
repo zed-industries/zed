@@ -691,7 +691,13 @@ impl View for ProjectSearchBar {
             Flex::row()
                 .with_child(
                     Flex::row()
-                        .with_child(ChildView::new(&search.query_editor).flex(1., true).boxed())
+                        .with_child(
+                            ChildView::new(&search.query_editor)
+                                .aligned()
+                                .left()
+                                .flex(1., true)
+                                .boxed(),
+                        )
                         .with_children(search.active_match_index.map(|match_ix| {
                             Label::new(
                                 format!(
@@ -710,7 +716,9 @@ impl View for ProjectSearchBar {
                         .with_style(editor_container)
                         .aligned()
                         .constrained()
+                        .with_min_width(theme.search.editor.min_width)
                         .with_max_width(theme.search.editor.max_width)
+                        .flex(1., false)
                         .boxed(),
                 )
                 .with_child(
@@ -735,9 +743,9 @@ impl View for ProjectSearchBar {
                         .boxed(),
                 )
                 .contained()
-                .with_style(theme.workspace.toolbar.container)
-                .constrained()
-                .with_height(theme.workspace.toolbar.height)
+                .with_style(theme.search.container)
+                .aligned()
+                .left()
                 .named("project search")
         } else {
             Empty::new().boxed()

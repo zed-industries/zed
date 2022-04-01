@@ -89,9 +89,7 @@ background = "$surface.1"
 border = { color = "$border.0", width = 1, left = false, right = false, bottom = true, top = false }
 height = 34
 item_spacing = 8
-padding.left = 16
-padding.right = 8
-padding.bottom = 4
+padding = { left = 16, right = 8, top = 4, bottom = 4 }
 
 [breadcrumbs]
 extends = "$text.1"
@@ -406,7 +404,7 @@ margin = { right = 5 }
 text = "$text.0"
 placeholder_text = "$text.2"
 selection = "$selection.host"
-border = { width = 1, color = "$border.0", overlay = true }
+border = { width = 1, color = "$border.0" }
 
 [search.invalid_editor]
 extends = "$search.editor"

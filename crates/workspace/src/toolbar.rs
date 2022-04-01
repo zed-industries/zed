@@ -76,6 +76,7 @@ impl View for Toolbar {
                             .aligned()
                             .contained()
                             .with_margin_right(theme.item_spacing)
+                            .flex(1., false)
                             .boxed()
                     }))
                     .with_children(primary_right_items.iter().map(|i| {
@@ -84,6 +85,7 @@ impl View for Toolbar {
                             .contained()
                             .with_margin_left(theme.item_spacing)
                             .flex_float()
+                            .flex(1., false)
                             .boxed()
                     }))
                     .constrained()
