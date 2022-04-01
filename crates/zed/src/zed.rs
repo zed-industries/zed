@@ -683,6 +683,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_pane_actions(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+
         cx.update(|cx| pane::init(cx));
         let app_state = cx.update(test_app_state);
         app_state
@@ -740,7 +742,9 @@ mod tests {
             assert_eq!(pane2_item.project_path(cx.as_ref()), Some(file1.clone()));
 
             cx.dispatch_action(window_id, vec![pane_2.id()], &workspace::CloseActiveItem);
-            let workspace = workspace.read(cx);
+        });
+        cx.foreground().run_until_parked();
+        workspace.read_with(cx, |workspace, _| {
             assert_eq!(workspace.panes().len(), 1);
             assert_eq!(workspace.active_pane(), &pane_1);
         });
