@@ -1,10 +1,11 @@
 use editor::{Anchor, Editor};
 use gpui::{
-    elements::*, AppContext, Entity, RenderContext, Subscription, View, ViewContext, ViewHandle,
+    elements::*, AppContext, Entity, ModelHandle, RenderContext, Subscription, View, ViewContext,
+    ViewHandle,
 };
-use language::{BufferSnapshot, OutlineItem};
+use language::{Buffer, OutlineItem};
+use project::Project;
 use search::ProjectSearchView;
-use std::borrow::Cow;
 use theme::SyntaxTheme;
 use workspace::{ItemHandle, Settings, ToolbarItemLocation, ToolbarItemView};
 
@@ -13,14 +14,16 @@ pub enum Event {
 }
 
 pub struct Breadcrumbs {
+    project: ModelHandle<Project>,
     editor: Option<ViewHandle<Editor>>,
     project_search: Option<ViewHandle<ProjectSearchView>>,
     subscriptions: Vec<Subscription>,
 }
 
 impl Breadcrumbs {
-    pub fn new() -> Self {
+    pub fn new(project: ModelHandle<Project>) -> Self {
         Self {
+            project,
             editor: Default::default(),
             subscriptions: Default::default(),
             project_search: Default::default(),
@@ -31,14 +34,14 @@ impl Breadcrumbs {
         &self,
         theme: &SyntaxTheme,
         cx: &AppContext,
-    ) -> Option<(BufferSnapshot, Vec<OutlineItem<Anchor>>)> {
+    ) -> Option<(ModelHandle<Buffer>, Vec<OutlineItem<Anchor>>)> {
         let editor = self.editor.as_ref()?.read(cx);
         let cursor = editor.newest_anchor_selection().head();
-        let (buffer, symbols) = editor
-            .buffer()
-            .read(cx)
+        let multibuffer = &editor.buffer().read(cx);
+        let (buffer_id, symbols) = multibuffer
             .read(cx)
             .symbols_containing(cursor, Some(theme))?;
+        let buffer = multibuffer.buffer(buffer_id)?;
         Some((buffer, symbols))
     }
 }
@@ -60,15 +63,21 @@ impl View for Breadcrumbs {
             } else {
                 return Empty::new().boxed();
             };
-
-        let filename = if let Some(path) = buffer.path() {
-            path.to_string_lossy()
+        let buffer = buffer.read(cx);
+        let filename = if let Some(file) = buffer.file() {
+            if file.path().file_name().is_none()
+                || self.project.read(cx).visible_worktrees(cx).count() > 1
+            {
+                file.full_path(cx).to_string_lossy().to_string()
+            } else {
+                file.path().to_string_lossy().to_string()
+            }
         } else {
-            Cow::Borrowed("untitled")
+            "untitled".to_string()
         };
 
         Flex::row()
-            .with_child(Label::new(filename.to_string(), theme.breadcrumbs.text.clone()).boxed())
+            .with_child(Label::new(filename, theme.breadcrumbs.text.clone()).boxed())
             .with_children(symbols.into_iter().flat_map(|symbol| {
                 [
                     Label::new(" 〉 ".to_string(), theme.breadcrumbs.text.clone()).boxed(),

@@ -12,6 +12,7 @@ collections = { path = "../collections" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
+project = { path = "../project" }
 search = { path = "../search" }
 theme = { path = "../theme" }
 workspace = { path = "../workspace" }
