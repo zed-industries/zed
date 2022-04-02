@@ -61,16 +61,16 @@ const borderColor = {
 };
 
 const textColor = {
-  primary: colors.neutral[800],
-  secondary: colors.neutral[700],
-  muted: colors.neutral[600],
-  placeholder: colors.neutral[500],
+  primary: colors.neutral[750],
+  secondary: colors.neutral[600],
+  muted: colors.neutral[450],
+  placeholder: colors.neutral[300],
   active: colors.neutral[900],
-  feature: colors.blue[600],
-  ok: colors.green[800],
-  error: colors.red[800],
-  warning: colors.yellow[800],
-  info: colors.blue[800],
+  feature: colors.blue[500],
+  ok: colors.green[500],
+  error: colors.red[500],
+  warning: colors.yellow[500],
+  info: colors.blue[500],
 };
 
 const iconColor = {
@@ -94,16 +94,16 @@ const player = {
     borderColor: colors.blue[500],
   },
   2: {
+    baseColor: colors.lime[500],
+    cursorColor: colors.lime[500],
+    selectionColor: colors.lime[100],
+    borderColor: colors.lime[500],
+  },
+  3: {
     baseColor: colors.indigo[500],
     cursorColor: colors.indigo[500],
     selectionColor: colors.indigo[100],
     borderColor: colors.indigo[500],
-  },
-  3: {
-    baseColor: colors.green[500],
-    cursorColor: colors.green[500],
-    selectionColor: colors.green[100],
-    borderColor: colors.green[500],
   },
   4: {
     baseColor: colors.orange[500],
@@ -143,8 +143,8 @@ const editor = {
   indent_guide: borderColor.muted,
   indent_guide_active: borderColor.secondary,
   line: {
-    active: colors.neutral[0],
-    highlighted: colors.neutral[0],
+    active: backgroundColor[500].active,
+    highlighted: backgroundColor[500].active,
     inserted: backgroundColor.ok.active,
     deleted: backgroundColor.error.active,
     modified: backgroundColor.info.active,
@@ -159,8 +159,8 @@ const editor = {
     related: colors.neutral[0],
   },
   gutter: {
-    primary: colors.neutral[0],
-    active: colors.neutral[0],
+    primary: textColor.muted,
+    active: textColor.active,
   },
 };
 

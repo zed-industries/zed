@@ -38,7 +38,8 @@ export default function editor(theme: Theme) {
     }
 
     return {
-        textColor: theme.textColor.secondary.value,
+        // textColor: theme.syntax.primary.color,
+        textColor: theme.syntax.primary.color.value,
         background: backgroundColor(theme, 500),
         activeLineBackground: theme.editor.line.active.value,
         codeActionsIndicator: iconColor(theme, "secondary"),

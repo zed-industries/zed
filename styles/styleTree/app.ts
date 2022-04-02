@@ -1,6 +1,6 @@
 import Theme from "../themes/theme";
 import chatPanel from "./chatPanel";
-import { backgroundColor, borderColor, text } from "./components";
+import { text } from "./components";
 import contactsPanel from "./contactsPanel";
 import editor from "./editor";
 import projectPanel from "./projectPanel";
@@ -18,7 +18,6 @@ export default function app(theme: Theme): Object {
         workspace: workspace(theme),
         editor: editor(theme),
         projectDiagnostics: {
-            background: backgroundColor(theme, 300),
             tabIconSpacing: 4,
             tabIconWidth: 13,
             tabSummarySpacing: 10,
