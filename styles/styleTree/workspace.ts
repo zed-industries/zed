@@ -12,14 +12,15 @@ export default function workspace(theme: Theme) {
   };
 
   const tab = {
-    height: 34,
+    height: 32,
+    background: backgroundColor(theme, 300),
     iconClose: iconColor(theme, "secondary"),
     iconCloseActive: iconColor(theme, "active"),
     iconConflict: iconColor(theme, "warning"),
     iconDirty: iconColor(theme, "info"),
     iconWidth: 8,
     spacing: 10,
-    text: text(theme, "mono", "secondary"),
+    text: text(theme, "mono", "secondary", { size: "sm" }),
     border: border(theme, "primary", {
       left: true,
       bottom: true,
@@ -33,8 +34,8 @@ export default function workspace(theme: Theme) {
 
   const activeTab = {
     ...tab,
-    background: backgroundColor(theme, 300),
-    text: text(theme, "mono", "primary"),
+    background: backgroundColor(theme, 500),
+    text: text(theme, "mono", "active", { size: "sm" }),
     border: {
       ...tab.border,
       bottom: false,
@@ -48,11 +49,12 @@ export default function workspace(theme: Theme) {
   };
   const sidebar = {
     width: 30,
+    background: backgroundColor(theme, 300),
     border: border(theme, "primary", { right: true }),
     item: sidebarItem,
     activeItem: {
       ...sidebarItem,
-      iconColor: iconColor(theme, "primary"),
+      iconColor: iconColor(theme, "active"),
     },
     resizeHandle: {
       background: border(theme, "primary").color,
@@ -63,7 +65,7 @@ export default function workspace(theme: Theme) {
   };
 
   return {
-    background: backgroundColor(theme, 500),
+    background: backgroundColor(theme, 300),
     leaderBorderOpacity: 0.7,
     leaderBorderWidth: 2.0,
     tab,
@@ -94,6 +96,7 @@ export default function workspace(theme: Theme) {
     titlebar: {
       avatarWidth: 18,
       height: 32,
+      background: backgroundColor(theme, 100),
       shareIconColor: iconColor(theme, "secondary"),
       shareIconActiveColor: iconColor(theme, "active"),
       title: text(theme, "sans", "primary"),
@@ -107,29 +110,32 @@ export default function workspace(theme: Theme) {
       avatarRibbon: {
         height: 3,
         width: 12,
+        // TODO: The background for this ideally should be 
+        // set with a token, not hardcoded in rust
       },
       border: border(theme, "primary", { bottom: true }),
       signInPrompt,
       hoveredSignInPrompt: {
         ...signInPrompt,
         ...text(theme, "mono", "active"),
+        size: 13,
       },
       offlineIcon: {
-        color: iconColor(theme, "muted"),
+        color: iconColor(theme, "secondary"),
         width: 16,
         padding: {
           right: 4,
         },
       },
       outdatedWarning: {
-        ...text(theme, "sans", "muted"),
+        ...text(theme, "sans", "warning"),
         size: 13,
       },
     },
     toolbar: {
       height: 34,
-      background: backgroundColor(theme, 300),
-      border: border(theme, "primary", { bottom: true }),
+      background: backgroundColor(theme, 500),
+      border: border(theme, "muted", { bottom: true }),
       itemSpacing: 8,
       padding: { left: 16, right: 8, top: 4, bottom: 4 },
     },
@@ -138,8 +144,7 @@ export default function workspace(theme: Theme) {
       padding: { left: 6 },
     },
     disconnectedOverlay: {
-      ...text(theme, "sans", "primary"),
-      color: "#ffffff",
+      ...text(theme, "sans", "active"),
       background: "#000000aa",
     },
   };

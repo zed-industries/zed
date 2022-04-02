@@ -5,7 +5,7 @@ import {
     iconColor,
     player,
     text,
-    TextColor,
+    TextColor
 } from "./components";
 
 export default function editor(theme: Theme) {
@@ -39,7 +39,7 @@ export default function editor(theme: Theme) {
 
     return {
         textColor: theme.textColor.secondary.value,
-        background: backgroundColor(theme, 300),
+        background: backgroundColor(theme, 500),
         activeLineBackground: theme.editor.line.active.value,
         codeActionsIndicator: iconColor(theme, "secondary"),
         diffBackgroundDeleted: backgroundColor(theme, "error"),
@@ -47,7 +47,7 @@ export default function editor(theme: Theme) {
         documentHighlightReadBackground: theme.editor.highlight.occurrence.value,
         documentHighlightWriteBackground: theme.editor.highlight.occurrence.value,
         errorColor: theme.textColor.error.value,
-        gutterBackground: backgroundColor(theme, 300),
+        gutterBackground: backgroundColor(theme, 500),
         gutterPaddingFactor: 2.5,
         highlightedLineBackground: theme.editor.line.highlighted.value,
         lineNumber: theme.editor.gutter.primary.value,
@@ -65,14 +65,14 @@ export default function editor(theme: Theme) {
             player(theme, 8).selection,
         ],
         autocomplete: {
-            background: backgroundColor(theme, 100),
+            background: backgroundColor(theme, 500),
             cornerRadius: 6,
             padding: 6,
             border: border(theme, "secondary"),
             item: autocompleteItem,
             hoveredItem: {
                 ...autocompleteItem,
-                background: backgroundColor(theme, 100, "hovered"),
+                background: backgroundColor(theme, 500, "hovered"),
             },
             margin: {
                 left: -14,
@@ -83,11 +83,11 @@ export default function editor(theme: Theme) {
             },
             selectedItem: {
                 ...autocompleteItem,
-                background: backgroundColor(theme, 100, "active"),
+                background: backgroundColor(theme, 500, "active"),
             },
         },
         diagnosticHeader: {
-            background: theme.editor.background.value,
+            background: backgroundColor(theme, 300),
             iconWidthFactor: 1.5,
             textScaleFactor: 0.857, // NateQ: Will we need dynamic sizing for text? If so let's create tokens for these.
             border: border(theme, "secondary", {
