@@ -1,0 +1,6 @@
+{
+  "watch": ["./**/*"],
+  "ext": "ts",
+  "ignore": [],
+  "exec": "ts-node buildThemes.ts"
+}
