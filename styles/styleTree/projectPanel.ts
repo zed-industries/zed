@@ -1,7 +1,7 @@
-import { panel } from "./app";
-import { backgroundColor, iconColor, text, TextColor } from "./components";
 import Theme from "../themes/theme";
 import { Color } from "../utils/color";
+import { panel } from "./app";
+import { backgroundColor, iconColor, text, TextColor } from "./components";
 
 export default function projectPanel(theme: Theme) {
   function entry(theme: Theme, textColor: TextColor, background?: Color) {
@@ -11,7 +11,7 @@ export default function projectPanel(theme: Theme) {
       iconColor: iconColor(theme, "muted"),
       iconSize: 8,
       iconSpacing: 8,
-      text: text(theme, "mono", textColor),
+      text: text(theme, "mono", textColor, { size: "sm" }),
     };
   }
 
@@ -31,6 +31,7 @@ export default function projectPanel(theme: Theme) {
     ),
     padding: {
       top: 6,
+      left: 12,
     },
   };
 }

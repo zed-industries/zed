@@ -31,7 +31,7 @@ export default function chatPanel(theme: Theme) {
 
   const message = {
     body: text(theme, "sans", "secondary"),
-    timestamp: text(theme, "sans", "muted"),
+    timestamp: text(theme, "sans", "muted", { size: "sm" }),
     padding: {
       bottom: 6,
     },
@@ -91,12 +91,12 @@ export default function chatPanel(theme: Theme) {
       },
     },
     inputEditor: {
-      background: backgroundColor(theme, 300),
+      background: backgroundColor(theme, 500),
       cornerRadius: 6,
       text: text(theme, "mono", "primary"),
-      placeholderText: text(theme, "mono", "muted"),
+      placeholderText: text(theme, "mono", "placeholder", { size: "sm" }),
       selection: player(theme, 1).selection,
-      border: border(theme, "primary"),
+      border: border(theme, "secondary"),
       padding: {
         bottom: 7,
         left: 8,

@@ -1,4 +1,4 @@
-import { FontWeightToken, ColorToken, NumberToken } from "../tokens";
+import { ColorToken, FontWeightToken, NumberToken } from "../tokens";
 
 export interface SyntaxHighlightStyle {
     color: ColorToken;

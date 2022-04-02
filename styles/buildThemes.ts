@@ -1,8 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
+import app from "./styleTree/app";
 import dark from "./themes/dark";
 import light from "./themes/light";
-import app from "./styleTree/app";
 import decamelizeTree from "./utils/decamelizeTree";
 
 const themes = [dark, light];

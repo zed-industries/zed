@@ -3,10 +3,10 @@ import Theme, { Syntax } from "./theme";
 
 const backgroundColor = {
     100: {
-        base: colors.neutral[750],
-        hovered: colors.neutral[750],
-        active: colors.neutral[750],
-        focused: colors.neutral[750],
+        base: colors.neutral[700],
+        hovered: colors.neutral[700],
+        active: colors.neutral[700],
+        focused: colors.neutral[700],
     },
     300: {
         base: colors.neutral[800],
@@ -52,10 +52,10 @@ const borderColor = {
     muted: colors.neutral[750],
     focused: colors.neutral[100],
     active: colors.neutral[500],
-    ok: colors.neutral[1000],
-    error: colors.neutral[1000],
-    warning: colors.neutral[1000],
-    info: colors.neutral[1000],
+    ok: colors.green[500],
+    error: colors.red[500],
+    warning: colors.amber[500],
+    info: colors.blue[500],
 };
 
 const textColor = {
@@ -65,7 +65,7 @@ const textColor = {
     placeholder: colors.neutral[750],
     active: colors.neutral[0],
     //TODO: (design) define feature and it's correct value
-    feature: colors.sky[500],
+    feature: colors.lime[400],
     ok: colors.green[600],
     error: colors.red[400],
     warning: colors.amber[300],
@@ -81,9 +81,9 @@ const iconColor = {
     //TODO: (design) define feature and it's correct value
     feature: colors.sky[500],
     ok: colors.green[600],
-    error: colors.red[400],
-    warning: colors.amber[300],
-    info: colors.blue[500],
+    error: colors.red[500],
+    warning: colors.amber[400],
+    info: colors.blue[600],
 };
 
 const player = {

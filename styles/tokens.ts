@@ -72,7 +72,7 @@ export interface ColorToken {
   step?: number,
 }
 export const colors = {
-  neutral: colorRamp(["black", "white"], { steps: 21, increment: 50 }),
+  neutral: colorRamp(["white", "black"], { steps: 19, increment: 50 }),
   rose: colorRamp("#F43F5EFF"),
   red: colorRamp("#EF4444FF"),
   orange: colorRamp("#F97316FF"),
