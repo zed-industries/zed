@@ -5860,6 +5860,7 @@ impl Editor {
                 self.refresh_code_actions(cx);
                 cx.emit(Event::BufferEdited);
             }
+            language::Event::Reparsed => cx.emit(Event::Reparsed),
             language::Event::Dirtied => cx.emit(Event::Dirtied),
             language::Event::Saved => cx.emit(Event::Saved),
             language::Event::FileHandleChanged => cx.emit(Event::TitleChanged),
@@ -5987,6 +5988,7 @@ pub enum Event {
     Activate,
     BufferEdited,
     Edited,
+    Reparsed,
     Blurred,
     Dirtied,
     Saved,

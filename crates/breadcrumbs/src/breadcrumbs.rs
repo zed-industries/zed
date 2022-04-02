@@ -110,7 +110,8 @@ impl ToolbarItemView for Breadcrumbs {
                     .push(cx.subscribe(&editor, |_, _, event, cx| match event {
                         editor::Event::BufferEdited
                         | editor::Event::TitleChanged
-                        | editor::Event::Saved => cx.notify(),
+                        | editor::Event::Saved
+                        | editor::Event::Reparsed => cx.notify(),
                         editor::Event::SelectionsChanged { local } if *local => cx.notify(),
                         _ => {}
                     }));
