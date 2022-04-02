@@ -16,9 +16,9 @@ const backgroundColor = {
     },
     500: {
         base: colors.neutral[900],
-        hovered: colors.neutral[900],
-        active: colors.neutral[900],
-        focused: colors.neutral[900],
+        hovered: colors.neutral[850],
+        active: colors.neutral[800],
+        focused: colors.neutral[850],
     },
     ok: {
         base: colors.green[600],
@@ -59,7 +59,7 @@ const borderColor = {
 };
 
 const textColor = {
-    primary: colors.neutral[150],
+    primary: colors.neutral[100],
     secondary: colors.neutral[350],
     muted: colors.neutral[550],
     placeholder: colors.neutral[750],
@@ -90,49 +90,49 @@ const player = {
     1: {
         baseColor: colors.blue[600],
         cursorColor: colors.blue[600],
-        selectionColor: colors.blue[600],
+        selectionColor: colors.blue[100],
         borderColor: colors.blue[600],
     },
     2: {
-        baseColor: colors.indigo[500],
-        cursorColor: colors.indigo[500],
-        selectionColor: colors.indigo[500],
-        borderColor: colors.indigo[500],
+        baseColor: colors.lime[500],
+        cursorColor: colors.lime[500],
+        selectionColor: colors.lime[100],
+        borderColor: colors.lime[500],
     },
     3: {
-        baseColor: colors.green[500],
-        cursorColor: colors.green[500],
-        selectionColor: colors.green[500],
-        borderColor: colors.green[500],
+        baseColor: colors.indigo[500],
+        cursorColor: colors.indigo[500],
+        selectionColor: colors.indigo[100],
+        borderColor: colors.indigo[500],
     },
     4: {
         baseColor: colors.orange[500],
         cursorColor: colors.orange[500],
-        selectionColor: colors.orange[500],
+        selectionColor: colors.orange[100],
         borderColor: colors.orange[500],
     },
     5: {
         baseColor: colors.purple[500],
         cursorColor: colors.purple[500],
-        selectionColor: colors.purple[500],
+        selectionColor: colors.purple[100],
         borderColor: colors.purple[500],
     },
     6: {
         baseColor: colors.teal[400],
         cursorColor: colors.teal[400],
-        selectionColor: colors.teal[400],
+        selectionColor: colors.teal[100],
         borderColor: colors.teal[400],
     },
     7: {
         baseColor: colors.pink[400],
         cursorColor: colors.pink[400],
-        selectionColor: colors.pink[400],
+        selectionColor: colors.pink[100],
         borderColor: colors.pink[400],
     },
     8: {
         baseColor: colors.yellow[400],
         cursorColor: colors.yellow[400],
-        selectionColor: colors.yellow[400],
+        selectionColor: colors.yellow[100],
         borderColor: colors.yellow[400],
     },
 };
@@ -143,24 +143,24 @@ const editor = {
     indent_guide: borderColor.muted,
     indent_guide_active: borderColor.secondary,
     line: {
-        active: colors.neutral[0],
-        highlighted: colors.neutral[0],
+        active: backgroundColor[500].active,
+        highlighted: backgroundColor[500].hovered,
         inserted: backgroundColor.ok.active,
         deleted: backgroundColor.error.active,
         modified: backgroundColor.info.active,
     },
     highlight: {
         selection: player[1].selectionColor,
-        occurrence: backgroundColor[500].active,
-        activeOccurrence: colors.neutral[0],
-        matchingBracket: colors.neutral[0],
-        match: colors.neutral[0],
-        activeMatch: colors.neutral[0],
-        related: colors.neutral[0],
+        occurrence: colors.indigo[500], // TODO: Why does indigo[500], indigo[100], and indigo[900] all give me the same color? @kethku
+        activeOccurrence: colors.indigo[400], // TODO: We don't seem to be using this right now in rust
+        matchingBracket: backgroundColor[500].active,
+        match: colors.lime[500],
+        activeMatch: colors.lime[400],
+        related: backgroundColor[500].focused,
     },
     gutter: {
-        primary: colors.neutral[0],
-        active: colors.neutral[0],
+        primary: textColor.muted,
+        active: textColor.active,
     },
 };
 
