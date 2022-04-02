@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "ts-node buildThemes.ts"
+    "build": "ts-node buildThemes.ts",
+    "watch": "nodemon"
   },
   "author": "",
   "license": "ISC",
@@ -14,5 +15,8 @@
     "case-anything": "^2.1.10",
     "chroma-js": "^2.4.2",
     "ts-node": "^10.7.0"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.15" 
   }
 }
