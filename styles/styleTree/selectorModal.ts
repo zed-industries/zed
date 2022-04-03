@@ -16,12 +16,12 @@ export default function selectorModal(theme: Theme): Object {
 
   const activeItem = {
     ...item,
-    background: backgroundColor(theme, 500, "active"),
+    background: backgroundColor(theme, 300, "active"),
     text: text(theme, "sans", "primary"),
   };
 
   return {
-    background: backgroundColor(theme, 500),
+    background: backgroundColor(theme, 300),
     cornerRadius: 6,
     padding: 8,
     item,
@@ -37,12 +37,12 @@ export default function selectorModal(theme: Theme): Object {
       },
     },
     inputEditor: {
-      background: backgroundColor(theme, 300),
+      background: backgroundColor(theme, 500),
       corner_radius: 6,
       placeholderText: text(theme, "sans", "placeholder"),
       selection: player(theme, 1).selection,
       text: text(theme, "mono", "primary"),
-      border: border(theme, "primary"),
+      border: border(theme, "secondary"),
       padding: {
         bottom: 7,
         left: 16,
