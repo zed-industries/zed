@@ -543,15 +543,23 @@ impl Pane {
 
                 this.update(&mut cx, |this, cx| {
                     if let Some(item_ix) = this.items.iter().position(|i| i.id() == item.id()) {
-                        this.items.remove(item_ix);
                         if item_ix == this.active_item_index {
-                            item.deactivated(cx);
+                            if item_ix + 1 < this.items.len() {
+                                this.activate_next_item(cx);
+                            } else if item_ix > 0 {
+                                this.activate_prev_item(cx);
+                            }
                         }
+
+                        let item = this.items.remove(item_ix);
+                        if this.items.is_empty() {
+                            item.deactivated(cx);
+                            cx.emit(Event::Remove);
+                        }
+
                         if item_ix < this.active_item_index {
                             this.active_item_index -= 1;
                         }
-                        this.active_item_index =
-                            cmp::min(this.active_item_index, this.items.len().saturating_sub(1));
 
                         let mut nav_history = this.nav_history.borrow_mut();
                         if let Some(path) = item.project_path(cx) {
@@ -563,17 +571,7 @@ impl Pane {
                 });
             }
 
-            this.update(&mut cx, |this, cx| {
-                if this.items.is_empty() {
-                    cx.emit(Event::Remove);
-                } else {
-                    this.focus_active_item(cx);
-                    this.activate(cx);
-                    cx.emit(Event::ActivateItem { local: true });
-                }
-                this.update_toolbar(cx);
-                cx.notify();
-            })
+            this.update(&mut cx, |_, cx| cx.notify());
         })
     }
 
