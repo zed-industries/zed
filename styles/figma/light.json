@@ -1,10 +1,11 @@
 {
-  "light": {
-    "text": {
-      "primary": {
-        "value": "#2b2b2b",
-        "type": "color"
-      }
+  "meta": {
+    "themeName": "light"
+  },
+  "text": {
+    "primary": {
+      "value": "#2b2b2b",
+      "type": "color"
     }
   }
 }

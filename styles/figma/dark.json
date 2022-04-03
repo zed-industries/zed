@@ -1,10 +1,11 @@
 {
-  "dark": {
-    "text": {
-      "primary": {
-        "value": "#f1f1f1",
-        "type": "color"
-      }
+  "meta": {
+    "themeName": "dark"
+  },
+  "text": {
+    "primary": {
+      "value": "#f1f1f1",
+      "type": "color"
     }
   }
 }

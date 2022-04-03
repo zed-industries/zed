@@ -6,8 +6,11 @@ import Theme from "./themes/theme";
 import { colors, fontFamilies, fontSizes, fontWeights } from "./tokens";
 
 // Organize theme tokens
-function themeTokens(theme: Theme): Object {
+function themeTokens(name: String, theme: Theme): Object {
   return {
+    meta: {
+      themeName: name,
+    },
     text: {
       primary: {
         value: theme.textColor.primary.value,
@@ -17,14 +20,17 @@ function themeTokens(theme: Theme): Object {
   };
 }
 
-let themes = [{ dark: themeTokens(dark) }, { light: themeTokens(light) }];
+let themes = [
+  themeTokens("dark", dark), 
+  themeTokens("light", light), 
+];
 
 // Create {theme}.json
 const themePath = path.resolve(`${__dirname}/figma`);
 themes.forEach((theme) => {
-  const name = Object.getOwnPropertyNames(theme);
   const tokenJSON = JSON.stringify(theme, null, 2);
-  fs.writeFileSync(`${themePath}/${name}.json`, tokenJSON);
+  //@ts-ignore //TODO: IDK what the hell TS wants me to do here
+  fs.writeFileSync(`${themePath}/${theme.meta.themeName}.json`, tokenJSON);
 });
 
 // Organize core tokens
