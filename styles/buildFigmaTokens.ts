@@ -5,8 +5,13 @@ import light from "./themes/light";
 import Theme from "./themes/theme";
 import { colors, fontFamilies, fontSizes, fontWeights } from "./tokens";
 
+let themes = [
+  dark, 
+  light
+];
+
 // Organize theme tokens
-function themeTokens(theme: Theme): Object {
+function themeTokens(theme: Theme) {
   return {
     meta: {
       themeName: theme.name,
@@ -71,16 +76,6 @@ function themeTokens(theme: Theme): Object {
   };
 }
 
-let themes = [themeTokens(dark), themeTokens(light)];
-
-// Create {theme}.json
-const themePath = path.resolve(`${__dirname}/figma`);
-themes.forEach((theme) => {
-  const tokenJSON = JSON.stringify(theme, null, 2);
-  //@ts-ignore //TODO: IDK what the hell TS wants me to do here
-  fs.writeFileSync(`${themePath}/${theme.meta.themeName}.json`, tokenJSON);
-});
-
 // Organize core tokens
 const coreTokens = {
   color: {
@@ -93,7 +88,28 @@ const coreTokens = {
   size: fontSizes,
 };
 
+const combinedTokens = {
+  core: coreTokens,
+  dark: themeTokens(dark),
+  light: themeTokens(light)
+}
+
 // Create core.json
 const corePath = path.resolve(`${__dirname}/figma/core.json`);
-const coreTokenJSON = JSON.stringify(coreTokens, null, 2);
-fs.writeFileSync(corePath, coreTokenJSON);
+const coreJSON = JSON.stringify(coreTokens, null, 2);
+fs.writeFileSync(corePath, coreJSON);
+console.log(`- Core: core.json created`);
+
+// Create {theme}.json
+const themePath = path.resolve(`${__dirname}/figma`);
+themes.forEach((theme) => {
+  const tokenJSON = JSON.stringify(themeTokens(theme), null, 2);
+  fs.writeFileSync(`${themePath}/${theme.name}.json`, tokenJSON);
+  console.log(`- Theme: ${theme.name}.json created`);
+});
+
+// Create combined tokens.json
+const combinedPath = path.resolve(`${__dirname}/figma/tokens.json`);
+const combinedJSON = JSON.stringify(combinedTokens, null, 2);
+fs.writeFileSync(combinedPath, combinedJSON);
+console.log(`- Combined: tokens.json created`);
