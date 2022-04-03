@@ -8,7 +8,7 @@ export type ColorRamp = {
 
 export function colorRamp(
   color: Color | [Color, Color],
-  options?: { steps?: number; increment?: number }
+  options?: { steps?: number; increment?: number; }
 ): ColorRamp {
   let scale: Scale;
   if (Array.isArray(color)) {

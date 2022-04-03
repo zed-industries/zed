@@ -3,22 +3,22 @@ import Theme, { Syntax } from "./theme";
 
 const backgroundColor = {
     100: {
-        base: colors.neutral[700],
-        hovered: colors.neutral[700],
+        base: colors.neutral[750],
+        hovered: colors.neutral[725],
         active: colors.neutral[700],
-        focused: colors.neutral[700],
+        focused: colors.neutral[675],
     },
     300: {
         base: colors.neutral[800],
-        hovered: colors.neutral[800],
-        active: colors.neutral[800],
-        focused: colors.neutral[800],
+        hovered: colors.neutral[775],
+        active: colors.neutral[750],
+        focused: colors.neutral[725],
     },
     500: {
         base: colors.neutral[900],
-        hovered: colors.neutral[850],
-        active: colors.neutral[800],
-        focused: colors.neutral[850],
+        hovered: colors.neutral[875],
+        active: colors.neutral[850],
+        focused: colors.neutral[825],
     },
     ok: {
         base: colors.green[600],
@@ -47,11 +47,11 @@ const backgroundColor = {
 };
 
 const borderColor = {
-    primary: colors.neutral[850],
-    secondary: colors.neutral[700],
-    muted: colors.neutral[750],
-    focused: colors.neutral[100],
-    active: colors.neutral[500],
+    primary: colors.neutral[875],
+    secondary: colors.neutral[825],
+    muted: colors.neutral[775],
+    focused: colors.neutral[500],
+    active: colors.neutral[900],
     ok: colors.green[500],
     error: colors.red[500],
     warning: colors.amber[500],
@@ -59,13 +59,13 @@ const borderColor = {
 };
 
 const textColor = {
-    primary: colors.neutral[100],
+    primary: colors.neutral[50],
     secondary: colors.neutral[350],
     muted: colors.neutral[550],
     placeholder: colors.neutral[750],
     active: colors.neutral[0],
     //TODO: (design) define feature and it's correct value
-    feature: colors.lime[400],
+    feature: colors.sky[500],
     ok: colors.green[600],
     error: colors.red[400],
     warning: colors.amber[300],
@@ -73,11 +73,11 @@ const textColor = {
 };
 
 const iconColor = {
-    primary: colors.neutral[300],
-    secondary: colors.neutral[500],
+    primary: colors.neutral[200],
+    secondary: colors.neutral[350],
     muted: colors.neutral[600],
     placeholder: colors.neutral[700],
-    active: colors.neutral[50],
+    active: colors.neutral[0],
     //TODO: (design) define feature and it's correct value
     feature: colors.sky[500],
     ok: colors.green[600],
