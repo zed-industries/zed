@@ -3,7 +3,6 @@ import * as path from "path";
 import app from "./styleTree/app";
 import dark from "./themes/dark";
 import light from "./themes/light";
-import { colors } from "./tokens";
 import decamelizeTree from "./utils/decamelizeTree";
 
 const themes = [dark, light];
@@ -15,6 +14,4 @@ for (let theme of themes) {
     );
     fs.writeFileSync(outPath, styleTreeJSON);
     console.log(`Generated ${outPath}`);
-
-    console.log(JSON.stringify(colors.indigo, null, 2));
 }
