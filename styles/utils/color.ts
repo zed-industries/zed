@@ -22,8 +22,8 @@ export function colorRamp(
       .scale([startColor, color, endColor])
       .domain([0, 0.5, 1])
       .mode("hsl")
-      .gamma(0.2)
-      // .correctLightness(true)
+      .gamma(1)
+      .correctLightness(true)
       .padding([0, 0.15]);
   }
 
