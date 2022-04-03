@@ -1,0 +1,10 @@
+{
+  "light": {
+    "text": {
+      "primary": {
+        "value": "#2b2b2b",
+        "type": "color"
+      }
+    }
+  }
+}

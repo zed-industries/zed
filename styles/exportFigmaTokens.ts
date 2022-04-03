@@ -5,19 +5,20 @@ import light from "./themes/light";
 import Theme from "./themes/theme";
 import { colors, fontFamilies, fontSizes, fontWeights } from "./tokens";
 
-const outPath = path.resolve(
-  `${__dirname}/figma/tokens.json`
-);
+const corePath = path.resolve(`${__dirname}/figma/core.json`);
+const themePath = path.resolve(`${__dirname}/figma`);
 
 function coreTokens(): Object {
   return {
-    color: colors,
+    color: {
+      ...colors,
+    },
     text: {
       family: fontFamilies,
       weight: fontWeights,
     },
     size: fontSizes,
-  }
+  };
 }
 
 function themeTokens(theme: Theme): Object {
@@ -26,17 +27,26 @@ function themeTokens(theme: Theme): Object {
       primary: {
         value: theme.textColor.primary.value,
         type: "color",
-      }
-    }
-  }
+      },
+    },
+  };
 }
 
-let tokens = {
-  core: coreTokens(),
-  dark: themeTokens(dark),
-  light: themeTokens(light),
-};
+let themes = [
+  { dark: themeTokens(dark) },
+  { light: themeTokens(light) },
+];
 
-const tokenJSON = JSON.stringify(tokens, null, 2);
+themes.forEach((theme) => {
+  const name = Object.getOwnPropertyNames(theme);
+  const tokenJSON = JSON.stringify(theme, null, 2);
+  fs.writeFileSync(`${themePath}/${name}.json`, tokenJSON);
+});
 
-fs.writeFileSync(outPath, tokenJSON);
+
+// Create core.json
+const coreTokenJSON = JSON.stringify(coreTokens(), null, 2);
+fs.writeFileSync(corePath, coreTokenJSON);
+
+// const tokenJSON = JSON.stringify(tokens, null, 2);
+// fs.writeFileSync(outPath, tokenJSON);
