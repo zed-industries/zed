@@ -12,7 +12,7 @@ use gpui::{
     View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
-use std::{any::Any, cell::RefCell, cmp, mem, rc::Rc};
+use std::{any::Any, cell::RefCell, cmp, mem, path::Path, rc::Rc};
 use util::ResultExt;
 
 action!(Split, SplitDirection);
@@ -443,41 +443,8 @@ impl Pane {
             }) {
                 let item =
                     this.read_with(&cx, |this, _| this.items[item_to_close_ix].boxed_clone());
-                if cx.read(|cx| item.can_save(cx)) {
-                    if cx.read(|cx| item.has_conflict(cx)) {
-                        let mut answer = this.update(&mut cx, |this, cx| {
-                            this.activate_item(item_to_close_ix, true, cx);
-                            cx.prompt(
-                                PromptLevel::Warning,
-                                CONFLICT_MESSAGE,
-                                &["Overwrite", "Discard", "Cancel"],
-                            )
-                        });
-
-                        match answer.next().await {
-                            Some(0) => {
-                                if cx
-                                    .update(|cx| item.save(project.clone(), cx))
-                                    .await
-                                    .log_err()
-                                    .is_none()
-                                {
-                                    break;
-                                }
-                            }
-                            Some(1) => {
-                                if cx
-                                    .update(|cx| item.reload(project.clone(), cx))
-                                    .await
-                                    .log_err()
-                                    .is_none()
-                                {
-                                    break;
-                                }
-                            }
-                            _ => break,
-                        }
-                    } else if cx.read(|cx| item.is_dirty(cx)) {
+                if cx.read(|cx| item.is_dirty(cx)) {
+                    if cx.read(|cx| item.can_save(cx)) {
                         let mut answer = this.update(&mut cx, |this, cx| {
                             this.activate_item(item_to_close_ix, true, cx);
                             cx.prompt(
@@ -501,20 +468,98 @@ impl Pane {
                             Some(1) => {}
                             _ => break,
                         }
+                    } else if cx.read(|cx| item.can_save_as(cx)) {
+                        let mut answer = this.update(&mut cx, |this, cx| {
+                            this.activate_item(item_to_close_ix, true, cx);
+                            cx.prompt(
+                                PromptLevel::Warning,
+                                DIRTY_MESSAGE,
+                                &["Save", "Don't Save", "Cancel"],
+                            )
+                        });
+
+                        match answer.next().await {
+                            Some(0) => {
+                                let start_abs_path = project
+                                    .read_with(&cx, |project, cx| {
+                                        let worktree = project.visible_worktrees(cx).next()?;
+                                        Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
+                                    })
+                                    .unwrap_or(Path::new("").into());
+
+                                let mut abs_path =
+                                    cx.update(|cx| cx.prompt_for_new_path(&start_abs_path));
+                                if let Some(abs_path) = abs_path.next().await.flatten() {
+                                    if cx
+                                        .update(|cx| item.save_as(project.clone(), abs_path, cx))
+                                        .await
+                                        .log_err()
+                                        .is_none()
+                                    {
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                            Some(1) => {}
+                            _ => break,
+                        }
+                    }
+                } else if cx.read(|cx| item.has_conflict(cx) && item.can_save(cx)) {
+                    let mut answer = this.update(&mut cx, |this, cx| {
+                        this.activate_item(item_to_close_ix, true, cx);
+                        cx.prompt(
+                            PromptLevel::Warning,
+                            CONFLICT_MESSAGE,
+                            &["Overwrite", "Discard", "Cancel"],
+                        )
+                    });
+
+                    match answer.next().await {
+                        Some(0) => {
+                            if cx
+                                .update(|cx| item.save(project.clone(), cx))
+                                .await
+                                .log_err()
+                                .is_none()
+                            {
+                                break;
+                            }
+                        }
+                        Some(1) => {
+                            if cx
+                                .update(|cx| item.reload(project.clone(), cx))
+                                .await
+                                .log_err()
+                                .is_none()
+                            {
+                                break;
+                            }
+                        }
+                        _ => break,
                     }
                 }
 
                 this.update(&mut cx, |this, cx| {
                     if let Some(item_ix) = this.items.iter().position(|i| i.id() == item.id()) {
-                        this.items.remove(item_ix);
                         if item_ix == this.active_item_index {
-                            item.deactivated(cx);
+                            if item_ix + 1 < this.items.len() {
+                                this.activate_next_item(cx);
+                            } else if item_ix > 0 {
+                                this.activate_prev_item(cx);
+                            }
                         }
+
+                        let item = this.items.remove(item_ix);
+                        if this.items.is_empty() {
+                            item.deactivated(cx);
+                            cx.emit(Event::Remove);
+                        }
+
                         if item_ix < this.active_item_index {
                             this.active_item_index -= 1;
                         }
-                        this.active_item_index =
-                            cmp::min(this.active_item_index, this.items.len().saturating_sub(1));
 
                         let mut nav_history = this.nav_history.borrow_mut();
                         if let Some(path) = item.project_path(cx) {
@@ -526,16 +571,7 @@ impl Pane {
                 });
             }
 
-            this.update(&mut cx, |this, cx| {
-                if this.items.is_empty() {
-                    cx.emit(Event::Remove);
-                } else {
-                    this.focus_active_item(cx);
-                    this.activate(cx);
-                }
-                this.update_toolbar(cx);
-                cx.notify();
-            })
+            this.update(&mut cx, |_, cx| cx.notify());
         })
     }
 
@@ -832,32 +868,58 @@ mod tests {
 
         let params = cx.update(WorkspaceParams::test);
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        let item1 = cx.add_view(window_id, |_| TestItem::new(false, true));
-        let item2 = cx.add_view(window_id, |_| TestItem::new(true, true));
-        let item3 = cx.add_view(window_id, |_| TestItem::new(false, true));
-        let item4 = cx.add_view(window_id, |_| TestItem::new(true, false));
+        let item1 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.has_conflict = true;
+            item
+        });
+        let item2 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item.has_conflict = true;
+            item
+        });
+        let item3 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.has_conflict = true;
+            item
+        });
+        let item4 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item
+        });
+        let item5 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item.can_save = false;
+            item
+        });
         let pane = workspace.update(cx, |workspace, cx| {
             workspace.add_item(Box::new(item1.clone()), cx);
+            workspace.add_item(Box::new(item2.clone()), cx);
             workspace.add_item(Box::new(item3.clone()), cx);
             workspace.add_item(Box::new(item4.clone()), cx);
-            workspace.add_item(Box::new(item2.clone()), cx);
-            assert_eq!(workspace.active_item(cx).unwrap().id(), item2.id());
-
+            workspace.add_item(Box::new(item5.clone()), cx);
             workspace.active_pane().clone()
         });
 
         let close_items = pane.update(cx, |pane, cx| {
+            pane.activate_item(1, true, cx);
+            assert_eq!(pane.active_item().unwrap().id(), item2.id());
+
             let item1_id = item1.id();
             let item3_id = item3.id();
             let item4_id = item4.id();
+            let item5_id = item5.id();
             pane.close_items(cx, move |id| {
-                id == item1_id || id == item3_id || id == item4_id
+                [item1_id, item3_id, item4_id, item5_id].contains(&id)
             })
         });
 
         cx.foreground().run_until_parked();
         pane.read_with(cx, |pane, _| {
-            assert_eq!(pane.items.len(), 4);
+            assert_eq!(pane.items.len(), 5);
             assert_eq!(pane.active_item().unwrap().id(), item1.id());
         });
 
@@ -865,8 +927,9 @@ mod tests {
         cx.foreground().run_until_parked();
         pane.read_with(cx, |pane, cx| {
             assert_eq!(item1.read(cx).save_count, 1);
+            assert_eq!(item1.read(cx).save_as_count, 0);
             assert_eq!(item1.read(cx).reload_count, 0);
-            assert_eq!(pane.items.len(), 3);
+            assert_eq!(pane.items.len(), 4);
             assert_eq!(pane.active_item().unwrap().id(), item3.id());
         });
 
@@ -874,35 +937,53 @@ mod tests {
         cx.foreground().run_until_parked();
         pane.read_with(cx, |pane, cx| {
             assert_eq!(item3.read(cx).save_count, 0);
+            assert_eq!(item3.read(cx).save_as_count, 0);
             assert_eq!(item3.read(cx).reload_count, 1);
-            assert_eq!(pane.items.len(), 2);
+            assert_eq!(pane.items.len(), 3);
             assert_eq!(pane.active_item().unwrap().id(), item4.id());
         });
 
         cx.simulate_prompt_answer(window_id, 0);
-        close_items.await;
+        cx.foreground().run_until_parked();
         pane.read_with(cx, |pane, cx| {
             assert_eq!(item4.read(cx).save_count, 1);
+            assert_eq!(item4.read(cx).save_as_count, 0);
             assert_eq!(item4.read(cx).reload_count, 0);
+            assert_eq!(pane.items.len(), 2);
+            assert_eq!(pane.active_item().unwrap().id(), item5.id());
+        });
+
+        cx.simulate_prompt_answer(window_id, 0);
+        cx.foreground().run_until_parked();
+        cx.simulate_new_path_selection(|_| Some(Default::default()));
+        close_items.await;
+        pane.read_with(cx, |pane, cx| {
+            assert_eq!(item5.read(cx).save_count, 0);
+            assert_eq!(item5.read(cx).save_as_count, 1);
+            assert_eq!(item5.read(cx).reload_count, 0);
             assert_eq!(pane.items.len(), 1);
             assert_eq!(pane.active_item().unwrap().id(), item2.id());
         });
     }
 
     struct TestItem {
+        save_count: usize,
+        save_as_count: usize,
+        reload_count: usize,
         is_dirty: bool,
         has_conflict: bool,
-        save_count: usize,
-        reload_count: usize,
+        can_save: bool,
     }
 
     impl TestItem {
-        fn new(is_dirty: bool, has_conflict: bool) -> Self {
+        fn new() -> Self {
             Self {
                 save_count: 0,
+                save_as_count: 0,
                 reload_count: 0,
-                is_dirty,
-                has_conflict,
+                is_dirty: false,
+                has_conflict: false,
+                can_save: true,
             }
         }
     }
@@ -945,7 +1026,7 @@ mod tests {
         }
 
         fn can_save(&self, _: &AppContext) -> bool {
-            true
+            self.can_save
         }
 
         fn save(
@@ -958,7 +1039,7 @@ mod tests {
         }
 
         fn can_save_as(&self, _: &AppContext) -> bool {
-            false
+            true
         }
 
         fn save_as(
@@ -967,7 +1048,8 @@ mod tests {
             _: std::path::PathBuf,
             _: &mut ViewContext<Self>,
         ) -> Task<anyhow::Result<()>> {
-            unreachable!()
+            self.save_as_count += 1;
+            Task::ready(Ok(()))
         }
 
         fn reload(
