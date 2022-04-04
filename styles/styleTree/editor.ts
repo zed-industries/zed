@@ -49,7 +49,7 @@ export default function editor(theme: Theme) {
         documentHighlightWriteBackground: theme.editor.highlight.occurrence.value,
         errorColor: theme.textColor.error.value,
         gutterBackground: backgroundColor(theme, 500),
-        gutterPaddingFactor: 2.5,
+        gutterPaddingFactor: 3.5,
         highlightedLineBackground: theme.editor.line.highlighted.value,
         lineNumber: theme.editor.gutter.primary.value,
         lineNumberActive: theme.editor.gutter.active.value,
@@ -129,7 +129,21 @@ export default function editor(theme: Theme) {
         invalidInformationDiagnostic: diagnostic(theme, "muted"),
         invalidWarningDiagnostic: diagnostic(theme, "muted"),
         syntax: {
-
-        }
+            keyword: theme.syntax.keyword.color.value, 
+            function: theme.syntax.function.color.value,
+            string: theme.syntax.string.color.value,
+            type: theme.syntax.type.color.value,
+            number: theme.syntax.number.color.value,
+            comment: theme.syntax.comment.color.value,
+            property: theme.syntax.property.color.value,
+            variant: theme.syntax.variant.color.value,
+            constant: theme.syntax.constant.color.value,
+            title: { color: theme.syntax.title.color.value, weight: "bold" },
+            emphasis: theme.textColor.feature.value,
+            "emphasis.strong": { color: theme.textColor.feature.value, weight: "bold" },
+            link_uri: { color: theme.syntax.linkUrl.color.value, underline: true },
+            link_text: { color: theme.syntax.linkText.color.value, italic: true },
+            list_marker: theme.syntax.listMarker.color.value,
+        },
     };
 }

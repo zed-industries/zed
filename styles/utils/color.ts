@@ -17,14 +17,14 @@ export function colorRamp(
   } else {
     let hue = Math.round(chroma(color).hsl()[0]);
     let startColor = chroma.hsl(hue, 0.88, 0.96);
-    let endColor = chroma.hsl(hue, 0.68, 0.32);
+    let endColor = chroma.hsl(hue, 0.68, 0.12);
     scale = chroma
       .scale([startColor, color, endColor])
       .domain([0, 0.5, 1])
       .mode("hsl")
       .gamma(1)
-      .correctLightness(true)
-      .padding([0, 0.15]);
+      // .correctLightness(true)
+      .padding([0, 0]);
   }
 
   const ramp: ColorRamp = {};

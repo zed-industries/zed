@@ -18,9 +18,9 @@ const backgroundColor = {
   },
   500: {
     base: colors.neutral[0],
-    hovered: colors.neutral[50],
-    active: colors.neutral[100],
-    focused: colors.neutral[50],
+    hovered: colors.neutral[25],
+    active: colors.neutral[50],
+    focused: colors.neutral[75],
   },
   ok: {
     base: colors.green[100],
@@ -159,66 +159,66 @@ const editor = {
     related: colors.neutral[0],
   },
   gutter: {
-    primary: textColor.muted,
+    primary: colors.neutral[300],
     active: textColor.active,
   },
 };
 
 const syntax: Syntax = {
   primary: {
-    color: textColor.primary,
+    color: colors.neutral[750],
     weight: fontWeights.normal,
   },
   comment: {
-    color: colors.lime[200],
+    color: colors.neutral[600],
     weight: fontWeights.normal,
   },
   punctuation: {
-    color: textColor.primary,
+    color: colors.neutral[700],
     weight: fontWeights.normal,
   },
   constant: {
-    color: colors.neutral[150],
+    color: colors.neutral[700],
     weight: fontWeights.normal,
   },
   keyword: {
-    color: colors.sky[400],
+    color: colors.blue[800],
     weight: fontWeights.normal,
   },
   function: {
-    color: colors.yellow[200],
+    color: colors.green[600],
     weight: fontWeights.normal,
   },
   type: {
-    color: colors.teal[300],
+    color: colors.teal[600],
     weight: fontWeights.normal,
   },
   variant: {
-    color: colors.teal[300],
+    color: colors.sky[600],
     weight: fontWeights.normal,
   },
   property: {
-    color: colors.sky[300],
+    color: colors.blue[700],
     weight: fontWeights.normal,
   },
   enum: {
-    color: colors.sky[400],
+    color: colors.orange[600],
     weight: fontWeights.normal,
   },
   operator: {
-    color: colors.sky[400],
+    color: colors.orange[600],
     weight: fontWeights.normal,
   },
   string: {
-    color: colors.orange[300],
+    color: colors.orange[600],
     weight: fontWeights.normal,
   },
   number: {
-    color: colors.neutral[150],
+    color: colors.teal[500],
     weight: fontWeights.normal,
   },
   boolean: {
-    color: colors.neutral[150],
+    color: colors.amber[600],
     weight: fontWeights.normal,
   },
   predictive: {
@@ -238,7 +238,7 @@ const syntax: Syntax = {
     weight: fontWeights.bold,
   },
   linkUrl: {
-    color: colors.lime[500],
+    color: colors.teal[500],
     weight: fontWeights.normal,
     // TODO: add underline
   },

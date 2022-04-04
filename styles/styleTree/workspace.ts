@@ -135,7 +135,7 @@ export default function workspace(theme: Theme) {
     toolbar: {
       height: 34,
       background: backgroundColor(theme, 500),
-      border: border(theme, "primary", { bottom: true }),
+      border: border(theme, "secondary", { bottom: true }),
       itemSpacing: 8,
       padding: { left: 16, right: 8, top: 4, bottom: 4 },
     },
