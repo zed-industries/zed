@@ -361,9 +361,10 @@ impl platform::Window for Window {
                 }
             });
             let block = block.copy();
+            let native_window = self.0.borrow().native_window;
             let _: () = msg_send![
                 alert,
-                beginSheetModalForWindow: self.0.borrow().native_window
+                beginSheetModalForWindow: native_window
                 completionHandler: block
             ];
             done_rx
