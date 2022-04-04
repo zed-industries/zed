@@ -623,6 +623,22 @@ impl platform::Platform for MacPlatform {
             }
         }
     }
+
+    fn app_version(&self) -> Result<platform::AppVersion> {
+        unsafe {
+            let bundle: id = NSBundle::mainBundle();
+            if bundle.is_null() {
+                Err(anyhow!("app is not running inside a bundle"))
+            } else {
+                let version: id =
+                    msg_send![bundle, objectForInfoDictionaryKey: "CFBundleShortVersionString"];
+                let len = msg_send![version, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
+                let bytes = version.UTF8String() as *const u8;
+                let version = str::from_utf8(slice::from_raw_parts(bytes, len)).unwrap();
+                version.parse()
+            }
+        }
+    }
 }
 
 unsafe fn get_foreground_platform(object: &mut Object) -> &MacForegroundPlatform {

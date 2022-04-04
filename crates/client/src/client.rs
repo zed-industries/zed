@@ -43,7 +43,7 @@ pub use rpc::*;
 pub use user::*;
 
 lazy_static! {
-    static ref ZED_SERVER_URL: String =
+    pub static ref ZED_SERVER_URL: String =
         std::env::var("ZED_SERVER_URL").unwrap_or("https://zed.dev".to_string());
     pub static ref IMPERSONATE_LOGIN: Option<String> = std::env::var("ZED_IMPERSONATE")
         .ok()

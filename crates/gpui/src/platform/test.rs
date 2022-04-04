@@ -1,4 +1,4 @@
-use super::{CursorStyle, WindowBounds};
+use super::{AppVersion, CursorStyle, WindowBounds};
 use crate::{
     geometry::vector::{vec2f, Vector2F},
     AnyAction, ClipboardItem,
@@ -163,6 +163,14 @@ impl super::Platform for Platform {
 
     fn path_for_resource(&self, _name: Option<&str>, _extension: Option<&str>) -> Result<PathBuf> {
         Err(anyhow!("app not running inside a bundle"))
+    }
+
+    fn app_version(&self) -> Result<AppVersion> {
+        Ok(AppVersion {
+            major: 1,
+            minor: 0,
+            patch: 0,
+        })
     }
 }
 

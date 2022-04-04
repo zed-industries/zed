@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod auto_updater;
 pub mod languages;
 pub mod menus;
 #[cfg(any(test, feature = "test-support"))]
