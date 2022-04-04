@@ -1,5 +1,5 @@
-name = "Rust"
-path_suffixes = ["rs"]
+name = "TypeScript"
+path_suffixes = ["ts"]
 line_comment = "// "
 autoclose_before = ";:.,=}])>"
 brackets = [
@@ -10,7 +10,3 @@ brackets = [
     { start = "\"", end = "\"", close = true, newline = false },
     { start = "/*", end = " */", close = true, newline = false },
 ]
-
-[language_server]
-disk_based_diagnostic_sources = ["rustc"]
-disk_based_diagnostics_progress_token = "rustAnalyzer/cargo check"

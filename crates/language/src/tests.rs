@@ -136,12 +136,16 @@ async fn test_apply_diff(cx: &mut gpui::TestAppContext) {
 
     let text = "a\nccc\ndddd\nffffff\n";
     let diff = buffer.read_with(cx, |b, cx| b.diff(text.into(), cx)).await;
-    buffer.update(cx, |b, cx| b.apply_diff(diff, cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(diff, cx).unwrap();
+    });
     cx.read(|cx| assert_eq!(buffer.read(cx).text(), text));
 
     let text = "a\n1\n\nccc\ndd2dd\nffffff\n";
     let diff = buffer.read_with(cx, |b, cx| b.diff(text.into(), cx)).await;
-    buffer.update(cx, |b, cx| b.apply_diff(diff, cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(diff, cx).unwrap();
+    });
     cx.read(|cx| assert_eq!(buffer.read(cx).text(), text));
 }
 
@@ -927,7 +931,6 @@ fn rust_lang() -> Language {
         LanguageConfig {
             name: "Rust".into(),
             path_suffixes: vec!["rs".to_string()],
-            language_server: None,
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),

@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use client::{proto, PeerId};
 use gpui::{AppContext, AsyncAppContext, ModelHandle};
 use language::{
-    point_from_lsp,
+    point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
-    range_from_lsp, Anchor, Bias, Buffer, PointUtf16, ToLspPosition, ToPointUtf16,
+    range_from_lsp, Anchor, Bias, Buffer, PointUtf16, ToPointUtf16,
 };
 use lsp::{DocumentHighlightKind, ServerCapabilities};
 use std::{cmp::Reverse, ops::Range, path::Path};
@@ -91,7 +91,7 @@ impl LspCommand for PrepareRename {
             text_document: lsp::TextDocumentIdentifier {
                 uri: lsp::Url::from_file_path(path).unwrap(),
             },
-            position: self.position.to_lsp_position(),
+            position: point_to_lsp(self.position),
         }
     }
 
@@ -208,7 +208,7 @@ impl LspCommand for PerformRename {
                 text_document: lsp::TextDocumentIdentifier {
                     uri: lsp::Url::from_file_path(path).unwrap(),
                 },
-                position: self.position.to_lsp_position(),
+                position: point_to_lsp(self.position),
             },
             new_name: self.new_name.clone(),
             work_done_progress_params: Default::default(),
@@ -223,22 +223,19 @@ impl LspCommand for PerformRename {
         mut cx: AsyncAppContext,
     ) -> Result<ProjectTransaction> {
         if let Some(edit) = message {
-            let language_server = project
+            let (lsp_adapter, lsp_server) = project
                 .read_with(&cx, |project, cx| {
                     project
                         .language_server_for_buffer(buffer.read(cx), cx)
                         .cloned()
                 })
                 .ok_or_else(|| anyhow!("no language server found for buffer"))?;
-            let language = buffer
-                .read_with(&cx, |buffer, _| buffer.language().cloned())
-                .ok_or_else(|| anyhow!("no language for buffer"))?;
             Project::deserialize_workspace_edit(
                 project,
                 edit,
                 self.push_to_history,
-                language.name(),
-                language_server,
+                lsp_adapter,
+                lsp_server,
                 &mut cx,
             )
             .await
@@ -328,7 +325,7 @@ impl LspCommand for GetDefinition {
                 text_document: lsp::TextDocumentIdentifier {
                     uri: lsp::Url::from_file_path(path).unwrap(),
                 },
-                position: self.position.to_lsp_position(),
+                position: point_to_lsp(self.position),
             },
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
@@ -343,16 +340,13 @@ impl LspCommand for GetDefinition {
         mut cx: AsyncAppContext,
     ) -> Result<Vec<Location>> {
         let mut definitions = Vec::new();
-        let language_server = project
+        let (lsp_adapter, language_server) = project
             .read_with(&cx, |project, cx| {
                 project
                     .language_server_for_buffer(buffer.read(cx), cx)
                     .cloned()
             })
             .ok_or_else(|| anyhow!("no language server found for buffer"))?;
-        let language = buffer
-            .read_with(&cx, |buffer, _| buffer.language().cloned())
-            .ok_or_else(|| anyhow!("no language for buffer"))?;
 
         if let Some(message) = message {
             let mut unresolved_locations = Vec::new();
@@ -377,7 +371,7 @@ impl LspCommand for GetDefinition {
                     .update(&mut cx, |this, cx| {
                         this.open_local_buffer_via_lsp(
                             target_uri,
-                            language.name(),
+                            lsp_adapter.clone(),
                             language_server.clone(),
                             cx,
                         )
@@ -503,7 +497,7 @@ impl LspCommand for GetReferences {
                 text_document: lsp::TextDocumentIdentifier {
                     uri: lsp::Url::from_file_path(path).unwrap(),
                 },
-                position: self.position.to_lsp_position(),
+                position: point_to_lsp(self.position),
             },
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
@@ -521,16 +515,13 @@ impl LspCommand for GetReferences {
         mut cx: AsyncAppContext,
     ) -> Result<Vec<Location>> {
         let mut references = Vec::new();
-        let language_server = project
+        let (lsp_adapter, language_server) = project
             .read_with(&cx, |project, cx| {
                 project
                     .language_server_for_buffer(buffer.read(cx), cx)
                     .cloned()
             })
             .ok_or_else(|| anyhow!("no language server found for buffer"))?;
-        let language = buffer
-            .read_with(&cx, |buffer, _| buffer.language().cloned())
-            .ok_or_else(|| anyhow!("no language for buffer"))?;
 
         if let Some(locations) = locations {
             for lsp_location in locations {
@@ -538,7 +529,7 @@ impl LspCommand for GetReferences {
                     .update(&mut cx, |this, cx| {
                         this.open_local_buffer_via_lsp(
                             lsp_location.uri,
-                            language.name(),
+                            lsp_adapter.clone(),
                             language_server.clone(),
                             cx,
                         )
@@ -668,7 +659,7 @@ impl LspCommand for GetDocumentHighlights {
                 text_document: lsp::TextDocumentIdentifier {
                     uri: lsp::Url::from_file_path(path).unwrap(),
                 },
-                position: self.position.to_lsp_position(),
+                position: point_to_lsp(self.position),
             },
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),

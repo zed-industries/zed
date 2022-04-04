@@ -21,7 +21,7 @@ fn editor_focused(EditorFocused(editor): &EditorFocused, cx: &mut MutableAppCont
     let mode = if matches!(editor.read(cx).mode(), EditorMode::SingleLine) {
         Mode::Insert
     } else {
-        Mode::Normal
+        Mode::normal()
     };
 
     VimState::update_global(cx, |state, cx| {

@@ -1,5 +1,5 @@
 pub mod assets;
-pub mod language;
+pub mod languages;
 pub mod menus;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -106,18 +106,21 @@ pub fn build_workspace(
     app_state: &Arc<AppState>,
     cx: &mut ViewContext<Workspace>,
 ) -> Workspace {
-    cx.subscribe(&cx.handle(), |_, _, event, cx| {
-        let workspace::Event::PaneAdded(pane) = event;
-        pane.update(cx, |pane, cx| {
-            pane.toolbar().update(cx, |toolbar, cx| {
-                let breadcrumbs = cx.add_view(|_| Breadcrumbs::new());
-                toolbar.add_item(breadcrumbs, cx);
-                let buffer_search_bar = cx.add_view(|cx| BufferSearchBar::new(cx));
-                toolbar.add_item(buffer_search_bar, cx);
-                let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
-                toolbar.add_item(project_search_bar, cx);
-            })
-        });
+    cx.subscribe(&cx.handle(), {
+        let project = project.clone();
+        move |_, _, event, cx| {
+            let workspace::Event::PaneAdded(pane) = event;
+            pane.update(cx, |pane, cx| {
+                pane.toolbar().update(cx, |toolbar, cx| {
+                    let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(project.clone()));
+                    toolbar.add_item(breadcrumbs, cx);
+                    let buffer_search_bar = cx.add_view(|cx| BufferSearchBar::new(cx));
+                    toolbar.add_item(buffer_search_bar, cx);
+                    let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
+                    toolbar.add_item(project_search_bar, cx);
+                })
+            });
+        }
     })
     .detach();
 
@@ -574,7 +577,7 @@ mod tests {
             assert_eq!(editor.title(cx), "untitled");
             assert!(Arc::ptr_eq(
                 editor.language(cx).unwrap(),
-                &language::PLAIN_TEXT
+                &languages::PLAIN_TEXT
             ));
             editor.handle_input(&editor::Input("hi".into()), cx);
             assert!(editor.is_dirty(cx));
@@ -664,7 +667,7 @@ mod tests {
         editor.update(cx, |editor, cx| {
             assert!(Arc::ptr_eq(
                 editor.language(cx).unwrap(),
-                &language::PLAIN_TEXT
+                &languages::PLAIN_TEXT
             ));
             editor.handle_input(&editor::Input("hi".into()), cx);
             assert!(editor.is_dirty(cx.as_ref()));
@@ -683,6 +686,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_pane_actions(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+
         cx.update(|cx| pane::init(cx));
         let app_state = cx.update(test_app_state);
         app_state
@@ -740,7 +745,9 @@ mod tests {
             assert_eq!(pane2_item.project_path(cx.as_ref()), Some(file1.clone()));
 
             cx.dispatch_action(window_id, vec![pane_2.id()], &workspace::CloseActiveItem);
-            let workspace = workspace.read(cx);
+        });
+        cx.foreground().run_until_parked();
+        workspace.read_with(cx, |workspace, _| {
             assert_eq!(workspace.panes().len(), 1);
             assert_eq!(workspace.active_pane(), &pane_1);
         });
@@ -867,12 +874,15 @@ mod tests {
 
         // Go forward to an item that has been closed, ensuring it gets re-opened at the same
         // location.
-        workspace.update(cx, |workspace, cx| {
-            workspace
-                .active_pane()
-                .update(cx, |pane, cx| pane.close_item(editor3.id(), cx));
-            drop(editor3);
-        });
+        workspace
+            .update(cx, |workspace, cx| {
+                let editor3_id = editor3.id();
+                drop(editor3);
+                workspace
+                    .active_pane()
+                    .update(cx, |pane, cx| pane.close_item(editor3_id, cx))
+            })
+            .await;
         workspace
             .update(cx, |w, cx| Pane::go_forward(w, None, cx))
             .await;
@@ -884,15 +894,17 @@ mod tests {
         // Go back to an item that has been closed and removed from disk, ensuring it gets skipped.
         workspace
             .update(cx, |workspace, cx| {
+                let editor2_id = editor2.id();
+                drop(editor2);
                 workspace
                     .active_pane()
-                    .update(cx, |pane, cx| pane.close_item(editor2.id(), cx));
-                drop(editor2);
-                app_state
-                    .fs
-                    .as_fake()
-                    .remove_file(Path::new("/root/a/file2"), Default::default())
+                    .update(cx, |pane, cx| pane.close_item(editor2_id, cx))
             })
+            .await;
+        app_state
+            .fs
+            .as_fake()
+            .remove_file(Path::new("/root/a/file2"), Default::default())
             .await
             .unwrap();
         workspace

@@ -371,6 +371,31 @@ impl Item for Editor {
         })
     }
 
+    fn reload(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        let buffer = self.buffer().clone();
+        let buffers = self.buffer.read(cx).all_buffers();
+        let reload_buffers =
+            project.update(cx, |project, cx| project.reload_buffers(buffers, true, cx));
+        cx.spawn(|this, mut cx| async move {
+            let transaction = reload_buffers.log_err().await;
+            this.update(&mut cx, |editor, cx| {
+                editor.request_autoscroll(Autoscroll::Fit, cx)
+            });
+            buffer.update(&mut cx, |buffer, _| {
+                if let Some(transaction) = transaction {
+                    if !buffer.is_singleton() {
+                        buffer.push_transaction(&transaction.0);
+                    }
+                }
+            });
+            Ok(())
+        })
+    }
+
     fn should_activate_item_on_event(event: &Event) -> bool {
         matches!(event, Event::Activate)
     }

@@ -1,0 +1,12 @@
+name = "Rust"
+path_suffixes = ["rs"]
+line_comment = "// "
+autoclose_before = ";:.,=}])>"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "<", end = ">", close = false, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false },
+    { start = "/*", end = " */", close = true, newline = false },
+]
