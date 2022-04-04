@@ -1388,6 +1388,24 @@ impl Editor {
         }
     }
 
+    pub fn replace_selections_with(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        find_replacement: impl Fn(&DisplaySnapshot) -> DisplayPoint,
+    ) {
+        let display_map = self.snapshot(cx);
+        let cursor = find_replacement(&display_map);
+        let selection = Selection {
+            id: post_inc(&mut self.next_selection_id),
+            start: cursor,
+            end: cursor,
+            reversed: false,
+            goal: SelectionGoal::None,
+        }
+        .map(|display_point| display_point.to_point(&display_map));
+        self.update_selections(vec![selection], None, cx);
+    }
+
     pub fn move_selections(
         &mut self,
         cx: &mut ViewContext<Self>,
@@ -1398,21 +1416,9 @@ impl Editor {
             .local_selections::<Point>(cx)
             .into_iter()
             .map(|selection| {
-                let mut selection = Selection {
-                    id: selection.id,
-                    start: selection.start.to_display_point(&display_map),
-                    end: selection.end.to_display_point(&display_map),
-                    reversed: selection.reversed,
-                    goal: selection.goal,
-                };
+                let mut selection = selection.map(|point| point.to_display_point(&display_map));
                 move_selection(&display_map, &mut selection);
-                Selection {
-                    id: selection.id,
-                    start: selection.start.to_point(&display_map),
-                    end: selection.end.to_point(&display_map),
-                    reversed: selection.reversed,
-                    goal: selection.goal,
-                }
+                selection.map(|display_point| display_point.to_point(&display_map))
             })
             .collect();
         self.update_selections(selections, Some(Autoscroll::Fit), cx);
