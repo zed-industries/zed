@@ -52,15 +52,15 @@ pub enum NormalState {
 
 impl NormalState {
     pub fn set_context(&self, context: &mut Context) {
-        let sub_mode = match self {
+        let submode = match self {
             Self::GPrefix => Some("g"),
             _ => None,
         };
 
-        if let Some(sub_mode) = sub_mode {
+        if let Some(submode) = submode {
             context
                 .map
-                .insert("vim_sub_mode".to_string(), sub_mode.to_string());
+                .insert("vim_submode".to_string(), submode.to_string());
         }
     }
 }

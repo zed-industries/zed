@@ -6,7 +6,7 @@ use crate::{mode::Mode, SwitchMode, VimState};
 action!(MoveToStart);
 
 pub fn init(cx: &mut MutableAppContext) {
-    let context = Some("Editor && vim_mode == normal && vim_sub_mode == g");
+    let context = Some("Editor && vim_mode == normal && vim_submode == g");
     cx.add_bindings(vec![
         Binding::new("g", MoveToStart, context),
         Binding::new("escape", SwitchMode(Mode::normal()), context),
