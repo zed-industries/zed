@@ -30,6 +30,7 @@ impl Event {
                 let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
                 let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
                 let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
+                let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask);
 
                 let unmodified_chars = CStr::from_ptr(
                     native_event.charactersIgnoringModifiers().UTF8String() as *mut c_char,
@@ -80,7 +81,7 @@ impl Event {
                         NSF12FunctionKey => "f12",
 
                         _ => {
-                            if !cmd && !ctrl {
+                            if !cmd && !ctrl && !function {
                                 input = Some(
                                     CStr::from_ptr(
                                         native_event.characters().UTF8String() as *mut c_char
