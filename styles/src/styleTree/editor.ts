@@ -46,7 +46,7 @@ export default function editor(theme: Theme) {
         diffBackgroundDeleted: backgroundColor(theme, "error"),
         diffBackgroundInserted: backgroundColor(theme, "ok"),
         documentHighlightReadBackground: theme.editor.highlight.occurrence.value,
-        documentHighlightWriteBackground: theme.editor.highlight.occurrence.value,
+        documentHighlightWriteBackground: theme.editor.highlight.activeOccurrence.value,
         errorColor: theme.textColor.error.value,
         gutterBackground: backgroundColor(theme, 500),
         gutterPaddingFactor: 3.5,
@@ -129,7 +129,7 @@ export default function editor(theme: Theme) {
         invalidInformationDiagnostic: diagnostic(theme, "muted"),
         invalidWarningDiagnostic: diagnostic(theme, "muted"),
         syntax: {
-            keyword: theme.syntax.keyword.color.value, 
+            keyword: theme.syntax.keyword.color.value,
             function: theme.syntax.function.color.value,
             string: theme.syntax.string.color.value,
             type: theme.syntax.type.color.value,
@@ -143,7 +143,7 @@ export default function editor(theme: Theme) {
             "emphasis.strong": { color: theme.textColor.feature.value, weight: "bold" },
             link_uri: { color: theme.syntax.linkUrl.color.value, underline: true },
             link_text: { color: theme.syntax.linkText.color.value, italic: true },
-            list_marker: theme.syntax.listMarker.color.value,
+            list_marker: theme.syntax.punctuation.color.value,
         },
     };
 }

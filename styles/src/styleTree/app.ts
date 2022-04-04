@@ -21,9 +21,7 @@ export default function app(theme: Theme): Object {
             tabIconSpacing: 4,
             tabIconWidth: 13,
             tabSummarySpacing: 10,
-            emptyMessage: {
-                ...text(theme, "sans", "primary", { size: "lg" }),
-            },
+            emptyMessage: text(theme, "sans", "primary", { size: "lg" }),
             statusBarItem: {
                 ...text(theme, "sans", "muted"),
                 margin: {

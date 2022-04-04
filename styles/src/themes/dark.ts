@@ -1,5 +1,6 @@
-import { colors, fontWeights, NumberToken } from "../tokens";
-import Theme, { Syntax } from "./theme";
+import { Color, colors, fontWeights, NumberToken } from "../tokens";
+import { withOpacity } from "../utils/color";
+import Theme, { buildPlayer, Syntax } from "./theme";
 
 const backgroundColor = {
     100: {
@@ -87,57 +88,16 @@ const iconColor = {
 };
 
 const player = {
-    1: {
-        baseColor: colors.blue[500],
-        cursorColor: colors.blue[500],
-        selectionColor: colors.blue[800],
-        borderColor: colors.blue[800],
-    },
-    2: {
-        baseColor: colors.lime[500],
-        cursorColor: colors.lime[500],
-        selectionColor: colors.lime[800],
-        borderColor: colors.lime[500],
-    },
-    3: {
-        baseColor: colors.indigo[500],
-        cursorColor: colors.indigo[500],
-        selectionColor: colors.indigo[800],
-        borderColor: colors.indigo[500],
-    },
-    4: {
-        baseColor: colors.orange[500],
-        cursorColor: colors.orange[500],
-        selectionColor: colors.orange[800],
-        borderColor: colors.orange[500],
-    },
-    5: {
-        baseColor: colors.purple[500],
-        cursorColor: colors.purple[500],
-        selectionColor: colors.purple[800],
-        borderColor: colors.purple[500],
-    },
-    6: {
-        baseColor: colors.teal[400],
-        cursorColor: colors.teal[400],
-        selectionColor: colors.teal[800],
-        borderColor: colors.teal[400],
-    },
-    7: {
-        baseColor: colors.pink[400],
-        cursorColor: colors.pink[400],
-        selectionColor: colors.pink[100],
-        borderColor: colors.pink[400],
-    },
-    8: {
-        baseColor: colors.yellow[400],
-        cursorColor: colors.yellow[400],
-        selectionColor: colors.yellow[100],
-        borderColor: colors.yellow[400],
-    },
+    1: buildPlayer(colors.blue[500]),
+    2: buildPlayer(colors.lime[500]),
+    3: buildPlayer(colors.indigo[500]),
+    4: buildPlayer(colors.orange[500]),
+    5: buildPlayer(colors.purple[500]),
+    6: buildPlayer(colors.teal[400]),
+    7: buildPlayer(colors.pink[400]),
+    8: buildPlayer(colors.yellow[400]),
 };
 
-// TODO: Fixup
 const editor = {
     background: backgroundColor[500].base,
     indent_guide: borderColor.muted,
@@ -151,11 +111,11 @@ const editor = {
     },
     highlight: {
         selection: player[1].selectionColor,
-        occurrence: colors.neutral[750], 
-        activeOccurrence: colors.neutral[700],
+        occurrence: withOpacity(colors.teal[500], 0.16),
+        activeOccurrence: withOpacity(colors.teal[500], 0.32),
         matchingBracket: backgroundColor[500].active,
-        match: colors.sky[900],
-        activeMatch: colors.sky[800],
+        match: withOpacity(colors.sky[500], 0.16),
+        activeMatch: withOpacity(colors.sky[800], 0.32),
         related: backgroundColor[500].focused,
     },
     gutter: {
@@ -247,10 +207,6 @@ const syntax: Syntax = {
         weight: fontWeights.normal,
         // TODO: add italic
     },
-    listMarker: {
-        color: colors.sky[400],
-        weight: fontWeights.normal,
-    }
 };
 
 const shadowAlpha: NumberToken = {

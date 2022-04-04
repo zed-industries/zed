@@ -1,4 +1,5 @@
 import { ColorToken, FontWeightToken, NumberToken } from "../tokens";
+import { Color, withOpacity } from "../utils/color";
 
 export interface SyntaxHighlightStyle {
     color: ColorToken;
@@ -10,6 +11,19 @@ export interface Player {
     cursorColor: ColorToken;
     selectionColor: ColorToken;
     borderColor: ColorToken;
+}
+export function buildPlayer(
+    color: ColorToken,
+    cursorOpacity?: number,
+    selectionOpacity?: number,
+    borderOpacity?: number
+) {
+    return {
+        baseColor: color,
+        cursorColor: withOpacity(color, cursorOpacity || 1.0),
+        selectionColor: withOpacity(color, selectionOpacity || 0.1),
+        borderColor: withOpacity(color, borderOpacity || 0.8),
+    }
 }
 
 export interface BackgroundColor {
