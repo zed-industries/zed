@@ -18,7 +18,7 @@
       },
       "highlight_text": {
         "family": "Zed Sans",
-        "color": "#6099f7",
+        "color": "#2472f2",
         "weight": "bold",
         "size": 14
       }
@@ -38,7 +38,7 @@
       },
       "highlight_text": {
         "family": "Zed Sans",
-        "color": "#6099f7",
+        "color": "#2472f2",
         "weight": "bold",
         "size": 14
       },
@@ -70,8 +70,8 @@
         "size": 14
       },
       "selection": {
-        "cursor": "#6099f7",
-        "selection": "#d0e2fd"
+        "cursor": "#2472f2",
+        "selection": "#c5dafc"
       },
       "text": {
         "family": "Zed Mono",
@@ -111,8 +111,8 @@
       "background": "#f1f1f1",
       "icon_close": "#555555",
       "icon_close_active": "#000000",
-      "icon_conflict": "#f6bc09",
-      "icon_dirty": "#4287f6",
+      "icon_conflict": "#f7bf17",
+      "icon_dirty": "#135acd",
       "icon_width": 8,
       "spacing": 10,
       "text": {
@@ -137,8 +137,8 @@
       "background": "#ffffff",
       "icon_close": "#555555",
       "icon_close_active": "#000000",
-      "icon_conflict": "#f6bc09",
-      "icon_dirty": "#4287f6",
+      "icon_conflict": "#f7bf17",
+      "icon_dirty": "#135acd",
       "icon_width": 8,
       "spacing": 10,
       "text": {
@@ -289,7 +289,7 @@
       },
       "outdated_warning": {
         "family": "Zed Sans",
-        "color": "#e5af09",
+        "color": "#d3a20b",
         "size": 13
       }
     },
@@ -297,7 +297,7 @@
       "height": 34,
       "background": "#ffffff",
       "border": {
-        "color": "#c6c6c6",
+        "color": "#e3e3e3",
         "width": 1,
         "bottom": true
       },
@@ -327,52 +327,52 @@
   "editor": {
     "text_color": "#2b2b2b",
     "background": "#ffffff",
-    "active_line_background": "#e3e3e3",
+    "active_line_background": "#f1f1f1",
     "code_actions_indicator": "#717171",
-    "diff_background_deleted": "#fdd4d4",
-    "diff_background_inserted": "#befad2",
-    "document_highlight_read_background": "#e3e3e3",
-    "document_highlight_write_background": "#e3e3e3",
-    "error_color": "#f47171",
+    "diff_background_deleted": "#fcc6c6",
+    "diff_background_inserted": "#b7f9ce",
+    "document_highlight_read_background": "#f1f1f1",
+    "document_highlight_write_background": "#f1f1f1",
+    "error_color": "#eb2d2d",
     "gutter_background": "#ffffff",
-    "gutter_padding_factor": 2.5,
-    "highlighted_line_background": "#e3e3e3",
-    "line_number": "#808080",
+    "gutter_padding_factor": 3.5,
+    "highlighted_line_background": "#f1f1f1",
+    "line_number": "#aaaaaa",
     "line_number_active": "#000000",
     "rename_fade": 0.6,
     "unnecessary_code_fade": 0.5,
     "selection": {
-      "cursor": "#6099f7",
-      "selection": "#d0e2fd"
+      "cursor": "#2472f2",
+      "selection": "#c5dafc"
     },
     "guest_selections": [
       {
-        "cursor": "#87d116",
-        "selection": "#dbf9ac"
+        "cursor": "#79ba16",
+        "selection": "#dffab5"
       },
       {
-        "cursor": "#777af4",
-        "selection": "#d4d5fd"
+        "cursor": "#484bed",
+        "selection": "#cdcdfc"
       },
       {
-        "cursor": "#f98a3d",
-        "selection": "#fde0cd"
+        "cursor": "#ee670a",
+        "selection": "#fcd6bd"
       },
       {
-        "cursor": "#b671f8",
-        "selection": "#e9d4fd"
+        "cursor": "#993bf3",
+        "selection": "#e4cbfc"
       },
       {
-        "cursor": "#16ddc7",
-        "selection": "#b4faf2"
+        "cursor": "#16d6c1",
+        "selection": "#b1faf2"
       },
       {
-        "cursor": "#f58ac0",
-        "selection": "#fcd4e8"
+        "cursor": "#ef59a3",
+        "selection": "#fbc6e1"
       },
       {
-        "cursor": "#f6bc09",
-        "selection": "#fceabc"
+        "cursor": "#f7bf17",
+        "selection": "#fce9b7"
       }
     ],
     "autocomplete": {
@@ -400,13 +400,13 @@
           "right": 6,
           "top": 2
         },
-        "background": "#f1f1f1"
+        "background": "#f8f8f8"
       },
       "margin": {
         "left": -14
       },
       "match_highlight": {
-        "color": "#59c3f5",
+        "color": "#103063",
         "weight": "normal"
       },
       "selected_item": {
@@ -417,7 +417,7 @@
           "right": 6,
           "top": 2
         },
-        "background": "#e3e3e3"
+        "background": "#f1f1f1"
       }
     },
     "diagnostic_header": {
@@ -453,7 +453,7 @@
       }
     },
     "diagnostic_path_header": {
-      "background": "#e3e3e3",
+      "background": "#f1f1f1",
       "text_scale_factor": 0.857,
       "filename": {
         "family": "Zed Mono",
@@ -481,12 +481,12 @@
       "message": {
         "text": {
           "family": "Zed Sans",
-          "color": "#f47171",
+          "color": "#eb2d2d",
           "size": 14
         },
         "highlight_text": {
           "family": "Zed Sans",
-          "color": "#f47171",
+          "color": "#eb2d2d",
           "size": 14,
           "weight": "bold"
         }
@@ -504,12 +504,12 @@
       "message": {
         "text": {
           "family": "Zed Sans",
-          "color": "#e5af09",
+          "color": "#d3a20b",
           "size": 14
         },
         "highlight_text": {
           "family": "Zed Sans",
-          "color": "#e5af09",
+          "color": "#d3a20b",
           "size": 14,
           "weight": "bold"
         }
@@ -527,12 +527,12 @@
       "message": {
         "text": {
           "family": "Zed Sans",
-          "color": "#6099f7",
+          "color": "#2472f2",
           "size": 14
         },
         "highlight_text": {
           "family": "Zed Sans",
-          "color": "#6099f7",
+          "color": "#2472f2",
           "size": 14,
           "weight": "bold"
         }
@@ -550,12 +550,12 @@
       "message": {
         "text": {
           "family": "Zed Sans",
-          "color": "#6099f7",
+          "color": "#2472f2",
           "size": 14
         },
         "highlight_text": {
           "family": "Zed Sans",
-          "color": "#6099f7",
+          "color": "#2472f2",
           "size": 14,
           "weight": "bold"
         }
@@ -653,7 +653,35 @@
         }
       }
     },
-    "syntax": {}
+    "syntax": {
+      "keyword": "#103063",
+      "function": "#1b9447",
+      "string": "#bb550e",
+      "type": "#138a7d",
+      "number": "#14a898",
+      "comment": "#555555",
+      "property": "#134697",
+      "variant": "#1179a8",
+      "constant": "#393939",
+      "title": {
+        "color": "#1096d3",
+        "weight": "bold"
+      },
+      "emphasis": "#2472f2",
+      "emphasis_strong": {
+        "color": "#2472f2",
+        "weight": "bold"
+      },
+      "link_uri": {
+        "color": "#14a898",
+        "underline": true
+      },
+      "link_text": {
+        "color": "#ee670a",
+        "italic": true
+      },
+      "list_marker": "#20b0f2"
+    }
   },
   "project_diagnostics": {
     "tab_icon_spacing": 4,
@@ -929,8 +957,8 @@
         "size": 14
       },
       "selection": {
-        "cursor": "#6099f7",
-        "selection": "#d0e2fd"
+        "cursor": "#2472f2",
+        "selection": "#c5dafc"
       },
       "border": {
         "color": "#e3e3e3",
@@ -1022,7 +1050,7 @@
       "padding": {
         "left": 8
       },
-      "background": "#e3e3e3",
+      "background": "#f1f1f1",
       "corner_radius": 6
     },
     "unshared_project": {
@@ -1062,7 +1090,7 @@
       "padding": {
         "left": 8
       },
-      "background": "#e3e3e3",
+      "background": "#f1f1f1",
       "corner_radius": 6
     }
   },
@@ -1123,8 +1151,8 @@
         "size": 16
       },
       "selection": {
-        "cursor": "#6099f7",
-        "selection": "#d0e2fd"
+        "cursor": "#2472f2",
+        "selection": "#c5dafc"
       },
       "text": {
         "family": "Zed Mono",
@@ -1177,8 +1205,8 @@
         "size": 16
       },
       "selection": {
-        "cursor": "#6099f7",
-        "selection": "#d0e2fd"
+        "cursor": "#2472f2",
+        "selection": "#c5dafc"
       },
       "text": {
         "family": "Zed Mono",
@@ -1186,7 +1214,7 @@
         "size": 16
       },
       "border": {
-        "color": "#fbbdbd",
+        "color": "#f9a0a0",
         "width": 1
       },
       "margin": {

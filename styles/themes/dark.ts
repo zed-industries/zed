@@ -88,39 +88,39 @@ const iconColor = {
 
 const player = {
     1: {
-        baseColor: colors.blue[600],
-        cursorColor: colors.blue[600],
-        selectionColor: colors.blue[100],
-        borderColor: colors.blue[600],
+        baseColor: colors.blue[500],
+        cursorColor: colors.blue[500],
+        selectionColor: colors.blue[800],
+        borderColor: colors.blue[800],
     },
     2: {
         baseColor: colors.lime[500],
         cursorColor: colors.lime[500],
-        selectionColor: colors.lime[100],
+        selectionColor: colors.lime[800],
         borderColor: colors.lime[500],
     },
     3: {
         baseColor: colors.indigo[500],
         cursorColor: colors.indigo[500],
-        selectionColor: colors.indigo[100],
+        selectionColor: colors.indigo[800],
         borderColor: colors.indigo[500],
     },
     4: {
         baseColor: colors.orange[500],
         cursorColor: colors.orange[500],
-        selectionColor: colors.orange[100],
+        selectionColor: colors.orange[800],
         borderColor: colors.orange[500],
     },
     5: {
         baseColor: colors.purple[500],
         cursorColor: colors.purple[500],
-        selectionColor: colors.purple[100],
+        selectionColor: colors.purple[800],
         borderColor: colors.purple[500],
     },
     6: {
         baseColor: colors.teal[400],
         cursorColor: colors.teal[400],
-        selectionColor: colors.teal[100],
+        selectionColor: colors.teal[800],
         borderColor: colors.teal[400],
     },
     7: {
@@ -151,11 +151,11 @@ const editor = {
     },
     highlight: {
         selection: player[1].selectionColor,
-        occurrence: colors.indigo[500], // TODO: Why does indigo[500], indigo[100], and indigo[900] all give me the same color? @kethku
-        activeOccurrence: colors.indigo[400], // TODO: We don't seem to be using this right now in rust
+        occurrence: colors.neutral[750], 
+        activeOccurrence: colors.neutral[700],
         matchingBracket: backgroundColor[500].active,
-        match: colors.lime[500],
-        activeMatch: colors.lime[400],
+        match: colors.sky[900],
+        activeMatch: colors.sky[800],
         related: backgroundColor[500].focused,
     },
     gutter: {
@@ -166,15 +166,15 @@ const editor = {
 
 const syntax: Syntax = {
     primary: {
-        color: textColor.primary,
+        color: colors.neutral[150],
         weight: fontWeights.normal,
     },
     comment: {
-        color: colors.lime[200],
+        color: colors.neutral[300],
         weight: fontWeights.normal,
     },
     punctuation: {
-        color: textColor.primary,
+        color: colors.neutral[200],
         weight: fontWeights.normal,
     },
     constant: {
@@ -182,7 +182,7 @@ const syntax: Syntax = {
         weight: fontWeights.normal,
     },
     keyword: {
-        color: colors.sky[400],
+        color: colors.blue[400],
         weight: fontWeights.normal,
     },
     function: {
@@ -194,19 +194,19 @@ const syntax: Syntax = {
         weight: fontWeights.normal,
     },
     variant: {
-        color: colors.teal[300],
-        weight: fontWeights.normal,
-    },
-    property: {
         color: colors.sky[300],
         weight: fontWeights.normal,
     },
+    property: {
+        color: colors.blue[400],
+        weight: fontWeights.normal,
+    },
     enum: {
-        color: colors.sky[400],
+        color: colors.orange[500],
         weight: fontWeights.normal,
     },
     operator: {
-        color: colors.sky[400],
+        color: colors.orange[500],
         weight: fontWeights.normal,
     },
     string: {
@@ -214,11 +214,11 @@ const syntax: Syntax = {
         weight: fontWeights.normal,
     },
     number: {
-        color: colors.neutral[150],
+        color: colors.lime[300],
         weight: fontWeights.normal,
     },
     boolean: {
-        color: colors.neutral[150],
+        color: colors.lime[300],
         weight: fontWeights.normal,
     },
     predictive: {
@@ -226,7 +226,7 @@ const syntax: Syntax = {
         weight: fontWeights.normal,
     },
     title: {
-        color: colors.sky[500],
+        color: colors.amber[500],
         weight: fontWeights.bold,
     },
     emphasis: {
