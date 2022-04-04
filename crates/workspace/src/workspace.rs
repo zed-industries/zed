@@ -183,12 +183,9 @@ pub struct AppState {
     pub user_store: ModelHandle<client::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub channel_list: ModelHandle<client::ChannelList>,
-    pub build_window_options: &'static dyn Fn() -> WindowOptions<'static>,
-    pub build_workspace: &'static dyn Fn(
-        ModelHandle<Project>,
-        &Arc<AppState>,
-        &mut ViewContext<Workspace>,
-    ) -> Workspace,
+    pub build_window_options: fn() -> WindowOptions<'static>,
+    pub build_workspace:
+        fn(ModelHandle<Project>, &Arc<AppState>, &mut ViewContext<Workspace>) -> Workspace,
 }
 
 #[derive(Clone)]

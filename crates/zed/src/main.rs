@@ -19,8 +19,7 @@ use workspace::{
     AppState, OpenNew, OpenParams, OpenPaths, Settings,
 };
 use zed::{
-    self, assets::Assets, auto_updater::AutoUpdater, build_window_options, build_workspace,
-    fs::RealFs, languages, menus,
+    self, assets::Assets, build_window_options, build_workspace, fs::RealFs, languages, menus,
 };
 
 fn main() {
@@ -65,14 +64,8 @@ fn main() {
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
         let channel_list =
             cx.add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx));
-        let auto_updater = if let Ok(current_version) = cx.platform().app_version() {
-            Some(cx.add_model(|cx| {
-                AutoUpdater::new(current_version, http, client::ZED_SERVER_URL.clone())
-            }))
-        } else {
-            None
-        };
 
+        auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
         project::Project::init(&client);
         client::Channel::init(&client);
         client::init(client.clone(), cx);
@@ -133,8 +126,8 @@ fn main() {
             client,
             user_store,
             fs,
-            build_window_options: &build_window_options,
-            build_workspace: &build_workspace,
+            build_window_options,
+            build_workspace,
         });
         journal::init(app_state.clone(), cx);
         zed::init(&app_state, cx);

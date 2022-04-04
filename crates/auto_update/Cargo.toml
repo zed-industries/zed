@@ -1,0 +1,22 @@
+[package]
+name = "auto_update"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/auto_update.rs"
+doctest = false
+
+[dependencies]
+gpui = { path = "../gpui" }
+theme = { path = "../theme" }
+client = { path = "../client" }
+workspace = { path = "../workspace" }
+anyhow = "1.0.38"
+lazy_static = "1.4"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1.0.64", features = ["preserve_order"] }
+smol = "1.2.5"
+surf = "2.2"
+tempdir = "0.3.7"

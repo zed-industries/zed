@@ -1,5 +1,4 @@
 pub mod assets;
-pub mod auto_updater;
 pub mod languages;
 pub mod menus;
 #[cfg(any(test, feature = "test-support"))]
@@ -173,11 +172,13 @@ pub fn build_workspace(
         workspace::lsp_status::LspStatus::new(workspace.project(), app_state.languages.clone(), cx)
     });
     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
+    let auto_update = cx.add_view(|cx| auto_update::AutoUpdateIndicator::new(cx));
     workspace.status_bar().update(cx, |status_bar, cx| {
         status_bar.add_left_item(diagnostic_summary, cx);
         status_bar.add_left_item(diagnostic_message, cx);
         status_bar.add_left_item(lsp_status, cx);
         status_bar.add_right_item(cursor_position, cx);
+        status_bar.add_right_item(auto_update, cx);
     });
 
     workspace

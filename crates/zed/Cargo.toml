@@ -15,6 +15,7 @@ name = "Zed"
 path = "src/main.rs"
 
 [dependencies]
+auto_update = { path = "../auto_update" }
 breadcrumbs = { path = "../breadcrumbs" }
 chat_panel = { path = "../chat_panel" }
 collections = { path = "../collections" }

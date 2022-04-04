@@ -545,6 +545,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "auto_update"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "gpui",
+ "lazy_static",
+ "log",
+ "serde",
+ "serde_json",
+ "smol",
+ "surf",
+ "tempdir",
+ "theme",
+ "workspace",
+]
+
+[[package]]
 name = "autocfg"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5987,6 +6005,7 @@ dependencies = [
  "async-compression",
  "async-recursion",
  "async-trait",
+ "auto_update",
  "breadcrumbs",
  "chat_panel",
  "client",
