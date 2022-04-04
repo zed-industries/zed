@@ -1001,6 +1001,13 @@ impl MultiBuffer {
             .collect()
     }
 
+    pub fn buffer(&self, buffer_id: usize) -> Option<ModelHandle<Buffer>> {
+        self.buffers
+            .borrow()
+            .get(&buffer_id)
+            .map(|state| state.buffer.clone())
+    }
+
     pub fn save(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let mut save_tasks = Vec::new();
         for BufferState { buffer, .. } in self.buffers.borrow().values() {
@@ -2268,12 +2275,12 @@ impl MultiBufferSnapshot {
         &self,
         offset: T,
         theme: Option<&SyntaxTheme>,
-    ) -> Option<(BufferSnapshot, Vec<OutlineItem<Anchor>>)> {
+    ) -> Option<(usize, Vec<OutlineItem<Anchor>>)> {
         let anchor = self.anchor_before(offset);
         let excerpt_id = anchor.excerpt_id();
         let excerpt = self.excerpt(excerpt_id)?;
         Some((
-            excerpt.buffer.clone(),
+            excerpt.buffer_id,
             excerpt
                 .buffer
                 .symbols_containing(anchor.text_anchor, theme)

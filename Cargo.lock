@@ -727,6 +727,7 @@ dependencies = [
  "editor",
  "gpui",
  "language",
+ "project",
  "search",
  "theme",
  "workspace",
