@@ -111,7 +111,6 @@ async fn create_access_token(request: Request) -> tide::Result {
         .get_user_by_github_login(request.param("github_login")?)
         .await?
         .ok_or_else(|| surf::Error::from_str(StatusCode::NotFound, "user not found"))?;
-    let access_token = auth::create_access_token(request.db().as_ref(), user.id).await?;
 
     #[derive(Deserialize)]
     struct QueryParams {
@@ -122,9 +121,6 @@ async fn create_access_token(request: Request) -> tide::Result {
     let query_params: QueryParams = request.query().map_err(|_| {
         surf::Error::from_str(StatusCode::UnprocessableEntity, "invalid query params")
     })?;
-
-    let encrypted_access_token =
-        auth::encrypt_access_token(&access_token, query_params.public_key.clone())?;
 
     let mut user_id = user.id;
     if let Some(impersonate) = query_params.impersonate {
@@ -150,6 +146,10 @@ async fn create_access_token(request: Request) -> tide::Result {
                 .build());
         }
     }
+
+    let access_token = auth::create_access_token(request.db().as_ref(), user_id).await?;
+    let encrypted_access_token =
+        auth::encrypt_access_token(&access_token, query_params.public_key.clone())?;
 
     Ok(tide::Response::builder(StatusCode::Ok)
         .body(json!({"user_id": user_id, "encrypted_access_token": encrypted_access_token}))
