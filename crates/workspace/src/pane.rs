@@ -206,10 +206,6 @@ impl Pane {
                     }
 
                     let prev_active_index = mem::replace(&mut pane.active_item_index, index);
-                    pane.focus_active_item(cx);
-                    pane.update_toolbar(cx);
-                    cx.emit(Event::ActivateItem { local: true });
-                    cx.notify();
 
                     let mut navigated = prev_active_index != pane.active_item_index;
                     if let Some(data) = entry.data {
@@ -217,6 +213,11 @@ impl Pane {
                     }
 
                     if navigated {
+                        pane.focus_active_item(cx);
+                        pane.update_toolbar(cx);
+                        pane.activate(cx);
+                        cx.emit(Event::ActivateItem { local: true });
+                        cx.notify();
                         break None;
                     }
                 }
