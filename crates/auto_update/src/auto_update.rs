@@ -10,7 +10,7 @@ use gpui::{
 use lazy_static::lazy_static;
 use serde::Deserialize;
 use smol::{fs::File, io::AsyncReadExt, process::Command};
-use std::{ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
+use std::{env, ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
 use surf::Request;
 use workspace::{ItemHandle, Settings, StatusItemView};
 
@@ -18,11 +18,10 @@ const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const ACCESS_TOKEN: &'static str = "618033988749894";
 
 lazy_static! {
-    pub static ref ZED_APP_VERSION: Option<AppVersion> = std::env::var("ZED_APP_VERSION")
+    pub static ref ZED_APP_VERSION: Option<AppVersion> = env::var("ZED_APP_VERSION")
         .ok()
         .and_then(|v| v.parse().ok());
-    pub static ref ZED_APP_PATH: Option<PathBuf> =
-        std::env::var("ZED_APP_PATH").ok().map(PathBuf::from);
+    pub static ref ZED_APP_PATH: Option<PathBuf> = env::var("ZED_APP_PATH").ok().map(PathBuf::from);
 }
 
 #[derive(Clone, PartialEq, Eq)]
