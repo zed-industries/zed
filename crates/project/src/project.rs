@@ -1019,7 +1019,14 @@ impl Project {
         cx: &mut ModelContext<Project>,
     ) -> Task<Result<()>> {
         let worktree_task = self.find_or_create_local_worktree(&abs_path, true, cx);
+        let old_path =
+            File::from_dyn(buffer.read(cx).file()).and_then(|f| Some(f.as_local()?.abs_path(cx)));
         cx.spawn(|this, mut cx| async move {
+            if let Some(old_path) = old_path {
+                this.update(&mut cx, |this, cx| {
+                    this.unregister_buffer_from_language_server(&buffer, old_path, cx);
+                });
+            }
             let (worktree, path) = worktree_task.await?;
             worktree
                 .update(&mut cx, |worktree, cx| {
@@ -1091,6 +1098,23 @@ impl Project {
 
         self.assign_language_to_buffer(buffer, cx);
         self.register_buffer_with_language_server(buffer, cx);
+        cx.observe_release(buffer, |this, buffer, cx| {
+            if let Some(file) = File::from_dyn(buffer.file()) {
+                if file.is_local() {
+                    let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+                    if let Some((_, server)) = this.language_server_for_buffer(buffer, cx) {
+                        server
+                            .notify::<lsp::notification::DidCloseTextDocument>(
+                                lsp::DidCloseTextDocumentParams {
+                                    text_document: lsp::TextDocumentIdentifier::new(uri.clone()),
+                                },
+                            )
+                            .log_err();
+                    }
+                }
+            }
+        })
+        .detach();
 
         Ok(())
     }
@@ -1143,28 +1167,29 @@ impl Project {
                     self.buffer_snapshots
                         .insert(buffer_id, vec![(0, initial_snapshot)]);
                 }
-
-                cx.observe_release(buffer_handle, |this, buffer, cx| {
-                    if let Some(file) = File::from_dyn(buffer.file()) {
-                        if file.is_local() {
-                            let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
-                            if let Some((_, server)) = this.language_server_for_buffer(buffer, cx) {
-                                server
-                                    .notify::<lsp::notification::DidCloseTextDocument>(
-                                        lsp::DidCloseTextDocumentParams {
-                                            text_document: lsp::TextDocumentIdentifier::new(
-                                                uri.clone(),
-                                            ),
-                                        },
-                                    )
-                                    .log_err();
-                            }
-                        }
-                    }
-                })
-                .detach();
             }
         }
+    }
+
+    fn unregister_buffer_from_language_server(
+        &mut self,
+        buffer: &ModelHandle<Buffer>,
+        old_path: PathBuf,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let buffer = &buffer.read(cx);
+        if let Some((_, language_server)) = self.language_server_for_buffer(buffer, cx) {
+            language_server
+                .notify::<lsp::notification::DidCloseTextDocument>(
+                    lsp::DidCloseTextDocumentParams {
+                        text_document: lsp::TextDocumentIdentifier::new(
+                            lsp::Url::from_file_path(old_path).unwrap(),
+                        ),
+                    },
+                )
+                .log_err();
+        }
+        self.buffer_snapshots.remove(&buffer.remote_id());
     }
 
     fn on_buffer_event(
@@ -3387,6 +3412,7 @@ impl Project {
     ) {
         let snapshot = worktree_handle.read(cx).snapshot();
         let mut buffers_to_delete = Vec::new();
+        let mut renamed_buffers = Vec::new();
         for (buffer_id, buffer) in &self.opened_buffers {
             if let Some(buffer) = buffer.upgrade(cx) {
                 buffer.update(cx, |buffer, cx| {
@@ -3426,6 +3452,11 @@ impl Project {
                             }
                         };
 
+                        let old_path = old_file.abs_path(cx);
+                        if new_file.abs_path(cx) != old_path {
+                            renamed_buffers.push((cx.handle(), old_path));
+                        }
+
                         if let Some(project_id) = self.remote_id() {
                             self.client
                                 .send(proto::UpdateBufferFile {
@@ -3445,6 +3476,12 @@ impl Project {
 
         for buffer_id in buffers_to_delete {
             self.opened_buffers.remove(&buffer_id);
+        }
+
+        for (buffer, old_path) in renamed_buffers {
+            self.unregister_buffer_from_language_server(&buffer, old_path, cx);
+            self.assign_language_to_buffer(&buffer, cx);
+            self.register_buffer_with_language_server(&buffer, cx);
         }
     }
 
@@ -5167,7 +5204,7 @@ mod tests {
                 .await
                 .text_document,
             lsp::TextDocumentIdentifier::new(
-                lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+                lsp::Url::from_file_path("/the-root/test3.rs").unwrap(),
             ),
         );
         assert_eq!(
