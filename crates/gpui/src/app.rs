@@ -426,15 +426,17 @@ impl TestAppContext {
         cx
     }
 
-    pub fn dispatch_action<A: Action>(
-        &self,
-        window_id: usize,
-        responder_chain: Vec<usize>,
-        action: A,
-    ) {
-        self.cx
-            .borrow_mut()
-            .dispatch_action_any(window_id, &responder_chain, &action);
+    pub fn dispatch_action<A: Action>(&self, window_id: usize, action: A) {
+        let mut cx = self.cx.borrow_mut();
+        let dispatch_path = cx
+            .presenters_and_platform_windows
+            .get(&window_id)
+            .unwrap()
+            .0
+            .borrow()
+            .dispatch_path(cx.as_ref());
+
+        cx.dispatch_action_any(window_id, &dispatch_path, &action);
     }
 
     pub fn dispatch_global_action<A: Action>(&self, action: A) {
@@ -455,9 +457,9 @@ impl TestAppContext {
                 .unwrap()
                 .0
                 .clone();
-            let responder_chain = presenter.borrow().dispatch_path(cx.as_ref());
+            let dispatch_path = presenter.borrow().dispatch_path(cx.as_ref());
 
-            if !cx.dispatch_keystroke(window_id, responder_chain, &keystroke) {
+            if !cx.dispatch_keystroke(window_id, dispatch_path, &keystroke) {
                 presenter.borrow_mut().dispatch_event(
                     Event::KeyDown {
                         keystroke,
@@ -594,6 +596,15 @@ impl TestAppContext {
     #[cfg(any(test, feature = "test-support"))]
     pub fn leak_detector(&self) -> Arc<Mutex<LeakDetector>> {
         self.cx.borrow().leak_detector()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn assert_dropped(&self, handle: impl WeakHandle) {
+        self.cx
+            .borrow()
+            .leak_detector()
+            .lock()
+            .assert_dropped(handle.id())
     }
 }
 
@@ -1314,10 +1325,10 @@ impl MutableAppContext {
     pub fn dispatch_action<A: Action>(
         &mut self,
         window_id: usize,
-        responder_chain: Vec<usize>,
+        dispatch_path: Vec<usize>,
         action: &A,
     ) {
-        self.dispatch_action_any(window_id, &responder_chain, action);
+        self.dispatch_action_any(window_id, &dispatch_path, action);
     }
 
     pub(crate) fn dispatch_action_any(
@@ -1403,11 +1414,11 @@ impl MutableAppContext {
     pub fn dispatch_keystroke(
         &mut self,
         window_id: usize,
-        responder_chain: Vec<usize>,
+        dispatch_path: Vec<usize>,
         keystroke: &Keystroke,
     ) -> bool {
         let mut context_chain = Vec::new();
-        for view_id in &responder_chain {
+        for view_id in &dispatch_path {
             let view = self
                 .cx
                 .views
@@ -1420,13 +1431,12 @@ impl MutableAppContext {
         for (i, cx) in context_chain.iter().enumerate().rev() {
             match self
                 .keystroke_matcher
-                .push_keystroke(keystroke.clone(), responder_chain[i], cx)
+                .push_keystroke(keystroke.clone(), dispatch_path[i], cx)
             {
                 MatchResult::None => {}
                 MatchResult::Pending => pending = true,
                 MatchResult::Action(action) => {
-                    if self.dispatch_action_any(window_id, &responder_chain[0..=i], action.as_ref())
-                    {
+                    if self.dispatch_action_any(window_id, &dispatch_path[0..=i], action.as_ref()) {
                         self.keystroke_matcher.clear_pending();
                         return true;
                     }
@@ -3301,6 +3311,10 @@ pub trait Handle<T> {
         Self: Sized;
 }
 
+pub trait WeakHandle {
+    fn id(&self) -> usize;
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum EntityLocation {
     Model(usize),
@@ -3573,6 +3587,12 @@ impl<T: Entity> Handle<T> for ModelHandle<T> {
 pub struct WeakModelHandle<T> {
     model_id: usize,
     model_type: PhantomData<T>,
+}
+
+impl<T> WeakHandle for WeakModelHandle<T> {
+    fn id(&self) -> usize {
+        self.model_id
+    }
 }
 
 unsafe impl<T> Send for WeakModelHandle<T> {}
@@ -4144,6 +4164,12 @@ pub struct WeakViewHandle<T> {
     view_type: PhantomData<T>,
 }
 
+impl<T> WeakHandle for WeakViewHandle<T> {
+    fn id(&self) -> usize {
+        self.view_id
+    }
+}
+
 impl<T: View> WeakViewHandle<T> {
     fn new(window_id: usize, view_id: usize) -> Self {
         Self {
@@ -4470,11 +4496,36 @@ impl LeakDetector {
         }
     }
 
+    pub fn assert_dropped(&mut self, entity_id: usize) {
+        if let Some((type_name, backtraces)) = self.handle_backtraces.get_mut(&entity_id) {
+            for trace in backtraces.values_mut() {
+                if let Some(trace) = trace {
+                    trace.resolve();
+                    eprintln!("{:?}", crate::util::CwdBacktrace(trace));
+                }
+            }
+
+            let hint = if *LEAK_BACKTRACE {
+                ""
+            } else {
+                " – set LEAK_BACKTRACE=1 for more information"
+            };
+
+            panic!(
+                "{} handles to {} {} still exist{}",
+                backtraces.len(),
+                type_name.unwrap_or("entity"),
+                entity_id,
+                hint
+            );
+        }
+    }
+
     pub fn detect(&mut self) {
         let mut found_leaks = false;
         for (id, (type_name, backtraces)) in self.handle_backtraces.iter_mut() {
             eprintln!(
-                "leaked {} handles to {:?} {}",
+                "leaked {} handles to {} {}",
                 backtraces.len(),
                 type_name.unwrap_or("entity"),
                 id

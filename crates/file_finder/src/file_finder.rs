@@ -446,7 +446,7 @@ mod tests {
             .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
-        cx.dispatch_action(window_id, vec![workspace.id()], Toggle);
+        cx.dispatch_action(window_id, Toggle);
 
         let finder = cx.read(|cx| {
             workspace
@@ -457,19 +457,16 @@ mod tests {
                 .downcast::<FileFinder>()
                 .unwrap()
         });
-        let query_buffer = cx.read(|cx| finder.read(cx).query_editor.clone());
-
-        let chain = vec![finder.id(), query_buffer.id()];
-        cx.dispatch_action(window_id, chain.clone(), Input("b".into()));
-        cx.dispatch_action(window_id, chain.clone(), Input("n".into()));
-        cx.dispatch_action(window_id, chain.clone(), Input("a".into()));
+        cx.dispatch_action(window_id, Input("b".into()));
+        cx.dispatch_action(window_id, Input("n".into()));
+        cx.dispatch_action(window_id, Input("a".into()));
         finder
             .condition(&cx, |finder, _| finder.matches.len() == 2)
             .await;
 
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
-        cx.dispatch_action(window_id, vec![workspace.id(), finder.id()], SelectNext);
-        cx.dispatch_action(window_id, vec![workspace.id(), finder.id()], Confirm);
+        cx.dispatch_action(window_id, SelectNext);
+        cx.dispatch_action(window_id, Confirm);
         active_pane
             .condition(&cx, |pane, _| pane.active_item().is_some())
             .await;

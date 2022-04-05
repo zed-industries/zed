@@ -563,7 +563,7 @@ mod tests {
         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
+        cx.dispatch_action(window_id, OpenNew(app_state.clone()));
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -618,7 +618,7 @@ mod tests {
 
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
-        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
+        cx.dispatch_action(window_id, OpenNew(app_state.clone()));
         workspace
             .update(cx, |workspace, cx| {
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
@@ -655,7 +655,7 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
+        cx.dispatch_action(window_id, OpenNew(app_state.clone()));
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -725,32 +725,47 @@ mod tests {
             .update(cx, |w, cx| w.open_path(file1.clone(), cx))
             .await
             .unwrap();
-        cx.read(|cx| {
-            assert_eq!(
-                pane_1.read(cx).active_item().unwrap().project_path(cx),
-                Some(file1.clone())
-            );
+
+        let (editor_1, buffer) = pane_1.update(cx, |pane_1, cx| {
+            let editor = pane_1.active_item().unwrap().downcast::<Editor>().unwrap();
+            assert_eq!(editor.project_path(cx), Some(file1.clone()));
+            let buffer = editor.update(cx, |editor, cx| {
+                editor.insert("dirt", cx);
+                editor.buffer().downgrade()
+            });
+            (editor.downgrade(), buffer)
         });
 
-        cx.dispatch_action(
-            window_id,
-            vec![pane_1.id()],
-            pane::Split(SplitDirection::Right),
-        );
-        cx.update(|cx| {
+        cx.dispatch_action(window_id, pane::Split(SplitDirection::Right));
+        let editor_2 = cx.update(|cx| {
             let pane_2 = workspace.read(cx).active_pane().clone();
             assert_ne!(pane_1, pane_2);
 
             let pane2_item = pane_2.read(cx).active_item().unwrap();
             assert_eq!(pane2_item.project_path(cx.as_ref()), Some(file1.clone()));
 
-            cx.dispatch_action(window_id, vec![pane_2.id()], &workspace::CloseActiveItem);
+            pane2_item.downcast::<Editor>().unwrap().downgrade()
         });
+        cx.dispatch_action(window_id, workspace::CloseActiveItem);
+
         cx.foreground().run_until_parked();
         workspace.read_with(cx, |workspace, _| {
             assert_eq!(workspace.panes().len(), 1);
             assert_eq!(workspace.active_pane(), &pane_1);
         });
+
+        cx.dispatch_action(window_id, workspace::CloseActiveItem);
+        cx.foreground().run_until_parked();
+        cx.simulate_prompt_answer(window_id, 1);
+        cx.foreground().run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(workspace.active_item(cx).is_none());
+        });
+
+        cx.assert_dropped(editor_1);
+        cx.assert_dropped(editor_2);
+        cx.assert_dropped(buffer);
     }
 
     #[gpui::test]
@@ -878,11 +893,10 @@ mod tests {
             .update(cx, |workspace, cx| {
                 let editor3_id = editor3.id();
                 drop(editor3);
-                workspace
-                    .active_pane()
-                    .update(cx, |pane, cx| pane.close_item(editor3_id, cx))
+                Pane::close_item(workspace, workspace.active_pane().clone(), editor3_id, cx)
             })
-            .await;
+            .await
+            .unwrap();
         workspace
             .update(cx, |w, cx| Pane::go_forward(w, None, cx))
             .await;
@@ -896,11 +910,10 @@ mod tests {
             .update(cx, |workspace, cx| {
                 let editor2_id = editor2.id();
                 drop(editor2);
-                workspace
-                    .active_pane()
-                    .update(cx, |pane, cx| pane.close_item(editor2_id, cx))
+                Pane::close_item(workspace, workspace.active_pane().clone(), editor2_id, cx)
             })
-            .await;
+            .await
+            .unwrap();
         app_state
             .fs
             .as_fake()
