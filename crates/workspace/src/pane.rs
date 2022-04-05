@@ -471,20 +471,31 @@ impl Pane {
             "This file contains unsaved edits. Do you want to save it?";
 
         let project = workspace.project().clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|workspace, mut cx| async move {
             while let Some(item_to_close_ix) = pane.read_with(&cx, |pane, _| {
                 pane.items.iter().position(|item| should_close(item.id()))
             }) {
                 let item =
                     pane.read_with(&cx, |pane, _| pane.items[item_to_close_ix].boxed_clone());
-                if cx.read(|cx| item.is_dirty(cx)) {
-                    if cx.read(|cx| item.can_save(cx)) {
+
+                let is_last_item_for_entry = workspace.read_with(&cx, |workspace, cx| {
+                    let project_entry_id = item.project_entry_id(cx);
+                    project_entry_id.is_none()
+                        || workspace
+                            .items(cx)
+                            .filter(|item| item.project_entry_id(cx) == project_entry_id)
+                            .count()
+                            == 1
+                });
+
+                if is_last_item_for_entry {
+                    if cx.read(|cx| item.has_conflict(cx) && item.can_save(cx)) {
                         let mut answer = pane.update(&mut cx, |pane, cx| {
                             pane.activate_item(item_to_close_ix, true, cx);
                             cx.prompt(
                                 PromptLevel::Warning,
-                                DIRTY_MESSAGE,
-                                &["Save", "Don't Save", "Cancel"],
+                                CONFLICT_MESSAGE,
+                                &["Overwrite", "Discard", "Cancel"],
                             )
                         });
 
@@ -492,59 +503,67 @@ impl Pane {
                             Some(0) => {
                                 cx.update(|cx| item.save(project.clone(), cx)).await?;
                             }
-                            Some(1) => {}
-                            _ => break,
-                        }
-                    } else if cx.read(|cx| item.can_save_as(cx)) {
-                        let mut answer = pane.update(&mut cx, |pane, cx| {
-                            pane.activate_item(item_to_close_ix, true, cx);
-                            cx.prompt(
-                                PromptLevel::Warning,
-                                DIRTY_MESSAGE,
-                                &["Save", "Don't Save", "Cancel"],
-                            )
-                        });
-
-                        match answer.next().await {
-                            Some(0) => {
-                                let start_abs_path = project
-                                    .read_with(&cx, |project, cx| {
-                                        let worktree = project.visible_worktrees(cx).next()?;
-                                        Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
-                                    })
-                                    .unwrap_or(Path::new("").into());
-
-                                let mut abs_path =
-                                    cx.update(|cx| cx.prompt_for_new_path(&start_abs_path));
-                                if let Some(abs_path) = abs_path.next().await.flatten() {
-                                    cx.update(|cx| item.save_as(project.clone(), abs_path, cx))
-                                        .await?;
-                                } else {
-                                    break;
-                                }
+                            Some(1) => {
+                                cx.update(|cx| item.reload(project.clone(), cx)).await?;
                             }
-                            Some(1) => {}
                             _ => break,
                         }
-                    }
-                } else if cx.read(|cx| item.has_conflict(cx) && item.can_save(cx)) {
-                    let mut answer = pane.update(&mut cx, |pane, cx| {
-                        pane.activate_item(item_to_close_ix, true, cx);
-                        cx.prompt(
-                            PromptLevel::Warning,
-                            CONFLICT_MESSAGE,
-                            &["Overwrite", "Discard", "Cancel"],
-                        )
-                    });
+                    } else if cx.read(|cx| item.is_dirty(cx)) {
+                        if cx.read(|cx| item.can_save(cx)) {
+                            let mut answer = pane.update(&mut cx, |pane, cx| {
+                                pane.activate_item(item_to_close_ix, true, cx);
+                                cx.prompt(
+                                    PromptLevel::Warning,
+                                    DIRTY_MESSAGE,
+                                    &["Save", "Don't Save", "Cancel"],
+                                )
+                            });
 
-                    match answer.next().await {
-                        Some(0) => {
-                            cx.update(|cx| item.save(project.clone(), cx)).await?;
+                            match answer.next().await {
+                                Some(0) => {
+                                    cx.update(|cx| item.save(project.clone(), cx)).await?;
+                                }
+                                Some(1) => {}
+                                _ => break,
+                            }
+                        } else if cx.read(|cx| item.can_save_as(cx)) {
+                            let mut answer = pane.update(&mut cx, |pane, cx| {
+                                pane.activate_item(item_to_close_ix, true, cx);
+                                cx.prompt(
+                                    PromptLevel::Warning,
+                                    DIRTY_MESSAGE,
+                                    &["Save", "Don't Save", "Cancel"],
+                                )
+                            });
+
+                            match answer.next().await {
+                                Some(0) => {
+                                    let start_abs_path = project
+                                        .read_with(&cx, |project, cx| {
+                                            let worktree = project.visible_worktrees(cx).next()?;
+                                            Some(
+                                                worktree
+                                                    .read(cx)
+                                                    .as_local()?
+                                                    .abs_path()
+                                                    .to_path_buf(),
+                                            )
+                                        })
+                                        .unwrap_or(Path::new("").into());
+
+                                    let mut abs_path =
+                                        cx.update(|cx| cx.prompt_for_new_path(&start_abs_path));
+                                    if let Some(abs_path) = abs_path.next().await.flatten() {
+                                        cx.update(|cx| item.save_as(project.clone(), abs_path, cx))
+                                            .await?;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                Some(1) => {}
+                                _ => break,
+                            }
                         }
-                        Some(1) => {
-                            cx.update(|cx| item.reload(project.clone(), cx)).await?;
-                        }
-                        _ => break,
                     }
                 }
 
@@ -578,7 +597,7 @@ impl Pane {
                 });
             }
 
-            this.update(&mut cx, |_, cx| cx.notify());
+            pane.update(&mut cx, |_, cx| cx.notify());
             Ok(())
         })
     }
@@ -872,11 +891,11 @@ impl NavHistory {
 
 #[cfg(test)]
 mod tests {
-    use crate::WorkspaceParams;
-
     use super::*;
+    use crate::WorkspaceParams;
     use gpui::{ModelHandle, TestAppContext, ViewContext};
     use project::Project;
+    use std::sync::atomic::AtomicUsize;
 
     #[gpui::test]
     async fn test_close_items(cx: &mut TestAppContext) {
@@ -886,7 +905,7 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         let item1 = cx.add_view(window_id, |_| {
             let mut item = TestItem::new();
-            item.has_conflict = true;
+            item.is_dirty = true;
             item
         });
         let item2 = cx.add_view(window_id, |_| {
@@ -897,15 +916,11 @@ mod tests {
         });
         let item3 = cx.add_view(window_id, |_| {
             let mut item = TestItem::new();
+            item.is_dirty = true;
             item.has_conflict = true;
             item
         });
         let item4 = cx.add_view(window_id, |_| {
-            let mut item = TestItem::new();
-            item.is_dirty = true;
-            item
-        });
-        let item5 = cx.add_view(window_id, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
             item.can_save = false;
@@ -916,7 +931,6 @@ mod tests {
             workspace.add_item(Box::new(item2.clone()), cx);
             workspace.add_item(Box::new(item3.clone()), cx);
             workspace.add_item(Box::new(item4.clone()), cx);
-            workspace.add_item(Box::new(item5.clone()), cx);
             workspace.active_pane().clone()
         });
 
@@ -929,15 +943,14 @@ mod tests {
             let item1_id = item1.id();
             let item3_id = item3.id();
             let item4_id = item4.id();
-            let item5_id = item5.id();
             Pane::close_items(workspace, pane.clone(), cx, move |id| {
-                [item1_id, item3_id, item4_id, item5_id].contains(&id)
+                [item1_id, item3_id, item4_id].contains(&id)
             })
         });
 
         cx.foreground().run_until_parked();
         pane.read_with(cx, |pane, _| {
-            assert_eq!(pane.items.len(), 5);
+            assert_eq!(pane.items.len(), 4);
             assert_eq!(pane.active_item().unwrap().id(), item1.id());
         });
 
@@ -947,7 +960,7 @@ mod tests {
             assert_eq!(item1.read(cx).save_count, 1);
             assert_eq!(item1.read(cx).save_as_count, 0);
             assert_eq!(item1.read(cx).reload_count, 0);
-            assert_eq!(pane.items.len(), 4);
+            assert_eq!(pane.items.len(), 3);
             assert_eq!(pane.active_item().unwrap().id(), item3.id());
         });
 
@@ -957,18 +970,8 @@ mod tests {
             assert_eq!(item3.read(cx).save_count, 0);
             assert_eq!(item3.read(cx).save_as_count, 0);
             assert_eq!(item3.read(cx).reload_count, 1);
-            assert_eq!(pane.items.len(), 3);
-            assert_eq!(pane.active_item().unwrap().id(), item4.id());
-        });
-
-        cx.simulate_prompt_answer(window_id, 0);
-        cx.foreground().run_until_parked();
-        pane.read_with(cx, |pane, cx| {
-            assert_eq!(item4.read(cx).save_count, 1);
-            assert_eq!(item4.read(cx).save_as_count, 0);
-            assert_eq!(item4.read(cx).reload_count, 0);
             assert_eq!(pane.items.len(), 2);
-            assert_eq!(pane.active_item().unwrap().id(), item5.id());
+            assert_eq!(pane.active_item().unwrap().id(), item4.id());
         });
 
         cx.simulate_prompt_answer(window_id, 0);
@@ -976,14 +979,58 @@ mod tests {
         cx.simulate_new_path_selection(|_| Some(Default::default()));
         close_items.await.unwrap();
         pane.read_with(cx, |pane, cx| {
-            assert_eq!(item5.read(cx).save_count, 0);
-            assert_eq!(item5.read(cx).save_as_count, 1);
-            assert_eq!(item5.read(cx).reload_count, 0);
+            assert_eq!(item4.read(cx).save_count, 0);
+            assert_eq!(item4.read(cx).save_as_count, 1);
+            assert_eq!(item4.read(cx).reload_count, 0);
             assert_eq!(pane.items.len(), 1);
             assert_eq!(pane.active_item().unwrap().id(), item2.id());
         });
     }
 
+    #[gpui::test]
+    async fn test_prompting_only_on_last_item_for_entry(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let params = cx.update(WorkspaceParams::test);
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
+        let item = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item.project_entry_id = Some(ProjectEntryId::new(&AtomicUsize::new(1)));
+            item
+        });
+
+        let (left_pane, right_pane) = workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(item.clone()), cx);
+            let left_pane = workspace.active_pane().clone();
+            let right_pane = workspace.split_pane(left_pane.clone(), SplitDirection::Right, cx);
+            (left_pane, right_pane)
+        });
+
+        workspace
+            .update(cx, |workspace, cx| {
+                let item = right_pane.read(cx).active_item().unwrap();
+                Pane::close_item(workspace, right_pane.clone(), item.id(), cx)
+            })
+            .await
+            .unwrap();
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(workspace.panes(), [left_pane.clone()]);
+        });
+
+        let close_item = workspace.update(cx, |workspace, cx| {
+            let item = left_pane.read(cx).active_item().unwrap();
+            Pane::close_item(workspace, left_pane.clone(), item.id(), cx)
+        });
+        cx.foreground().run_until_parked();
+        cx.simulate_prompt_answer(window_id, 0);
+        close_item.await.unwrap();
+        left_pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items.len(), 0);
+        });
+    }
+
+    #[derive(Clone)]
     struct TestItem {
         save_count: usize,
         save_as_count: usize,
@@ -991,6 +1038,7 @@ mod tests {
         is_dirty: bool,
         has_conflict: bool,
         can_save: bool,
+        project_entry_id: Option<ProjectEntryId>,
     }
 
     impl TestItem {
@@ -1002,6 +1050,7 @@ mod tests {
                 is_dirty: false,
                 has_conflict: false,
                 can_save: true,
+                project_entry_id: None,
             }
         }
     }
@@ -1030,10 +1079,17 @@ mod tests {
         }
 
         fn project_entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
-            None
+            self.project_entry_id
         }
 
         fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
+
+        fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
+        where
+            Self: Sized,
+        {
+            Some(self.clone())
+        }
 
         fn is_dirty(&self, _: &AppContext) -> bool {
             self.is_dirty
