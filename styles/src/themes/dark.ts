@@ -80,7 +80,7 @@ const iconColor = {
     placeholder: colors.neutral[700],
     active: colors.neutral[0],
     //TODO: (design) define feature and it's correct value
-    feature: colors.sky[500],
+    feature: colors.blue[500],
     ok: colors.green[600],
     error: colors.red[500],
     warning: colors.amber[400],
@@ -90,7 +90,7 @@ const iconColor = {
 const player = {
     1: buildPlayer(colors.blue[500]),
     2: buildPlayer(colors.lime[500]),
-    3: buildPlayer(colors.indigo[500]),
+    3: buildPlayer(colors.fuschia[500]),
     4: buildPlayer(colors.orange[500]),
     5: buildPlayer(colors.purple[500]),
     6: buildPlayer(colors.teal[400]),

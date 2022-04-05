@@ -109,7 +109,7 @@
     "tab": {
       "height": 32,
       "background": "#f1f1f1",
-      "icon_close": "#555555",
+      "icon_close": "#717171",
       "icon_close_active": "#000000",
       "icon_conflict": "#f7bf17",
       "icon_dirty": "#135acd",
@@ -135,7 +135,7 @@
     "active_tab": {
       "height": 32,
       "background": "#ffffff",
-      "icon_close": "#555555",
+      "icon_close": "#717171",
       "icon_close_active": "#000000",
       "icon_conflict": "#f7bf17",
       "icon_dirty": "#135acd",
@@ -168,7 +168,7 @@
       },
       "item": {
         "height": 32,
-        "icon_color": "#717171",
+        "icon_color": "#555555",
         "icon_size": 18
       },
       "active_item": {
@@ -193,7 +193,7 @@
       },
       "item": {
         "height": 32,
-        "icon_color": "#717171",
+        "icon_color": "#555555",
         "icon_size": 18
       },
       "active_item": {
@@ -239,7 +239,7 @@
       "avatar_width": 18,
       "height": 32,
       "background": "#e3e3e3",
-      "share_icon_color": "#717171",
+      "share_icon_color": "#555555",
       "share_icon_active_color": "#1179a8",
       "title": {
         "family": "Zed Sans",
@@ -281,7 +281,7 @@
         }
       },
       "offline_icon": {
-        "color": "#717171",
+        "color": "#555555",
         "width": 16,
         "padding": {
           "right": 4
@@ -328,7 +328,7 @@
     "text_color": "#2b2b2b",
     "background": "#ffffff",
     "active_line_background": "#f1f1f1",
-    "code_actions_indicator": "#717171",
+    "code_actions_indicator": "#555555",
     "diff_background_deleted": "#fcc6c6",
     "diff_background_inserted": "#b7f9ce",
     "document_highlight_read_background": "#14a89829",
@@ -351,8 +351,8 @@
         "selection": "#79ba164d"
       },
       {
-        "cursor": "#484bed",
-        "selection": "#484bed4d"
+        "cursor": "#d430e0",
+        "selection": "#d430e04d"
       },
       {
         "cursor": "#ee670a",
@@ -708,7 +708,7 @@
     },
     "entry": {
       "height": 22,
-      "icon_color": "#555555",
+      "icon_color": "#717171",
       "icon_size": 8,
       "icon_spacing": 8,
       "text": {
@@ -720,7 +720,7 @@
     "hovered_entry": {
       "height": 22,
       "background": "#e3e3e3",
-      "icon_color": "#555555",
+      "icon_color": "#717171",
       "icon_size": 8,
       "icon_spacing": 8,
       "text": {
@@ -731,7 +731,7 @@
     },
     "selected_entry": {
       "height": 22,
-      "icon_color": "#555555",
+      "icon_color": "#717171",
       "icon_size": 8,
       "icon_spacing": 8,
       "text": {
@@ -743,7 +743,7 @@
     "hovered_selected_entry": {
       "height": 22,
       "background": "#e3e3e3",
-      "icon_color": "#555555",
+      "icon_color": "#717171",
       "icon_size": 8,
       "icon_spacing": 8,
       "text": {

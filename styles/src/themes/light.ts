@@ -73,10 +73,10 @@ const textColor = {
 };
 
 const iconColor = {
-    primary: colors.neutral[300],
-    secondary: colors.neutral[500],
-    muted: colors.neutral[600],
-    placeholder: colors.neutral[700],
+    primary: colors.neutral[700],
+    secondary: colors.neutral[600],
+    muted: colors.neutral[500],
+    placeholder: colors.neutral[300],
     active: colors.neutral[900],
     feature: colors.sky[600],
     ok: colors.green[600],
@@ -88,7 +88,7 @@ const iconColor = {
 const player = {
     1: buildPlayer(colors.blue[500]),
     2: buildPlayer(colors.lime[500]),
-    3: buildPlayer(colors.indigo[500]),
+    3: buildPlayer(colors.fuschia[500]),
     4: buildPlayer(colors.orange[500]),
     5: buildPlayer(colors.purple[500]),
     6: buildPlayer(colors.teal[400]),

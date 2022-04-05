@@ -240,7 +240,7 @@
       "height": 32,
       "background": "#2b2b2b",
       "share_icon_color": "#9c9c9c",
-      "share_icon_active_color": "#1096d3",
+      "share_icon_active_color": "#2472f2",
       "title": {
         "family": "Zed Sans",
         "color": "#f1f1f1",
@@ -351,8 +351,8 @@
         "selection": "#79ba164d"
       },
       {
-        "cursor": "#484bed",
-        "selection": "#484bed4d"
+        "cursor": "#d430e0",
+        "selection": "#d430e04d"
       },
       {
         "cursor": "#ee670a",
