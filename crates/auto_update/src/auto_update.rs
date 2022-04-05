@@ -105,7 +105,7 @@ impl AutoUpdater {
     }
 
     pub fn poll(&mut self, cx: &mut ModelContext<Self>) {
-        if self.pending_poll.is_some() {
+        if self.pending_poll.is_some() || self.status == AutoUpdateStatus::Updated {
             return;
         }
 
