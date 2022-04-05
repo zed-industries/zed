@@ -61,11 +61,11 @@ const borderColor = {
 
 const textColor = {
     primary: colors.neutral[750],
-    secondary: colors.neutral[600],
-    muted: colors.neutral[450],
-    placeholder: colors.neutral[300],
+    secondary: colors.neutral[650],
+    muted: colors.neutral[550],
+    placeholder: colors.neutral[450],
     active: colors.neutral[900],
-    feature: colors.blue[500],
+    feature: colors.indigo[500],
     ok: colors.green[500],
     error: colors.red[500],
     warning: colors.yellow[500],
@@ -78,7 +78,7 @@ const iconColor = {
     muted: colors.neutral[500],
     placeholder: colors.neutral[300],
     active: colors.neutral[900],
-    feature: colors.sky[600],
+    feature: colors.indigo[500],
     ok: colors.green[600],
     error: colors.red[600],
     warning: colors.yellow[400],
@@ -87,10 +87,10 @@ const iconColor = {
 
 const player = {
     1: buildPlayer(colors.blue[500]),
-    2: buildPlayer(colors.lime[500]),
-    3: buildPlayer(colors.fuschia[500]),
-    4: buildPlayer(colors.orange[500]),
-    5: buildPlayer(colors.purple[500]),
+    2: buildPlayer(colors.emerald[400]),
+    3: buildPlayer(colors.fuschia[400]),
+    4: buildPlayer(colors.orange[400]),
+    5: buildPlayer(colors.purple[400]),
     6: buildPlayer(colors.teal[400]),
     7: buildPlayer(colors.pink[400]),
     8: buildPlayer(colors.yellow[400]),
@@ -110,11 +110,11 @@ const editor = {
     },
     highlight: {
         selection: player[1].selectionColor,
-        occurrence: withOpacity(colors.teal[500], 0.16),
-        activeOccurrence: withOpacity(colors.teal[500], 0.32),
+        occurrence: withOpacity(colors.amber[500], 0.06),
+        activeOccurrence: withOpacity(colors.amber[500], 0.26),
         matchingBracket: colors.neutral[0],
-        match: withOpacity(colors.sky[500], 0.16),
-        activeMatch: withOpacity(colors.sky[800], 0.32),
+        match: withOpacity(colors.purple[500], 0.12),
+        activeMatch: withOpacity(colors.purple[400], 0.36),
         related: colors.neutral[0],
     },
     gutter: {
@@ -125,63 +125,63 @@ const editor = {
 
 const syntax: Syntax = {
     primary: {
-        color: colors.neutral[750],
+        color: colors.neutral[800],
         weight: fontWeights.normal,
     },
     comment: {
-        color: colors.neutral[600],
+        color: colors.neutral[500],
         weight: fontWeights.normal,
     },
     punctuation: {
-        color: colors.neutral[700],
+        color: colors.neutral[600],
         weight: fontWeights.normal,
     },
     constant: {
-        color: colors.neutral[700],
+        color: colors.neutral[800],
         weight: fontWeights.normal,
     },
     keyword: {
-        color: colors.blue[800],
+        color: colors.indigo[700],
         weight: fontWeights.normal,
     },
     function: {
-        color: colors.green[600],
+        color: colors.orange[400],
         weight: fontWeights.normal,
     },
     type: {
-        color: colors.teal[600],
+        color: colors.amber[500],
         weight: fontWeights.normal,
     },
     variant: {
-        color: colors.sky[600],
+        color: colors.sky[500],
         weight: fontWeights.normal,
     },
     property: {
-        color: colors.blue[700],
+        color: colors.emerald[600],
         weight: fontWeights.normal,
     },
     enum: {
-        color: colors.orange[600],
+        color: colors.red[500],
         weight: fontWeights.normal,
     },
     operator: {
-        color: colors.orange[600],
+        color: colors.red[500],
         weight: fontWeights.normal,
     },
     string: {
-        color: colors.orange[600],
+        color: colors.red[500],
         weight: fontWeights.normal,
     },
     number: {
-        color: colors.teal[500],
+        color: colors.indigo[500],
         weight: fontWeights.normal,
     },
     boolean: {
-        color: colors.amber[600],
+        color: colors.red[500],
         weight: fontWeights.normal,
     },
     predictive: {
-        color: textColor.muted,
+        color: textColor.placeholder,
         weight: fontWeights.normal,
     },
     title: {
@@ -197,12 +197,12 @@ const syntax: Syntax = {
         weight: fontWeights.bold,
     },
     linkUrl: {
-        color: colors.teal[500],
+        color: colors.lime[500],
         weight: fontWeights.normal,
         // TODO: add underline
     },
     linkText: {
-        color: colors.orange[500],
+        color: colors.red[500],
         weight: fontWeights.normal,
         // TODO: add italic
     },

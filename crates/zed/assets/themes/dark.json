@@ -71,7 +71,7 @@
       },
       "selection": {
         "cursor": "#2472f2",
-        "selection": "#2472f24d"
+        "selection": "#2472f23d"
       },
       "text": {
         "family": "Zed Mono",
@@ -343,36 +343,36 @@
     "unnecessary_code_fade": 0.5,
     "selection": {
       "cursor": "#2472f2",
-      "selection": "#2472f24d"
+      "selection": "#2472f23d"
     },
     "guest_selections": [
       {
         "cursor": "#79ba16",
-        "selection": "#79ba164d"
+        "selection": "#79ba163d"
       },
       {
         "cursor": "#d430e0",
-        "selection": "#d430e04d"
+        "selection": "#d430e03d"
       },
       {
         "cursor": "#ee670a",
-        "selection": "#ee670a4d"
+        "selection": "#ee670a3d"
       },
       {
         "cursor": "#993bf3",
-        "selection": "#993bf34d"
+        "selection": "#993bf33d"
       },
       {
         "cursor": "#16d6c1",
-        "selection": "#16d6c14d"
+        "selection": "#16d6c13d"
       },
       {
         "cursor": "#ef59a3",
-        "selection": "#ef59a34d"
+        "selection": "#ef59a33d"
       },
       {
         "cursor": "#f7bf17",
-        "selection": "#f7bf174d"
+        "selection": "#f7bf173d"
       }
     ],
     "autocomplete": {
@@ -958,7 +958,7 @@
       },
       "selection": {
         "cursor": "#2472f2",
-        "selection": "#2472f24d"
+        "selection": "#2472f23d"
       },
       "border": {
         "color": "#232323",
@@ -1153,7 +1153,7 @@
       },
       "selection": {
         "cursor": "#2472f2",
-        "selection": "#2472f24d"
+        "selection": "#2472f23d"
       },
       "text": {
         "family": "Zed Mono",
@@ -1207,7 +1207,7 @@
       },
       "selection": {
         "cursor": "#2472f2",
-        "selection": "#2472f24d"
+        "selection": "#2472f23d"
       },
       "text": {
         "family": "Zed Mono",

@@ -21,7 +21,7 @@ export function buildPlayer(
     return {
         baseColor: color,
         cursorColor: withOpacity(color, cursorOpacity || 1.0),
-        selectionColor: withOpacity(color, selectionOpacity || 0.3),
+        selectionColor: withOpacity(color, selectionOpacity || 0.24),
         borderColor: withOpacity(color, borderOpacity || 0.8),
     }
 }
