@@ -1177,19 +1177,21 @@ impl Project {
         old_path: PathBuf,
         cx: &mut ModelContext<Self>,
     ) {
-        let buffer = &buffer.read(cx);
-        if let Some((_, language_server)) = self.language_server_for_buffer(buffer, cx) {
-            language_server
-                .notify::<lsp::notification::DidCloseTextDocument>(
-                    lsp::DidCloseTextDocumentParams {
-                        text_document: lsp::TextDocumentIdentifier::new(
-                            lsp::Url::from_file_path(old_path).unwrap(),
-                        ),
-                    },
-                )
-                .log_err();
-        }
-        self.buffer_snapshots.remove(&buffer.remote_id());
+        buffer.update(cx, |buffer, cx| {
+            buffer.update_diagnostics(Default::default(), cx);
+            self.buffer_snapshots.remove(&buffer.remote_id());
+            if let Some((_, language_server)) = self.language_server_for_buffer(buffer, cx) {
+                language_server
+                    .notify::<lsp::notification::DidCloseTextDocument>(
+                        lsp::DidCloseTextDocumentParams {
+                            text_document: lsp::TextDocumentIdentifier::new(
+                                lsp::Url::from_file_path(old_path).unwrap(),
+                            ),
+                        },
+                    )
+                    .log_err();
+            }
+        });
     }
 
     fn on_buffer_event(
@@ -5189,6 +5191,26 @@ mod tests {
             },
         );
 
+        rust_buffer2.update(cx, |buffer, cx| {
+            buffer.update_diagnostics(
+                DiagnosticSet::from_sorted_entries(
+                    vec![DiagnosticEntry {
+                        diagnostic: Default::default(),
+                        range: Anchor::MIN..Anchor::MAX,
+                    }],
+                    &buffer.snapshot(),
+                ),
+                cx,
+            );
+            assert_eq!(
+                buffer
+                    .snapshot()
+                    .diagnostics_in_range::<_, usize>(0..buffer.len(), false)
+                    .count(),
+                1
+            );
+        });
+
         // When the rename changes the extension of the file, the buffer gets closed on the old
         // language server and gets opened on the new one.
         fs.rename(
@@ -5219,6 +5241,16 @@ mod tests {
                 language_id: Default::default()
             },
         );
+        // We clear the diagnostics, since the language has changed.
+        rust_buffer2.read_with(cx, |buffer, _| {
+            assert_eq!(
+                buffer
+                    .snapshot()
+                    .diagnostics_in_range::<_, usize>(0..buffer.len(), false)
+                    .count(),
+                0
+            );
+        });
 
         // The renamed file's version resets after changing language server.
         rust_buffer2.update(cx, |buffer, cx| buffer.edit([0..0], "// ", cx));
