@@ -179,8 +179,8 @@ pub fn build_workspace(
         status_bar.add_left_item(diagnostic_summary, cx);
         status_bar.add_left_item(diagnostic_message, cx);
         status_bar.add_left_item(lsp_status, cx);
-        status_bar.add_right_item(cursor_position, cx);
         status_bar.add_right_item(auto_update, cx);
+        status_bar.add_right_item(cursor_position, cx);
     });
 
     workspace

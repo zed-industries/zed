@@ -253,7 +253,7 @@ impl View for AutoUpdateIndicator {
                 .boxed(),
                 AutoUpdateStatus::Installing => Text::new(
                     "Installing update…".to_string(),
-                    theme.auto_update_done_message.clone(),
+                    theme.auto_update_progress_message.clone(),
                 )
                 .boxed(),
                 AutoUpdateStatus::Updated => Text::new(

@@ -84,7 +84,7 @@ cursor_position = "$text.2"
 diagnostic_message = "$text.2"
 lsp_message = "$text.2"
 auto_update_progress_message = "$text.2"
-auto_update_done_message = "$text.0"
+auto_update_done_message = "$text.2"
 
 [workspace.toolbar]
 background = "$surface.1"
