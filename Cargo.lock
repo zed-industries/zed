@@ -2727,6 +2727,7 @@ dependencies = [
  "text",
  "theme",
  "tree-sitter",
+ "tree-sitter-json",
  "tree-sitter-rust",
  "unindent",
  "util",
