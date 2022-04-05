@@ -497,8 +497,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             }
 
             if T::should_close_item_on_event(event) {
-                pane.update(cx, |pane, cx| pane.close_item(item.id(), cx))
-                    .detach();
+                Pane::close_item(workspace, pane, item.id(), cx).detach_and_log_err(cx);
                 return;
             }
 
@@ -738,7 +737,7 @@ impl Workspace {
         })
         .detach();
 
-        let pane = cx.add_view(|cx| Pane::new(params.project.clone(), cx));
+        let pane = cx.add_view(|cx| Pane::new(cx));
         let pane_id = pane.id();
         cx.observe(&pane, move |me, _, cx| {
             let active_entry = me.active_project_path(cx);
@@ -1070,7 +1069,7 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane = cx.add_view(|cx| Pane::new(self.project.clone(), cx));
+        let pane = cx.add_view(|cx| Pane::new(cx));
         let pane_id = pane.id();
         cx.observe(&pane, move |me, _, cx| {
             let active_entry = me.active_project_path(cx);

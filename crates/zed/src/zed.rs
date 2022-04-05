@@ -878,11 +878,10 @@ mod tests {
             .update(cx, |workspace, cx| {
                 let editor3_id = editor3.id();
                 drop(editor3);
-                workspace
-                    .active_pane()
-                    .update(cx, |pane, cx| pane.close_item(editor3_id, cx))
+                Pane::close_item(workspace, workspace.active_pane().clone(), editor3_id, cx)
             })
-            .await;
+            .await
+            .unwrap();
         workspace
             .update(cx, |w, cx| Pane::go_forward(w, None, cx))
             .await;
@@ -896,11 +895,10 @@ mod tests {
             .update(cx, |workspace, cx| {
                 let editor2_id = editor2.id();
                 drop(editor2);
-                workspace
-                    .active_pane()
-                    .update(cx, |pane, cx| pane.close_item(editor2_id, cx))
+                Pane::close_item(workspace, workspace.active_pane().clone(), editor2_id, cx)
             })
-            .await;
+            .await
+            .unwrap();
         app_state
             .fs
             .as_fake()

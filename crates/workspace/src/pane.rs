@@ -1,5 +1,6 @@
 use super::{ItemHandle, SplitDirection};
 use crate::{toolbar::Toolbar, Item, Settings, WeakItemHandle, Workspace};
+use anyhow::Result;
 use collections::{HashMap, VecDeque};
 use futures::StreamExt;
 use gpui::{
@@ -8,10 +9,10 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     keymap::Binding,
     platform::{CursorStyle, NavigationDirection},
-    AppContext, Entity, ModelHandle, MutableAppContext, PromptLevel, Quad, RenderContext, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, Entity, MutableAppContext, PromptLevel, Quad, RenderContext, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
-use project::{Project, ProjectEntryId, ProjectPath};
+use project::{ProjectEntryId, ProjectPath};
 use std::{any::Any, cell::RefCell, cmp, mem, path::Path, rc::Rc};
 use util::ResultExt;
 
@@ -21,9 +22,15 @@ action!(ActivatePrevItem);
 action!(ActivateNextItem);
 action!(CloseActiveItem);
 action!(CloseInactiveItems);
-action!(CloseItem, usize);
+action!(CloseItem, CloseItemParams);
 action!(GoBack, Option<WeakViewHandle<Pane>>);
 action!(GoForward, Option<WeakViewHandle<Pane>>);
+
+#[derive(Clone)]
+pub struct CloseItemParams {
+    pub item_id: usize,
+    pub pane: WeakViewHandle<Pane>,
+}
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -37,14 +44,11 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, _: &ActivateNextItem, cx| {
         pane.activate_next_item(cx);
     });
-    cx.add_action(|pane: &mut Pane, _: &CloseActiveItem, cx| {
-        pane.close_active_item(cx).detach();
-    });
-    cx.add_action(|pane: &mut Pane, _: &CloseInactiveItems, cx| {
-        pane.close_inactive_items(cx).detach();
-    });
-    cx.add_action(|pane: &mut Pane, action: &CloseItem, cx| {
-        pane.close_item(action.0, cx).detach();
+    cx.add_async_action(Pane::close_active_item);
+    cx.add_async_action(Pane::close_inactive_items);
+    cx.add_async_action(|workspace: &mut Workspace, action: &CloseItem, cx| {
+        let pane = action.0.pane.upgrade(cx)?;
+        Some(Pane::close_item(workspace, pane, action.0.item_id, cx))
     });
     cx.add_action(|pane: &mut Pane, action: &Split, cx| {
         pane.split(action.0, cx);
@@ -98,7 +102,6 @@ pub struct Pane {
     active_item_index: usize,
     nav_history: Rc<RefCell<NavHistory>>,
     toolbar: ViewHandle<Toolbar>,
-    project: ModelHandle<Project>,
 }
 
 pub struct ItemNavHistory {
@@ -134,13 +137,12 @@ pub struct NavigationEntry {
 }
 
 impl Pane {
-    pub fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
         Self {
             items: Vec::new(),
             active_item_index: 0,
             nav_history: Default::default(),
             toolbar: cx.add_view(|_| Toolbar::new()),
-            project,
         }
     }
 
@@ -410,47 +412,75 @@ impl Pane {
         self.activate_item(index, true, cx);
     }
 
-    pub fn close_active_item(&mut self, cx: &mut ViewContext<Self>) -> Task<()> {
-        if self.items.is_empty() {
-            Task::ready(())
+    fn close_active_item(
+        workspace: &mut Workspace,
+        _: &CloseActiveItem,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Task<Result<()>>> {
+        let pane_handle = workspace.active_pane().clone();
+        let pane = pane_handle.read(cx);
+        if pane.items.is_empty() {
+            None
         } else {
-            self.close_item(self.items[self.active_item_index].id(), cx)
+            let item_id_to_close = pane.items[pane.active_item_index].id();
+            Some(Self::close_items(
+                workspace,
+                pane_handle,
+                cx,
+                move |item_id| item_id == item_id_to_close,
+            ))
         }
     }
 
-    pub fn close_inactive_items(&mut self, cx: &mut ViewContext<Self>) -> Task<()> {
-        if self.items.is_empty() {
-            Task::ready(())
+    pub fn close_inactive_items(
+        workspace: &mut Workspace,
+        _: &CloseInactiveItems,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Task<Result<()>>> {
+        let pane_handle = workspace.active_pane().clone();
+        let pane = pane_handle.read(cx);
+        if pane.items.is_empty() {
+            None
         } else {
-            let active_item_id = self.items[self.active_item_index].id();
-            self.close_items(cx, move |id| id != active_item_id)
+            let active_item_id = pane.items[pane.active_item_index].id();
+            Some(Self::close_items(workspace, pane_handle, cx, move |id| {
+                id != active_item_id
+            }))
         }
     }
 
-    pub fn close_item(&mut self, view_id_to_close: usize, cx: &mut ViewContext<Self>) -> Task<()> {
-        self.close_items(cx, move |view_id| view_id == view_id_to_close)
+    pub fn close_item(
+        workspace: &mut Workspace,
+        pane: ViewHandle<Pane>,
+        item_id_to_close: usize,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<()>> {
+        Self::close_items(workspace, pane, cx, move |view_id| {
+            view_id == item_id_to_close
+        })
     }
 
     pub fn close_items(
-        &mut self,
-        cx: &mut ViewContext<Self>,
+        workspace: &mut Workspace,
+        pane: ViewHandle<Pane>,
+        cx: &mut ViewContext<Workspace>,
         should_close: impl 'static + Fn(usize) -> bool,
-    ) -> Task<()> {
+    ) -> Task<Result<()>> {
         const CONFLICT_MESSAGE: &'static str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
         const DIRTY_MESSAGE: &'static str =
             "This file contains unsaved edits. Do you want to save it?";
 
-        let project = self.project.clone();
+        let project = workspace.project().clone();
         cx.spawn(|this, mut cx| async move {
-            while let Some(item_to_close_ix) = this.read_with(&cx, |this, _| {
-                this.items.iter().position(|item| should_close(item.id()))
+            while let Some(item_to_close_ix) = pane.read_with(&cx, |pane, _| {
+                pane.items.iter().position(|item| should_close(item.id()))
             }) {
                 let item =
-                    this.read_with(&cx, |this, _| this.items[item_to_close_ix].boxed_clone());
+                    pane.read_with(&cx, |pane, _| pane.items[item_to_close_ix].boxed_clone());
                 if cx.read(|cx| item.is_dirty(cx)) {
                     if cx.read(|cx| item.can_save(cx)) {
-                        let mut answer = this.update(&mut cx, |this, cx| {
-                            this.activate_item(item_to_close_ix, true, cx);
+                        let mut answer = pane.update(&mut cx, |pane, cx| {
+                            pane.activate_item(item_to_close_ix, true, cx);
                             cx.prompt(
                                 PromptLevel::Warning,
                                 DIRTY_MESSAGE,
@@ -460,21 +490,14 @@ impl Pane {
 
                         match answer.next().await {
                             Some(0) => {
-                                if cx
-                                    .update(|cx| item.save(project.clone(), cx))
-                                    .await
-                                    .log_err()
-                                    .is_none()
-                                {
-                                    break;
-                                }
+                                cx.update(|cx| item.save(project.clone(), cx)).await?;
                             }
                             Some(1) => {}
                             _ => break,
                         }
                     } else if cx.read(|cx| item.can_save_as(cx)) {
-                        let mut answer = this.update(&mut cx, |this, cx| {
-                            this.activate_item(item_to_close_ix, true, cx);
+                        let mut answer = pane.update(&mut cx, |pane, cx| {
+                            pane.activate_item(item_to_close_ix, true, cx);
                             cx.prompt(
                                 PromptLevel::Warning,
                                 DIRTY_MESSAGE,
@@ -494,14 +517,8 @@ impl Pane {
                                 let mut abs_path =
                                     cx.update(|cx| cx.prompt_for_new_path(&start_abs_path));
                                 if let Some(abs_path) = abs_path.next().await.flatten() {
-                                    if cx
-                                        .update(|cx| item.save_as(project.clone(), abs_path, cx))
-                                        .await
-                                        .log_err()
-                                        .is_none()
-                                    {
-                                        break;
-                                    }
+                                    cx.update(|cx| item.save_as(project.clone(), abs_path, cx))
+                                        .await?;
                                 } else {
                                     break;
                                 }
@@ -511,8 +528,8 @@ impl Pane {
                         }
                     }
                 } else if cx.read(|cx| item.has_conflict(cx) && item.can_save(cx)) {
-                    let mut answer = this.update(&mut cx, |this, cx| {
-                        this.activate_item(item_to_close_ix, true, cx);
+                    let mut answer = pane.update(&mut cx, |pane, cx| {
+                        pane.activate_item(item_to_close_ix, true, cx);
                         cx.prompt(
                             PromptLevel::Warning,
                             CONFLICT_MESSAGE,
@@ -522,50 +539,36 @@ impl Pane {
 
                     match answer.next().await {
                         Some(0) => {
-                            if cx
-                                .update(|cx| item.save(project.clone(), cx))
-                                .await
-                                .log_err()
-                                .is_none()
-                            {
-                                break;
-                            }
+                            cx.update(|cx| item.save(project.clone(), cx)).await?;
                         }
                         Some(1) => {
-                            if cx
-                                .update(|cx| item.reload(project.clone(), cx))
-                                .await
-                                .log_err()
-                                .is_none()
-                            {
-                                break;
-                            }
+                            cx.update(|cx| item.reload(project.clone(), cx)).await?;
                         }
                         _ => break,
                     }
                 }
 
-                this.update(&mut cx, |this, cx| {
-                    if let Some(item_ix) = this.items.iter().position(|i| i.id() == item.id()) {
-                        if item_ix == this.active_item_index {
-                            if item_ix + 1 < this.items.len() {
-                                this.activate_next_item(cx);
+                pane.update(&mut cx, |pane, cx| {
+                    if let Some(item_ix) = pane.items.iter().position(|i| i.id() == item.id()) {
+                        if item_ix == pane.active_item_index {
+                            if item_ix + 1 < pane.items.len() {
+                                pane.activate_next_item(cx);
                             } else if item_ix > 0 {
-                                this.activate_prev_item(cx);
+                                pane.activate_prev_item(cx);
                             }
                         }
 
-                        let item = this.items.remove(item_ix);
-                        if this.items.is_empty() {
+                        let item = pane.items.remove(item_ix);
+                        if pane.items.is_empty() {
                             item.deactivated(cx);
                             cx.emit(Event::Remove);
                         }
 
-                        if item_ix < this.active_item_index {
-                            this.active_item_index -= 1;
+                        if item_ix < pane.active_item_index {
+                            pane.active_item_index -= 1;
                         }
 
-                        let mut nav_history = this.nav_history.borrow_mut();
+                        let mut nav_history = pane.nav_history.borrow_mut();
                         if let Some(path) = item.project_path(cx) {
                             nav_history.paths_by_item.insert(item.id(), path);
                         } else {
@@ -576,6 +579,7 @@ impl Pane {
             }
 
             this.update(&mut cx, |_, cx| cx.notify());
+            Ok(())
         })
     }
 
@@ -607,6 +611,7 @@ impl Pane {
         let theme = cx.global::<Settings>().theme.clone();
 
         enum Tabs {}
+        let pane = cx.handle();
         let tabs = MouseEventHandler::new::<Tabs, _, _>(0, cx, |mouse_state, cx| {
             let mut row = Flex::row();
             for (ix, item) in self.items.iter().enumerate() {
@@ -698,8 +703,14 @@ impl Pane {
                                             )
                                             .with_padding(Padding::uniform(4.))
                                             .with_cursor_style(CursorStyle::PointingHand)
-                                            .on_click(move |cx| {
-                                                cx.dispatch_action(CloseItem(item_id))
+                                            .on_click({
+                                                let pane = pane.clone();
+                                                move |cx| {
+                                                    cx.dispatch_action(CloseItem(CloseItemParams {
+                                                        item_id,
+                                                        pane: pane.clone(),
+                                                    }))
+                                                }
                                             })
                                             .named("close-tab-icon")
                                         } else {
@@ -864,7 +875,8 @@ mod tests {
     use crate::WorkspaceParams;
 
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{ModelHandle, TestAppContext, ViewContext};
+    use project::Project;
 
     #[gpui::test]
     async fn test_close_items(cx: &mut TestAppContext) {
@@ -908,15 +920,17 @@ mod tests {
             workspace.active_pane().clone()
         });
 
-        let close_items = pane.update(cx, |pane, cx| {
-            pane.activate_item(1, true, cx);
-            assert_eq!(pane.active_item().unwrap().id(), item2.id());
+        let close_items = workspace.update(cx, |workspace, cx| {
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(1, true, cx);
+                assert_eq!(pane.active_item().unwrap().id(), item2.id());
+            });
 
             let item1_id = item1.id();
             let item3_id = item3.id();
             let item4_id = item4.id();
             let item5_id = item5.id();
-            pane.close_items(cx, move |id| {
+            Pane::close_items(workspace, pane.clone(), cx, move |id| {
                 [item1_id, item3_id, item4_id, item5_id].contains(&id)
             })
         });
@@ -960,7 +974,7 @@ mod tests {
         cx.simulate_prompt_answer(window_id, 0);
         cx.foreground().run_until_parked();
         cx.simulate_new_path_selection(|_| Some(Default::default()));
-        close_items.await;
+        close_items.await.unwrap();
         pane.read_with(cx, |pane, cx| {
             assert_eq!(item5.read(cx).save_count, 0);
             assert_eq!(item5.read(cx).save_as_count, 1);
