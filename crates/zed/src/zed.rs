@@ -31,6 +31,7 @@ action!(About);
 action!(Quit);
 action!(OpenSettings);
 action!(AdjustBufferFontSize, f32);
+action!(CheckForUpdates);
 
 const MIN_FONT_SIZE: f32 = 6.0;
 
@@ -43,6 +44,7 @@ lazy_static! {
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_global_action(quit);
+    cx.add_global_action(|_: &CheckForUpdates, cx| auto_update::check(cx));
     cx.add_global_action({
         move |action: &AdjustBufferFontSize, cx| {
             cx.update_global::<Settings, _, _>(|settings, cx| {

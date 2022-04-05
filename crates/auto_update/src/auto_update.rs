@@ -70,6 +70,12 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut Mutab
     }
 }
 
+pub fn check(cx: &mut MutableAppContext) {
+    if let Some(updater) = AutoUpdater::get(cx) {
+        updater.update(cx, |updater, cx| updater.poll(cx));
+    }
+}
+
 impl AutoUpdater {
     fn get(cx: &mut MutableAppContext) -> Option<ModelHandle<Self>> {
         cx.default_global::<Option<ModelHandle<Self>>>().clone()
