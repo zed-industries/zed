@@ -287,6 +287,8 @@ impl MultiBuffer {
         S: ToOffset,
         T: Into<String>,
     {
+        let indent_size = crate::INDENT_SIZE;
+
         if self.buffers.borrow().is_empty() {
             return;
         }
@@ -298,7 +300,7 @@ impl MultiBuffer {
                 .map(|range| range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot));
             return buffer.update(cx, |buffer, cx| {
                 if autoindent {
-                    buffer.edit_with_autoindent(ranges, new_text, cx);
+                    buffer.edit_with_autoindent(ranges, new_text, indent_size, cx);
                 } else {
                     buffer.edit(ranges, new_text, cx);
                 }
@@ -394,8 +396,8 @@ impl MultiBuffer {
                     }
 
                     if autoindent {
-                        buffer.edit_with_autoindent(deletions, "", cx);
-                        buffer.edit_with_autoindent(insertions, new_text.clone(), cx);
+                        buffer.edit_with_autoindent(deletions, "", indent_size, cx);
+                        buffer.edit_with_autoindent(insertions, new_text.clone(), indent_size, cx);
                     } else {
                         buffer.edit(deletions, "", cx);
                         buffer.edit(insertions, new_text.clone(), cx);

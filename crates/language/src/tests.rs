@@ -576,13 +576,13 @@ fn test_edit_with_autoindent(cx: &mut MutableAppContext) {
         let text = "fn a() {}";
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
 
-        buffer.edit_with_autoindent([8..8], "\n\n", cx);
+        buffer.edit_with_autoindent([8..8], "\n\n", 4, cx);
         assert_eq!(buffer.text(), "fn a() {\n    \n}");
 
-        buffer.edit_with_autoindent([Point::new(1, 4)..Point::new(1, 4)], "b()\n", cx);
+        buffer.edit_with_autoindent([Point::new(1, 4)..Point::new(1, 4)], "b()\n", 4, cx);
         assert_eq!(buffer.text(), "fn a() {\n    b()\n    \n}");
 
-        buffer.edit_with_autoindent([Point::new(2, 4)..Point::new(2, 4)], ".c", cx);
+        buffer.edit_with_autoindent([Point::new(2, 4)..Point::new(2, 4)], ".c", 4, cx);
         assert_eq!(buffer.text(), "fn a() {\n    b()\n        .c\n}");
 
         buffer
@@ -604,7 +604,12 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
 
         // Lines 2 and 3 don't match the indentation suggestion. When editing these lines,
         // their indentation is not adjusted.
-        buffer.edit_with_autoindent([empty(Point::new(1, 1)), empty(Point::new(2, 1))], "()", cx);
+        buffer.edit_with_autoindent(
+            [empty(Point::new(1, 1)), empty(Point::new(2, 1))],
+            "()",
+            4,
+            cx,
+        );
         assert_eq!(
             buffer.text(),
             "
@@ -621,6 +626,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
         buffer.edit_with_autoindent(
             [empty(Point::new(1, 1)), empty(Point::new(2, 1))],
             "\n.f\n.g",
+            4,
             cx,
         );
         assert_eq!(
@@ -651,7 +657,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
 
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
 
-        buffer.edit_with_autoindent([5..5], "\nb", cx);
+        buffer.edit_with_autoindent([5..5], "\nb", 4, cx);
         assert_eq!(
             buffer.text(),
             "
@@ -663,7 +669,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
 
         // The indentation suggestion changed because `@end` node (a close paren)
         // is now at the beginning of the line.
-        buffer.edit_with_autoindent([Point::new(1, 4)..Point::new(1, 5)], "", cx);
+        buffer.edit_with_autoindent([Point::new(1, 4)..Point::new(1, 5)], "", 4, cx);
         assert_eq!(
             buffer.text(),
             "

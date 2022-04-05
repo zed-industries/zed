@@ -63,6 +63,7 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
+const INDENT_SIZE: u32 = 4;
 
 action!(Cancel);
 action!(Backspace);
@@ -2946,7 +2947,7 @@ impl Editor {
                 {
                     let indent_column = buffer.indent_column_for_line(line_buffer_range.start.row);
                     if old_head.column <= indent_column && old_head.column > 0 {
-                        let indent = buffer.indent_size();
+                        let indent = INDENT_SIZE;
                         new_head = cmp::min(
                             new_head,
                             Point::new(old_head.row, ((old_head.column - 1) / indent) * indent),
