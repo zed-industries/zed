@@ -725,32 +725,47 @@ mod tests {
             .update(cx, |w, cx| w.open_path(file1.clone(), cx))
             .await
             .unwrap();
-        cx.read(|cx| {
-            assert_eq!(
-                pane_1.read(cx).active_item().unwrap().project_path(cx),
-                Some(file1.clone())
-            );
+
+        let (editor_1, buffer) = pane_1.update(cx, |pane_1, cx| {
+            let editor = pane_1.active_item().unwrap().downcast::<Editor>().unwrap();
+            assert_eq!(editor.project_path(cx), Some(file1.clone()));
+            let buffer = editor.update(cx, |editor, cx| {
+                editor.insert("dirt", cx);
+                editor.buffer().downgrade()
+            });
+            (editor.downgrade(), buffer)
         });
 
         cx.dispatch_action(window_id, pane::Split(SplitDirection::Right));
-        cx.update(|cx| {
+        let editor_2 = cx.update(|cx| {
             let pane_2 = workspace.read(cx).active_pane().clone();
             assert_ne!(pane_1, pane_2);
 
             let pane2_item = pane_2.read(cx).active_item().unwrap();
             assert_eq!(pane2_item.project_path(cx.as_ref()), Some(file1.clone()));
 
-            cx.dispatch_action(
-                window_id,
-                vec![workspace.id(), pane_2.id()],
-                &workspace::CloseActiveItem,
-            );
+            pane2_item.downcast::<Editor>().unwrap().downgrade()
         });
+        cx.dispatch_action(window_id, workspace::CloseActiveItem);
+
         cx.foreground().run_until_parked();
         workspace.read_with(cx, |workspace, _| {
             assert_eq!(workspace.panes().len(), 1);
             assert_eq!(workspace.active_pane(), &pane_1);
         });
+
+        cx.dispatch_action(window_id, workspace::CloseActiveItem);
+        cx.foreground().run_until_parked();
+        cx.simulate_prompt_answer(window_id, 1);
+        cx.foreground().run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(workspace.active_item(cx).is_none());
+        });
+
+        cx.assert_dropped(editor_1);
+        cx.assert_dropped(editor_2);
+        cx.assert_dropped(buffer);
     }
 
     #[gpui::test]

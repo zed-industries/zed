@@ -597,6 +597,15 @@ impl TestAppContext {
     pub fn leak_detector(&self) -> Arc<Mutex<LeakDetector>> {
         self.cx.borrow().leak_detector()
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn assert_dropped(&self, handle: impl WeakHandle) {
+        self.cx
+            .borrow()
+            .leak_detector()
+            .lock()
+            .assert_dropped(handle.id())
+    }
 }
 
 impl AsyncAppContext {
@@ -3302,6 +3311,10 @@ pub trait Handle<T> {
         Self: Sized;
 }
 
+pub trait WeakHandle {
+    fn id(&self) -> usize;
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum EntityLocation {
     Model(usize),
@@ -3574,6 +3587,12 @@ impl<T: Entity> Handle<T> for ModelHandle<T> {
 pub struct WeakModelHandle<T> {
     model_id: usize,
     model_type: PhantomData<T>,
+}
+
+impl<T> WeakHandle for WeakModelHandle<T> {
+    fn id(&self) -> usize {
+        self.model_id
+    }
 }
 
 unsafe impl<T> Send for WeakModelHandle<T> {}
@@ -4145,6 +4164,12 @@ pub struct WeakViewHandle<T> {
     view_type: PhantomData<T>,
 }
 
+impl<T> WeakHandle for WeakViewHandle<T> {
+    fn id(&self) -> usize {
+        self.view_id
+    }
+}
+
 impl<T: View> WeakViewHandle<T> {
     fn new(window_id: usize, view_id: usize) -> Self {
         Self {
@@ -4471,11 +4496,36 @@ impl LeakDetector {
         }
     }
 
+    pub fn assert_dropped(&mut self, entity_id: usize) {
+        if let Some((type_name, backtraces)) = self.handle_backtraces.get_mut(&entity_id) {
+            for trace in backtraces.values_mut() {
+                if let Some(trace) = trace {
+                    trace.resolve();
+                    eprintln!("{:?}", crate::util::CwdBacktrace(trace));
+                }
+            }
+
+            let hint = if *LEAK_BACKTRACE {
+                ""
+            } else {
+                " – set LEAK_BACKTRACE=1 for more information"
+            };
+
+            panic!(
+                "{} handles to {} {} still exist{}",
+                backtraces.len(),
+                type_name.unwrap_or("entity"),
+                entity_id,
+                hint
+            );
+        }
+    }
+
     pub fn detect(&mut self) {
         let mut found_leaks = false;
         for (id, (type_name, backtraces)) in self.handle_backtraces.iter_mut() {
             eprintln!(
-                "leaked {} handles to {:?} {}",
+                "leaked {} handles to {} {}",
                 backtraces.len(),
                 type_name.unwrap_or("entity"),
                 id

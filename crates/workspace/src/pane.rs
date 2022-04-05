@@ -580,6 +580,7 @@ impl Pane {
                         let item = pane.items.remove(item_ix);
                         if pane.items.is_empty() {
                             item.deactivated(cx);
+                            pane.update_toolbar(cx);
                             cx.emit(Event::Remove);
                         }
 
