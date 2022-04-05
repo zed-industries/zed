@@ -1,16 +1,9 @@
 import chroma from "chroma-js";
-import Theme, { BackgroundColor } from "../themes/theme";
-import { fontFamilies, fontSizes, FontFamily, FontWeight, FontSize } from "../tokens";
+import Theme, { BackgroundColorSet } from "../themes/theme";
+import { fontFamilies, fontSizes, FontWeight } from "../tokens";
 import { Color } from "../utils/color";
 
 export type TextColor = keyof Theme["textColor"];
-export interface Text {
-    family: FontFamily,
-    color: Color,
-    size: FontSize,
-    weight?: FontWeight,
-    underline?: boolean,
-}
 export function text(
     theme: Theme,
     fontFamily: keyof typeof fontFamilies,
@@ -20,18 +13,20 @@ export function text(
         weight?: FontWeight;
         underline?: boolean;
     }
-): Text {
-    let extraProperties = {
-        ...properties,
-        size: fontSizes[properties.size || "sm"].value,
-    };
+) {
+    let size = fontSizes[properties?.size || "sm"].value;
     return {
         family: fontFamilies[fontFamily].value,
         color: theme.textColor[color].value,
-        ...extraProperties,
+        ...properties,
+        size,
     };
 }
+export function textColor(theme: Theme, color: TextColor) {
+    return theme.textColor[color].value;
+}
 
+export type BorderColor = keyof Theme["borderColor"];
 export interface BorderOptions {
     width?: number;
     top?: boolean;
@@ -42,7 +37,7 @@ export interface BorderOptions {
 }
 export function border(
     theme: Theme,
-    color: keyof Theme["borderColor"],
+    color: BorderColor,
     options?: BorderOptions
 ) {
     return {
@@ -51,25 +46,25 @@ export function border(
         ...options,
     };
 }
-
-export function borderColor(theme: Theme, color: keyof Theme["borderColor"]) {
+export function borderColor(theme: Theme, color: BorderColor) {
     return theme.borderColor[color].value;
 }
 
-export function iconColor(theme: Theme, color: keyof Theme["iconColor"]) {
+export type IconColor = keyof Theme["iconColor"];
+export function iconColor(theme: Theme, color: IconColor) {
     return theme.iconColor[color].value;
 }
 
+export type PlayerIndex = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 export interface Player {
     selection: {
         cursor: Color;
         selection: Color;
     };
 }
-
 export function player(
     theme: Theme,
-    playerNumber: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
+    playerNumber: PlayerIndex,
 ): Player {
     return {
         selection: {
@@ -79,10 +74,12 @@ export function player(
     };
 }
 
+export type BackgroundColor = keyof Theme["backgroundColor"];
+export type BackgroundState = keyof BackgroundColorSet;
 export function backgroundColor(
     theme: Theme,
-    name: keyof Theme["backgroundColor"],
-    state?: keyof BackgroundColor
+    name: BackgroundColor,
+    state?: BackgroundState,
 ): Color {
     return theme.backgroundColor[name][state || "base"].value;
 }

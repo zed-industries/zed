@@ -1,6 +1,6 @@
 import Theme from "../themes/theme";
 import { panel } from "./app";
-import { borderColor, text } from "./components";
+import { backgroundColor, borderColor, text } from "./components";
 
 export default function(theme: Theme) {
     const project = {
@@ -11,7 +11,7 @@ export default function(theme: Theme) {
             width: 14,
         },
         name: {
-            ...text(theme, "mono", "secondary"),
+            ...text(theme, "mono", "placeholder", { size: "sm" }),
             margin: {
                 right: 6,
             },
@@ -23,9 +23,11 @@ export default function(theme: Theme) {
 
     const sharedProject = {
         ...project,
+        background: backgroundColor(theme, 300),
+        cornerRadius: 6,
         name: {
             ...project.name,
-            ...text(theme, "mono", "primary"),
+            ...text(theme, "mono", "secondary", { size: "sm" }),
         },
     };
 
@@ -39,7 +41,7 @@ export default function(theme: Theme) {
             width: 18,
         },
         hostUsername: {
-            ...text(theme, "mono", "muted"),
+            ...text(theme, "mono", "primary", { size: "sm" }),
             padding: {
                 left: 8,
             },
@@ -48,13 +50,12 @@ export default function(theme: Theme) {
         sharedProject,
         hoveredSharedProject: {
             ...sharedProject,
-            background: theme.editor.line.active.value,
+            background: backgroundColor(theme, 300, "hovered"),
             cornerRadius: 6,
         },
         unsharedProject: project,
         hoveredUnsharedProject: {
             ...project,
-            background: theme.editor.line.active.value,
             cornerRadius: 6,
         },
     }

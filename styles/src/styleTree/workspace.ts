@@ -79,7 +79,7 @@ export default function workspace(theme: Theme) {
             border: border(theme, "primary", { left: true }),
         },
         paneDivider: {
-            color: border(theme, "primary").color,
+            color: border(theme, "secondary").color,
             width: 1,
         },
         status_bar: {
@@ -98,7 +98,7 @@ export default function workspace(theme: Theme) {
             height: 32,
             background: backgroundColor(theme, 100),
             shareIconColor: iconColor(theme, "secondary"),
-            shareIconActiveColor: iconColor(theme, "active"),
+            shareIconActiveColor: iconColor(theme, "feature"),
             title: text(theme, "sans", "primary"),
             avatar: {
                 cornerRadius: 10,

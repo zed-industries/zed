@@ -1,4 +1,4 @@
-import { Color, colors, fontWeights, NumberToken } from "../tokens";
+import { colors, fontWeights, NumberToken } from "../tokens";
 import { withOpacity } from "../utils/color";
 import Theme, { buildPlayer, Syntax } from "./theme";
 
@@ -49,8 +49,8 @@ const backgroundColor = {
 
 const borderColor = {
     primary: colors.neutral[875],
-    secondary: colors.neutral[825],
-    muted: colors.neutral[775],
+    secondary: colors.neutral[775],
+    muted: colors.neutral[675],
     focused: colors.neutral[500],
     active: colors.neutral[900],
     ok: colors.green[500],
@@ -62,8 +62,8 @@ const borderColor = {
 const textColor = {
     primary: colors.neutral[50],
     secondary: colors.neutral[350],
-    muted: colors.neutral[550],
-    placeholder: colors.neutral[750],
+    muted: colors.neutral[450],
+    placeholder: colors.neutral[650],
     active: colors.neutral[0],
     //TODO: (design) define feature and it's correct value
     feature: colors.sky[500],

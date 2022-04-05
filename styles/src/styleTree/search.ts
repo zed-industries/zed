@@ -27,7 +27,7 @@ export default function search(theme: Theme) {
         placeholderText: text(theme, "mono", "placeholder"),
         selection: player(theme, 1).selection,
         text: text(theme, "mono", "primary"),
-        border: border(theme, "primary"),
+        border: border(theme, "secondary"),
         margin: {
             right: 5,
         },

@@ -1,5 +1,5 @@
 import { ColorToken, FontWeightToken, NumberToken } from "../tokens";
-import { Color, withOpacity } from "../utils/color";
+import { withOpacity } from "../utils/color";
 
 export interface SyntaxHighlightStyle {
     color: ColorToken;
@@ -21,12 +21,12 @@ export function buildPlayer(
     return {
         baseColor: color,
         cursorColor: withOpacity(color, cursorOpacity || 1.0),
-        selectionColor: withOpacity(color, selectionOpacity || 0.1),
+        selectionColor: withOpacity(color, selectionOpacity || 0.3),
         borderColor: withOpacity(color, borderOpacity || 0.8),
     }
 }
 
-export interface BackgroundColor {
+export interface BackgroundColorSet {
     base: ColorToken;
     hovered: ColorToken;
     active: ColorToken;
@@ -55,19 +55,18 @@ export interface Syntax {
     emphasisStrong: SyntaxHighlightStyle;
     linkUrl: SyntaxHighlightStyle;
     linkText: SyntaxHighlightStyle;
-    listMarker: SyntaxHighlightStyle;
 };
 
 export default interface Theme {
     name: string;
     backgroundColor: {
-        100: BackgroundColor;
-        300: BackgroundColor;
-        500: BackgroundColor;
-        ok: BackgroundColor;
-        error: BackgroundColor;
-        warning: BackgroundColor;
-        info: BackgroundColor;
+        100: BackgroundColorSet;
+        300: BackgroundColorSet;
+        500: BackgroundColorSet;
+        ok: BackgroundColorSet;
+        error: BackgroundColorSet;
+        warning: BackgroundColorSet;
+        info: BackgroundColorSet;
     };
     borderColor: {
         primary: ColorToken;
