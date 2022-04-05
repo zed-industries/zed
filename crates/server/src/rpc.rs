@@ -4561,6 +4561,29 @@ mod tests {
             })
             .await;
 
+        // When client A navigates back and forth, client B does so as well.
+        workspace_a
+            .update(cx_a, |workspace, cx| {
+                workspace::Pane::go_back(workspace, None, cx)
+            })
+            .await;
+        workspace_b
+            .condition(cx_b, |workspace, cx| {
+                workspace.active_item(cx).unwrap().id() == editor_b2.id()
+            })
+            .await;
+
+        workspace_a
+            .update(cx_a, |workspace, cx| {
+                workspace::Pane::go_forward(workspace, None, cx)
+            })
+            .await;
+        workspace_b
+            .condition(cx_b, |workspace, cx| {
+                workspace.active_item(cx).unwrap().id() == editor_b1.id()
+            })
+            .await;
+
         // Changes to client A's editor are reflected on client B.
         editor_a1.update(cx_a, |editor, cx| {
             editor.select_ranges([1..1, 2..2], None, cx);
