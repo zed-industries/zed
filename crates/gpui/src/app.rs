@@ -426,15 +426,17 @@ impl TestAppContext {
         cx
     }
 
-    pub fn dispatch_action<A: Action>(
-        &self,
-        window_id: usize,
-        responder_chain: Vec<usize>,
-        action: A,
-    ) {
-        self.cx
-            .borrow_mut()
-            .dispatch_action_any(window_id, &responder_chain, &action);
+    pub fn dispatch_action<A: Action>(&self, window_id: usize, action: A) {
+        let mut cx = self.cx.borrow_mut();
+        let responder_chain = cx
+            .presenters_and_platform_windows
+            .get(&window_id)
+            .unwrap()
+            .0
+            .borrow()
+            .dispatch_path(cx.as_ref());
+
+        cx.dispatch_action_any(window_id, &responder_chain, &action);
     }
 
     pub fn dispatch_global_action<A: Action>(&self, action: A) {

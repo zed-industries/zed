@@ -563,7 +563,7 @@ mod tests {
         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
+        cx.dispatch_action(window_id, OpenNew(app_state.clone()));
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -618,7 +618,7 @@ mod tests {
 
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
-        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
+        cx.dispatch_action(window_id, OpenNew(app_state.clone()));
         workspace
             .update(cx, |workspace, cx| {
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
@@ -655,7 +655,7 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
+        cx.dispatch_action(window_id, OpenNew(app_state.clone()));
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -732,11 +732,7 @@ mod tests {
             );
         });
 
-        cx.dispatch_action(
-            window_id,
-            vec![pane_1.id()],
-            pane::Split(SplitDirection::Right),
-        );
+        cx.dispatch_action(window_id, pane::Split(SplitDirection::Right));
         cx.update(|cx| {
             let pane_2 = workspace.read(cx).active_pane().clone();
             assert_ne!(pane_1, pane_2);
