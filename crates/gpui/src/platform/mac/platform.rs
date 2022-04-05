@@ -615,11 +615,19 @@ impl platform::Platform for MacPlatform {
                 if path.is_null() {
                     Err(anyhow!("resource could not be found"))
                 } else {
-                    let len = msg_send![path, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
-                    let bytes = path.UTF8String() as *const u8;
-                    let path = str::from_utf8(slice::from_raw_parts(bytes, len)).unwrap();
-                    Ok(PathBuf::from(path))
+                    Ok(path_from_objc(path))
                 }
+            }
+        }
+    }
+
+    fn app_path(&self) -> Result<PathBuf> {
+        unsafe {
+            let bundle: id = NSBundle::mainBundle();
+            if bundle.is_null() {
+                Err(anyhow!("app is not running inside a bundle"))
+            } else {
+                Ok(path_from_objc(msg_send![bundle, bundlePath]))
             }
         }
     }
@@ -639,6 +647,13 @@ impl platform::Platform for MacPlatform {
             }
         }
     }
+}
+
+unsafe fn path_from_objc(path: id) -> PathBuf {
+    let len = msg_send![path, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
+    let bytes = path.UTF8String() as *const u8;
+    let path = str::from_utf8(slice::from_raw_parts(bytes, len)).unwrap();
+    PathBuf::from(path)
 }
 
 unsafe fn get_foreground_platform(object: &mut Object) -> &MacForegroundPlatform {

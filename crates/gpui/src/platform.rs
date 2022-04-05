@@ -57,6 +57,7 @@ pub trait Platform: Send + Sync {
     fn local_timezone(&self) -> UtcOffset;
 
     fn path_for_resource(&self, name: Option<&str>, extension: Option<&str>) -> Result<PathBuf>;
+    fn app_path(&self) -> Result<PathBuf>;
     fn app_version(&self) -> Result<AppVersion>;
 }
 

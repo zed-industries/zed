@@ -166,7 +166,7 @@ impl AutoUpdater {
         mounted_app_path.push("/");
         let running_app_path = ZED_APP_PATH
             .clone()
-            .map_or_else(|| cx.platform().path_for_resource(None, None), Ok)?;
+            .map_or_else(|| cx.platform().app_path(), Ok)?;
 
         let mut dmg_file = File::create(&dmg_path).await?;
         let response = client

@@ -165,6 +165,10 @@ impl super::Platform for Platform {
         Err(anyhow!("app not running inside a bundle"))
     }
 
+    fn app_path(&self) -> Result<PathBuf> {
+        Err(anyhow!("app not running inside a bundle"))
+    }
+
     fn app_version(&self) -> Result<AppVersion> {
         Ok(AppVersion {
             major: 1,
