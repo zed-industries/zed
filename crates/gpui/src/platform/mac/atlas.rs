@@ -2,6 +2,7 @@ use crate::geometry::{
     rect::RectI,
     vector::{vec2i, Vector2I},
 };
+use anyhow::anyhow;
 use etagere::BucketedAtlasAllocator;
 use foreign_types::ForeignType;
 use metal::{Device, TextureDescriptor};
@@ -48,7 +49,12 @@ impl AtlasAllocator {
             .allocate(requested_size)
             .unwrap_or_else(|| {
                 let mut atlas = self.new_atlas(requested_size);
-                let (id, origin) = atlas.allocate(requested_size).unwrap();
+                let (id, origin) = atlas
+                    .allocate(requested_size)
+                    .ok_or_else(|| {
+                        anyhow!("could not allocate requested size {:?}", requested_size)
+                    })
+                    .unwrap();
                 self.atlases.push(atlas);
                 (id, origin)
             });
