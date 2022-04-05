@@ -30,6 +30,7 @@ pub enum AutoUpdateStatus {
     Idle,
     Checking,
     Downloading,
+    Installing,
     Updated,
     Errored,
 }
@@ -175,6 +176,11 @@ impl AutoUpdater {
         smol::io::copy(response.bytes(), &mut dmg_file).await?;
         log::info!("downloaded update. path:{:?}", dmg_path);
 
+        this.update(&mut cx, |this, cx| {
+            this.status = AutoUpdateStatus::Installing;
+            cx.notify();
+        });
+
         let output = Command::new("hdiutil")
             .args(&["attach", "-nobrowse"])
             .arg(&dmg_path)
@@ -215,7 +221,7 @@ impl AutoUpdater {
         }
 
         this.update(&mut cx, |this, cx| {
-            this.status = AutoUpdateStatus::Idle;
+            this.status = AutoUpdateStatus::Updated;
             cx.notify();
         });
         Ok(())
@@ -243,6 +249,11 @@ impl View for AutoUpdateIndicator {
                 AutoUpdateStatus::Downloading => Text::new(
                     "Downloading update…".to_string(),
                     theme.auto_update_progress_message.clone(),
+                )
+                .boxed(),
+                AutoUpdateStatus::Installing => Text::new(
+                    "Installing update…".to_string(),
+                    theme.auto_update_done_message.clone(),
                 )
                 .boxed(),
                 AutoUpdateStatus::Updated => Text::new(
