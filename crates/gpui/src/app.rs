@@ -428,7 +428,7 @@ impl TestAppContext {
 
     pub fn dispatch_action<A: Action>(&self, window_id: usize, action: A) {
         let mut cx = self.cx.borrow_mut();
-        let responder_chain = cx
+        let dispatch_path = cx
             .presenters_and_platform_windows
             .get(&window_id)
             .unwrap()
@@ -436,7 +436,7 @@ impl TestAppContext {
             .borrow()
             .dispatch_path(cx.as_ref());
 
-        cx.dispatch_action_any(window_id, &responder_chain, &action);
+        cx.dispatch_action_any(window_id, &dispatch_path, &action);
     }
 
     pub fn dispatch_global_action<A: Action>(&self, action: A) {
@@ -457,9 +457,9 @@ impl TestAppContext {
                 .unwrap()
                 .0
                 .clone();
-            let responder_chain = presenter.borrow().dispatch_path(cx.as_ref());
+            let dispatch_path = presenter.borrow().dispatch_path(cx.as_ref());
 
-            if !cx.dispatch_keystroke(window_id, responder_chain, &keystroke) {
+            if !cx.dispatch_keystroke(window_id, dispatch_path, &keystroke) {
                 presenter.borrow_mut().dispatch_event(
                     Event::KeyDown {
                         keystroke,
@@ -1316,10 +1316,10 @@ impl MutableAppContext {
     pub fn dispatch_action<A: Action>(
         &mut self,
         window_id: usize,
-        responder_chain: Vec<usize>,
+        dispatch_path: Vec<usize>,
         action: &A,
     ) {
-        self.dispatch_action_any(window_id, &responder_chain, action);
+        self.dispatch_action_any(window_id, &dispatch_path, action);
     }
 
     pub(crate) fn dispatch_action_any(
@@ -1405,11 +1405,11 @@ impl MutableAppContext {
     pub fn dispatch_keystroke(
         &mut self,
         window_id: usize,
-        responder_chain: Vec<usize>,
+        dispatch_path: Vec<usize>,
         keystroke: &Keystroke,
     ) -> bool {
         let mut context_chain = Vec::new();
-        for view_id in &responder_chain {
+        for view_id in &dispatch_path {
             let view = self
                 .cx
                 .views
@@ -1422,13 +1422,12 @@ impl MutableAppContext {
         for (i, cx) in context_chain.iter().enumerate().rev() {
             match self
                 .keystroke_matcher
-                .push_keystroke(keystroke.clone(), responder_chain[i], cx)
+                .push_keystroke(keystroke.clone(), dispatch_path[i], cx)
             {
                 MatchResult::None => {}
                 MatchResult::Pending => pending = true,
                 MatchResult::Action(action) => {
-                    if self.dispatch_action_any(window_id, &responder_chain[0..=i], action.as_ref())
-                    {
+                    if self.dispatch_action_any(window_id, &dispatch_path[0..=i], action.as_ref()) {
                         self.keystroke_matcher.clear_pending();
                         return true;
                     }
