@@ -744,7 +744,11 @@ mod tests {
             let pane2_item = pane_2.read(cx).active_item().unwrap();
             assert_eq!(pane2_item.project_path(cx.as_ref()), Some(file1.clone()));
 
-            cx.dispatch_action(window_id, vec![pane_2.id()], &workspace::CloseActiveItem);
+            cx.dispatch_action(
+                window_id,
+                vec![workspace.id(), pane_2.id()],
+                &workspace::CloseActiveItem,
+            );
         });
         cx.foreground().run_until_parked();
         workspace.read_with(cx, |workspace, _| {
