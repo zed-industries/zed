@@ -4970,7 +4970,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, cx);
+        let project = Project::test(fs.clone(), cx);
         project.update(cx, |project, _| {
             project.languages.add(Arc::new(rust_language));
             project.languages.add(Arc::new(json_language));
@@ -5122,6 +5122,80 @@ mod tests {
             )
         );
 
+        // Renames are reported only to servers matching the buffer's language.
+        fs.rename(
+            Path::new("/the-root/test2.rs"),
+            Path::new("/the-root/test3.rs"),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            fake_rust_server
+                .receive_notification::<lsp::notification::DidCloseTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentIdentifier::new(
+                lsp::Url::from_file_path("/the-root/test2.rs").unwrap()
+            ),
+        );
+        assert_eq!(
+            fake_rust_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentItem {
+                uri: lsp::Url::from_file_path("/the-root/test3.rs").unwrap(),
+                version: 0,
+                text: rust_buffer2.read_with(cx, |buffer, _| buffer.text()),
+                language_id: Default::default()
+            },
+        );
+
+        // When the rename changes the extension of the file, the buffer gets closed on the old
+        // language server and gets opened on the new one.
+        fs.rename(
+            Path::new("/the-root/test3.rs"),
+            Path::new("/the-root/test3.json"),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            fake_rust_server
+                .receive_notification::<lsp::notification::DidCloseTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentIdentifier::new(
+                lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+            ),
+        );
+        assert_eq!(
+            fake_json_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentItem {
+                uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+                version: 0,
+                text: rust_buffer2.read_with(cx, |buffer, _| buffer.text()),
+                language_id: Default::default()
+            },
+        );
+
+        // The renamed file's version resets after changing language server.
+        rust_buffer2.update(cx, |buffer, cx| buffer.edit([0..0], "// ", cx));
+        assert_eq!(
+            fake_json_server
+                .receive_notification::<lsp::notification::DidChangeTextDocument>()
+                .await
+                .text_document,
+            lsp::VersionedTextDocumentIdentifier::new(
+                lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+                1
+            )
+        );
+
         // Restart language servers
         project.update(cx, |project, cx| {
             project.restart_language_servers_for_buffers(
@@ -5139,46 +5213,46 @@ mod tests {
         let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
         let mut fake_json_server = fake_json_servers.next().await.unwrap();
 
-        // Ensure both rust documents are reopened in new rust language server without worrying about order
+        // Ensure rust document is reopened in new rust language server
+        assert_eq!(
+            fake_rust_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentItem {
+                uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+                version: 1,
+                text: rust_buffer.read_with(cx, |buffer, _| buffer.text()),
+                language_id: Default::default()
+            }
+        );
+
+        // Ensure json documents are reopened in new json language server
         assert_set_eq!(
             [
-                fake_rust_server
+                fake_json_server
                     .receive_notification::<lsp::notification::DidOpenTextDocument>()
                     .await
                     .text_document,
-                fake_rust_server
+                fake_json_server
                     .receive_notification::<lsp::notification::DidOpenTextDocument>()
                     .await
                     .text_document,
             ],
             [
                 lsp::TextDocumentItem {
-                    uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
-                    version: 1,
-                    text: rust_buffer.read_with(cx, |buffer, _| buffer.text()),
+                    uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+                    version: 0,
+                    text: json_buffer.read_with(cx, |buffer, _| buffer.text()),
                     language_id: Default::default()
                 },
                 lsp::TextDocumentItem {
-                    uri: lsp::Url::from_file_path("/the-root/test2.rs").unwrap(),
+                    uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
                     version: 1,
                     text: rust_buffer2.read_with(cx, |buffer, _| buffer.text()),
                     language_id: Default::default()
-                },
+                }
             ]
-        );
-
-        // Ensure json document is reopened in new json language server
-        assert_eq!(
-            fake_json_server
-                .receive_notification::<lsp::notification::DidOpenTextDocument>()
-                .await
-                .text_document,
-            lsp::TextDocumentItem {
-                uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
-                version: 0,
-                text: json_buffer.read_with(cx, |buffer, _| buffer.text()),
-                language_id: Default::default()
-            }
         );
 
         // Close notifications are reported only to servers matching the buffer's language.
