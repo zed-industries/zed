@@ -1019,7 +1019,14 @@ impl Project {
         cx: &mut ModelContext<Project>,
     ) -> Task<Result<()>> {
         let worktree_task = self.find_or_create_local_worktree(&abs_path, true, cx);
+        let old_path =
+            File::from_dyn(buffer.read(cx).file()).and_then(|f| Some(f.as_local()?.abs_path(cx)));
         cx.spawn(|this, mut cx| async move {
+            if let Some(old_path) = old_path {
+                this.update(&mut cx, |this, cx| {
+                    this.unregister_buffer_from_language_server(&buffer, old_path, cx);
+                });
+            }
             let (worktree, path) = worktree_task.await?;
             worktree
                 .update(&mut cx, |worktree, cx| {
@@ -1091,6 +1098,23 @@ impl Project {
 
         self.assign_language_to_buffer(buffer, cx);
         self.register_buffer_with_language_server(buffer, cx);
+        cx.observe_release(buffer, |this, buffer, cx| {
+            if let Some(file) = File::from_dyn(buffer.file()) {
+                if file.is_local() {
+                    let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+                    if let Some((_, server)) = this.language_server_for_buffer(buffer, cx) {
+                        server
+                            .notify::<lsp::notification::DidCloseTextDocument>(
+                                lsp::DidCloseTextDocumentParams {
+                                    text_document: lsp::TextDocumentIdentifier::new(uri.clone()),
+                                },
+                            )
+                            .log_err();
+                    }
+                }
+            }
+        })
+        .detach();
 
         Ok(())
     }
@@ -1143,28 +1167,31 @@ impl Project {
                     self.buffer_snapshots
                         .insert(buffer_id, vec![(0, initial_snapshot)]);
                 }
-
-                cx.observe_release(buffer_handle, |this, buffer, cx| {
-                    if let Some(file) = File::from_dyn(buffer.file()) {
-                        if file.is_local() {
-                            let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
-                            if let Some((_, server)) = this.language_server_for_buffer(buffer, cx) {
-                                server
-                                    .notify::<lsp::notification::DidCloseTextDocument>(
-                                        lsp::DidCloseTextDocumentParams {
-                                            text_document: lsp::TextDocumentIdentifier::new(
-                                                uri.clone(),
-                                            ),
-                                        },
-                                    )
-                                    .log_err();
-                            }
-                        }
-                    }
-                })
-                .detach();
             }
         }
+    }
+
+    fn unregister_buffer_from_language_server(
+        &mut self,
+        buffer: &ModelHandle<Buffer>,
+        old_path: PathBuf,
+        cx: &mut ModelContext<Self>,
+    ) {
+        buffer.update(cx, |buffer, cx| {
+            buffer.update_diagnostics(Default::default(), cx);
+            self.buffer_snapshots.remove(&buffer.remote_id());
+            if let Some((_, language_server)) = self.language_server_for_buffer(buffer, cx) {
+                language_server
+                    .notify::<lsp::notification::DidCloseTextDocument>(
+                        lsp::DidCloseTextDocumentParams {
+                            text_document: lsp::TextDocumentIdentifier::new(
+                                lsp::Url::from_file_path(old_path).unwrap(),
+                            ),
+                        },
+                    )
+                    .log_err();
+            }
+        });
     }
 
     fn on_buffer_event(
@@ -3387,6 +3414,7 @@ impl Project {
     ) {
         let snapshot = worktree_handle.read(cx).snapshot();
         let mut buffers_to_delete = Vec::new();
+        let mut renamed_buffers = Vec::new();
         for (buffer_id, buffer) in &self.opened_buffers {
             if let Some(buffer) = buffer.upgrade(cx) {
                 buffer.update(cx, |buffer, cx| {
@@ -3426,6 +3454,11 @@ impl Project {
                             }
                         };
 
+                        let old_path = old_file.abs_path(cx);
+                        if new_file.abs_path(cx) != old_path {
+                            renamed_buffers.push((cx.handle(), old_path));
+                        }
+
                         if let Some(project_id) = self.remote_id() {
                             self.client
                                 .send(proto::UpdateBufferFile {
@@ -3445,6 +3478,12 @@ impl Project {
 
         for buffer_id in buffers_to_delete {
             self.opened_buffers.remove(&buffer_id);
+        }
+
+        for (buffer, old_path) in renamed_buffers {
+            self.unregister_buffer_from_language_server(&buffer, old_path, cx);
+            self.assign_language_to_buffer(&buffer, cx);
+            self.register_buffer_with_language_server(&buffer, cx);
         }
     }
 
@@ -4970,7 +5009,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, cx);
+        let project = Project::test(fs.clone(), cx);
         project.update(cx, |project, _| {
             project.languages.add(Arc::new(rust_language));
             project.languages.add(Arc::new(json_language));
@@ -5122,6 +5161,110 @@ mod tests {
             )
         );
 
+        // Renames are reported only to servers matching the buffer's language.
+        fs.rename(
+            Path::new("/the-root/test2.rs"),
+            Path::new("/the-root/test3.rs"),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            fake_rust_server
+                .receive_notification::<lsp::notification::DidCloseTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentIdentifier::new(
+                lsp::Url::from_file_path("/the-root/test2.rs").unwrap()
+            ),
+        );
+        assert_eq!(
+            fake_rust_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentItem {
+                uri: lsp::Url::from_file_path("/the-root/test3.rs").unwrap(),
+                version: 0,
+                text: rust_buffer2.read_with(cx, |buffer, _| buffer.text()),
+                language_id: Default::default()
+            },
+        );
+
+        rust_buffer2.update(cx, |buffer, cx| {
+            buffer.update_diagnostics(
+                DiagnosticSet::from_sorted_entries(
+                    vec![DiagnosticEntry {
+                        diagnostic: Default::default(),
+                        range: Anchor::MIN..Anchor::MAX,
+                    }],
+                    &buffer.snapshot(),
+                ),
+                cx,
+            );
+            assert_eq!(
+                buffer
+                    .snapshot()
+                    .diagnostics_in_range::<_, usize>(0..buffer.len(), false)
+                    .count(),
+                1
+            );
+        });
+
+        // When the rename changes the extension of the file, the buffer gets closed on the old
+        // language server and gets opened on the new one.
+        fs.rename(
+            Path::new("/the-root/test3.rs"),
+            Path::new("/the-root/test3.json"),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            fake_rust_server
+                .receive_notification::<lsp::notification::DidCloseTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentIdentifier::new(
+                lsp::Url::from_file_path("/the-root/test3.rs").unwrap(),
+            ),
+        );
+        assert_eq!(
+            fake_json_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentItem {
+                uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+                version: 0,
+                text: rust_buffer2.read_with(cx, |buffer, _| buffer.text()),
+                language_id: Default::default()
+            },
+        );
+        // We clear the diagnostics, since the language has changed.
+        rust_buffer2.read_with(cx, |buffer, _| {
+            assert_eq!(
+                buffer
+                    .snapshot()
+                    .diagnostics_in_range::<_, usize>(0..buffer.len(), false)
+                    .count(),
+                0
+            );
+        });
+
+        // The renamed file's version resets after changing language server.
+        rust_buffer2.update(cx, |buffer, cx| buffer.edit([0..0], "// ", cx));
+        assert_eq!(
+            fake_json_server
+                .receive_notification::<lsp::notification::DidChangeTextDocument>()
+                .await
+                .text_document,
+            lsp::VersionedTextDocumentIdentifier::new(
+                lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+                1
+            )
+        );
+
         // Restart language servers
         project.update(cx, |project, cx| {
             project.restart_language_servers_for_buffers(
@@ -5139,46 +5282,46 @@ mod tests {
         let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
         let mut fake_json_server = fake_json_servers.next().await.unwrap();
 
-        // Ensure both rust documents are reopened in new rust language server without worrying about order
+        // Ensure rust document is reopened in new rust language server
+        assert_eq!(
+            fake_rust_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentItem {
+                uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+                version: 1,
+                text: rust_buffer.read_with(cx, |buffer, _| buffer.text()),
+                language_id: Default::default()
+            }
+        );
+
+        // Ensure json documents are reopened in new json language server
         assert_set_eq!(
             [
-                fake_rust_server
+                fake_json_server
                     .receive_notification::<lsp::notification::DidOpenTextDocument>()
                     .await
                     .text_document,
-                fake_rust_server
+                fake_json_server
                     .receive_notification::<lsp::notification::DidOpenTextDocument>()
                     .await
                     .text_document,
             ],
             [
                 lsp::TextDocumentItem {
-                    uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
-                    version: 1,
-                    text: rust_buffer.read_with(cx, |buffer, _| buffer.text()),
+                    uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+                    version: 0,
+                    text: json_buffer.read_with(cx, |buffer, _| buffer.text()),
                     language_id: Default::default()
                 },
                 lsp::TextDocumentItem {
-                    uri: lsp::Url::from_file_path("/the-root/test2.rs").unwrap(),
+                    uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
                     version: 1,
                     text: rust_buffer2.read_with(cx, |buffer, _| buffer.text()),
                     language_id: Default::default()
-                },
+                }
             ]
-        );
-
-        // Ensure json document is reopened in new json language server
-        assert_eq!(
-            fake_json_server
-                .receive_notification::<lsp::notification::DidOpenTextDocument>()
-                .await
-                .text_document,
-            lsp::TextDocumentItem {
-                uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
-                version: 0,
-                text: json_buffer.read_with(cx, |buffer, _| buffer.text()),
-                language_id: Default::default()
-            }
         );
 
         // Close notifications are reported only to servers matching the buffer's language.

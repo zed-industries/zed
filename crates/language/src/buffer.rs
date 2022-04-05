@@ -486,6 +486,7 @@ impl Buffer {
     }
 
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
+        *self.syntax_tree.lock() = None;
         self.language = language;
         self.reparse(cx);
     }

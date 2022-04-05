@@ -276,12 +276,32 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
             "arguments: (arguments (identifier)))))))",
         )
     );
+}
 
-    fn get_tree_sexp(buffer: &ModelHandle<Buffer>, cx: &gpui::TestAppContext) -> String {
-        buffer.read_with(cx, |buffer, _| {
-            buffer.syntax_tree().unwrap().root_node().to_sexp()
-        })
-    }
+#[gpui::test]
+async fn test_resetting_language(cx: &mut gpui::TestAppContext) {
+    let buffer = cx.add_model(|cx| {
+        let mut buffer = Buffer::new(0, "{}", cx).with_language(Arc::new(rust_lang()), cx);
+        buffer.set_sync_parse_timeout(Duration::ZERO);
+        buffer
+    });
+
+    // Wait for the initial text to parse
+    buffer
+        .condition(&cx, |buffer, _| !buffer.is_parsing())
+        .await;
+    assert_eq!(
+        get_tree_sexp(&buffer, &cx),
+        "(source_file (expression_statement (block)))"
+    );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_language(Some(Arc::new(json_lang())), cx)
+    });
+    buffer
+        .condition(&cx, |buffer, _| !buffer.is_parsing())
+        .await;
+    assert_eq!(get_tree_sexp(&buffer, &cx), "(document (object))");
 }
 
 #[gpui::test]
@@ -976,6 +996,23 @@ fn rust_lang() -> Language {
         "#,
     )
     .unwrap()
+}
+
+fn json_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "Json".into(),
+            path_suffixes: vec!["js".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_json::language()),
+    )
+}
+
+fn get_tree_sexp(buffer: &ModelHandle<Buffer>, cx: &gpui::TestAppContext) -> String {
+    buffer.read_with(cx, |buffer, _| {
+        buffer.syntax_tree().unwrap().root_node().to_sexp()
+    })
 }
 
 fn empty(point: Point) -> Range<Point> {

@@ -57,5 +57,6 @@ util = { path = "../util", features = ["test-support"] }
 ctor = "0.1"
 env_logger = "0.8"
 rand = "0.8.3"
+tree-sitter-json = "0.19.0"
 tree-sitter-rust = "0.20.0"
 unindent = "0.1.7"
