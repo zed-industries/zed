@@ -1633,93 +1633,84 @@ impl Project {
                 return;
             }
         };
-
-        match progress.value {
-            lsp::ProgressParamsValue::WorkDone(progress) => match progress {
-                lsp::WorkDoneProgress::Begin(_) => {
-                    let language_server_status =
-                        if let Some(status) = self.language_server_statuses.get_mut(&server_id) {
-                            status
-                        } else {
-                            return;
-                        };
-
-                    if Some(token.as_str()) == disk_based_diagnostics_progress_token {
-                        language_server_status.pending_diagnostic_updates += 1;
-                        if language_server_status.pending_diagnostic_updates == 1 {
-                            self.disk_based_diagnostics_started(cx);
-                            self.broadcast_language_server_update(
-                                                            server_id,
-                                                            proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(
-                                                                proto::LspDiskBasedDiagnosticsUpdating {},
-                                                            ),
-                                                        );
-                        }
-                    } else {
-                        self.on_lsp_work_start(server_id, token.clone(), cx);
+        let progress = match progress.value {
+            lsp::ProgressParamsValue::WorkDone(value) => value,
+        };
+        let language_server_status =
+            if let Some(status) = self.language_server_statuses.get_mut(&server_id) {
+                status
+            } else {
+                return;
+            };
+        match progress {
+            lsp::WorkDoneProgress::Begin(_) => {
+                if Some(token.as_str()) == disk_based_diagnostics_progress_token {
+                    language_server_status.pending_diagnostic_updates += 1;
+                    if language_server_status.pending_diagnostic_updates == 1 {
+                        self.disk_based_diagnostics_started(cx);
                         self.broadcast_language_server_update(
                             server_id,
-                            proto::update_language_server::Variant::WorkStart(
-                                proto::LspWorkStart { token },
+                            proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(
+                                proto::LspDiskBasedDiagnosticsUpdating {},
                             ),
                         );
                     }
+                } else {
+                    self.on_lsp_work_start(server_id, token.clone(), cx);
+                    self.broadcast_language_server_update(
+                        server_id,
+                        proto::update_language_server::Variant::WorkStart(proto::LspWorkStart {
+                            token,
+                        }),
+                    );
                 }
-                lsp::WorkDoneProgress::Report(report) => {
-                    if Some(token.as_str()) != disk_based_diagnostics_progress_token {
-                        self.on_lsp_work_progress(
-                            server_id,
-                            token.clone(),
-                            LanguageServerProgress {
-                                message: report.message.clone(),
-                                percentage: report.percentage.map(|p| p as usize),
-                                last_update_at: Instant::now(),
-                            },
-                            cx,
-                        );
-                        self.broadcast_language_server_update(
-                            server_id,
-                            proto::update_language_server::Variant::WorkProgress(
-                                proto::LspWorkProgress {
-                                    token,
-                                    message: report.message,
-                                    percentage: report.percentage.map(|p| p as u32),
-                                },
-                            ),
-                        );
-                    }
-                }
-                lsp::WorkDoneProgress::End(_) => {
-                    if Some(token.as_str()) == disk_based_diagnostics_progress_token {
-                        let language_server_status = if let Some(status) =
-                            self.language_server_statuses.get_mut(&server_id)
-                        {
-                            status
-                        } else {
-                            return;
-                        };
-
-                        language_server_status.pending_diagnostic_updates -= 1;
-                        if language_server_status.pending_diagnostic_updates == 0 {
-                            self.disk_based_diagnostics_finished(cx);
-                            self.broadcast_language_server_update(
-                                server_id,
-                                proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
-                                    proto::LspDiskBasedDiagnosticsUpdated {},
-                                ),
-                            );
-                        }
-                    } else {
-                        self.on_lsp_work_end(server_id, token.clone(), cx);
-                        self.broadcast_language_server_update(
-                            server_id,
-                            proto::update_language_server::Variant::WorkEnd(proto::LspWorkEnd {
+            }
+            lsp::WorkDoneProgress::Report(report) => {
+                if Some(token.as_str()) != disk_based_diagnostics_progress_token {
+                    self.on_lsp_work_progress(
+                        server_id,
+                        token.clone(),
+                        LanguageServerProgress {
+                            message: report.message.clone(),
+                            percentage: report.percentage.map(|p| p as usize),
+                            last_update_at: Instant::now(),
+                        },
+                        cx,
+                    );
+                    self.broadcast_language_server_update(
+                        server_id,
+                        proto::update_language_server::Variant::WorkProgress(
+                            proto::LspWorkProgress {
                                 token,
-                            }),
+                                message: report.message,
+                                percentage: report.percentage.map(|p| p as u32),
+                            },
+                        ),
+                    );
+                }
+            }
+            lsp::WorkDoneProgress::End(_) => {
+                if Some(token.as_str()) == disk_based_diagnostics_progress_token {
+                    language_server_status.pending_diagnostic_updates -= 1;
+                    if language_server_status.pending_diagnostic_updates == 0 {
+                        self.disk_based_diagnostics_finished(cx);
+                        self.broadcast_language_server_update(
+                            server_id,
+                            proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
+                                proto::LspDiskBasedDiagnosticsUpdated {},
+                            ),
                         );
                     }
+                } else {
+                    self.on_lsp_work_end(server_id, token.clone(), cx);
+                    self.broadcast_language_server_update(
+                        server_id,
+                        proto::update_language_server::Variant::WorkEnd(proto::LspWorkEnd {
+                            token,
+                        }),
+                    );
                 }
-            },
+            }
         }
     }
 
