@@ -83,28 +83,28 @@ const coreTokens = {
     size: fontSizes,
 };
 
-const combinedTokens: any = {
-    core: coreTokens,
-}
+const combinedTokens: any = {};
 
-// Create core.json
-const corePath = path.resolve(`${__dirname}/../dist/figma/core.json`);
-const coreJSON = JSON.stringify(coreTokens, null, 2);
-fs.writeFileSync(corePath, coreJSON);
-console.log(`- Core: core.json created`);
+const distPath = path.resolve(`${__dirname}/../dist`);
 
-// Create {theme}.json
+// Add core tokens to the combined tokens and write `core.json`.
+// We write `core.json` as a separate file for the design team's convenience, but it isn't consumed by Figma Tokens directly.
+const corePath = path.join(distPath, "core.json");
+fs.writeFileSync(corePath, JSON.stringify(coreTokens, null, 2));
+console.log(`- ${corePath} created`);
+combinedTokens.core = coreTokens;
+
+// Add each theme to the combined tokens and write ${theme}.json.
+// We write `${theme}.json` as a separate file for the design team's convenience, but it isn't consumed by Figma Tokens directly.
 let themes = [dark, light];
-const themePath = path.resolve(`${__dirname}/figma`);
 themes.forEach((theme) => {
-    const tokenJSON = JSON.stringify(themeTokens(theme), null, 2);
-    fs.writeFileSync(`${themePath}/${theme.name}.json`, tokenJSON);
-    console.log(`- Theme: ${theme.name}.json created`);
+    const themePath = `${distPath}/${theme.name}.json`
+    fs.writeFileSync(themePath, JSON.stringify(themeTokens(theme), null, 2));
+    console.log(`- ${themePath} created`);
     combinedTokens[theme.name] = themeTokens(theme);
 });
 
-// Create combined tokens.json
-const combinedPath = path.resolve(`${__dirname}/figma/tokens.json`);
-const combinedJSON = JSON.stringify(combinedTokens, null, 2);
-fs.writeFileSync(combinedPath, combinedJSON);
-console.log(`- Combined: tokens.json created`);
+// Write combined tokens to `tokens.json`. This file is consumed by the Figma Tokens plugin to keep our designs consistent with the app.
+const combinedPath = path.resolve(`${distPath}/tokens.json`);
+fs.writeFileSync(combinedPath, JSON.stringify(combinedTokens, null, 2));
+console.log(`- ${combinedPath} created`);

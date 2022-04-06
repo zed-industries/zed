@@ -4,8 +4,9 @@
     "description": "",
     "main": "index.js",
     "scripts": {
+        "build": "npm run build-themes && npm run build-tokens",
         "build-themes": "ts-node ./src/buildThemes.ts",
-        "build-figma": "ts-node ./src/buildFigmaTokens.ts",
+        "build-tokens": "ts-node ./src/buildTokens.ts",
         "watch": "nodemon"
     },
     "author": "",

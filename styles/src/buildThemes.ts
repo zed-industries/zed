@@ -13,5 +13,5 @@ for (let theme of themes) {
         `${__dirname}/../../crates/zed/assets/themes/${theme.name}.json`
     );
     fs.writeFileSync(outPath, styleTreeJSON);
-    console.log(`Generated ${outPath}`);
+    console.log(`- ${outPath} created`);
 }
