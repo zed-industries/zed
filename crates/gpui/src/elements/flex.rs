@@ -13,6 +13,7 @@ use serde_json::json;
 
 #[derive(Default)]
 struct ScrollState {
+    scroll_to: Option<usize>,
     scroll_position: f32,
 }
 
@@ -39,12 +40,19 @@ impl Flex {
         Self::new(Axis::Vertical)
     }
 
-    pub fn scrollable<Tag, C>(mut self, element_id: usize, cx: &mut C) -> Self
+    pub fn scrollable<Tag, C>(
+        mut self,
+        element_id: usize,
+        scroll_to: Option<usize>,
+        cx: &mut C,
+    ) -> Self
     where
         Tag: 'static,
         C: ElementStateContext,
     {
-        self.scroll_state = Some(cx.element_state::<Tag, ScrollState>(element_id));
+        let scroll_state = cx.element_state::<Tag, ScrollState>(element_id);
+        scroll_state.update(cx, |scroll_state, _| scroll_state.scroll_to = scroll_to);
+        self.scroll_state = Some(scroll_state);
         self
     }
 
@@ -185,6 +193,23 @@ impl Element for Flex {
 
         if let Some(scroll_state) = self.scroll_state.as_ref() {
             scroll_state.update(cx, |scroll_state, _| {
+                if let Some(scroll_to) = scroll_state.scroll_to.take() {
+                    let visible_start = scroll_state.scroll_position;
+                    let visible_end = visible_start + size.along(self.axis);
+                    if let Some(child) = self.children.get(scroll_to) {
+                        let child_start: f32 = self.children[..scroll_to]
+                            .iter()
+                            .map(|c| c.size().along(self.axis))
+                            .sum();
+                        let child_end = child_start + child.size().along(self.axis);
+                        if child_start < visible_start {
+                            scroll_state.scroll_position = child_start;
+                        } else if child_end > visible_end {
+                            scroll_state.scroll_position = child_end - size.along(self.axis);
+                        }
+                    }
+                }
+
                 scroll_state.scroll_position =
                     scroll_state.scroll_position.min(-remaining_space).max(0.);
             });

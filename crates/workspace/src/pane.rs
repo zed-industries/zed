@@ -100,6 +100,7 @@ pub enum Event {
 pub struct Pane {
     items: Vec<Box<dyn ItemHandle>>,
     active_item_index: usize,
+    autoscroll: bool,
     nav_history: Rc<RefCell<NavHistory>>,
     toolbar: ViewHandle<Toolbar>,
 }
@@ -141,6 +142,7 @@ impl Pane {
         Self {
             items: Vec::new(),
             active_item_index: 0,
+            autoscroll: false,
             nav_history: Default::default(),
             toolbar: cx.add_view(|_| Toolbar::new()),
         }
@@ -388,6 +390,7 @@ impl Pane {
                 self.focus_active_item(cx);
                 self.activate(cx);
             }
+            self.autoscroll = true;
             cx.notify();
         }
     }
@@ -627,13 +630,18 @@ impl Pane {
         });
     }
 
-    fn render_tabs(&self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render_tabs(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = cx.global::<Settings>().theme.clone();
 
         enum Tabs {}
         let pane = cx.handle();
         let tabs = MouseEventHandler::new::<Tabs, _, _>(0, cx, |mouse_state, cx| {
-            let mut row = Flex::row().scrollable::<Tabs, _>(1, cx);
+            let autoscroll = if mem::take(&mut self.autoscroll) {
+                Some(self.active_item_index)
+            } else {
+                None
+            };
+            let mut row = Flex::row().scrollable::<Tabs, _>(1, autoscroll, cx);
             for (ix, item) in self.items.iter().enumerate() {
                 let is_active = ix == self.active_item_index;
 
