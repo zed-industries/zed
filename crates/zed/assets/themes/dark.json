@@ -219,6 +219,12 @@
         "left": 6,
         "right": 6
       },
+      "border": {
+        "color": "#070707",
+        "width": 1,
+        "top": true,
+        "overlay": true
+      },
       "cursor_position": {
         "family": "Zed Sans",
         "color": "#808080",
@@ -265,7 +271,7 @@
       "sign_in_prompt": {
         "family": "Zed Sans",
         "color": "#9c9c9c",
-        "size": 13,
+        "size": 12,
         "underline": true,
         "padding": {
           "right": 8
@@ -274,7 +280,7 @@
       "hovered_sign_in_prompt": {
         "family": "Zed Sans",
         "color": "#ffffff",
-        "size": 13,
+        "size": 12,
         "underline": true,
         "padding": {
           "right": 8

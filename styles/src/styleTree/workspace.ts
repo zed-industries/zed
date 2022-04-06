@@ -1,5 +1,5 @@
 import Theme from "../themes/theme";
-import { backgroundColor, border, iconColor, text } from "./components";
+import { backgroundColor, border, borderColor, iconColor, text } from "./components";
 
 export default function workspace(theme: Theme) {
     const signInPrompt = {
@@ -88,6 +88,7 @@ export default function workspace(theme: Theme) {
                 left: 6,
                 right: 6,
             },
+            border: border(theme, "primary", { top: true, overlay: true }),
             cursorPosition: text(theme, "sans", "muted"),
             diagnosticMessage: text(theme, "sans", "muted"),
             lspMessage: text(theme, "sans", "muted"),
