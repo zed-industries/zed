@@ -3,8 +3,7 @@ import { backgroundColor, border, iconColor, text } from "./components";
 
 export default function workspace(theme: Theme) {
     const signInPrompt = {
-        ...text(theme, "sans", "secondary"),
-        size: 13,
+        ...text(theme, "sans", "secondary", { size: "xs" }),
         underline: true,
         padding: {
             right: 8,
@@ -117,8 +116,7 @@ export default function workspace(theme: Theme) {
             signInPrompt,
             hoveredSignInPrompt: {
                 ...signInPrompt,
-                ...text(theme, "sans", "active"),
-                size: 13,
+                ...text(theme, "sans", "active", { size: "xs" }),
             },
             offlineIcon: {
                 color: iconColor(theme, "secondary"),
