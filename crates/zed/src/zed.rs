@@ -578,7 +578,7 @@ mod tests {
             assert!(!editor.is_dirty(cx));
             assert_eq!(editor.title(cx), "untitled");
             assert!(Arc::ptr_eq(
-                editor.language(cx).unwrap(),
+                editor.language_at(0, cx).unwrap(),
                 &languages::PLAIN_TEXT
             ));
             editor.handle_input(&editor::Input("hi".into()), cx);
@@ -602,7 +602,7 @@ mod tests {
         editor.read_with(cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
             assert_eq!(editor.title(cx), "the-new-name.rs");
-            assert_eq!(editor.language(cx).unwrap().name().as_ref(), "Rust");
+            assert_eq!(editor.language_at(0, cx).unwrap().name().as_ref(), "Rust");
         });
 
         // Edit the file and save it again. This time, there is no filename prompt.
@@ -668,7 +668,7 @@ mod tests {
 
         editor.update(cx, |editor, cx| {
             assert!(Arc::ptr_eq(
-                editor.language(cx).unwrap(),
+                editor.language_at(0, cx).unwrap(),
                 &languages::PLAIN_TEXT
             ));
             editor.handle_input(&editor::Input("hi".into()), cx);
@@ -682,7 +682,7 @@ mod tests {
         // The buffer is not dirty anymore and the language is assigned based on the path.
         editor.read_with(cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
-            assert_eq!(editor.language(cx).unwrap().name().as_ref(), "Rust")
+            assert_eq!(editor.language_at(0, cx).unwrap().name().as_ref(), "Rust")
         });
     }
 

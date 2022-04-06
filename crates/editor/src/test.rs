@@ -1,8 +1,9 @@
-use util::test::marked_text;
+use gpui::ViewContext;
+use util::test::{marked_text, marked_text_ranges};
 
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
-    DisplayPoint, MultiBuffer,
+    DisplayPoint, Editor, MultiBuffer,
 };
 
 #[cfg(test)]
@@ -37,4 +38,21 @@ pub fn marked_display_snapshot(
         .collect();
 
     (snapshot, markers)
+}
+
+pub fn select_ranges(editor: &mut Editor, marked_text: &str, cx: &mut ViewContext<Editor>) {
+    let (umarked_text, text_ranges) = marked_text_ranges(marked_text);
+    assert_eq!(editor.text(cx), umarked_text);
+    editor.select_ranges(text_ranges, None, cx);
+}
+
+pub fn assert_text_with_selections(
+    editor: &mut Editor,
+    marked_text: &str,
+    cx: &mut ViewContext<Editor>,
+) {
+    let (unmarked_text, text_ranges) = marked_text_ranges(marked_text);
+
+    assert_eq!(editor.text(cx), unmarked_text);
+    assert_eq!(editor.selected_ranges(cx), text_ranges);
 }

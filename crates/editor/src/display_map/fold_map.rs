@@ -1210,6 +1210,7 @@ mod tests {
     use super::*;
     use crate::{MultiBuffer, ToPoint};
     use rand::prelude::*;
+    use settings::Settings;
     use std::{cmp::Reverse, env, mem, sync::Arc};
     use sum_tree::TreeMap;
     use text::RandomCharIter;
@@ -1218,6 +1219,7 @@ mod tests {
 
     #[gpui::test]
     fn test_basic_folds(cx: &mut gpui::MutableAppContext) {
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
@@ -1291,6 +1293,7 @@ mod tests {
 
     #[gpui::test]
     fn test_adjacent_folds(cx: &mut gpui::MutableAppContext) {
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("abcdefghijkl", cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
@@ -1354,6 +1357,7 @@ mod tests {
 
     #[gpui::test]
     fn test_merging_folds_via_edit(cx: &mut gpui::MutableAppContext) {
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
@@ -1404,6 +1408,7 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_random_folds(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
+        cx.set_global(Settings::test(cx));
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);

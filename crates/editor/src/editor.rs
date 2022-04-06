@@ -64,7 +64,6 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
-const INDENT_SIZE: u32 = 4;
 
 action!(Cancel);
 action!(Backspace);
@@ -1131,8 +1130,12 @@ impl Editor {
         }
     }
 
-    pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
-        self.buffer.read(cx).language(cx)
+    pub fn language_at<'a, T: ToOffset>(
+        &self,
+        point: T,
+        cx: &'a AppContext,
+    ) -> Option<&'a Arc<Language>> {
+        self.buffer.read(cx).language_at(point, cx)
     }
 
     fn style(&self, cx: &AppContext) -> EditorStyle {
@@ -2946,8 +2949,9 @@ impl Editor {
                     .buffer_line_for_row(old_head.row)
                 {
                     let indent_column = buffer.indent_column_for_line(line_buffer_range.start.row);
+                    let language_name = buffer.language().map(|language| language.name());
+                    let indent = cx.global::<Settings>().tab_size(language_name.as_deref());
                     if old_head.column <= indent_column && old_head.column > 0 {
-                        let indent = INDENT_SIZE;
                         new_head = cmp::min(
                             new_head,
                             Point::new(old_head.row, ((old_head.column - 1) / indent) * indent),
@@ -2992,12 +2996,15 @@ impl Editor {
                     return;
                 }
 
-                let tab_size = cx.global::<Settings>().tab_size;
                 let mut selections = self.local_selections::<Point>(cx);
                 if selections.iter().all(|s| s.is_empty()) {
                     self.transact(cx, |this, cx| {
                         this.buffer.update(cx, |buffer, cx| {
                             for selection in &mut selections {
+                                let language_name =
+                                    buffer.language_at(selection.start, cx).map(|l| l.name());
+                                let tab_size =
+                                    cx.global::<Settings>().tab_size(language_name.as_deref());
                                 let char_column = buffer
                                     .read(cx)
                                     .text_for_range(
@@ -3026,12 +3033,14 @@ impl Editor {
     }
 
     pub fn indent(&mut self, _: &Indent, cx: &mut ViewContext<Self>) {
-        let tab_size = cx.global::<Settings>().tab_size;
         let mut selections = self.local_selections::<Point>(cx);
         self.transact(cx, |this, cx| {
             let mut last_indent = None;
             this.buffer.update(cx, |buffer, cx| {
+                let snapshot = buffer.snapshot(cx);
                 for selection in &mut selections {
+                    let language_name = buffer.language_at(selection.start, cx).map(|l| l.name());
+                    let tab_size = cx.global::<Settings>().tab_size(language_name.as_deref());
                     let mut start_row = selection.start.row;
                     let mut end_row = selection.end.row + 1;
 
@@ -3055,7 +3064,7 @@ impl Editor {
                     }
 
                     for row in start_row..end_row {
-                        let indent_column = buffer.read(cx).indent_column_for_line(row);
+                        let indent_column = snapshot.indent_column_for_line(row);
                         let columns_to_next_tab_stop = tab_size - (indent_column % tab_size);
                         let row_start = Point::new(row, 0);
                         buffer.edit(
@@ -3082,14 +3091,16 @@ impl Editor {
     }
 
     pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
-        let tab_size = cx.global::<Settings>().tab_size;
         let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut deletion_ranges = Vec::new();
         let mut last_outdent = None;
         {
-            let buffer = self.buffer.read(cx).read(cx);
+            let buffer = self.buffer.read(cx);
+            let snapshot = buffer.snapshot(cx);
             for selection in &selections {
+                let language_name = buffer.language_at(selection.start, cx).map(|l| l.name());
+                let tab_size = cx.global::<Settings>().tab_size(language_name.as_deref());
                 let mut rows = selection.spanned_rows(false, &display_map);
 
                 // Avoid re-outdenting a row that has already been outdented by a
@@ -3101,7 +3112,7 @@ impl Editor {
                 }
 
                 for row in rows {
-                    let column = buffer.indent_column_for_line(row);
+                    let column = snapshot.indent_column_for_line(row);
                     if column > 0 {
                         let mut deletion_len = column % tab_size;
                         if deletion_len == 0 {
@@ -4245,24 +4256,26 @@ impl Editor {
     }
 
     pub fn toggle_comments(&mut self, _: &ToggleComments, cx: &mut ViewContext<Self>) {
-        // Get the line comment prefix. Split its trailing whitespace into a separate string,
-        // as that portion won't be used for detecting if a line is a comment.
-        let full_comment_prefix =
-            if let Some(prefix) = self.language(cx).and_then(|l| l.line_comment_prefix()) {
-                prefix.to_string()
-            } else {
-                return;
-            };
-        let comment_prefix = full_comment_prefix.trim_end_matches(' ');
-        let comment_prefix_whitespace = &full_comment_prefix[comment_prefix.len()..];
-
         self.transact(cx, |this, cx| {
             let mut selections = this.local_selections::<Point>(cx);
             let mut all_selection_lines_are_comments = true;
             let mut edit_ranges = Vec::new();
             let mut last_toggled_row = None;
             this.buffer.update(cx, |buffer, cx| {
+                // TODO: Handle selections that cross excerpts
                 for selection in &mut selections {
+                    // Get the line comment prefix. Split its trailing whitespace into a separate string,
+                    // as that portion won't be used for detecting if a line is a comment.
+                    let full_comment_prefix = if let Some(prefix) = buffer
+                        .language_at(selection.start, cx)
+                        .and_then(|l| l.line_comment_prefix())
+                    {
+                        prefix.to_string()
+                    } else {
+                        return;
+                    };
+                    let comment_prefix = full_comment_prefix.trim_end_matches(' ');
+                    let comment_prefix_whitespace = &full_comment_prefix[comment_prefix.len()..];
                     edit_ranges.clear();
                     let snapshot = buffer.snapshot(cx);
 
@@ -5670,16 +5683,22 @@ impl Editor {
     }
 
     pub fn soft_wrap_mode(&self, cx: &AppContext) -> SoftWrap {
-        let language = self.language(cx).map(|language| language.name());
+        let language_name = self
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|singleton_buffer| singleton_buffer.read(cx).language())
+            .map(|l| l.name());
+
         let settings = cx.global::<Settings>();
         let mode = self
             .soft_wrap_mode_override
-            .unwrap_or_else(|| settings.soft_wrap(language.as_deref()));
+            .unwrap_or_else(|| settings.soft_wrap(language_name.as_deref()));
         match mode {
             settings::SoftWrap::None => SoftWrap::None,
             settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
             settings::SoftWrap::PreferredLineLength => {
-                SoftWrap::Column(settings.preferred_line_length(language.as_deref()))
+                SoftWrap::Column(settings.preferred_line_length(language_name.as_deref()))
             }
         }
     }
@@ -6463,14 +6482,18 @@ pub fn styled_runs_for_code_label<'a>(
 
 #[cfg(test)]
 mod tests {
+    use crate::test::{assert_text_with_selections, select_ranges};
+
     use super::*;
     use gpui::{
         geometry::rect::RectF,
         platform::{WindowBounds, WindowOptions},
     };
+    use indoc::indoc;
     use language::{FakeLspAdapter, LanguageConfig};
     use lsp::FakeLanguageServer;
     use project::FakeFs;
+    use settings::LanguageOverride;
     use smol::stream::StreamExt;
     use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
@@ -6480,7 +6503,7 @@ mod tests {
 
     #[gpui::test]
     fn test_edit_events(cx: &mut MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = cx.add_model(|cx| language::Buffer::new(0, "123456", cx));
 
         let events = Rc::new(RefCell::new(Vec::new()));
@@ -6588,7 +6611,7 @@ mod tests {
 
     #[gpui::test]
     fn test_undo_redo_with_selection_restoration(cx: &mut MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let mut now = Instant::now();
         let buffer = cx.add_model(|cx| language::Buffer::new(0, "123456", cx));
         let group_interval = buffer.read(cx).transaction_group_interval();
@@ -6657,7 +6680,7 @@ mod tests {
 
     #[gpui::test]
     fn test_selection_with_mouse(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
 
         let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\nddddddd\n", cx);
         let (_, editor) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
@@ -6722,7 +6745,7 @@ mod tests {
 
     #[gpui::test]
     fn test_canceling_pending_selection(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
 
@@ -6754,7 +6777,7 @@ mod tests {
 
     #[gpui::test]
     fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         use workspace::Item;
         let nav_history = Rc::new(RefCell::new(workspace::NavHistory::default()));
         let buffer = MultiBuffer::build_simple(&sample_text(30, 5, 'a'), cx);
@@ -6814,7 +6837,7 @@ mod tests {
 
     #[gpui::test]
     fn test_cancel(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
 
@@ -6854,7 +6877,7 @@ mod tests {
 
     #[gpui::test]
     fn test_fold(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(
             &"
                 impl Foo {
@@ -6939,7 +6962,7 @@ mod tests {
 
     #[gpui::test]
     fn test_move_cursor(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
@@ -7013,7 +7036,7 @@ mod tests {
 
     #[gpui::test]
     fn test_move_cursor_multibyte(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
@@ -7114,7 +7137,7 @@ mod tests {
 
     #[gpui::test]
     fn test_move_cursor_different_line_lengths(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
         view.update(cx, |view, cx| {
@@ -7159,7 +7182,7 @@ mod tests {
 
     #[gpui::test]
     fn test_beginning_end_of_line(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("abc\n  def", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -7300,7 +7323,7 @@ mod tests {
 
     #[gpui::test]
     fn test_prev_next_word_boundary(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("use std::str::{foo, bar}\n\n  {baz.qux()}", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -7405,7 +7428,7 @@ mod tests {
 
     #[gpui::test]
     fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("use one::{\n    two::three::four::five\n};", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
 
@@ -7458,7 +7481,7 @@ mod tests {
 
     #[gpui::test]
     fn test_delete_to_word_boundary(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("one two three four", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
@@ -7495,7 +7518,7 @@ mod tests {
 
     #[gpui::test]
     fn test_newline(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("aaaa\n    bbbb\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
@@ -7516,7 +7539,7 @@ mod tests {
 
     #[gpui::test]
     fn test_newline_with_old_selections(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(
             "
                 a
@@ -7601,7 +7624,7 @@ mod tests {
 
     #[gpui::test]
     fn test_insert_with_old_selections(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("a( X ), b( Y ), c( Z )", cx);
         let (_, editor) = cx.add_window(Default::default(), |cx| {
             let mut editor = build_editor(buffer.clone(), cx);
@@ -7628,81 +7651,226 @@ mod tests {
 
     #[gpui::test]
     fn test_indent_outdent(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
-        let buffer = MultiBuffer::build_simple("  one two\nthree\n four", cx);
+        cx.set_global(Settings::test(cx));
+        let buffer = MultiBuffer::build_simple(
+            indoc! {"
+                  one two
+                three
+                 four"},
+            cx,
+        );
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
         view.update(cx, |view, cx| {
             // two selections on the same line
-            view.select_display_ranges(
-                &[
-                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 5),
-                    DisplayPoint::new(0, 6)..DisplayPoint::new(0, 9),
-                ],
+            select_ranges(
+                view,
+                indoc! {"
+                      [one] [two]
+                    three
+                     four"},
                 cx,
             );
 
             // indent from mid-tabstop to full tabstop
             view.tab(&Tab(Direction::Next), cx);
-            assert_eq!(view.text(cx), "    one two\nthree\n four");
-            assert_eq!(
-                view.selected_display_ranges(cx),
-                &[
-                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 7),
-                    DisplayPoint::new(0, 8)..DisplayPoint::new(0, 11),
-                ]
+            assert_text_with_selections(
+                view,
+                indoc! {"
+                        [one] [two]
+                    three
+                     four"},
+                cx,
             );
 
             // outdent from 1 tabstop to 0 tabstops
             view.tab(&Tab(Direction::Prev), cx);
-            assert_eq!(view.text(cx), "one two\nthree\n four");
-            assert_eq!(
-                view.selected_display_ranges(cx),
-                &[
-                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 3),
-                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 7),
-                ]
+            assert_text_with_selections(
+                view,
+                indoc! {"
+                    [one] [two]
+                    three
+                     four"},
+                cx,
             );
 
             // select across line ending
-            view.select_display_ranges(&[DisplayPoint::new(1, 1)..DisplayPoint::new(2, 0)], cx);
+            select_ranges(
+                view,
+                indoc! {"
+                    one two
+                    t[hree
+                    ] four"},
+                cx,
+            );
 
             // indent and outdent affect only the preceding line
             view.tab(&Tab(Direction::Next), cx);
-            assert_eq!(view.text(cx), "one two\n    three\n four");
-            assert_eq!(
-                view.selected_display_ranges(cx),
-                &[DisplayPoint::new(1, 5)..DisplayPoint::new(2, 0)]
+            assert_text_with_selections(
+                view,
+                indoc! {"
+                    one two
+                        t[hree
+                    ] four"},
+                cx,
             );
             view.tab(&Tab(Direction::Prev), cx);
-            assert_eq!(view.text(cx), "one two\nthree\n four");
-            assert_eq!(
-                view.selected_display_ranges(cx),
-                &[DisplayPoint::new(1, 1)..DisplayPoint::new(2, 0)]
+            assert_text_with_selections(
+                view,
+                indoc! {"
+                    one two
+                    t[hree
+                    ] four"},
+                cx,
             );
 
             // Ensure that indenting/outdenting works when the cursor is at column 0.
-            view.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
+            select_ranges(
+                view,
+                indoc! {"
+                    one two
+                    []three
+                     four"},
+                cx,
+            );
             view.tab(&Tab(Direction::Next), cx);
-            assert_eq!(view.text(cx), "one two\n    three\n four");
-            assert_eq!(
-                view.selected_display_ranges(cx),
-                &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4)]
+            assert_text_with_selections(
+                view,
+                indoc! {"
+                    one two
+                        []three
+                     four"},
+                cx,
             );
 
-            view.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
+            select_ranges(
+                view,
+                indoc! {"
+                    one two
+                    []    three
+                     four"},
+                cx,
+            );
             view.tab(&Tab(Direction::Prev), cx);
-            assert_eq!(view.text(cx), "one two\nthree\n four");
-            assert_eq!(
-                view.selected_display_ranges(cx),
-                &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
+            assert_text_with_selections(
+                view,
+                indoc! {"
+                    one two
+                    []three
+                     four"},
+                cx,
             );
         });
     }
 
     #[gpui::test]
+    fn test_indent_outdent_with_excerpts(cx: &mut gpui::MutableAppContext) {
+        cx.set_global(
+            Settings::test(cx)
+                .with_overrides(
+                    "TOML",
+                    LanguageOverride {
+                        tab_size: Some(2),
+                        ..Default::default()
+                    },
+                )
+                .with_overrides(
+                    "Rust",
+                    LanguageOverride {
+                        tab_size: Some(4),
+                        ..Default::default()
+                    },
+                ),
+        );
+        let toml_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "TOML".into(),
+                ..Default::default()
+            },
+            None,
+        ));
+        let rust_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                ..Default::default()
+            },
+            None,
+        ));
+
+        let toml_buffer = cx
+            .add_model(|cx| Buffer::new(0, "a = 1\nb = 2\n", cx).with_language(toml_language, cx));
+        let rust_buffer = cx.add_model(|cx| {
+            Buffer::new(0, "const c: usize = 3;\n", cx).with_language(rust_language, cx)
+        });
+        let multibuffer = cx.add_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(0);
+            multibuffer.push_excerpts(
+                toml_buffer.clone(),
+                [Point::new(0, 0)..Point::new(2, 0)],
+                cx,
+            );
+            multibuffer.push_excerpts(
+                rust_buffer.clone(),
+                [Point::new(0, 0)..Point::new(1, 0)],
+                cx,
+            );
+            multibuffer
+        });
+
+        cx.add_window(Default::default(), |cx| {
+            let mut editor = build_editor(multibuffer, cx);
+
+            assert_eq!(
+                editor.text(cx),
+                indoc! {"
+                    a = 1
+                    b = 2
+
+                    const c: usize = 3;
+                "}
+            );
+
+            select_ranges(
+                &mut editor,
+                indoc! {"
+                    [a] = 1
+                    b = 2
+
+                    [const c:] usize = 3;
+                "},
+                cx,
+            );
+
+            editor.tab(&Tab(Direction::Next), cx);
+            assert_text_with_selections(
+                &mut editor,
+                indoc! {"
+                      [a] = 1
+                    b = 2
+
+                        [const c:] usize = 3;
+                "},
+                cx,
+            );
+            editor.tab(&Tab(Direction::Prev), cx);
+            assert_text_with_selections(
+                &mut editor,
+                indoc! {"
+                    [a] = 1
+                    b = 2
+
+                    [const c:] usize = 3;
+                "},
+                cx,
+            );
+
+            editor
+        });
+    }
+
+    #[gpui::test]
     fn test_backspace(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(MultiBuffer::build_simple("", cx), cx)
         });
@@ -7747,7 +7915,7 @@ mod tests {
 
     #[gpui::test]
     fn test_delete(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer =
             MultiBuffer::build_simple("one two three\nfour five six\nseven eight nine\nten\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
@@ -7775,7 +7943,7 @@ mod tests {
 
     #[gpui::test]
     fn test_delete_line(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -7798,7 +7966,7 @@ mod tests {
             );
         });
 
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -7814,7 +7982,7 @@ mod tests {
 
     #[gpui::test]
     fn test_duplicate_line(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -7864,7 +8032,7 @@ mod tests {
 
     #[gpui::test]
     fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(10, 5, 'a'), cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -7960,7 +8128,7 @@ mod tests {
 
     #[gpui::test]
     fn test_move_line_up_down_with_blocks(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(10, 5, 'a'), cx);
         let snapshot = buffer.read(cx).snapshot(cx);
         let (_, editor) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
@@ -7981,7 +8149,7 @@ mod tests {
 
     #[gpui::test]
     fn test_clipboard(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("one✅ two three four five six ", cx);
         let view = cx
             .add_window(Default::default(), |cx| build_editor(buffer.clone(), cx))
@@ -8110,7 +8278,7 @@ mod tests {
 
     #[gpui::test]
     fn test_select_all(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("abc\nde\nfgh", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -8124,7 +8292,7 @@ mod tests {
 
     #[gpui::test]
     fn test_select_line(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(6, 5, 'a'), cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -8169,7 +8337,7 @@ mod tests {
 
     #[gpui::test]
     fn test_split_selection_into_lines(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(9, 5, 'a'), cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -8235,7 +8403,7 @@ mod tests {
 
     #[gpui::test]
     fn test_add_selection_above_below(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("abc\ndefghi\n\njk\nlmno\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
 
@@ -8419,7 +8587,7 @@ mod tests {
 
     #[gpui::test]
     fn test_select_next(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
 
         let (text, ranges) = marked_text_ranges("[abc]\n[abc] [abc]\ndefabc\n[abc]");
         let buffer = MultiBuffer::build_simple(&text, cx);
@@ -8449,7 +8617,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
-        cx.update(populate_settings);
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
         let language = Arc::new(Language::new(
             LanguageConfig::default(),
             Some(tree_sitter_rust::language()),
@@ -8590,7 +8758,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
-        cx.update(populate_settings);
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
         let language = Arc::new(
             Language::new(
                 LanguageConfig {
@@ -8647,7 +8815,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
-        cx.update(populate_settings);
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
         let language = Arc::new(Language::new(
             LanguageConfig {
                 brackets: vec![
@@ -8794,7 +8962,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_snippets(cx: &mut gpui::TestAppContext) {
-        cx.update(populate_settings);
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
 
         let text = "
             a. b
@@ -8902,7 +9070,7 @@ mod tests {
     #[gpui::test]
     async fn test_format_during_save(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
-        cx.update(populate_settings);
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
 
         let mut language = Language::new(
             LanguageConfig {
@@ -8954,6 +9122,7 @@ mod tests {
                     params.text_document.uri,
                     lsp::Url::from_file_path("/file.rs").unwrap()
                 );
+                assert_eq!(params.options.tab_size, 4);
                 Ok(Some(vec![lsp::TextEdit::new(
                     lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
                     ", ".to_string(),
@@ -8990,11 +9159,39 @@ mod tests {
             "one\ntwo\nthree\n"
         );
         assert!(!cx.read(|cx| editor.is_dirty(cx)));
+
+        // Set rust language override and assert overriden tabsize is sent to language server
+        cx.update(|cx| {
+            cx.update_global::<Settings, _, _>(|settings, _| {
+                settings.language_overrides.insert(
+                    "Rust".into(),
+                    LanguageOverride {
+                        tab_size: Some(8),
+                        ..Default::default()
+                    },
+                );
+            })
+        });
+
+        let save = cx.update(|cx| editor.save(project.clone(), cx));
+        fake_server
+            .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path("/file.rs").unwrap()
+                );
+                assert_eq!(params.options.tab_size, 8);
+                Ok(Some(vec![]))
+            })
+            .next()
+            .await;
+        cx.foreground().start_waiting();
+        save.await.unwrap();
     }
 
     #[gpui::test]
     async fn test_completion(cx: &mut gpui::TestAppContext) {
-        cx.update(populate_settings);
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
 
         let mut language = Language::new(
             LanguageConfig {
@@ -9235,7 +9432,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
-        cx.update(populate_settings);
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
         let language = Arc::new(Language::new(
             LanguageConfig {
                 line_comment: Some("// ".to_string()),
@@ -9315,7 +9512,7 @@ mod tests {
 
     #[gpui::test]
     fn test_editing_disjoint_excerpts(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
@@ -9358,7 +9555,7 @@ mod tests {
 
     #[gpui::test]
     fn test_editing_overlapping_excerpts(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
@@ -9413,7 +9610,7 @@ mod tests {
 
     #[gpui::test]
     fn test_refresh_selections(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
         let mut excerpt1_id = None;
         let multibuffer = cx.add_model(|cx| {
@@ -9491,7 +9688,7 @@ mod tests {
 
     #[gpui::test]
     fn test_refresh_selections_while_selecting_with_mouse(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
         let mut excerpt1_id = None;
         let multibuffer = cx.add_model(|cx| {
@@ -9545,7 +9742,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
-        cx.update(populate_settings);
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
         let language = Arc::new(Language::new(
             LanguageConfig {
                 brackets: vec![
@@ -9613,7 +9810,8 @@ mod tests {
     #[gpui::test]
     fn test_highlighted_ranges(cx: &mut gpui::MutableAppContext) {
         let buffer = MultiBuffer::build_simple(&sample_text(16, 8, 'a'), cx);
-        populate_settings(cx);
+
+        cx.set_global(Settings::test(cx));
         let (_, editor) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
         editor.update(cx, |editor, cx| {
@@ -9692,7 +9890,8 @@ mod tests {
     #[gpui::test]
     fn test_following(cx: &mut gpui::MutableAppContext) {
         let buffer = MultiBuffer::build_simple(&sample_text(16, 8, 'a'), cx);
-        populate_settings(cx);
+
+        cx.set_global(Settings::test(cx));
 
         let (_, leader) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
         let (_, follower) = cx.add_window(
@@ -9857,11 +10056,6 @@ mod tests {
 
     fn build_editor(buffer: ModelHandle<MultiBuffer>, cx: &mut ViewContext<Editor>) -> Editor {
         Editor::new(EditorMode::Full, buffer, None, None, cx)
-    }
-
-    fn populate_settings(cx: &mut gpui::MutableAppContext) {
-        let settings = Settings::test(cx);
-        cx.set_global(settings);
     }
 
     fn assert_selection_ranges(

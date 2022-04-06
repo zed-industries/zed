@@ -12,7 +12,7 @@ use gpui::{
     AppContext, Entity, MutableAppContext, PromptLevel, Quad, RenderContext, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
-use project::{Project, ProjectEntryId, ProjectPath};
+use project::{ProjectEntryId, ProjectPath};
 use settings::Settings;
 use std::{any::Any, cell::RefCell, cmp, mem, path::Path, rc::Rc};
 use util::ResultExt;

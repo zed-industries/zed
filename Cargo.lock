@@ -1638,6 +1638,7 @@ dependencies = [
  "futures",
  "fuzzy",
  "gpui",
+ "indoc",
  "itertools",
  "language",
  "lazy_static",

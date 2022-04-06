@@ -969,6 +969,7 @@ mod tests {
     use crate::multi_buffer::MultiBuffer;
     use gpui::{elements::Empty, Element};
     use rand::prelude::*;
+    use settings::Settings;
     use std::env;
     use text::RandomCharIter;
 
@@ -988,6 +989,8 @@ mod tests {
 
     #[gpui::test]
     fn test_basic_blocks(cx: &mut gpui::MutableAppContext) {
+        cx.set_global(Settings::test(cx));
+
         let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
         let font_id = cx
             .font_cache()
@@ -1167,6 +1170,8 @@ mod tests {
 
     #[gpui::test]
     fn test_blocks_on_wrapped_lines(cx: &mut gpui::MutableAppContext) {
+        cx.set_global(Settings::test(cx));
+
         let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
         let font_id = cx
             .font_cache()
@@ -1209,6 +1214,8 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_random_blocks(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
+        cx.set_global(Settings::test(cx));
+
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);

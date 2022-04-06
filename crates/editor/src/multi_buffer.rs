@@ -11,6 +11,7 @@ use language::{
     Language, OffsetRangeExt, Outline, OutlineItem, Selection, ToOffset as _, ToPoint as _,
     ToPointUtf16 as _, TransactionId,
 };
+use settings::Settings;
 use std::{
     cell::{Ref, RefCell},
     cmp, fmt, io,
@@ -287,8 +288,6 @@ impl MultiBuffer {
         S: ToOffset,
         T: Into<String>,
     {
-        let indent_size = crate::INDENT_SIZE;
-
         if self.buffers.borrow().is_empty() {
             return;
         }
@@ -299,6 +298,8 @@ impl MultiBuffer {
                 .into_iter()
                 .map(|range| range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot));
             return buffer.update(cx, |buffer, cx| {
+                let language_name = buffer.language().map(|language| language.name());
+                let indent_size = cx.global::<Settings>().tab_size(language_name.as_deref());
                 if autoindent {
                     buffer.edit_with_autoindent(ranges, new_text, indent_size, cx);
                 } else {
@@ -394,6 +395,8 @@ impl MultiBuffer {
                             );
                         }
                     }
+                    let language_name = buffer.language().map(|l| l.name());
+                    let indent_size = cx.global::<Settings>().tab_size(language_name.as_deref());
 
                     if autoindent {
                         buffer.edit_with_autoindent(deletions, "", indent_size, cx);
@@ -863,6 +866,29 @@ impl MultiBuffer {
         })
     }
 
+    // If point is at the end of the buffer, the last excerpt is returned
+    pub fn point_to_buffer_offset<'a, T: ToOffset>(
+        &'a self,
+        point: T,
+        cx: &AppContext,
+    ) -> Option<(ModelHandle<Buffer>, usize)> {
+        let snapshot = self.read(cx);
+        let offset = point.to_offset(&snapshot);
+        let mut cursor = snapshot.excerpts.cursor::<usize>();
+        cursor.seek(&offset, Bias::Right, &());
+        if cursor.item().is_none() {
+            cursor.prev(&());
+        }
+
+        cursor.item().map(|excerpt| {
+            let excerpt_start = excerpt.range.start.to_offset(&excerpt.buffer);
+            let buffer_point = excerpt_start + offset - *cursor.start();
+            let buffer = self.buffers.borrow()[&excerpt.buffer_id].buffer.clone();
+
+            (buffer, buffer_point)
+        })
+    }
+
     pub fn range_to_buffer_ranges<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
@@ -1059,12 +1085,13 @@ impl MultiBuffer {
             .unwrap_or(false)
     }
 
-    pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
-        self.buffers
-            .borrow()
-            .values()
-            .next()
-            .and_then(|state| state.buffer.read(cx).language())
+    pub fn language_at<'a, T: ToOffset>(
+        &self,
+        point: T,
+        cx: &'a AppContext,
+    ) -> Option<&'a Arc<Language>> {
+        self.point_to_buffer_offset(point, cx)
+            .and_then(|(buffer, _)| buffer.read(cx).language())
     }
 
     pub fn file<'a>(&self, cx: &'a AppContext) -> Option<&'a dyn File> {
@@ -3762,6 +3789,7 @@ mod tests {
 
     #[gpui::test]
     fn test_history(cx: &mut MutableAppContext) {
+        cx.set_global(Settings::test(cx));
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, "1234", cx));
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, "5678", cx));
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));

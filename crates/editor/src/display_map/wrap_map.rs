@@ -1014,12 +1014,14 @@ mod tests {
     use gpui::test::observe;
     use language::RandomCharIter;
     use rand::prelude::*;
+    use settings::Settings;
     use smol::stream::StreamExt;
     use std::{cmp, env};
     use text::Rope;
 
     #[gpui::test(iterations = 100)]
     async fn test_random_wraps(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
         cx.foreground().set_block_on_ticks(0..=50);
         cx.foreground().forbid_parking();
         let operations = env::var("OPERATIONS")
