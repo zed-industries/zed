@@ -43,12 +43,14 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 use util::{post_inc, ResultExt, TryFutureExt as _};
 
 pub use fs::*;
 pub use worktree::*;
+
+const LSP_WORK_PROGRESS_UPDATE_INTERVAL: Duration = Duration::from_micros(16666);
 
 pub trait Item: Entity {
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
@@ -1749,8 +1751,18 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-            status.pending_work.insert(token, progress);
-            cx.notify();
+            match status.pending_work.entry(token) {
+                collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(progress);
+                    cx.notify();
+                }
+                collections::btree_map::Entry::Occupied(mut entry) => {
+                    if entry.get().last_update_at.elapsed() > LSP_WORK_PROGRESS_UPDATE_INTERVAL {
+                        entry.insert(progress);
+                        cx.notify();
+                    }
+                }
+            }
         }
     }
 
