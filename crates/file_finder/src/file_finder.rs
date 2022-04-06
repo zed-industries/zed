@@ -8,6 +8,7 @@ use gpui::{
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectPath, WorktreeId};
+use settings::Settings;
 use std::{
     cmp,
     path::Path,
@@ -21,7 +22,6 @@ use workspace::{
     menu::{Confirm, SelectNext, SelectPrev},
     Workspace,
 };
-use settings::Settings;
 
 pub struct FileFinder {
     handle: WeakViewHandle<Self>,

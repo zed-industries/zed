@@ -11,7 +11,7 @@ pub struct Settings {
     pub buffer_font_family: FamilyId,
     pub buffer_font_size: f32,
     pub vim_mode: bool,
-    pub tab_size: usize,
+    pub tab_size: u32,
     pub soft_wrap: SoftWrap,
     pub preferred_line_length: u32,
     pub language_overrides: HashMap<Arc<str>, LanguageOverride>,
@@ -20,7 +20,7 @@ pub struct Settings {
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct LanguageOverride {
-    pub tab_size: Option<usize>,
+    pub tab_size: Option<u32>,
     pub soft_wrap: Option<SoftWrap>,
     pub preferred_line_length: Option<u32>,
 }
@@ -81,7 +81,7 @@ impl Settings {
         self
     }
 
-    pub fn tab_size(&self, language: Option<&str>) -> usize {
+    pub fn tab_size(&self, language: Option<&str>) -> u32 {
         language
             .and_then(|language| self.language_overrides.get(language))
             .and_then(|settings| settings.tab_size)

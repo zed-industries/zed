@@ -48,6 +48,20 @@ fn main() {
                 soft_wrap: Some(settings::SoftWrap::PreferredLineLength),
                 ..Default::default()
             },
+        )
+        .with_overrides(
+            "Rust",
+            settings::LanguageOverride {
+                tab_size: Some(4),
+                ..Default::default()
+            },
+        )
+        .with_overrides(
+            "TypeScript",
+            settings::LanguageOverride {
+                tab_size: Some(2),
+                ..Default::default()
+            },
         );
     let settings_file = load_settings_file(&app, fs.clone());
 

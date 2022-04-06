@@ -1157,7 +1157,7 @@ mod tests {
 
         let (folds_snapshot, fold_edits) =
             fold_map.read(buffer_snapshot, subscription.consume().into_inner());
-        let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+        let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits, 4);
         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
             wrap_map.sync(tabs_snapshot, tab_edits, cx)
         });
@@ -1296,7 +1296,8 @@ mod tests {
 
                     let (folds_snapshot, fold_edits) =
                         fold_map.read(buffer_snapshot.clone(), vec![]);
-                    let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+                    let (tabs_snapshot, tab_edits) =
+                        tab_map.sync(folds_snapshot, fold_edits, tab_size);
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tabs_snapshot, tab_edits, cx)
                     });
@@ -1318,7 +1319,8 @@ mod tests {
 
                     let (folds_snapshot, fold_edits) =
                         fold_map.read(buffer_snapshot.clone(), vec![]);
-                    let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+                    let (tabs_snapshot, tab_edits) =
+                        tab_map.sync(folds_snapshot, fold_edits, tab_size);
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tabs_snapshot, tab_edits, cx)
                     });
@@ -1338,7 +1340,7 @@ mod tests {
             }
 
             let (folds_snapshot, fold_edits) = fold_map.read(buffer_snapshot.clone(), buffer_edits);
-            let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+            let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits, tab_size);
             let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                 wrap_map.sync(tabs_snapshot, tab_edits, cx)
             });

@@ -1010,7 +1010,6 @@ impl Editor {
             let style = build_style(&*settings, get_field_editor_theme, None, cx);
             DisplayMap::new(
                 buffer.clone(),
-                settings.tab_size,
                 style.text.font_id,
                 style.text.font_size,
                 None,
@@ -3006,13 +3005,14 @@ impl Editor {
                                     )
                                     .flat_map(str::chars)
                                     .count();
-                                let chars_to_next_tab_stop = tab_size - (char_column % tab_size);
+                                let chars_to_next_tab_stop =
+                                    tab_size - (char_column as u32 % tab_size);
                                 buffer.edit(
                                     [selection.start..selection.start],
-                                    " ".repeat(chars_to_next_tab_stop),
+                                    " ".repeat(chars_to_next_tab_stop as usize),
                                     cx,
                                 );
-                                selection.start.column += chars_to_next_tab_stop as u32;
+                                selection.start.column += chars_to_next_tab_stop;
                                 selection.end = selection.start;
                             }
                         });
@@ -3055,12 +3055,12 @@ impl Editor {
                     }
 
                     for row in start_row..end_row {
-                        let indent_column = buffer.read(cx).indent_column_for_line(row) as usize;
+                        let indent_column = buffer.read(cx).indent_column_for_line(row);
                         let columns_to_next_tab_stop = tab_size - (indent_column % tab_size);
                         let row_start = Point::new(row, 0);
                         buffer.edit(
                             [row_start..row_start],
-                            " ".repeat(columns_to_next_tab_stop),
+                            " ".repeat(columns_to_next_tab_stop as usize),
                             cx,
                         );
 
@@ -3101,11 +3101,11 @@ impl Editor {
                 }
 
                 for row in rows {
-                    let column = buffer.indent_column_for_line(row) as usize;
+                    let column = buffer.indent_column_for_line(row);
                     if column > 0 {
-                        let mut deletion_len = (column % tab_size) as u32;
+                        let mut deletion_len = column % tab_size;
                         if deletion_len == 0 {
-                            deletion_len = tab_size as u32;
+                            deletion_len = tab_size;
                         }
                         deletion_ranges.push(Point::new(row, 0)..Point::new(row, deletion_len));
                         last_outdent = Some(row);

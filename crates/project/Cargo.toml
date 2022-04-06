@@ -25,6 +25,7 @@ gpui = { path = "../gpui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
 rpc = { path = "../rpc" }
+settings = { path = "../settings" }
 sum_tree = { path = "../sum_tree" }
 util = { path = "../util" }
 aho-corasick = "0.7"

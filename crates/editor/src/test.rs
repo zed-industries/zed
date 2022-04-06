@@ -20,7 +20,6 @@ pub fn marked_display_snapshot(
 ) -> (DisplaySnapshot, Vec<DisplayPoint>) {
     let (unmarked_text, markers) = marked_text(text);
 
-    let tab_size = 4;
     let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
     let font_id = cx
         .font_cache()
@@ -30,7 +29,7 @@ pub fn marked_display_snapshot(
 
     let buffer = MultiBuffer::build_simple(&unmarked_text, cx);
     let display_map =
-        cx.add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
+        cx.add_model(|cx| DisplayMap::new(buffer, font_id, font_size, None, 1, 1, cx));
     let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
     let markers = markers
         .into_iter()

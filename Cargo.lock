@@ -3632,6 +3632,7 @@ dependencies = [
  "rpc",
  "serde",
  "serde_json",
+ "settings",
  "sha2 0.10.2",
  "similar",
  "smol",
