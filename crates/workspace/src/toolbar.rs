@@ -1,8 +1,9 @@
-use crate::{ItemHandle, Settings};
+use crate::ItemHandle;
 use gpui::{
     elements::*, AnyViewHandle, AppContext, ElementBox, Entity, MutableAppContext, RenderContext,
     View, ViewContext, ViewHandle,
 };
+use settings::Settings;
 
 pub trait ToolbarItemView: View {
     fn set_active_pane_item(

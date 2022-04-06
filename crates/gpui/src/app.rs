@@ -1019,7 +1019,10 @@ impl MutableAppContext {
             .insert(TypeId::of::<A>(), handler)
             .is_some()
         {
-            panic!("registered multiple global handlers for the same action type");
+            panic!(
+                "registered multiple global handlers for {}",
+                type_name::<A>()
+            );
         }
     }
 
@@ -2355,11 +2358,11 @@ impl AppContext {
     }
 
     pub fn global<T: 'static>(&self) -> &T {
-        self.globals
-            .get(&TypeId::of::<T>())
-            .expect("no app state has been added for this type")
-            .downcast_ref()
-            .unwrap()
+        if let Some(global) = self.globals.get(&TypeId::of::<T>()) {
+            global.downcast_ref().unwrap()
+        } else {
+            panic!("no global has been added for {}", type_name::<T>());
+        }
     }
 }
 

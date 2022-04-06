@@ -13,6 +13,7 @@ fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 project = { path = "../project" }
 text = { path = "../text" }
+settings = { path = "../settings" }
 workspace = { path = "../workspace" }
 util = { path = "../util" }
 anyhow = "1.0.38"

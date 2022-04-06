@@ -28,6 +28,7 @@ use parking_lot::Mutex;
 use postage::watch;
 use rand::prelude::*;
 use search::SearchQuery;
+use settings::Settings;
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use std::{
@@ -2173,6 +2174,10 @@ impl Project {
                     lsp::Url::from_file_path(&buffer_abs_path).unwrap(),
                 );
                 let capabilities = &language_server.capabilities();
+                let tab_size = cx.update(|cx| {
+                    let language_name = buffer.read(cx).language().map(|language| language.name());
+                    cx.global::<Settings>().tab_size(language_name.as_deref())
+                });
                 let lsp_edits = if capabilities
                     .document_formatting_provider
                     .as_ref()
@@ -2182,7 +2187,7 @@ impl Project {
                         .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
                             text_document,
                             options: lsp::FormattingOptions {
-                                tab_size: 4,
+                                tab_size,
                                 insert_spaces: true,
                                 insert_final_newline: Some(true),
                                 ..Default::default()

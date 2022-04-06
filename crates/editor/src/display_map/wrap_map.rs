@@ -1014,12 +1014,14 @@ mod tests {
     use gpui::test::observe;
     use language::RandomCharIter;
     use rand::prelude::*;
+    use settings::Settings;
     use smol::stream::StreamExt;
     use std::{cmp, env};
     use text::Rope;
 
     #[gpui::test(iterations = 100)]
     async fn test_random_wraps(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
         cx.foreground().set_block_on_ticks(0..=50);
         cx.foreground().forbid_parking();
         let operations = env::var("OPERATIONS")
@@ -1104,7 +1106,8 @@ mod tests {
                 }
                 20..=39 => {
                     for (folds_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
-                        let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+                        let (tabs_snapshot, tab_edits) =
+                            tab_map.sync(folds_snapshot, fold_edits, tab_size);
                         let (mut snapshot, wrap_edits) =
                             wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
                         snapshot.check_invariants();
@@ -1129,7 +1132,7 @@ mod tests {
                 "Unwrapped text (unexpanded tabs): {:?}",
                 folds_snapshot.text()
             );
-            let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+            let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits, tab_size);
             log::info!("Unwrapped text (expanded tabs): {:?}", tabs_snapshot.text());
 
             let unwrapped_text = tabs_snapshot.text();

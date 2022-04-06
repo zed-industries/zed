@@ -28,6 +28,7 @@ language = { path = "../language" }
 lsp = { path = "../lsp" }
 project = { path = "../project" }
 rpc = { path = "../rpc" }
+settings = { path = "../settings" }
 snippet = { path = "../snippet" }
 sum_tree = { path = "../sum_tree" }
 theme = { path = "../theme" }
@@ -36,6 +37,7 @@ workspace = { path = "../workspace" }
 aho-corasick = "0.7"
 anyhow = "1.0"
 futures = "0.3"
+indoc = "1.0.4"
 itertools = "0.10"
 lazy_static = "1.4"
 log = "0.4"
@@ -54,6 +56,7 @@ lsp = { path = "../lsp", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
+settings = { path = "../settings", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
 ctor = "0.1"
 env_logger = "0.8"

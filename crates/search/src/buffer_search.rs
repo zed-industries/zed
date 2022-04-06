@@ -8,8 +8,9 @@ use gpui::{
 };
 use language::OffsetRangeExt;
 use project::search::SearchQuery;
+use settings::Settings;
 use std::ops::Range;
-use workspace::{ItemHandle, Pane, Settings, ToolbarItemLocation, ToolbarItemView};
+use workspace::{ItemHandle, Pane, ToolbarItemLocation, ToolbarItemView};
 
 action!(Deploy, bool);
 action!(Dismiss);

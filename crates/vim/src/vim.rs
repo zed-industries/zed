@@ -10,7 +10,8 @@ use editor::{CursorShape, Editor};
 use gpui::{action, MutableAppContext, ViewContext, WeakViewHandle};
 
 use mode::Mode;
-use workspace::{self, Settings, Workspace};
+use settings::Settings;
+use workspace::{self, Workspace};
 
 action!(SwitchMode, Mode);
 

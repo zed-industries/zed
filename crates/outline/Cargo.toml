@@ -12,6 +12,7 @@ editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
+settings = { path = "../settings" }
 text = { path = "../text" }
 workspace = { path = "../workspace" }
 ordered-float = "2.1.1"

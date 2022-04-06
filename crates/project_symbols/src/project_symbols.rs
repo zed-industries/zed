@@ -11,6 +11,7 @@ use gpui::{
 };
 use ordered_float::OrderedFloat;
 use project::{Project, Symbol};
+use settings::Settings;
 use std::{
     borrow::Cow,
     cmp::{self, Reverse},
@@ -18,7 +19,7 @@ use std::{
 use util::ResultExt;
 use workspace::{
     menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev},
-    Settings, Workspace,
+    Workspace,
 };
 
 action!(Toggle);

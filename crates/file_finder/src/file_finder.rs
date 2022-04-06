@@ -8,6 +8,7 @@ use gpui::{
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectPath, WorktreeId};
+use settings::Settings;
 use std::{
     cmp,
     path::Path,
@@ -19,7 +20,7 @@ use std::{
 use util::post_inc;
 use workspace::{
     menu::{Confirm, SelectNext, SelectPrev},
-    Settings, Workspace,
+    Workspace,
 };
 
 pub struct FileFinder {

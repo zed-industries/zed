@@ -14,6 +14,7 @@ required-features = ["seed-support"]
 
 [dependencies]
 collections = { path = "../collections" }
+settings = { path = "../settings" }
 rpc = { path = "../rpc" }
 anyhow = "1.0.40"
 async-io = "1.3"

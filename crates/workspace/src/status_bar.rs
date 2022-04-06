@@ -1,4 +1,5 @@
-use crate::{ItemHandle, Pane, Settings};
+use crate::{ItemHandle, Pane};
+use settings::Settings;
 use gpui::{
     elements::*, AnyViewHandle, ElementBox, Entity, MutableAppContext, RenderContext, Subscription,
     View, ViewContext, ViewHandle,

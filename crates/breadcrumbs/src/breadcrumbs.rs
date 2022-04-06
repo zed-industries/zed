@@ -6,8 +6,9 @@ use gpui::{
 use language::{Buffer, OutlineItem};
 use project::Project;
 use search::ProjectSearchView;
+use settings::Settings;
 use theme::SyntaxTheme;
-use workspace::{ItemHandle, Settings, ToolbarItemLocation, ToolbarItemView};
+use workspace::{ItemHandle, ToolbarItemLocation, ToolbarItemView};
 
 pub enum Event {
     UpdateLocation,

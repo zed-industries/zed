@@ -13,6 +13,7 @@ editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 project = { path = "../project" }
+settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }

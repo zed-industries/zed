@@ -12,6 +12,7 @@ collections = { path = "../collections" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
+settings = { path = "../settings" }
 workspace = { path = "../workspace" }
 log = "0.4"
 
@@ -19,7 +20,8 @@ log = "0.4"
 indoc = "1.0.4"
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
-project = { path = "../project", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
+project = { path = "../project", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
+settings = { path = "../settings" }
 workspace = { path = "../workspace", features = ["test-support"] }

@@ -12,6 +12,7 @@ editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 theme = { path = "../theme" }
+settings = { path = "../settings" }
 workspace = { path = "../workspace" }
 log = "0.4"
 parking_lot = "0.11.1"

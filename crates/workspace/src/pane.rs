@@ -1,5 +1,5 @@
 use super::{ItemHandle, SplitDirection};
-use crate::{toolbar::Toolbar, Item, Settings, WeakItemHandle, Workspace};
+use crate::{toolbar::Toolbar, Item, WeakItemHandle, Workspace};
 use anyhow::Result;
 use collections::{HashMap, VecDeque};
 use futures::StreamExt;
@@ -13,6 +13,7 @@ use gpui::{
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{ProjectEntryId, ProjectPath};
+use settings::Settings;
 use std::{any::Any, cell::RefCell, cmp, mem, path::Path, rc::Rc};
 use util::ResultExt;
 

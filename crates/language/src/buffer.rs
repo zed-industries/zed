@@ -66,7 +66,6 @@ pub struct Buffer {
     file_update_count: usize,
     completion_triggers: Vec<String>,
     deferred_ops: OperationQueue<Operation>,
-    indent_size: u32,
 }
 
 pub struct BufferSnapshot {
@@ -80,7 +79,6 @@ pub struct BufferSnapshot {
     selections_update_count: usize,
     language: Option<Arc<Language>>,
     parse_count: usize,
-    indent_size: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -214,6 +212,7 @@ struct AutoindentRequest {
     before_edit: BufferSnapshot,
     edited: Vec<Anchor>,
     inserted: Option<Vec<Range<Anchor>>>,
+    indent_size: u32,
 }
 
 #[derive(Debug)]
@@ -427,8 +426,6 @@ impl Buffer {
             file_update_count: 0,
             completion_triggers: Default::default(),
             deferred_ops: OperationQueue::new(),
-            // TODO: make this configurable
-            indent_size: 4,
         }
     }
 
@@ -444,7 +441,6 @@ impl Buffer {
             language: self.language.clone(),
             parse_count: self.parse_count,
             selections_update_count: self.selections_update_count,
-            indent_size: self.indent_size,
         }
     }
 
@@ -786,7 +782,7 @@ impl Buffer {
                                     .indent_column_for_line(suggestion.basis_row)
                             });
                         let delta = if suggestion.indent {
-                            snapshot.indent_size
+                            request.indent_size
                         } else {
                             0
                         };
@@ -809,7 +805,7 @@ impl Buffer {
                         .flatten();
                     for (new_row, suggestion) in new_edited_row_range.zip(suggestions) {
                         let delta = if suggestion.indent {
-                            snapshot.indent_size
+                            request.indent_size
                         } else {
                             0
                         };
@@ -845,7 +841,7 @@ impl Buffer {
                             .flatten();
                         for (row, suggestion) in inserted_row_range.zip(suggestions) {
                             let delta = if suggestion.indent {
-                                snapshot.indent_size
+                                request.indent_size
                             } else {
                                 0
                             };
@@ -1055,7 +1051,7 @@ impl Buffer {
     where
         T: Into<String>,
     {
-        self.edit_internal([0..self.len()], text, false, cx)
+        self.edit_internal([0..self.len()], text, None, cx)
     }
 
     pub fn edit<I, S, T>(
@@ -1069,13 +1065,14 @@ impl Buffer {
         S: ToOffset,
         T: Into<String>,
     {
-        self.edit_internal(ranges_iter, new_text, false, cx)
+        self.edit_internal(ranges_iter, new_text, None, cx)
     }
 
     pub fn edit_with_autoindent<I, S, T>(
         &mut self,
         ranges_iter: I,
         new_text: T,
+        indent_size: u32,
         cx: &mut ModelContext<Self>,
     ) -> Option<clock::Local>
     where
@@ -1083,14 +1080,14 @@ impl Buffer {
         S: ToOffset,
         T: Into<String>,
     {
-        self.edit_internal(ranges_iter, new_text, true, cx)
+        self.edit_internal(ranges_iter, new_text, Some(indent_size), cx)
     }
 
     pub fn edit_internal<I, S, T>(
         &mut self,
         ranges_iter: I,
         new_text: T,
-        autoindent: bool,
+        autoindent_size: Option<u32>,
         cx: &mut ModelContext<Self>,
     ) -> Option<clock::Local>
     where
@@ -1122,23 +1119,27 @@ impl Buffer {
 
         self.start_transaction();
         self.pending_autoindent.take();
-        let autoindent_request = if autoindent && self.language.is_some() {
-            let before_edit = self.snapshot();
-            let edited = ranges
-                .iter()
-                .filter_map(|range| {
-                    let start = range.start.to_point(self);
-                    if new_text.starts_with('\n') && start.column == self.line_len(start.row) {
-                        None
-                    } else {
-                        Some(self.anchor_before(range.start))
-                    }
-                })
-                .collect();
-            Some((before_edit, edited))
-        } else {
-            None
-        };
+        let autoindent_request =
+            self.language
+                .as_ref()
+                .and_then(|_| autoindent_size)
+                .map(|autoindent_size| {
+                    let before_edit = self.snapshot();
+                    let edited = ranges
+                        .iter()
+                        .filter_map(|range| {
+                            let start = range.start.to_point(self);
+                            if new_text.starts_with('\n')
+                                && start.column == self.line_len(start.row)
+                            {
+                                None
+                            } else {
+                                Some(self.anchor_before(range.start))
+                            }
+                        })
+                        .collect();
+                    (before_edit, edited, autoindent_size)
+                });
 
         let first_newline_ix = new_text.find('\n');
         let new_text_len = new_text.len();
@@ -1146,7 +1147,7 @@ impl Buffer {
         let edit = self.text.edit(ranges.iter().cloned(), new_text);
         let edit_id = edit.local_timestamp();
 
-        if let Some((before_edit, edited)) = autoindent_request {
+        if let Some((before_edit, edited, size)) = autoindent_request {
             let mut inserted = None;
             if let Some(first_newline_ix) = first_newline_ix {
                 let mut delta = 0isize;
@@ -1169,6 +1170,7 @@ impl Buffer {
                 before_edit,
                 edited,
                 inserted,
+                indent_size: size,
             }));
         }
 
@@ -1925,10 +1927,6 @@ impl BufferSnapshot {
     pub fn file_update_count(&self) -> usize {
         self.file_update_count
     }
-
-    pub fn indent_size(&self) -> u32 {
-        self.indent_size
-    }
 }
 
 impl Clone for BufferSnapshot {
@@ -1944,7 +1942,6 @@ impl Clone for BufferSnapshot {
             file_update_count: self.file_update_count,
             language: self.language.clone(),
             parse_count: self.parse_count,
-            indent_size: self.indent_size,
         }
     }
 }

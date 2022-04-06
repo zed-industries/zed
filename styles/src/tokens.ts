@@ -36,7 +36,7 @@ export const fontSizes = {
   xl: fontSize(20),
 };
 
-export type FontWeight = 
+export type FontWeight =
   | "thin"
   | "extra_light"
   | "light"

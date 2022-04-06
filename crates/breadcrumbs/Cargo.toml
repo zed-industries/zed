@@ -14,6 +14,7 @@ gpui = { path = "../gpui" }
 language = { path = "../language" }
 project = { path = "../project" }
 search = { path = "../search" }
+settings = { path = "../settings" }
 theme = { path = "../theme" }
 workspace = { path = "../workspace" }
 
