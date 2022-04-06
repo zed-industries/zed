@@ -10,15 +10,14 @@ use gpui::{
     ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use project::{search::SearchQuery, Project};
+use settings::Settings;
 use std::{
     any::{Any, TypeId},
     ops::Range,
     path::PathBuf,
 };
 use util::ResultExt as _;
-use workspace::{
-    Item, ItemNavHistory, Pane, Settings, ToolbarItemLocation, ToolbarItemView, Workspace,
-};
+use workspace::{Item, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace};
 
 action!(Deploy);
 action!(Search);

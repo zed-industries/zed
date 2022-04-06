@@ -729,6 +729,7 @@ dependencies = [
  "language",
  "project",
  "search",
+ "settings",
  "theme",
  "workspace",
 ]
@@ -881,6 +882,7 @@ dependencies = [
  "editor",
  "gpui",
  "postage",
+ "settings",
  "theme",
  "time 0.3.7",
  "util",
@@ -1131,6 +1133,7 @@ dependencies = [
  "client",
  "gpui",
  "postage",
+ "settings",
  "theme",
  "workspace",
 ]
@@ -1480,6 +1483,7 @@ dependencies = [
  "postage",
  "project",
  "serde_json",
+ "settings",
  "theme",
  "unindent",
  "util",
@@ -1646,6 +1650,7 @@ dependencies = [
  "rand 0.8.3",
  "rpc",
  "serde",
+ "settings",
  "smallvec",
  "smol",
  "snippet",
@@ -1806,6 +1811,7 @@ dependencies = [
  "postage",
  "project",
  "serde_json",
+ "settings",
  "theme",
  "util",
  "workspace",
@@ -2206,6 +2212,7 @@ dependencies = [
  "editor",
  "gpui",
  "postage",
+ "settings",
  "text",
  "workspace",
 ]
@@ -3255,6 +3262,7 @@ dependencies = [
  "language",
  "ordered-float",
  "postage",
+ "settings",
  "smol",
  "text",
  "workspace",
@@ -3643,6 +3651,7 @@ dependencies = [
  "postage",
  "project",
  "serde_json",
+ "settings",
  "theme",
  "util",
  "workspace",
@@ -3659,6 +3668,7 @@ dependencies = [
  "ordered-float",
  "postage",
  "project",
+ "settings",
  "smol",
  "text",
  "util",
@@ -4258,6 +4268,7 @@ dependencies = [
  "postage",
  "project",
  "serde_json",
+ "settings",
  "theme",
  "unindent",
  "util",
@@ -4404,6 +4415,21 @@ dependencies = [
  "expat-sys",
  "freetype-sys",
  "pkg-config",
+]
+
+[[package]]
+name = "settings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "theme",
+ "toml",
+ "util",
 ]
 
 [[package]]
@@ -5142,6 +5168,7 @@ dependencies = [
  "log",
  "parking_lot",
  "postage",
+ "settings",
  "smol",
  "theme",
  "workspace",
@@ -5719,6 +5746,7 @@ dependencies = [
  "language",
  "log",
  "project",
+ "settings",
  "util",
  "workspace",
 ]
@@ -5948,9 +5976,9 @@ dependencies = [
  "parking_lot",
  "postage",
  "project",
- "schemars",
  "serde",
  "serde_json",
+ "settings",
  "smallvec",
  "theme",
  "util",
@@ -6034,6 +6062,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "settings",
  "simplelog",
  "smallvec",
  "smol",
@@ -6099,6 +6128,7 @@ dependencies = [
  "scrypt",
  "serde",
  "serde_json",
+ "settings",
  "sha-1 0.9.6",
  "sqlx 0.5.5",
  "surf",

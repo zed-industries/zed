@@ -17,6 +17,7 @@ collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 project = { path = "../project" }
+settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 anyhow = "1.0.38"
@@ -24,7 +25,6 @@ futures = "0.3"
 log = "0.4"
 parking_lot = "0.11.1"
 postage = { version = "0.4.1", features = ["futures-traits"] }
-schemars = "0.8"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 smallvec = { version = "1.6", features = ["union"] }
@@ -33,3 +33,4 @@ smallvec = { version = "1.6", features = ["union"] }
 client = { path = "../client", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
+settings = { path = "../settings", features = ["test-support"] }

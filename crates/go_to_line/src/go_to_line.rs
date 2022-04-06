@@ -3,8 +3,9 @@ use gpui::{
     action, elements::*, geometry::vector::Vector2F, keymap::Binding, Axis, Entity,
     MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
 };
+use settings::Settings;
 use text::{Bias, Point};
-use workspace::{Settings, Workspace};
+use workspace::Workspace;
 
 action!(Toggle);
 action!(Confirm);

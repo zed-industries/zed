@@ -3,9 +3,9 @@ use client::{test::FakeHttpClient, ChannelList, Client, UserStore};
 use gpui::MutableAppContext;
 use language::LanguageRegistry;
 use project::fs::FakeFs;
+use settings::Settings;
 use std::sync::Arc;
 use theme::ThemeRegistry;
-use workspace::Settings;
 
 #[cfg(test)]
 #[ctor::ctor]

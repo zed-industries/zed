@@ -1104,6 +1104,7 @@ mod tests {
     use rand::prelude::*;
     use rpc::PeerId;
     use serde_json::json;
+    use settings::Settings;
     use sqlx::types::time::OffsetDateTime;
     use std::{
         cell::Cell,
@@ -1117,7 +1118,7 @@ mod tests {
         },
         time::Duration,
     };
-    use workspace::{Item, Settings, SplitDirection, Workspace, WorkspaceParams};
+    use workspace::{Item, SplitDirection, Workspace, WorkspaceParams};
 
     #[cfg(test)]
     #[ctor::ctor]

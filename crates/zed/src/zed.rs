@@ -1,6 +1,7 @@
 pub mod assets;
 pub mod languages;
 pub mod menus;
+pub mod settings_file;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
@@ -23,9 +24,10 @@ use project::Project;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
+use settings::Settings;
 use std::{path::PathBuf, sync::Arc};
 pub use workspace;
-use workspace::{AppState, Settings, Workspace, WorkspaceParams};
+use workspace::{AppState, Workspace, WorkspaceParams};
 
 action!(About);
 action!(Quit);

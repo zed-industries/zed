@@ -46,6 +46,7 @@ impl Entity for DisplayMap {
 impl DisplayMap {
     pub fn new(
         buffer: ModelHandle<MultiBuffer>,
+        // TODO - remove. read tab_size from settings inside
         tab_size: usize,
         font_id: FontId,
         font_size: f32,
@@ -76,6 +77,8 @@ impl DisplayMap {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (folds_snapshot, edits) = self.fold_map.read(buffer_snapshot, edits);
+
+        // TODO: Pull tabsize out of cx and pass it to sync
         let (tabs_snapshot, edits) = self.tab_map.sync(folds_snapshot.clone(), edits);
         let (wraps_snapshot, edits) = self
             .wrap_map

@@ -10,6 +10,7 @@ use gpui::{
     ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
+use settings::Settings;
 use std::{
     collections::{hash_map, HashMap},
     ffi::OsStr,
@@ -17,7 +18,7 @@ use std::{
 };
 use workspace::{
     menu::{SelectNext, SelectPrev},
-    Settings, Workspace,
+    Workspace,
 };
 
 pub struct ProjectPanel {

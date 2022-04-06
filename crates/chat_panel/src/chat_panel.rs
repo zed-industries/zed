@@ -13,10 +13,10 @@ use gpui::{
     ViewContext, ViewHandle,
 };
 use postage::prelude::Stream;
+use settings::{Settings, SoftWrap};
 use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
 use util::{ResultExt, TryFutureExt};
-use workspace::{settings::SoftWrap, Settings};
 
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
 

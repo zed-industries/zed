@@ -9,9 +9,10 @@ use gpui::{
 };
 use std::{cmp, sync::Arc};
 use theme::{Theme, ThemeRegistry};
+use settings::Settings;
 use workspace::{
     menu::{Confirm, SelectNext, SelectPrev},
-    Settings, Workspace,
+    Workspace,
 };
 
 pub struct ThemeSelector {

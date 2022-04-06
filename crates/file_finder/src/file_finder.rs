@@ -19,8 +19,9 @@ use std::{
 use util::post_inc;
 use workspace::{
     menu::{Confirm, SelectNext, SelectPrev},
-    Settings, Workspace,
+    Workspace,
 };
+use settings::Settings;
 
 pub struct FileFinder {
     handle: WeakViewHandle<Self>,

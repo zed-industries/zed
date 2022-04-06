@@ -13,10 +13,11 @@ use gpui::{
 };
 use language::Outline;
 use ordered_float::OrderedFloat;
+use settings::Settings;
 use std::cmp::{self, Reverse};
 use workspace::{
     menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev},
-    Settings, Workspace,
+    Workspace,
 };
 
 action!(Toggle);

@@ -25,7 +25,8 @@ use std::{
     sync::Arc,
 };
 use util::TryFutureExt;
-use workspace::{ItemHandle as _, ItemNavHistory, Settings, Workspace};
+use workspace::{ItemHandle as _, ItemNavHistory, Workspace};
+use settings::Settings;
 
 action!(Deploy);
 

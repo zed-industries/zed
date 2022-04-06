@@ -8,7 +8,8 @@ use gpui::{
     Element, ElementBox, Entity, LayoutContext, ModelHandle, RenderContext, Subscription, View,
     ViewContext,
 };
-use workspace::{AppState, JoinProject, JoinProjectParams, Settings};
+use workspace::{AppState, JoinProject, JoinProjectParams};
+use settings::Settings;
 
 pub struct ContactsPanel {
     contacts: ListState,

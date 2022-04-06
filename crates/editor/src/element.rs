@@ -1494,8 +1494,8 @@ mod tests {
         display_map::{BlockDisposition, BlockProperties},
         Editor, MultiBuffer,
     };
+    use settings::Settings;
     use util::test::sample_text;
-    use workspace::Settings;
 
     #[gpui::test]
     fn test_layout_line_numbers(cx: &mut gpui::MutableAppContext) {

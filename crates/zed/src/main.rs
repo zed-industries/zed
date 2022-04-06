@@ -9,17 +9,19 @@ use gpui::{App, AssetSource, Task};
 use log::LevelFilter;
 use parking_lot::Mutex;
 use project::Fs;
+use settings::{self, Settings};
 use smol::process::Command;
 use std::{env, fs, path::PathBuf, sync::Arc};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
 use util::ResultExt;
-use workspace::{
-    self,
-    settings::{self, SettingsFile},
-    AppState, OpenNew, OpenParams, OpenPaths, Settings,
-};
+use workspace::{self, AppState, OpenNew, OpenParams, OpenPaths};
 use zed::{
-    self, assets::Assets, build_window_options, build_workspace, fs::RealFs, languages, menus,
+    self,
+    assets::Assets,
+    build_window_options, build_workspace,
+    fs::RealFs,
+    languages, menus,
+    settings_file::{settings_from_files, SettingsFile},
 };
 
 fn main() {
@@ -97,7 +99,7 @@ fn main() {
         .detach_and_log_err(cx);
 
         let settings_file = cx.background().block(settings_file).unwrap();
-        let mut settings_rx = Settings::from_files(
+        let mut settings_rx = settings_from_files(
             default_settings,
             vec![settings_file],
             themes.clone(),

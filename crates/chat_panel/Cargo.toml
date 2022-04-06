@@ -11,6 +11,7 @@ doctest = false
 client = { path = "../client" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
+settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }

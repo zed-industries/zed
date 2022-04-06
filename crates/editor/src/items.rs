@@ -8,12 +8,11 @@ use gpui::{
 use language::{Bias, Buffer, Diagnostic, File as _, SelectionGoal};
 use project::{File, Project, ProjectEntryId, ProjectPath};
 use rpc::proto::{self, update_view};
+use settings::Settings;
 use std::{fmt::Write, path::PathBuf, time::Duration};
 use text::{Point, Selection};
 use util::TryFutureExt;
-use workspace::{
-    FollowableItem, Item, ItemHandle, ItemNavHistory, ProjectItem, Settings, StatusItemView,
-};
+use workspace::{FollowableItem, Item, ItemHandle, ItemNavHistory, ProjectItem, StatusItemView};
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 

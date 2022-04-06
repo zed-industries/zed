@@ -41,6 +41,7 @@ pub use multi_buffer::{
 use ordered_float::OrderedFloat;
 use project::{Project, ProjectTransaction};
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use smallvec::SmallVec;
 use smol::Timer;
 use snippet::Snippet;
@@ -57,7 +58,7 @@ pub use sum_tree::Bias;
 use text::rope::TextDimension;
 use theme::DiagnosticStyle;
 use util::{post_inc, ResultExt, TryFutureExt};
-use workspace::{settings, ItemNavHistory, Settings, Workspace};
+use workspace::{ItemNavHistory, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -5669,16 +5670,16 @@ impl Editor {
     }
 
     pub fn soft_wrap_mode(&self, cx: &AppContext) -> SoftWrap {
-        let language = self.language(cx);
+        let language = self.language(cx).map(|language| language.name());
         let settings = cx.global::<Settings>();
         let mode = self
             .soft_wrap_mode_override
-            .unwrap_or_else(|| settings.soft_wrap(language));
+            .unwrap_or_else(|| settings.soft_wrap(language.as_deref()));
         match mode {
             settings::SoftWrap::None => SoftWrap::None,
             settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
             settings::SoftWrap::PreferredLineLength => {
-                SoftWrap::Column(settings.preferred_line_length(language))
+                SoftWrap::Column(settings.preferred_line_length(language.as_deref()))
             }
         }
     }
