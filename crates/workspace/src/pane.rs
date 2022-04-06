@@ -633,7 +633,7 @@ impl Pane {
         enum Tabs {}
         let pane = cx.handle();
         let tabs = MouseEventHandler::new::<Tabs, _, _>(0, cx, |mouse_state, cx| {
-            let mut row = Flex::row();
+            let mut row = Flex::row().scrollable::<Tabs, _>(1, cx);
             for (ix, item) in self.items.iter().enumerate() {
                 let is_active = ix == self.active_item_index;
 
