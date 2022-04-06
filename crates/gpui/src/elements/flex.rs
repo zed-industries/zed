@@ -259,8 +259,6 @@ impl Element for Flex {
                 if *remaining_space < 0. && bounds.contains_point(position) {
                     if let Some(scroll_state) = self.scroll_state.as_ref() {
                         scroll_state.update(cx, |scroll_state, cx| {
-                            dbg!(precise, delta);
-
                             let mut delta = match self.axis {
                                 Axis::Horizontal => {
                                     if delta.x() != 0. {
