@@ -42,7 +42,7 @@ export default function editor(theme: Theme) {
         textColor: theme.syntax.primary.color.value,
         background: backgroundColor(theme, 500),
         activeLineBackground: theme.editor.line.active.value,
-        codeActionsIndicator: iconColor(theme, "secondary"),
+        codeActionsIndicator: iconColor(theme, "muted"),
         diffBackgroundDeleted: backgroundColor(theme, "error"),
         diffBackgroundInserted: backgroundColor(theme, "ok"),
         documentHighlightReadBackground: theme.editor.highlight.occurrence.value,
@@ -78,10 +78,7 @@ export default function editor(theme: Theme) {
             margin: {
                 left: -14,
             },
-            matchHighlight: {
-                color: theme.syntax.keyword.color.value,
-                weight: theme.syntax.keyword.weight.value,
-            },
+            matchHighlight: text(theme, "mono", "feature"),
             selectedItem: {
                 ...autocompleteItem,
                 background: backgroundColor(theme, 500, "active"),

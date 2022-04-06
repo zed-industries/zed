@@ -28,7 +28,7 @@ export default function selectorModal(theme: Theme): Object {
         activeItem,
         border: border(theme, "primary"),
         empty: {
-            text: text(theme, "sans", "muted"),
+            text: text(theme, "sans", "placeholder"),
             padding: {
                 bottom: 4,
                 left: 16,

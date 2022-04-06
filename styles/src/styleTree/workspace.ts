@@ -117,7 +117,7 @@ export default function workspace(theme: Theme) {
             signInPrompt,
             hoveredSignInPrompt: {
                 ...signInPrompt,
-                ...text(theme, "mono", "active"),
+                ...text(theme, "sans", "active"),
                 size: 13,
             },
             offlineIcon: {

@@ -51,7 +51,7 @@
     "empty": {
       "text": {
         "family": "Zed Sans",
-        "color": "#808080",
+        "color": "#474747",
         "size": 14
       },
       "padding": {
@@ -272,7 +272,7 @@
         }
       },
       "hovered_sign_in_prompt": {
-        "family": "Zed Mono",
+        "family": "Zed Sans",
         "color": "#ffffff",
         "size": 13,
         "underline": true,
@@ -327,17 +327,17 @@
   "editor": {
     "text_color": "#d5d5d5",
     "background": "#000000",
-    "active_line_background": "#0e0e0e",
-    "code_actions_indicator": "#9c9c9c",
+    "active_line_background": "#ffffff12",
+    "code_actions_indicator": "#555555",
     "diff_background_deleted": "#f15656",
     "diff_background_inserted": "#1b9447",
-    "document_highlight_read_background": "#14a89829",
-    "document_highlight_write_background": "#14a89852",
+    "document_highlight_read_background": "#ffffff1f",
+    "document_highlight_write_background": "#ffffff29",
     "error_color": "#f15656",
     "gutter_background": "#000000",
     "gutter_padding_factor": 3.5,
-    "highlighted_line_background": "#070707",
-    "line_number": "#808080",
+    "highlighted_line_background": "#ffffff1f",
+    "line_number": "#474747",
     "line_number_active": "#ffffff",
     "rename_fade": 0.6,
     "unnecessary_code_fade": 0.5,
@@ -400,14 +400,15 @@
           "right": 6,
           "top": 2
         },
-        "background": "#070707"
+        "background": "#ffffff14"
       },
       "margin": {
         "left": -14
       },
       "match_highlight": {
-        "color": "#4f8ff7",
-        "weight": "normal"
+        "family": "Zed Mono",
+        "color": "#1096d3",
+        "size": 14
       },
       "selected_item": {
         "corner_radius": 6,
@@ -417,7 +418,7 @@
           "right": 6,
           "top": 2
         },
-        "background": "#0e0e0e"
+        "background": "#ffffff1f"
       }
     },
     "diagnostic_header": {
@@ -453,7 +454,7 @@
       }
     },
     "diagnostic_path_header": {
-      "background": "#0e0e0e",
+      "background": "#ffffff12",
       "text_scale_factor": 0.857,
       "filename": {
         "family": "Zed Mono",

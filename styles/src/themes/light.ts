@@ -4,22 +4,22 @@ import Theme, { buildPlayer, Syntax } from "./theme";
 
 const backgroundColor = {
     100: {
-        base: colors.neutral[100],
-        hovered: colors.neutral[150],
-        active: colors.neutral[200],
-        focused: colors.neutral[150],
-    },
-    300: {
-        base: colors.neutral[50],
+        base: colors.neutral[75],
         hovered: colors.neutral[100],
         active: colors.neutral[150],
         focused: colors.neutral[100],
     },
+    300: {
+        base: colors.neutral[25],
+        hovered: colors.neutral[75],
+        active: colors.neutral[125],
+        focused: colors.neutral[75],
+    },
     500: {
         base: colors.neutral[0],
-        hovered: colors.neutral[25],
-        active: colors.neutral[50],
-        focused: colors.neutral[75],
+        hovered: withOpacity(colors.neutral[900], 0.03),
+        active: withOpacity(colors.neutral[900], 0.06),
+        focused: colors.neutral[50],
     },
     ok: {
         base: colors.green[100],
@@ -48,9 +48,9 @@ const backgroundColor = {
 };
 
 const borderColor = {
-    primary: colors.neutral[200],
-    secondary: colors.neutral[100],
-    muted: colors.neutral[50],
+    primary: colors.neutral[150],
+    secondary: colors.neutral[150],
+    muted: colors.neutral[100],
     focused: colors.neutral[100],
     active: colors.neutral[250],
     ok: colors.green[200],
@@ -74,8 +74,8 @@ const textColor = {
 
 const iconColor = {
     primary: colors.neutral[700],
-    secondary: colors.neutral[600],
-    muted: colors.neutral[500],
+    secondary: colors.neutral[500],
+    muted: colors.neutral[350],
     placeholder: colors.neutral[300],
     active: colors.neutral[900],
     feature: colors.indigo[500],
@@ -102,19 +102,19 @@ const editor = {
     indent_guide: borderColor.muted,
     indent_guide_active: borderColor.secondary,
     line: {
-        active: backgroundColor[500].active,
-        highlighted: backgroundColor[500].active,
+        active: withOpacity(colors.neutral[900], 0.06),
+        highlighted: withOpacity(colors.neutral[900], 0.12),
         inserted: backgroundColor.ok.active,
         deleted: backgroundColor.error.active,
         modified: backgroundColor.info.active,
     },
     highlight: {
         selection: player[1].selectionColor,
-        occurrence: withOpacity(colors.amber[500], 0.06),
-        activeOccurrence: withOpacity(colors.amber[500], 0.26),
+        occurrence: withOpacity(colors.neutral[900], 0.06),
+        activeOccurrence: withOpacity(colors.neutral[900], 0.16), // TODO: This is not correctly hooked up to occurences on the rust side
         matchingBracket: colors.neutral[0],
-        match: withOpacity(colors.purple[500], 0.12),
-        activeMatch: withOpacity(colors.purple[400], 0.36),
+        match: withOpacity(colors.red[500], 0.2),
+        activeMatch: withOpacity(colors.indigo[400], 0.36),
         related: colors.neutral[0],
     },
     gutter: {

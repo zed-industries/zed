@@ -6,19 +6,19 @@ const backgroundColor = {
     100: {
         base: colors.neutral[750],
         hovered: colors.neutral[725],
-        active: colors.neutral[700],
+        active: colors.neutral[800],
         focused: colors.neutral[675],
     },
     300: {
         base: colors.neutral[800],
         hovered: colors.neutral[775],
         active: colors.neutral[750],
-        focused: colors.neutral[725],
+        focused: colors.neutral[775],
     },
     500: {
         base: colors.neutral[900],
-        hovered: colors.neutral[875],
-        active: colors.neutral[850],
+        hovered: withOpacity(colors.neutral[0], 0.08),
+        active: withOpacity(colors.neutral[0], 0.12),
         focused: colors.neutral[825],
     },
     ok: {
@@ -103,23 +103,23 @@ const editor = {
     indent_guide: borderColor.muted,
     indent_guide_active: borderColor.secondary,
     line: {
-        active: backgroundColor[500].active,
-        highlighted: backgroundColor[500].hovered,
+        active: withOpacity(colors.neutral[0], 0.07),
+        highlighted: withOpacity(colors.neutral[0], 0.12),
         inserted: backgroundColor.ok.active,
         deleted: backgroundColor.error.active,
         modified: backgroundColor.info.active,
     },
     highlight: {
         selection: player[1].selectionColor,
-        occurrence: withOpacity(colors.teal[500], 0.16),
-        activeOccurrence: withOpacity(colors.teal[500], 0.32),
+        occurrence: withOpacity(colors.neutral[0], 0.12),
+        activeOccurrence: withOpacity(colors.neutral[0], 0.16), // TODO: This is not correctly hooked up to occurences on the rust side
         matchingBracket: backgroundColor[500].active,
         match: withOpacity(colors.sky[500], 0.16),
         activeMatch: withOpacity(colors.sky[800], 0.32),
         related: backgroundColor[500].focused,
     },
     gutter: {
-        primary: textColor.muted,
+        primary: textColor.placeholder,
         active: textColor.active,
     },
 };
