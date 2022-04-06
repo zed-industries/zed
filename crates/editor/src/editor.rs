@@ -5956,8 +5956,6 @@ impl Editor {
         // and activating a new item causes the pane to call a method on us reentrantly,
         // which panics if we're on the stack.
         cx.defer(move |workspace, cx| {
-            workspace.activate_next_pane(cx);
-
             for (buffer, ranges) in new_selections_by_buffer.into_iter() {
                 let editor = workspace.open_project_item::<Self>(buffer, cx);
                 editor.update(cx, |editor, cx| {
