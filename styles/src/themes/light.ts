@@ -65,7 +65,7 @@ const textColor = {
     muted: colors.neutral[550],
     placeholder: colors.neutral[450],
     active: colors.neutral[900],
-    feature: colors.indigo[500],
+    feature: colors.indigo[600],
     ok: colors.green[500],
     error: colors.red[500],
     warning: colors.yellow[500],
@@ -96,7 +96,6 @@ const player = {
     8: buildPlayer(colors.yellow[400]),
 };
 
-// TODO: Fixup
 const editor = {
     background: backgroundColor[500].base,
     indent_guide: borderColor.muted,
@@ -111,10 +110,10 @@ const editor = {
     highlight: {
         selection: player[1].selectionColor,
         occurrence: withOpacity(colors.neutral[900], 0.06),
-        activeOccurrence: withOpacity(colors.neutral[900], 0.16), // TODO: This is not correctly hooked up to occurences on the rust side
+        activeOccurrence: withOpacity(colors.neutral[900], 0.16), // TODO: This is not hooked up to occurences on the rust side
         matchingBracket: colors.neutral[0],
         match: withOpacity(colors.red[500], 0.2),
-        activeMatch: withOpacity(colors.indigo[400], 0.36),
+        activeMatch: withOpacity(colors.indigo[400], 0.36), // TODO: This is not hooked up to occurences on the rust side
         related: colors.neutral[0],
     },
     gutter: {
@@ -145,19 +144,19 @@ const syntax: Syntax = {
         weight: fontWeights.normal,
     },
     function: {
-        color: colors.orange[400],
+        color: colors.orange[600],
         weight: fontWeights.normal,
     },
     type: {
-        color: colors.amber[500],
+        color: colors.yellow[600],
         weight: fontWeights.normal,
     },
     variant: {
-        color: colors.sky[500],
+        color: colors.rose[700],
         weight: fontWeights.normal,
     },
     property: {
-        color: colors.emerald[600],
+        color: colors.emerald[700],
         weight: fontWeights.normal,
     },
     enum: {
