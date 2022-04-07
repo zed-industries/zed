@@ -66,6 +66,7 @@ impl Element for Expanded {
         &mut self,
         event: &Event,
         _: RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         cx: &mut EventContext,

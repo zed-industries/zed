@@ -266,6 +266,7 @@ impl Element for Flex {
         &mut self,
         event: &Event,
         bounds: RectF,
+        _: RectF,
         remaining_space: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         cx: &mut EventContext,
@@ -390,6 +391,7 @@ impl Element for FlexItem {
     fn dispatch_event(
         &mut self,
         event: &Event,
+        _: RectF,
         _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,

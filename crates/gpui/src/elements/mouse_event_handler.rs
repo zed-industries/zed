@@ -100,6 +100,7 @@ impl Element for MouseEventHandler {
         &mut self,
         event: &Event,
         bounds: RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         cx: &mut EventContext,

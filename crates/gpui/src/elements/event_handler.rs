@@ -85,6 +85,8 @@ impl Element for EventHandler {
         &mut self,
         event: &Event,
         bounds: RectF,
+        _: RectF,
+        visible_bounds: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         cx: &mut EventContext,

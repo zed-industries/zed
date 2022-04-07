@@ -104,6 +104,7 @@ impl gpui::Element for TextElement {
         &mut self,
         _: &gpui::Event,
         _: RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         _: &mut gpui::EventContext,

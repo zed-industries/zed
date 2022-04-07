@@ -1147,6 +1147,7 @@ impl Element for EditorElement {
         &mut self,
         event: &Event,
         _: RectF,
+        _: RectF,
         layout: &mut LayoutState,
         paint: &mut PaintState,
         cx: &mut EventContext,
