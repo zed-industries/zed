@@ -172,7 +172,13 @@ impl Renderer {
             for path in layer.paths() {
                 let origin = path.bounds.origin() * scene.scale_factor();
                 let size = (path.bounds.size() * scene.scale_factor()).ceil();
-                let (alloc_id, atlas_origin) = self.path_atlases.allocate(size.to_i32());
+
+                let path_allocation = self.path_atlases.allocate(size.to_i32());
+                if path_allocation.is_none() {
+                    // Path size was likely zero.
+                    continue;
+                }
+                let (alloc_id, atlas_origin) = path_allocation.unwrap();
                 let atlas_origin = atlas_origin.to_f32();
                 sprites.push(PathSprite {
                     layer_id,
@@ -569,6 +575,10 @@ impl Renderer {
             let sprite =
                 self.sprite_cache
                     .render_icon(source_size, icon.path.clone(), icon.svg.clone());
+            if sprite.is_none() {
+                continue;
+            }
+            let sprite = sprite.unwrap();
 
             sprites_by_atlas
                 .entry(sprite.atlas_id)

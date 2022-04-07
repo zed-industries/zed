@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use metal::{MTLPixelFormat, TextureDescriptor, TextureRef};
 
 use super::atlas::{AllocId, AtlasAllocator};
@@ -31,7 +32,9 @@ impl ImageCache {
             .prev_frame
             .remove(&image.id)
             .or_else(|| self.curr_frame.get(&image.id).copied())
-            .unwrap_or_else(|| self.atlases.upload(image.size(), image.as_bytes()));
+            .or_else(|| self.atlases.upload(image.size(), image.as_bytes()))
+            .ok_or_else(|| anyhow!("Could not upload image of size {:?}", image.size()))
+            .unwrap();
         self.curr_frame.insert(image.id, (alloc_id, atlas_bounds));
         (alloc_id, atlas_bounds)
     }

@@ -2,7 +2,6 @@ use crate::geometry::{
     rect::RectI,
     vector::{vec2i, Vector2I},
 };
-use anyhow::anyhow;
 use etagere::BucketedAtlasAllocator;
 use foreign_types::ForeignType;
 use metal::{Device, TextureDescriptor};
@@ -41,36 +40,31 @@ impl AtlasAllocator {
         )
     }
 
-    pub fn allocate(&mut self, requested_size: Vector2I) -> (AllocId, Vector2I) {
+    pub fn allocate(&mut self, requested_size: Vector2I) -> Option<(AllocId, Vector2I)> {
         let (alloc_id, origin) = self
             .atlases
             .last_mut()
             .unwrap()
             .allocate(requested_size)
-            .unwrap_or_else(|| {
+            .or_else(|| {
                 let mut atlas = self.new_atlas(requested_size);
-                let (id, origin) = atlas
-                    .allocate(requested_size)
-                    .ok_or_else(|| {
-                        anyhow!("could not allocate requested size {:?}", requested_size)
-                    })
-                    .unwrap();
+                let (id, origin) = atlas.allocate(requested_size)?;
                 self.atlases.push(atlas);
-                (id, origin)
-            });
+                Some((id, origin))
+            })?;
 
         let id = AllocId {
             atlas_id: self.atlases.len() - 1,
             alloc_id,
         };
-        (id, origin)
+        Some((id, origin))
     }
 
-    pub fn upload(&mut self, size: Vector2I, bytes: &[u8]) -> (AllocId, RectI) {
-        let (alloc_id, origin) = self.allocate(size);
+    pub fn upload(&mut self, size: Vector2I, bytes: &[u8]) -> Option<(AllocId, RectI)> {
+        let (alloc_id, origin) = self.allocate(size)?;
         let bounds = RectI::new(origin, size);
         self.atlases[alloc_id.atlas_id].upload(bounds, bytes);
-        (alloc_id, bounds)
+        Some((alloc_id, bounds))
     }
 
     pub fn deallocate(&mut self, id: AllocId) {
