@@ -1165,10 +1165,7 @@ pub mod tests {
                         *markers[0].column_mut() += 1;
                     }
 
-                    assert_eq!(
-                        unmarked_snapshot.clip_point(dbg!(markers[0]), bias),
-                        markers[1]
-                    )
+                    assert_eq!(unmarked_snapshot.clip_point(markers[0], bias), markers[1])
                 }
             };
         }

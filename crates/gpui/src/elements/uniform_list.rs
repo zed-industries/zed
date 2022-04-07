@@ -8,11 +8,10 @@ use crate::{
     ElementBox,
 };
 use json::ToJson;
-use parking_lot::Mutex;
-use std::{cmp, ops::Range, sync::Arc};
+use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
 
 #[derive(Clone, Default)]
-pub struct UniformListState(Arc<Mutex<StateInner>>);
+pub struct UniformListState(Rc<RefCell<StateInner>>);
 
 #[derive(Debug)]
 pub enum ScrollTarget {
@@ -22,11 +21,11 @@ pub enum ScrollTarget {
 
 impl UniformListState {
     pub fn scroll_to(&self, scroll_to: ScrollTarget) {
-        self.0.lock().scroll_to = Some(scroll_to);
+        self.0.borrow_mut().scroll_to = Some(scroll_to);
     }
 
     pub fn scroll_top(&self) -> f32 {
-        self.0.lock().scroll_top
+        self.0.borrow().scroll_top
     }
 }
 
@@ -96,7 +95,7 @@ where
             delta *= 20.;
         }
 
-        let mut state = self.state.0.lock();
+        let mut state = self.state.0.borrow_mut();
         state.scroll_top = (state.scroll_top - delta.y()).max(0.0).min(scroll_max);
         cx.notify();
 
@@ -104,7 +103,7 @@ where
     }
 
     fn autoscroll(&mut self, scroll_max: f32, list_height: f32, item_height: f32) {
-        let mut state = self.state.0.lock();
+        let mut state = self.state.0.borrow_mut();
 
         if let Some(scroll_to) = state.scroll_to.take() {
             let item_ix;
@@ -141,7 +140,7 @@ where
     }
 
     fn scroll_top(&self) -> f32 {
-        self.state.0.lock().scroll_top
+        self.state.0.borrow().scroll_top
     }
 }
 

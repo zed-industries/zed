@@ -101,6 +101,7 @@ pub enum Event {
 pub struct Pane {
     items: Vec<Box<dyn ItemHandle>>,
     active_item_index: usize,
+    autoscroll: bool,
     nav_history: Rc<RefCell<NavHistory>>,
     toolbar: ViewHandle<Toolbar>,
 }
@@ -142,6 +143,7 @@ impl Pane {
         Self {
             items: Vec::new(),
             active_item_index: 0,
+            autoscroll: false,
             nav_history: Default::default(),
             toolbar: cx.add_view(|_| Toolbar::new()),
         }
@@ -200,27 +202,19 @@ impl Pane {
                     .upgrade(cx)
                     .and_then(|v| pane.index_for_item(v.as_ref()))
                 {
-                    if let Some(item) = pane.active_item() {
-                        pane.nav_history.borrow_mut().set_mode(mode);
-                        item.deactivated(cx);
-                        pane.nav_history
-                            .borrow_mut()
-                            .set_mode(NavigationMode::Normal);
-                    }
+                    let prev_active_item_index = pane.active_item_index;
+                    pane.nav_history.borrow_mut().set_mode(mode);
+                    pane.activate_item(index, true, cx);
+                    pane.nav_history
+                        .borrow_mut()
+                        .set_mode(NavigationMode::Normal);
 
-                    let prev_active_index = mem::replace(&mut pane.active_item_index, index);
-
-                    let mut navigated = prev_active_index != pane.active_item_index;
+                    let mut navigated = prev_active_item_index != pane.active_item_index;
                     if let Some(data) = entry.data {
                         navigated |= pane.active_item()?.navigate(data, cx);
                     }
 
                     if navigated {
-                        pane.focus_active_item(cx);
-                        pane.update_toolbar(cx);
-                        pane.activate(cx);
-                        cx.emit(Event::ActivateItem { local: true });
-                        cx.notify();
                         break None;
                     }
                 }
@@ -376,10 +370,12 @@ impl Pane {
     }
 
     pub fn activate_item(&mut self, index: usize, local: bool, cx: &mut ViewContext<Self>) {
+        use NavigationMode::{GoingBack, GoingForward};
         if index < self.items.len() {
             let prev_active_item_ix = mem::replace(&mut self.active_item_index, index);
-            if prev_active_item_ix != self.active_item_index
-                && prev_active_item_ix < self.items.len()
+            if matches!(self.nav_history.borrow().mode, GoingBack | GoingForward)
+                || (prev_active_item_ix != self.active_item_index
+                    && prev_active_item_ix < self.items.len())
             {
                 self.items[prev_active_item_ix].deactivated(cx);
                 cx.emit(Event::ActivateItem { local });
@@ -389,6 +385,7 @@ impl Pane {
                 self.focus_active_item(cx);
                 self.activate(cx);
             }
+            self.autoscroll = true;
             cx.notify();
         }
     }
@@ -628,13 +625,18 @@ impl Pane {
         });
     }
 
-    fn render_tabs(&self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render_tabs(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = cx.global::<Settings>().theme.clone();
 
         enum Tabs {}
         let pane = cx.handle();
         let tabs = MouseEventHandler::new::<Tabs, _, _>(0, cx, |mouse_state, cx| {
-            let mut row = Flex::row();
+            let autoscroll = if mem::take(&mut self.autoscroll) {
+                Some(self.active_item_index)
+            } else {
+                None
+            };
+            let mut row = Flex::row().scrollable::<Tabs, _>(1, autoscroll, cx);
             for (ix, item) in self.items.iter().enumerate() {
                 let is_active = ix == self.active_item_index;
 
