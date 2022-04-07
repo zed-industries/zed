@@ -3,7 +3,7 @@ use editor::{
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    action,
+    actions,
     elements::*,
     keymap::{self, Binding},
     AppContext, Axis, Entity, ModelHandle, MutableAppContext, RenderContext, Task, View,
@@ -22,7 +22,7 @@ use workspace::{
     Workspace,
 };
 
-action!(Toggle);
+actions!(project_symbols, [Toggle]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([

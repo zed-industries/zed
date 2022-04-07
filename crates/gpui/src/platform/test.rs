@@ -1,7 +1,7 @@
 use super::{CursorStyle, WindowBounds};
 use crate::{
     geometry::vector::{vec2f, Vector2F},
-    AnyAction, ClipboardItem,
+    Action, ClipboardItem,
 };
 use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
@@ -72,7 +72,7 @@ impl super::ForegroundPlatform for ForegroundPlatform {
         unimplemented!()
     }
 
-    fn on_menu_command(&self, _: Box<dyn FnMut(&dyn AnyAction)>) {}
+    fn on_menu_command(&self, _: Box<dyn FnMut(&dyn Action)>) {}
 
     fn set_menus(&self, _: Vec<crate::Menu>) {}
 

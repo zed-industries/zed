@@ -6,7 +6,7 @@ use crate::{
     json::{self, ToJson},
     platform::Event,
     text_layout::TextLayoutCache,
-    Action, AnyAction, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox,
+    Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox,
     ElementStateContext, Entity, FontSystem, ModelHandle, ReadModel, ReadView, Scene,
     UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
@@ -223,7 +223,7 @@ impl Presenter {
 
 pub struct DispatchDirective {
     pub path: Vec<usize>,
-    pub action: Box<dyn AnyAction>,
+    pub action: Box<dyn Action>,
 }
 
 pub struct LayoutContext<'a> {

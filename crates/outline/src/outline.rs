@@ -4,7 +4,7 @@ use editor::{
 };
 use fuzzy::StringMatch;
 use gpui::{
-    action,
+    actions,
     elements::*,
     geometry::vector::Vector2F,
     keymap::{self, Binding},
@@ -20,7 +20,7 @@ use workspace::{
     Workspace,
 };
 
-action!(Toggle);
+actions!(outline, [Toggle]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([

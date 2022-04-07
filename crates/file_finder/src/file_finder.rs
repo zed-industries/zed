@@ -1,8 +1,9 @@
 use editor::Editor;
 use fuzzy::PathMatch;
 use gpui::{
-    action,
+    actions,
     elements::*,
+    impl_actions,
     keymap::{self, Binding},
     AppContext, Axis, Entity, ModelHandle, MutableAppContext, RenderContext, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
@@ -37,8 +38,11 @@ pub struct FileFinder {
     list_state: UniformListState,
 }
 
-action!(Toggle);
-action!(Select, ProjectPath);
+#[derive(Clone)]
+pub struct Select(pub ProjectPath);
+
+impl_actions!(file_finder, [Select]);
+actions!(file_finder, [Toggle]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(FileFinder::toggle);

@@ -1,23 +1,42 @@
 mod g_prefix;
 
+use crate::{mode::NormalState, Mode, SwitchMode, VimState};
 use editor::{char_kind, movement, Bias};
-use gpui::{action, keymap::Binding, MutableAppContext, ViewContext};
+use gpui::{actions, impl_actions, keymap::Binding, MutableAppContext, ViewContext};
 use language::SelectionGoal;
 use workspace::Workspace;
 
-use crate::{mode::NormalState, Mode, SwitchMode, VimState};
+#[derive(Clone)]
+struct MoveToNextWordStart(pub bool);
 
-action!(GPrefix);
-action!(MoveLeft);
-action!(MoveDown);
-action!(MoveUp);
-action!(MoveRight);
-action!(MoveToStartOfLine);
-action!(MoveToEndOfLine);
-action!(MoveToEnd);
-action!(MoveToNextWordStart, bool);
-action!(MoveToNextWordEnd, bool);
-action!(MoveToPreviousWordStart, bool);
+#[derive(Clone)]
+struct MoveToNextWordEnd(pub bool);
+
+#[derive(Clone)]
+struct MoveToPreviousWordStart(pub bool);
+
+impl_actions!(
+    vim,
+    [
+        MoveToNextWordStart,
+        MoveToNextWordEnd,
+        MoveToPreviousWordStart,
+    ]
+);
+
+actions!(
+    vim,
+    [
+        GPrefix,
+        MoveLeft,
+        MoveDown,
+        MoveUp,
+        MoveRight,
+        MoveToStartOfLine,
+        MoveToEndOfLine,
+        MoveToEnd,
+    ]
+);
 
 pub fn init(cx: &mut MutableAppContext) {
     let context = Some("Editor && vim_mode == normal");

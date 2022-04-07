@@ -4,7 +4,7 @@ use client::{
 };
 use editor::Editor;
 use gpui::{
-    action,
+    actions,
     elements::*,
     keymap::Binding,
     platform::CursorStyle,
@@ -33,8 +33,7 @@ pub struct ChatPanel {
 
 pub enum Event {}
 
-action!(Send);
-action!(LoadMoreMessages);
+actions!(chat_panel, [Send, LoadMoreMessages]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ChatPanel::send);

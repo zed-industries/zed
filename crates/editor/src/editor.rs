@@ -16,12 +16,13 @@ use display_map::*;
 pub use element::*;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    action,
+    actions,
     color::Color,
     elements::*,
     executor,
     fonts::{self, HighlightStyle, TextStyle},
     geometry::vector::{vec2f, Vector2F},
+    impl_actions,
     keymap::Binding,
     platform::CursorStyle,
     text_layout, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
@@ -65,84 +66,128 @@ const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 
-action!(Cancel);
-action!(Backspace);
-action!(Delete);
-action!(Input, String);
-action!(Newline);
-action!(Tab, Direction);
-action!(Indent);
-action!(Outdent);
-action!(DeleteLine);
-action!(DeleteToPreviousWordStart);
-action!(DeleteToPreviousSubwordStart);
-action!(DeleteToNextWordEnd);
-action!(DeleteToNextSubwordEnd);
-action!(DeleteToBeginningOfLine);
-action!(DeleteToEndOfLine);
-action!(CutToEndOfLine);
-action!(DuplicateLine);
-action!(MoveLineUp);
-action!(MoveLineDown);
-action!(Cut);
-action!(Copy);
-action!(Paste);
-action!(Undo);
-action!(Redo);
-action!(MoveUp);
-action!(MoveDown);
-action!(MoveLeft);
-action!(MoveRight);
-action!(MoveToPreviousWordStart);
-action!(MoveToPreviousSubwordStart);
-action!(MoveToNextWordEnd);
-action!(MoveToNextSubwordEnd);
-action!(MoveToBeginningOfLine);
-action!(MoveToEndOfLine);
-action!(MoveToBeginning);
-action!(MoveToEnd);
-action!(SelectUp);
-action!(SelectDown);
-action!(SelectLeft);
-action!(SelectRight);
-action!(SelectToPreviousWordStart);
-action!(SelectToPreviousSubwordStart);
-action!(SelectToNextWordEnd);
-action!(SelectToNextSubwordEnd);
-action!(SelectToBeginningOfLine, bool);
-action!(SelectToEndOfLine, bool);
-action!(SelectToBeginning);
-action!(SelectToEnd);
-action!(SelectAll);
-action!(SelectLine);
-action!(SplitSelectionIntoLines);
-action!(AddSelectionAbove);
-action!(AddSelectionBelow);
-action!(SelectNext, bool);
-action!(ToggleComments);
-action!(SelectLargerSyntaxNode);
-action!(SelectSmallerSyntaxNode);
-action!(MoveToEnclosingBracket);
-action!(UndoSelection);
-action!(RedoSelection);
-action!(GoToDiagnostic, Direction);
-action!(GoToDefinition);
-action!(FindAllReferences);
-action!(Rename);
-action!(ConfirmRename);
-action!(PageUp);
-action!(PageDown);
-action!(Fold);
-action!(UnfoldLines);
-action!(FoldSelectedRanges);
-action!(Scroll, Vector2F);
-action!(Select, SelectPhase);
-action!(ShowCompletions);
-action!(ToggleCodeActions, bool);
-action!(ConfirmCompletion, Option<usize>);
-action!(ConfirmCodeAction, Option<usize>);
-action!(OpenExcerpts);
-action!(RestartLanguageServer);
+#[derive(Clone)]
+pub struct SelectNext(pub bool);
+
+#[derive(Clone)]
+pub struct GoToDiagnostic(pub Direction);
+
+#[derive(Clone)]
+pub struct Scroll(pub Vector2F);
+
+#[derive(Clone)]
+pub struct Select(pub SelectPhase);
+
+#[derive(Clone)]
+pub struct Input(pub String);
+
+#[derive(Clone)]
+pub struct Tab(pub Direction);
+
+#[derive(Clone)]
+pub struct SelectToBeginningOfLine(pub bool);
+
+#[derive(Clone)]
+pub struct SelectToEndOfLine(pub bool);
+
+#[derive(Clone)]
+pub struct ToggleCodeActions(pub bool);
+
+#[derive(Clone)]
+pub struct ConfirmCompletion(pub Option<usize>);
+
+#[derive(Clone)]
+pub struct ConfirmCodeAction(pub Option<usize>);
+
+impl_actions!(
+    editor,
+    [
+        SelectNext,
+        GoToDiagnostic,
+        Scroll,
+        Select,
+        Input,
+        Tab,
+        SelectToBeginningOfLine,
+        SelectToEndOfLine,
+        ToggleCodeActions,
+        ConfirmCompletion,
+        ConfirmCodeAction,
+    ]
+);
+
+actions!(
+    editor,
+    [
+        Cancel,
+        Backspace,
+        Delete,
+        Newline,
+        Indent,
+        Outdent,
+        DeleteLine,
+        DeleteToPreviousWordStart,
+        DeleteToPreviousSubwordStart,
+        DeleteToNextWordEnd,
+        DeleteToNextSubwordEnd,
+        DeleteToBeginningOfLine,
+        DeleteToEndOfLine,
+        CutToEndOfLine,
+        DuplicateLine,
+        MoveLineUp,
+        MoveLineDown,
+        Cut,
+        Copy,
+        Paste,
+        Undo,
+        Redo,
+        MoveUp,
+        MoveDown,
+        MoveLeft,
+        MoveRight,
+        MoveToPreviousWordStart,
+        MoveToPreviousSubwordStart,
+        MoveToNextWordEnd,
+        MoveToNextSubwordEnd,
+        MoveToBeginningOfLine,
+        MoveToEndOfLine,
+        MoveToBeginning,
+        MoveToEnd,
+        SelectUp,
+        SelectDown,
+        SelectLeft,
+        SelectRight,
+        SelectToPreviousWordStart,
+        SelectToPreviousSubwordStart,
+        SelectToNextWordEnd,
+        SelectToNextSubwordEnd,
+        SelectToBeginning,
+        SelectToEnd,
+        SelectAll,
+        SelectLine,
+        SplitSelectionIntoLines,
+        AddSelectionAbove,
+        AddSelectionBelow,
+        ToggleComments,
+        SelectLargerSyntaxNode,
+        SelectSmallerSyntaxNode,
+        MoveToEnclosingBracket,
+        UndoSelection,
+        RedoSelection,
+        GoToDefinition,
+        FindAllReferences,
+        Rename,
+        ConfirmRename,
+        PageUp,
+        PageDown,
+        Fold,
+        UnfoldLines,
+        FoldSelectedRanges,
+        ShowCompletions,
+        OpenExcerpts,
+        RestartLanguageServer,
+    ]
+);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}

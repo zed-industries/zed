@@ -12,8 +12,9 @@ pub use contacts_panel;
 use contacts_panel::ContactsPanel;
 pub use editor;
 use gpui::{
-    action,
+    actions,
     geometry::vector::vec2f,
+    impl_actions,
     keymap::Binding,
     platform::{WindowBounds, WindowOptions},
     ModelHandle, ViewContext,
@@ -29,10 +30,12 @@ use std::{path::PathBuf, sync::Arc};
 pub use workspace;
 use workspace::{AppState, Workspace, WorkspaceParams};
 
-action!(About);
-action!(Quit);
-action!(OpenSettings);
-action!(AdjustBufferFontSize, f32);
+actions!(zed, [About, Quit, OpenSettings]);
+
+#[derive(Clone)]
+pub struct AdjustBufferFontSize(pub f32);
+
+impl_actions!(zed, [AdjustBufferFontSize]);
 
 const MIN_FONT_SIZE: f32 = 6.0;
 

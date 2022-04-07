@@ -3,7 +3,7 @@ use crate::{
     executor,
     keymap::Keystroke,
     platform::{self, CursorStyle},
-    AnyAction, ClipboardItem, Event, Menu, MenuItem,
+    Action, ClipboardItem, Event, Menu, MenuItem,
 };
 use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
@@ -107,10 +107,10 @@ pub struct MacForegroundPlatformState {
     resign_active: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
     event: Option<Box<dyn FnMut(crate::Event) -> bool>>,
-    menu_command: Option<Box<dyn FnMut(&dyn AnyAction)>>,
+    menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     open_files: Option<Box<dyn FnMut(Vec<PathBuf>)>>,
     finish_launching: Option<Box<dyn FnOnce() -> ()>>,
-    menu_actions: Vec<Box<dyn AnyAction>>,
+    menu_actions: Vec<Box<dyn Action>>,
 }
 
 impl MacForegroundPlatform {
@@ -235,7 +235,7 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
         }
     }
 
-    fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn AnyAction)>) {
+    fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>) {
         self.0.borrow_mut().menu_command = Some(callback);
     }
 

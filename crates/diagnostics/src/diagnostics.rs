@@ -8,7 +8,7 @@ use editor::{
     highlight_diagnostic_message, Editor, ExcerptId, MultiBuffer, ToOffset,
 };
 use gpui::{
-    action, elements::*, fonts::TextStyle, keymap::Binding, AnyViewHandle, AppContext, Entity,
+    actions, elements::*, fonts::TextStyle, keymap::Binding, AnyViewHandle, AppContext, Entity,
     ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
@@ -28,7 +28,7 @@ use std::{
 use util::TryFutureExt;
 use workspace::{ItemHandle as _, ItemNavHistory, Workspace};
 
-action!(Deploy);
+actions!(diagnostics, [Deploy]);
 
 const CONTEXT_LINE_COUNT: u32 = 1;
 

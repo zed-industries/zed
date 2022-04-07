@@ -13,10 +13,11 @@ use client::{
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
 use gpui::{
-    action,
+    actions,
     color::Color,
     elements::*,
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
+    impl_actions,
     json::{self, to_string_pretty, ToJson},
     keymap::Binding,
     platform::{CursorStyle, WindowOptions},
@@ -69,18 +70,38 @@ type FollowableItemBuilders = HashMap<
     ),
 >;
 
-action!(Open, Arc<AppState>);
-action!(OpenNew, Arc<AppState>);
-action!(OpenPaths, OpenParams);
-action!(ToggleShare);
-action!(ToggleFollow, PeerId);
-action!(FollowNextCollaborator);
-action!(Unfollow);
-action!(JoinProject, JoinProjectParams);
-action!(Save);
-action!(DebugElements);
-action!(ActivatePreviousPane);
-action!(ActivateNextPane);
+actions!(
+    workspace,
+    [
+        ToggleShare,
+        Unfollow,
+        Save,
+        DebugElements,
+        ActivatePreviousPane,
+        ActivateNextPane,
+        FollowNextCollaborator,
+    ]
+);
+
+#[derive(Clone)]
+pub struct Open(pub Arc<AppState>);
+
+#[derive(Clone)]
+pub struct OpenNew(pub Arc<AppState>);
+
+#[derive(Clone)]
+pub struct OpenPaths(pub OpenParams);
+
+#[derive(Clone)]
+pub struct ToggleFollow(pub PeerId);
+
+#[derive(Clone)]
+pub struct JoinProject(pub JoinProjectParams);
+
+impl_actions!(
+    workspace,
+    [Open, OpenNew, OpenPaths, ToggleFollow, JoinProject]
+);
 
 pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     pane::init(cx);

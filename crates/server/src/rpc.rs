@@ -1118,7 +1118,7 @@ mod tests {
         },
         time::Duration,
     };
-    use workspace::{Item, SplitDirection, Workspace, WorkspaceParams};
+    use workspace::{Item, SplitDirection, ToggleFollow, Workspace, WorkspaceParams};
 
     #[cfg(test)]
     #[ctor::ctor]
@@ -4527,7 +4527,9 @@ mod tests {
         editor_a2.update(cx_a, |editor, cx| editor.select_ranges([2..3], None, cx));
         workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.toggle_follow(&client_a_id.into(), cx).unwrap()
+                workspace
+                    .toggle_follow(&ToggleFollow(client_a_id), cx)
+                    .unwrap()
             })
             .await
             .unwrap();
@@ -4627,7 +4629,9 @@ mod tests {
         // Client A starts following client B.
         workspace_a
             .update(cx_a, |workspace, cx| {
-                workspace.toggle_follow(&client_b_id.into(), cx).unwrap()
+                workspace
+                    .toggle_follow(&ToggleFollow(client_b_id), cx)
+                    .unwrap()
             })
             .await
             .unwrap();
@@ -4856,7 +4860,9 @@ mod tests {
         });
         workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.toggle_follow(&leader_id.into(), cx).unwrap()
+                workspace
+                    .toggle_follow(&ToggleFollow(leader_id), cx)
+                    .unwrap()
             })
             .await
             .unwrap();
@@ -4881,7 +4887,9 @@ mod tests {
 
         workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.toggle_follow(&leader_id.into(), cx).unwrap()
+                workspace
+                    .toggle_follow(&ToggleFollow(leader_id), cx)
+                    .unwrap()
             })
             .await
             .unwrap();
@@ -4899,7 +4907,9 @@ mod tests {
 
         workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.toggle_follow(&leader_id.into(), cx).unwrap()
+                workspace
+                    .toggle_follow(&ToggleFollow(leader_id), cx)
+                    .unwrap()
             })
             .await
             .unwrap();
@@ -4919,7 +4929,9 @@ mod tests {
 
         workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.toggle_follow(&leader_id.into(), cx).unwrap()
+                workspace
+                    .toggle_follow(&ToggleFollow(leader_id), cx)
+                    .unwrap()
             })
             .await
             .unwrap();

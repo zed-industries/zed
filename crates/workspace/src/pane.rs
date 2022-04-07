@@ -4,9 +4,10 @@ use anyhow::Result;
 use collections::{HashMap, VecDeque};
 use futures::StreamExt;
 use gpui::{
-    action,
+    actions,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
+    impl_actions,
     keymap::Binding,
     platform::{CursorStyle, NavigationDirection},
     AppContext, Entity, MutableAppContext, PromptLevel, Quad, RenderContext, Task, View,
@@ -17,15 +18,32 @@ use settings::Settings;
 use std::{any::Any, cell::RefCell, cmp, mem, path::Path, rc::Rc};
 use util::ResultExt;
 
-action!(Split, SplitDirection);
-action!(ActivateItem, usize);
-action!(ActivatePrevItem);
-action!(ActivateNextItem);
-action!(CloseActiveItem);
-action!(CloseInactiveItems);
-action!(CloseItem, CloseItemParams);
-action!(GoBack, Option<WeakViewHandle<Pane>>);
-action!(GoForward, Option<WeakViewHandle<Pane>>);
+actions!(
+    pane,
+    [
+        ActivatePrevItem,
+        ActivateNextItem,
+        CloseActiveItem,
+        CloseInactiveItems,
+    ]
+);
+
+#[derive(Clone)]
+pub struct Split(pub SplitDirection);
+
+#[derive(Clone)]
+pub struct CloseItem(pub CloseItemParams);
+
+#[derive(Clone)]
+pub struct ActivateItem(pub usize);
+
+#[derive(Clone)]
+pub struct GoBack(pub Option<WeakViewHandle<Pane>>);
+
+#[derive(Clone)]
+pub struct GoForward(pub Option<WeakViewHandle<Pane>>);
+
+impl_actions!(pane, [Split, CloseItem, ActivateItem, GoBack, GoForward,]);
 
 #[derive(Clone)]
 pub struct CloseItemParams {

@@ -1,3 +1,5 @@
+pub mod action;
+
 use crate::{
     elements::ElementBox,
     executor::{self, Task},
@@ -7,6 +9,7 @@ use crate::{
     util::post_inc,
     AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
 };
+pub use action::*;
 use anyhow::{anyhow, Result};
 use collections::btree_map;
 use keymap::MatchResult;
@@ -142,89 +145,6 @@ pub trait ElementStateContext: DerefMut<Target = MutableAppContext> {
     }
 }
 
-pub trait Action: 'static + AnyAction {
-    type Argument: 'static + Clone;
-}
-
-pub trait AnyAction {
-    fn id(&self) -> TypeId;
-    fn name(&self) -> &'static str;
-    fn as_any(&self) -> &dyn Any;
-    fn boxed_clone(&self) -> Box<dyn AnyAction>;
-    fn boxed_clone_as_any(&self) -> Box<dyn Any>;
-}
-
-#[macro_export]
-macro_rules! action {
-    ($name:ident, $arg:ty) => {
-        #[derive(Clone)]
-        pub struct $name(pub $arg);
-
-        impl $crate::Action for $name {
-            type Argument = $arg;
-        }
-
-        impl $crate::AnyAction for $name {
-            fn id(&self) -> std::any::TypeId {
-                std::any::TypeId::of::<$name>()
-            }
-
-            fn name(&self) -> &'static str {
-                stringify!($name)
-            }
-
-            fn as_any(&self) -> &dyn std::any::Any {
-                self
-            }
-
-            fn boxed_clone(&self) -> Box<dyn $crate::AnyAction> {
-                Box::new(self.clone())
-            }
-
-            fn boxed_clone_as_any(&self) -> Box<dyn std::any::Any> {
-                Box::new(self.clone())
-            }
-        }
-
-        impl From<$arg> for $name {
-            fn from(arg: $arg) -> Self {
-                Self(arg)
-            }
-        }
-    };
-
-    ($name:ident) => {
-        #[derive(Clone, Debug, Eq, PartialEq)]
-        pub struct $name;
-
-        impl $crate::Action for $name {
-            type Argument = ();
-        }
-
-        impl $crate::AnyAction for $name {
-            fn id(&self) -> std::any::TypeId {
-                std::any::TypeId::of::<$name>()
-            }
-
-            fn name(&self) -> &'static str {
-                stringify!($name)
-            }
-
-            fn as_any(&self) -> &dyn std::any::Any {
-                self
-            }
-
-            fn boxed_clone(&self) -> Box<dyn $crate::AnyAction> {
-                Box::new(self.clone())
-            }
-
-            fn boxed_clone_as_any(&self) -> Box<dyn std::any::Any> {
-                Box::new(self.clone())
-            }
-        }
-    };
-}
-
 pub struct Menu<'a> {
     pub name: &'a str,
     pub items: Vec<MenuItem<'a>>,
@@ -234,7 +154,7 @@ pub enum MenuItem<'a> {
     Action {
         name: &'a str,
         keystroke: Option<&'a str>,
-        action: Box<dyn AnyAction>,
+        action: Box<dyn Action>,
     },
     Separator,
 }
@@ -787,8 +707,8 @@ impl ReadViewWith for TestAppContext {
 }
 
 type ActionCallback =
-    dyn FnMut(&mut dyn AnyView, &dyn AnyAction, &mut MutableAppContext, usize, usize);
-type GlobalActionCallback = dyn FnMut(&dyn AnyAction, &mut MutableAppContext);
+    dyn FnMut(&mut dyn AnyView, &dyn Action, &mut MutableAppContext, usize, usize);
+type GlobalActionCallback = dyn FnMut(&dyn Action, &mut MutableAppContext);
 
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
 type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
@@ -963,7 +883,7 @@ impl MutableAppContext {
     {
         let handler = Box::new(
             move |view: &mut dyn AnyView,
-                  action: &dyn AnyAction,
+                  action: &dyn Action,
                   cx: &mut MutableAppContext,
                   window_id: usize,
                   view_id: usize| {
@@ -1009,7 +929,7 @@ impl MutableAppContext {
         A: Action,
         F: 'static + FnMut(&A, &mut MutableAppContext),
     {
-        let handler = Box::new(move |action: &dyn AnyAction, cx: &mut MutableAppContext| {
+        let handler = Box::new(move |action: &dyn Action, cx: &mut MutableAppContext| {
             let action = action.as_any().downcast_ref().unwrap();
             handler(action, cx);
         });
@@ -1338,7 +1258,7 @@ impl MutableAppContext {
         &mut self,
         window_id: usize,
         path: &[usize],
-        action: &dyn AnyAction,
+        action: &dyn Action,
     ) -> bool {
         self.update(|this| {
             this.halt_action_dispatch = false;
@@ -1398,7 +1318,7 @@ impl MutableAppContext {
         self.dispatch_global_action_any(&action);
     }
 
-    fn dispatch_global_action_any(&mut self, action: &dyn AnyAction) -> bool {
+    fn dispatch_global_action_any(&mut self, action: &dyn Action) -> bool {
         self.update(|this| {
             if let Some((name, mut handler)) = this.global_actions.remove_entry(&action.id()) {
                 handler(action, this);
@@ -4655,7 +4575,7 @@ impl RefCounts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::elements::*;
+    use crate::{elements::*, impl_actions};
     use smol::future::poll_once;
     use std::{
         cell::Cell,
@@ -5801,7 +5721,10 @@ mod tests {
             }
         }
 
-        action!(Action, &'static str);
+        #[derive(Clone)]
+        pub struct Action(pub &'static str);
+
+        impl_actions!(test, [Action]);
 
         let actions = Rc::new(RefCell::new(Vec::new()));
 
@@ -5909,7 +5832,10 @@ mod tests {
 
     #[crate::test(self)]
     fn test_dispatch_keystroke(cx: &mut MutableAppContext) {
-        action!(Action, &'static str);
+        #[derive(Clone)]
+        pub struct Action(pub &'static str);
+
+        impl_actions!(test, [Action]);
 
         struct View {
             id: usize,
