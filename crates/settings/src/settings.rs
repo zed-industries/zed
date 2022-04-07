@@ -1,8 +1,11 @@
 use anyhow::Result;
 use gpui::font_cache::{FamilyId, FontCache};
-use schemars::{schema_for, JsonSchema};
+use schemars::{
+    gen::{SchemaGenerator, SchemaSettings},
+    JsonSchema,
+};
 use serde::Deserialize;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fmt::Display, sync::Arc};
 use theme::{Theme, ThemeRegistry};
 use util::ResultExt as _;
 
@@ -33,6 +36,53 @@ pub enum SoftWrap {
     PreferredLineLength,
 }
 
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+pub enum ThemeNames {
+    Dark,
+    Light,
+}
+
+impl Display for ThemeNames {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ThemeNames::Dark => write!(f, "Dark"),
+            ThemeNames::Light => write!(f, "Light"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
+pub struct LanguageOverrides {
+    C: Option<LanguageOverride>,
+    JSON: Option<LanguageOverride>,
+    Markdown: Option<LanguageOverride>,
+    PlainText: Option<LanguageOverride>,
+    Rust: Option<LanguageOverride>,
+    TSX: Option<LanguageOverride>,
+    TypeScript: Option<LanguageOverride>,
+}
+
+impl IntoIterator for LanguageOverrides {
+    type Item = (String, LanguageOverride);
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        vec![
+            ("C", self.C),
+            ("JSON", self.JSON),
+            ("Markdown", self.Markdown),
+            ("PlainText", self.PlainText),
+            ("Rust", self.Rust),
+            ("TSX", self.TSX),
+            ("TypeScript", self.TypeScript),
+        ]
+        .into_iter()
+        .filter_map(|(name, language_override)| language_override.map(|lo| (name.to_owned(), lo)))
+        .collect::<Vec<_>>()
+        .into_iter()
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct SettingsFileContent {
     #[serde(default)]
@@ -44,9 +94,9 @@ pub struct SettingsFileContent {
     #[serde(flatten)]
     pub editor: LanguageOverride,
     #[serde(default)]
-    pub language_overrides: HashMap<Arc<str>, LanguageOverride>,
+    pub language_overrides: LanguageOverrides,
     #[serde(default)]
-    pub theme: Option<String>,
+    pub theme: Option<ThemeNames>,
 }
 
 impl Settings {
@@ -68,7 +118,12 @@ impl Settings {
     }
 
     pub fn file_json_schema() -> serde_json::Value {
-        serde_json::to_value(schema_for!(SettingsFileContent)).unwrap()
+        let settings = SchemaSettings::draft07().with(|settings| {
+            settings.option_nullable = true;
+            settings.option_add_null_type = false;
+        });
+        let generator = SchemaGenerator::new(settings);
+        serde_json::to_value(generator.into_root_schema_for::<SettingsFileContent>()).unwrap()
     }
 
     pub fn with_overrides(
@@ -128,7 +183,7 @@ impl Settings {
             }
         }
         if let Some(value) = &data.theme {
-            if let Some(theme) = theme_registry.get(value).log_err() {
+            if let Some(theme) = theme_registry.get(&value.to_string()).log_err() {
                 self.theme = theme;
             }
         }
@@ -142,10 +197,10 @@ impl Settings {
             data.editor.preferred_line_length,
         );
 
-        for (language_name, settings) in &data.language_overrides {
+        for (language_name, settings) in data.language_overrides.clone().into_iter() {
             let target = self
                 .language_overrides
-                .entry(language_name.clone())
+                .entry(language_name.into())
                 .or_default();
 
             merge_option(&mut target.tab_size, settings.tab_size);
