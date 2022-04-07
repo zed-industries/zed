@@ -201,6 +201,9 @@ impl LanguageServer {
                             std::str::from_utf8(&buffer)?
                         ));
                     }
+
+                    // Don't starve the main thread when receiving lots of messages at once.
+                    smol::future::yield_now().await;
                 }
             }
             .log_err()
