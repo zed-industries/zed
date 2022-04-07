@@ -271,12 +271,6 @@ impl Element for Flex {
         _: &mut Self::PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        if let Some(position) = event.position() {
-            if !bounds.contains_point(position) {
-                return false;
-            }
-        }
-
         let mut handled = false;
         for child in &mut self.children {
             handled = child.dispatch_event(event, cx) || handled;
