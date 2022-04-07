@@ -85,10 +85,14 @@ pub struct Input(pub String);
 pub struct Tab(pub Direction);
 
 #[derive(Clone)]
-pub struct SelectToBeginningOfLine(pub bool);
+pub struct SelectToBeginningOfLine {
+    stop_at_soft_wraps: bool,
+}
 
 #[derive(Clone)]
-pub struct SelectToEndOfLine(pub bool);
+pub struct SelectToEndOfLine {
+    stop_at_soft_wraps: bool,
+}
 
 #[derive(Clone)]
 pub struct ToggleCodeActions(pub bool);
@@ -301,7 +305,9 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("alt-shift-F", SelectToNextWordEnd, Some("Editor")),
         Binding::new(
             "cmd-shift-left",
-            SelectToBeginningOfLine(true),
+            SelectToBeginningOfLine {
+                stop_at_soft_wraps: true,
+            },
             Some("Editor"),
         ),
         Binding::new(
@@ -312,11 +318,25 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("ctrl-alt-shift-F", SelectToNextSubwordEnd, Some("Editor")),
         Binding::new(
             "ctrl-shift-A",
-            SelectToBeginningOfLine(true),
+            SelectToBeginningOfLine {
+                stop_at_soft_wraps: true,
+            },
             Some("Editor"),
         ),
-        Binding::new("cmd-shift-right", SelectToEndOfLine(true), Some("Editor")),
-        Binding::new("ctrl-shift-E", SelectToEndOfLine(true), Some("Editor")),
+        Binding::new(
+            "cmd-shift-right",
+            SelectToEndOfLine {
+                stop_at_soft_wraps: true,
+            },
+            Some("Editor"),
+        ),
+        Binding::new(
+            "ctrl-shift-E",
+            SelectToEndOfLine {
+                stop_at_soft_wraps: true,
+            },
+            Some("Editor"),
+        ),
         Binding::new("cmd-shift-up", SelectToBeginning, Some("Editor")),
         Binding::new("cmd-shift-down", SelectToEnd, Some("Editor")),
         Binding::new("cmd-a", SelectAll, Some("Editor")),
@@ -3905,12 +3925,12 @@ impl Editor {
 
     pub fn select_to_beginning_of_line(
         &mut self,
-        SelectToBeginningOfLine(stop_at_soft_boundaries): &SelectToBeginningOfLine,
+        action: &SelectToBeginningOfLine,
         cx: &mut ViewContext<Self>,
     ) {
         self.move_selection_heads(cx, |map, head, _| {
             (
-                movement::line_beginning(map, head, *stop_at_soft_boundaries),
+                movement::line_beginning(map, head, action.stop_at_soft_wraps),
                 SelectionGoal::None,
             )
         });
@@ -3922,7 +3942,12 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
-            this.select_to_beginning_of_line(&SelectToBeginningOfLine(false), cx);
+            this.select_to_beginning_of_line(
+                &SelectToBeginningOfLine {
+                    stop_at_soft_wraps: false,
+                },
+                cx,
+            );
             this.backspace(&Backspace, cx);
         });
     }
@@ -3935,12 +3960,12 @@ impl Editor {
 
     pub fn select_to_end_of_line(
         &mut self,
-        SelectToEndOfLine(stop_at_soft_boundaries): &SelectToEndOfLine,
+        action: &SelectToEndOfLine,
         cx: &mut ViewContext<Self>,
     ) {
         self.move_selection_heads(cx, |map, head, _| {
             (
-                movement::line_end(map, head, *stop_at_soft_boundaries),
+                movement::line_end(map, head, action.stop_at_soft_wraps),
                 SelectionGoal::None,
             )
         });
@@ -3948,14 +3973,24 @@ impl Editor {
 
     pub fn delete_to_end_of_line(&mut self, _: &DeleteToEndOfLine, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            this.select_to_end_of_line(&SelectToEndOfLine(false), cx);
+            this.select_to_end_of_line(
+                &SelectToEndOfLine {
+                    stop_at_soft_wraps: false,
+                },
+                cx,
+            );
             this.delete(&Delete, cx);
         });
     }
 
     pub fn cut_to_end_of_line(&mut self, _: &CutToEndOfLine, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            this.select_to_end_of_line(&SelectToEndOfLine(false), cx);
+            this.select_to_end_of_line(
+                &SelectToEndOfLine {
+                    stop_at_soft_wraps: false,
+                },
+                cx,
+            );
             this.cut(&Cut, cx);
         });
     }
@@ -7296,7 +7331,12 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.move_left(&MoveLeft, cx);
-            view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
+            view.select_to_beginning_of_line(
+                &SelectToBeginningOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                cx,
+            );
             assert_eq!(
                 view.selected_display_ranges(cx),
                 &[
@@ -7307,7 +7347,12 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
+            view.select_to_beginning_of_line(
+                &SelectToBeginningOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                cx,
+            );
             assert_eq!(
                 view.selected_display_ranges(cx),
                 &[
@@ -7318,7 +7363,12 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
+            view.select_to_beginning_of_line(
+                &SelectToBeginningOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                cx,
+            );
             assert_eq!(
                 view.selected_display_ranges(cx),
                 &[
@@ -7329,7 +7379,12 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_to_end_of_line(&SelectToEndOfLine(true), cx);
+            view.select_to_end_of_line(
+                &SelectToEndOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                cx,
+            );
             assert_eq!(
                 view.selected_display_ranges(cx),
                 &[

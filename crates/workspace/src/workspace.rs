@@ -90,7 +90,10 @@ pub struct Open(pub Arc<AppState>);
 pub struct OpenNew(pub Arc<AppState>);
 
 #[derive(Clone)]
-pub struct OpenPaths(pub OpenParams);
+pub struct OpenPaths {
+    pub paths: Vec<PathBuf>,
+    pub app_state: Arc<AppState>,
+}
 
 #[derive(Clone)]
 pub struct ToggleFollow(pub PeerId);
@@ -109,7 +112,7 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
 
     cx.add_global_action(open);
     cx.add_global_action(move |action: &OpenPaths, cx: &mut MutableAppContext| {
-        open_paths(&action.0.paths, &action.0.app_state, cx).detach();
+        open_paths(&action.paths, &action.app_state, cx).detach();
     });
     cx.add_global_action(move |action: &OpenNew, cx: &mut MutableAppContext| {
         open_new(&action.0, cx)
@@ -209,12 +212,6 @@ pub struct AppState {
         &Arc<AppState>,
         &mut ViewContext<Workspace>,
     ) -> Workspace,
-}
-
-#[derive(Clone)]
-pub struct OpenParams {
-    pub paths: Vec<PathBuf>,
-    pub app_state: Arc<AppState>,
 }
 
 #[derive(Clone)]
@@ -2113,9 +2110,9 @@ impl Element for AvatarRibbon {
     }
 }
 
-impl std::fmt::Debug for OpenParams {
+impl std::fmt::Debug for OpenPaths {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpenParams")
+        f.debug_struct("OpenPaths")
             .field("paths", &self.paths)
             .finish()
     }
@@ -2130,7 +2127,7 @@ fn open(action: &Open, cx: &mut MutableAppContext) {
     });
     cx.spawn(|mut cx| async move {
         if let Some(paths) = paths.recv().await.flatten() {
-            cx.update(|cx| cx.dispatch_global_action(OpenPaths(OpenParams { paths, app_state })));
+            cx.update(|cx| cx.dispatch_global_action(OpenPaths { paths, app_state }));
         }
     })
     .detach();

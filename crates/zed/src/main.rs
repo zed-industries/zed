@@ -14,7 +14,7 @@ use smol::process::Command;
 use std::{env, fs, path::PathBuf, sync::Arc};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
 use util::ResultExt;
-use workspace::{self, AppState, OpenNew, OpenParams, OpenPaths};
+use workspace::{self, AppState, OpenNew, OpenPaths};
 use zed::{
     self,
     assets::Assets,
@@ -158,7 +158,7 @@ fn main() {
         if paths.is_empty() {
             cx.dispatch_global_action(OpenNew(app_state.clone()));
         } else {
-            cx.dispatch_global_action(OpenPaths(OpenParams { paths, app_state }));
+            cx.dispatch_global_action(OpenPaths { paths, app_state });
         }
     });
 }
