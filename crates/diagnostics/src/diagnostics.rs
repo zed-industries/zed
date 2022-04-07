@@ -16,6 +16,7 @@ use language::{
     Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
 };
 use project::{DiagnosticSummary, Project, ProjectPath};
+use settings::Settings;
 use std::{
     any::{Any, TypeId},
     cmp::Ordering,
@@ -26,7 +27,6 @@ use std::{
 };
 use util::TryFutureExt;
 use workspace::{ItemHandle as _, ItemNavHistory, Workspace};
-use settings::Settings;
 
 action!(Deploy);
 
