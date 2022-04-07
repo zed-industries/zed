@@ -788,7 +788,7 @@ impl MultiBuffer {
             old: edit_start..edit_start,
             new: edit_start..edit_end,
         }]);
-
+        cx.emit(Event::Edited);
         cx.notify();
         ids
     }
@@ -802,10 +802,12 @@ impl MultiBuffer {
         snapshot.trailing_excerpt_update_count += 1;
         snapshot.is_dirty = false;
         snapshot.has_conflict = false;
+
         self.subscriptions.publish_mut([Edit {
             old: 0..prev_len,
             new: 0..0,
         }]);
+        cx.emit(Event::Edited);
         cx.notify();
     }
 
@@ -993,6 +995,7 @@ impl MultiBuffer {
         }
 
         self.subscriptions.publish_mut(edits);
+        cx.emit(Event::Edited);
         cx.notify();
     }
 
@@ -2928,7 +2931,7 @@ mod tests {
     use gpui::MutableAppContext;
     use language::{Buffer, Rope};
     use rand::prelude::*;
-    use std::env;
+    use std::{env, rc::Rc};
     use text::{Point, RandomCharIter};
     use util::test::sample_text;
 
@@ -2985,6 +2988,15 @@ mod tests {
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'g'), cx));
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
 
+        let events = Rc::new(RefCell::new(Vec::<Event>::new()));
+        multibuffer.update(cx, |_, cx| {
+            let events = events.clone();
+            cx.subscribe(&multibuffer, move |_, _, event, _| {
+                events.borrow_mut().push(event.clone())
+            })
+            .detach();
+        });
+
         let subscription = multibuffer.update(cx, |multibuffer, cx| {
             let subscription = multibuffer.subscribe();
             multibuffer.push_excerpts(buffer_1.clone(), [Point::new(1, 2)..Point::new(2, 5)], cx);
@@ -3008,6 +3020,12 @@ mod tests {
 
             subscription
         });
+
+        // Adding excerpts emits an edited event.
+        assert_eq!(
+            events.borrow().as_slice(),
+            &[Event::Edited, Event::Edited, Event::Edited]
+        );
 
         let snapshot = multibuffer.read(cx).snapshot(cx);
         assert_eq!(
