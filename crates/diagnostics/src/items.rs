@@ -3,8 +3,8 @@ use gpui::{
     elements::*, platform::CursorStyle, Entity, ModelHandle, RenderContext, View, ViewContext,
 };
 use project::Project;
-use workspace::{StatusItemView};
 use settings::Settings;
+use workspace::StatusItemView;
 
 pub struct DiagnosticSummary {
     summary: project::DiagnosticSummary,
