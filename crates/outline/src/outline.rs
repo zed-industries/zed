@@ -277,8 +277,8 @@ impl OutlineView {
                     (ix, depth, distance_to_closest_endpoint)
                 })
                 .max_by_key(|(_, depth, distance)| (*depth, Reverse(*distance)))
-                .unwrap()
-                .0;
+                .map(|(ix, _, _)| ix)
+                .unwrap_or(0);
             navigate_to_selected_index = false;
         } else {
             self.matches = smol::block_on(self.outline.search(&query, cx.background().clone()));
