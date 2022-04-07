@@ -1080,7 +1080,7 @@ mod tests {
     use ::rpc::Peer;
     use client::{
         self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Credentials,
-        EstablishConnectionError, UserStore,
+        EstablishConnectionError, UserStore, RECEIVE_TIMEOUT,
     };
     use collections::BTreeMap;
     use editor::{
@@ -4983,6 +4983,7 @@ mod tests {
         let operations = Rc::new(Cell::new(0));
         let mut server = TestServer::start(cx.foreground(), cx.background()).await;
         let mut clients = Vec::new();
+        let mut user_ids = Vec::new();
         let files = Arc::new(Mutex::new(Vec::new()));
 
         let mut next_entity_id = 100000;
@@ -5150,13 +5151,14 @@ mod tests {
         });
         host_language_registry.add(Arc::new(language));
 
+        user_ids.push(host.current_user_id(&host_cx));
         clients.push(cx.foreground().spawn(host.simulate_host(
             host_project,
             files,
             operations.clone(),
             max_operations,
             rng.clone(),
-            host_cx,
+            &mut host_cx,
         )));
 
         while operations.get() < max_operations {
@@ -5191,6 +5193,7 @@ mod tests {
                 )
                 .await
                 .unwrap();
+                user_ids.push(guest.current_user_id(&guest_cx));
                 clients.push(cx.foreground().spawn(guest.simulate_guest(
                     guest_id,
                     guest_project,
@@ -5201,6 +5204,30 @@ mod tests {
                 )));
 
                 log::info!("Guest {} added", guest_id);
+            } else if rng.lock().gen_bool(0.05) {
+                server.disconnect_client(user_ids[0]);
+                cx.foreground().advance_clock(RECEIVE_TIMEOUT);
+                let mut clients = futures::future::join_all(clients).await;
+                cx.foreground().run_until_parked();
+
+                let store = server.store.read();
+                let (host, host_cx) = clients.remove(0);
+                host.project
+                    .as_ref()
+                    .unwrap()
+                    .read_with(&host_cx, |project, _| assert!(!project.is_shared()));
+                for (guest, guest_cx) in clients {
+                    assert!(store
+                        .contacts_for_user(guest.current_user_id(&guest_cx))
+                        .is_empty());
+                    guest
+                        .project
+                        .as_ref()
+                        .unwrap()
+                        .read_with(&guest_cx, |project, _| assert!(project.is_read_only()));
+                }
+
+                return;
             }
         }
 
@@ -5471,6 +5498,14 @@ mod tests {
         }
     }
 
+    impl Deref for TestServer {
+        type Target = Server;
+
+        fn deref(&self) -> &Self::Target {
+            &self.server
+        }
+    }
+
     impl Drop for TestServer {
         fn drop(&mut self) {
             self.peer.reset();
@@ -5584,15 +5619,15 @@ mod tests {
         }
 
         async fn simulate_host(
-            mut self,
+            &mut self,
             project: ModelHandle<Project>,
             files: Arc<Mutex<Vec<PathBuf>>>,
             operations: Rc<Cell<usize>>,
             max_operations: usize,
             rng: Arc<Mutex<StdRng>>,
-            mut cx: TestAppContext,
-        ) -> (Self, TestAppContext) {
-            let fs = project.read_with(&cx, |project, _| project.fs().clone());
+            cx: &mut TestAppContext,
+        ) -> anyhow::Result<()> {
+            let fs = project.read_with(cx, |project, _| project.fs().clone());
             while operations.get() < max_operations {
                 operations.set(operations.get() + 1);
 
@@ -5609,29 +5644,25 @@ mod tests {
                         }
 
                         log::info!("Host: find/create local worktree {:?}", path);
-                        let find_or_create_worktree = project.update(&mut cx, |project, cx| {
+                        let find_or_create_worktree = project.update(cx, |project, cx| {
                             project.find_or_create_local_worktree(path, true, cx)
                         });
-                        let find_or_create_worktree = async move {
-                            find_or_create_worktree.await.unwrap();
-                        };
                         if rng.lock().gen() {
                             cx.background().spawn(find_or_create_worktree).detach();
                         } else {
-                            find_or_create_worktree.await;
+                            find_or_create_worktree.await?;
                         }
                     }
                     10..=80 if !files.lock().is_empty() => {
                         let buffer = if self.buffers.is_empty() || rng.lock().gen() {
                             let file = files.lock().choose(&mut *rng.lock()).unwrap().clone();
                             let (worktree, path) = project
-                                .update(&mut cx, |project, cx| {
+                                .update(cx, |project, cx| {
                                     project.find_or_create_local_worktree(file.clone(), true, cx)
                                 })
-                                .await
-                                .unwrap();
+                                .await?;
                             let project_path =
-                                worktree.read_with(&cx, |worktree, _| (worktree.id(), path));
+                                worktree.read_with(cx, |worktree, _| (worktree.id(), path));
                             log::info!(
                                 "Host: opening path {:?}, worktree {}, relative_path {:?}",
                                 file,
@@ -5639,9 +5670,7 @@ mod tests {
                                 project_path.1
                             );
                             let buffer = project
-                                .update(&mut cx, |project, cx| {
-                                    project.open_buffer(project_path, cx)
-                                })
+                                .update(cx, |project, cx| project.open_buffer(project_path, cx))
                                 .await
                                 .unwrap();
                             self.buffers.insert(buffer.clone());
@@ -5664,7 +5693,7 @@ mod tests {
                                 drop(buffer);
                             });
                         } else {
-                            buffer.update(&mut cx, |buffer, cx| {
+                            buffer.update(cx, |buffer, cx| {
                                 log::info!(
                                     "Host: updating buffer {:?} ({})",
                                     buffer.file().unwrap().full_path(cx),
@@ -5701,10 +5730,10 @@ mod tests {
                 cx.background().simulate_random_delay().await;
             }
 
-            log::info!("Host done");
-
             self.project = Some(project);
-            (self, cx)
+
+            log::info!("Host done");
+            Ok(())
         }
 
         pub async fn simulate_guest(
