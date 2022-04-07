@@ -99,7 +99,8 @@ impl Element for MouseEventHandler {
     fn dispatch_event(
         &mut self,
         event: &Event,
-        bounds: RectF,
+        _: RectF,
+        visible_bounds: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         cx: &mut EventContext,
@@ -112,8 +113,8 @@ impl Element for MouseEventHandler {
         let handled_in_child = self.child.dispatch_event(event, cx);
 
         let hit_bounds = RectF::from_points(
-            bounds.origin() - vec2f(self.padding.left, self.padding.top),
-            bounds.lower_right() + vec2f(self.padding.right, self.padding.bottom),
+            visible_bounds.origin() - vec2f(self.padding.left, self.padding.top),
+            visible_bounds.lower_right() + vec2f(self.padding.right, self.padding.bottom),
         )
         .round_out();
 

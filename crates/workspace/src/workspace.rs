@@ -16,7 +16,7 @@ use gpui::{
     action,
     color::Color,
     elements::*,
-    geometry::{vector::vec2f, PathBuilder},
+    geometry::{rect::RectF, vector::vec2f, PathBuilder},
     json::{self, to_string_pretty, ToJson},
     keymap::Binding,
     platform::{CursorStyle, WindowOptions},
@@ -2068,7 +2068,8 @@ impl Element for AvatarRibbon {
     fn dispatch_event(
         &mut self,
         _: &gpui::Event,
-        _: gpui::geometry::rect::RectF,
+        _: RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         _: &mut gpui::EventContext,

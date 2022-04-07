@@ -266,16 +266,11 @@ impl Element for Flex {
         &mut self,
         event: &Event,
         bounds: RectF,
+        _: RectF,
         remaining_space: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        if let Some(position) = event.position() {
-            if !bounds.contains_point(position) {
-                return false;
-            }
-        }
-
         let mut handled = false;
         for child in &mut self.children {
             handled = child.dispatch_event(event, cx) || handled;
@@ -390,6 +385,7 @@ impl Element for FlexItem {
     fn dispatch_event(
         &mut self,
         event: &Event,
+        _: RectF,
         _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,

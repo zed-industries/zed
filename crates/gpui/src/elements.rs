@@ -74,6 +74,7 @@ pub trait Element {
         &mut self,
         event: &Event,
         bounds: RectF,
+        visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         paint: &mut Self::PaintState,
         cx: &mut EventContext,
@@ -169,6 +170,7 @@ pub enum Lifecycle<T: Element> {
         element: T,
         constraint: SizeConstraint,
         bounds: RectF,
+        visible_bounds: RectF,
         layout: T::LayoutState,
         paint: T::PaintState,
     },
@@ -222,6 +224,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                     element,
                     constraint,
                     bounds,
+                    visible_bounds,
                     layout,
                     paint,
                 }
@@ -242,6 +245,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                     element,
                     constraint,
                     bounds,
+                    visible_bounds,
                     layout,
                     paint,
                 }
@@ -254,12 +258,13 @@ impl<T: Element> AnyElement for Lifecycle<T> {
         if let Lifecycle::PostPaint {
             element,
             bounds,
+            visible_bounds,
             layout,
             paint,
             ..
         } = self
         {
-            element.dispatch_event(event, *bounds, layout, paint, cx)
+            element.dispatch_event(event, *bounds, *visible_bounds, layout, paint, cx)
         } else {
             panic!("invalid element lifecycle state");
         }
@@ -288,6 +293,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                 element,
                 constraint,
                 bounds,
+                visible_bounds,
                 layout,
                 paint,
             } => {
@@ -299,6 +305,8 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                         new_map.insert("type".into(), typ);
                     }
                     new_map.insert("constraint".into(), constraint.to_json());
+                    new_map.insert("bounds".into(), bounds.to_json());
+                    new_map.insert("visible_bounds".into(), visible_bounds.to_json());
                     new_map.append(map);
                     json::Value::Object(new_map)
                 } else {
