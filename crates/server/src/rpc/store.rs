@@ -244,6 +244,9 @@ impl Store {
                 language_servers: Default::default(),
             },
         );
+        if let Some(connection) = self.connections.get_mut(&host_connection_id) {
+            connection.projects.insert(project_id);
+        }
         self.next_project_id += 1;
         project_id
     }
@@ -266,9 +269,7 @@ impl Store {
                     .or_default()
                     .insert(project_id);
             }
-            if let Some(connection) = self.connections.get_mut(&project.host_connection_id) {
-                connection.projects.insert(project_id);
-            }
+
             project.worktrees.insert(worktree_id, worktree);
             if let Ok(share) = project.share_mut() {
                 share.worktrees.insert(worktree_id, Default::default());

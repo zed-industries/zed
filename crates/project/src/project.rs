@@ -1216,7 +1216,7 @@ impl Project {
                 let file = File::from_dyn(buffer.file())?;
                 let abs_path = file.as_local()?.abs_path(cx);
                 let uri = lsp::Url::from_file_path(abs_path).unwrap();
-                let buffer_snapshots = self.buffer_snapshots.entry(buffer.remote_id()).or_default();
+                let buffer_snapshots = self.buffer_snapshots.get_mut(&buffer.remote_id())?;
                 let (version, prev_snapshot) = buffer_snapshots.last()?;
                 let next_snapshot = buffer.text_snapshot();
                 let next_version = version + 1;
@@ -3850,7 +3850,7 @@ impl Project {
             let buffer = this
                 .opened_buffers
                 .get(&buffer_id)
-                .map(|buffer| buffer.upgrade(cx).unwrap())
+                .and_then(|buffer| buffer.upgrade(cx))
                 .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
             Ok::<_, anyhow::Error>((project_id, buffer))
         })?;
@@ -3882,7 +3882,7 @@ impl Project {
                 buffers.insert(
                     this.opened_buffers
                         .get(buffer_id)
-                        .map(|buffer| buffer.upgrade(cx).unwrap())
+                        .and_then(|buffer| buffer.upgrade(cx))
                         .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?,
                 );
             }
@@ -3911,7 +3911,7 @@ impl Project {
                 buffers.insert(
                     this.opened_buffers
                         .get(buffer_id)
-                        .map(|buffer| buffer.upgrade(cx).unwrap())
+                        .and_then(|buffer| buffer.upgrade(cx))
                         .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?,
                 );
             }
@@ -3942,7 +3942,7 @@ impl Project {
         let buffer = this.read_with(&cx, |this, cx| {
             this.opened_buffers
                 .get(&envelope.payload.buffer_id)
-                .map(|buffer| buffer.upgrade(cx).unwrap())
+                .and_then(|buffer| buffer.upgrade(cx))
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })?;
         buffer
@@ -3972,7 +3972,7 @@ impl Project {
             let buffer = this
                 .opened_buffers
                 .get(&envelope.payload.buffer_id)
-                .map(|buffer| buffer.upgrade(cx).unwrap())
+                .and_then(|buffer| buffer.upgrade(cx))
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
             let language = buffer.read(cx).language();
             let completion = language::proto::deserialize_completion(
@@ -4014,7 +4014,7 @@ impl Project {
         let buffer = this.update(&mut cx, |this, cx| {
             this.opened_buffers
                 .get(&envelope.payload.buffer_id)
-                .map(|buffer| buffer.upgrade(cx).unwrap())
+                .and_then(|buffer| buffer.upgrade(cx))
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })?;
         buffer
@@ -4055,7 +4055,7 @@ impl Project {
             let buffer = this
                 .opened_buffers
                 .get(&envelope.payload.buffer_id)
-                .map(|buffer| buffer.upgrade(cx).unwrap())
+                .and_then(|buffer| buffer.upgrade(cx))
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
             Ok::<_, anyhow::Error>(this.apply_code_action(buffer, action, false, cx))
         })?;
