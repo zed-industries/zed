@@ -5,7 +5,7 @@ use crate::{
 use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll};
 use gpui::{
-    action, elements::*, keymap::Binding, platform::CursorStyle, AppContext, ElementBox, Entity,
+    actions, elements::*, keymap::Binding, platform::CursorStyle, AppContext, ElementBox, Entity,
     ModelContext, ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View,
     ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
@@ -19,10 +19,7 @@ use std::{
 use util::ResultExt as _;
 use workspace::{Item, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace};
 
-action!(Deploy);
-action!(Search);
-action!(SearchInNew);
-action!(ToggleFocus);
+actions!(project_search, [Deploy, Search, SearchInNew, ToggleFocus]);
 
 const MAX_TAB_TITLE_LEN: usize = 24;
 

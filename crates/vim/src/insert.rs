@@ -1,11 +1,10 @@
+use crate::{mode::Mode, SwitchMode, VimState};
 use editor::Bias;
-use gpui::{action, keymap::Binding, MutableAppContext, ViewContext};
+use gpui::{actions, keymap::Binding, MutableAppContext, ViewContext};
 use language::SelectionGoal;
 use workspace::Workspace;
 
-use crate::{mode::Mode, SwitchMode, VimState};
-
-action!(NormalBefore);
+actions!(vim, [NormalBefore]);
 
 pub fn init(cx: &mut MutableAppContext) {
     let context = Some("Editor && vim_mode == insert");

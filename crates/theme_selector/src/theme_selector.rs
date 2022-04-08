@@ -1,15 +1,15 @@
 use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    action,
     elements::*,
+    impl_actions,
     keymap::{self, Binding},
     AppContext, Axis, Element, ElementBox, Entity, MutableAppContext, RenderContext, View,
     ViewContext, ViewHandle,
 };
+use settings::Settings;
 use std::{cmp, sync::Arc};
 use theme::{Theme, ThemeRegistry};
-use settings::Settings;
 use workspace::{
     menu::{Confirm, SelectNext, SelectPrev},
     Workspace,
@@ -25,8 +25,13 @@ pub struct ThemeSelector {
     selection_completed: bool,
 }
 
-action!(Toggle, Arc<ThemeRegistry>);
-action!(Reload, Arc<ThemeRegistry>);
+#[derive(Clone)]
+pub struct Toggle(pub Arc<ThemeRegistry>);
+
+#[derive(Clone)]
+pub struct Reload(pub Arc<ThemeRegistry>);
+
+impl_actions!(theme_selector, [Toggle, Reload]);
 
 pub fn init(themes: Arc<ThemeRegistry>, cx: &mut MutableAppContext) {
     cx.add_action(ThemeSelector::confirm);

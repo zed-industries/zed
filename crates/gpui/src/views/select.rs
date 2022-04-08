@@ -1,6 +1,6 @@
 use crate::{
-    action, elements::*, AppContext, Entity, MutableAppContext, RenderContext, View, ViewContext,
-    WeakViewHandle,
+    actions, elements::*, impl_actions, AppContext, Entity, MutableAppContext, RenderContext, View,
+    ViewContext, WeakViewHandle,
 };
 
 pub struct Select {
@@ -25,8 +25,11 @@ pub enum ItemType {
     Unselected,
 }
 
-action!(ToggleSelect);
-action!(SelectItem, usize);
+#[derive(Clone)]
+pub struct SelectItem(pub usize);
+
+actions!(select, [ToggleSelect]);
+impl_actions!(select, [SelectItem]);
 
 pub enum Event {}
 

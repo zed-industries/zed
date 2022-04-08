@@ -1,9 +1,10 @@
 use gpui::{
-    action,
+    actions,
     elements::{
         Align, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement, ScrollTarget,
         Svg, UniformList, UniformListState,
     },
+    impl_actions,
     keymap::{self, Binding},
     platform::CursorStyle,
     AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, View, ViewContext,
@@ -46,10 +47,14 @@ struct EntryDetails {
     is_selected: bool,
 }
 
-action!(ExpandSelectedEntry);
-action!(CollapseSelectedEntry);
-action!(ToggleExpanded, ProjectEntryId);
-action!(Open, ProjectEntryId);
+#[derive(Clone)]
+pub struct ToggleExpanded(pub ProjectEntryId);
+
+#[derive(Clone)]
+pub struct Open(pub ProjectEntryId);
+
+actions!(project_panel, [ExpandSelectedEntry, CollapseSelectedEntry]);
+impl_actions!(project_panel, [Open, ToggleExpanded]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::expand_selected_entry);

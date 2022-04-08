@@ -1,9 +1,8 @@
-use gpui::{action, keymap::Binding, MutableAppContext, ViewContext};
+use crate::{mode::Mode, SwitchMode, VimState};
+use gpui::{actions, keymap::Binding, MutableAppContext, ViewContext};
 use workspace::Workspace;
 
-use crate::{mode::Mode, SwitchMode, VimState};
-
-action!(MoveToStart);
+actions!(vim, [MoveToStart]);
 
 pub fn init(cx: &mut MutableAppContext) {
     let context = Some("Editor && vim_mode == normal && vim_submode == g");

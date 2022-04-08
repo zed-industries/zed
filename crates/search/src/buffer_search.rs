@@ -2,7 +2,7 @@ use crate::{active_match_index, match_index_for_direction, Direction, SearchOpti
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, Anchor, Autoscroll, Bias, Editor};
 use gpui::{
-    action, elements::*, keymap::Binding, platform::CursorStyle, AppContext, Entity,
+    actions, elements::*, impl_actions, keymap::Binding, platform::CursorStyle, AppContext, Entity,
     MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
@@ -12,10 +12,14 @@ use settings::Settings;
 use std::ops::Range;
 use workspace::{ItemHandle, Pane, ToolbarItemLocation, ToolbarItemView};
 
-action!(Deploy, bool);
-action!(Dismiss);
-action!(FocusEditor);
-action!(ToggleSearchOption, SearchOption);
+#[derive(Clone)]
+pub struct Deploy(pub bool);
+
+#[derive(Clone)]
+pub struct ToggleSearchOption(pub SearchOption);
+
+actions!(buffer_search, [Dismiss, FocusEditor]);
+impl_actions!(buffer_search, [Deploy, ToggleSearchOption]);
 
 pub enum Event {
     UpdateLocation,

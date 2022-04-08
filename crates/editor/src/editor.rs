@@ -16,12 +16,13 @@ use display_map::*;
 pub use element::*;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    action,
+    actions,
     color::Color,
     elements::*,
     executor,
     fonts::{self, HighlightStyle, TextStyle},
     geometry::vector::{vec2f, Vector2F},
+    impl_actions,
     keymap::Binding,
     platform::CursorStyle,
     text_layout, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
@@ -65,84 +66,132 @@ const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 
-action!(Cancel);
-action!(Backspace);
-action!(Delete);
-action!(Input, String);
-action!(Newline);
-action!(Tab, Direction);
-action!(Indent);
-action!(Outdent);
-action!(DeleteLine);
-action!(DeleteToPreviousWordStart);
-action!(DeleteToPreviousSubwordStart);
-action!(DeleteToNextWordEnd);
-action!(DeleteToNextSubwordEnd);
-action!(DeleteToBeginningOfLine);
-action!(DeleteToEndOfLine);
-action!(CutToEndOfLine);
-action!(DuplicateLine);
-action!(MoveLineUp);
-action!(MoveLineDown);
-action!(Cut);
-action!(Copy);
-action!(Paste);
-action!(Undo);
-action!(Redo);
-action!(MoveUp);
-action!(MoveDown);
-action!(MoveLeft);
-action!(MoveRight);
-action!(MoveToPreviousWordStart);
-action!(MoveToPreviousSubwordStart);
-action!(MoveToNextWordEnd);
-action!(MoveToNextSubwordEnd);
-action!(MoveToBeginningOfLine);
-action!(MoveToEndOfLine);
-action!(MoveToBeginning);
-action!(MoveToEnd);
-action!(SelectUp);
-action!(SelectDown);
-action!(SelectLeft);
-action!(SelectRight);
-action!(SelectToPreviousWordStart);
-action!(SelectToPreviousSubwordStart);
-action!(SelectToNextWordEnd);
-action!(SelectToNextSubwordEnd);
-action!(SelectToBeginningOfLine, bool);
-action!(SelectToEndOfLine, bool);
-action!(SelectToBeginning);
-action!(SelectToEnd);
-action!(SelectAll);
-action!(SelectLine);
-action!(SplitSelectionIntoLines);
-action!(AddSelectionAbove);
-action!(AddSelectionBelow);
-action!(SelectNext, bool);
-action!(ToggleComments);
-action!(SelectLargerSyntaxNode);
-action!(SelectSmallerSyntaxNode);
-action!(MoveToEnclosingBracket);
-action!(UndoSelection);
-action!(RedoSelection);
-action!(GoToDiagnostic, Direction);
-action!(GoToDefinition);
-action!(FindAllReferences);
-action!(Rename);
-action!(ConfirmRename);
-action!(PageUp);
-action!(PageDown);
-action!(Fold);
-action!(UnfoldLines);
-action!(FoldSelectedRanges);
-action!(Scroll, Vector2F);
-action!(Select, SelectPhase);
-action!(ShowCompletions);
-action!(ToggleCodeActions, bool);
-action!(ConfirmCompletion, Option<usize>);
-action!(ConfirmCodeAction, Option<usize>);
-action!(OpenExcerpts);
-action!(RestartLanguageServer);
+#[derive(Clone)]
+pub struct SelectNext(pub bool);
+
+#[derive(Clone)]
+pub struct GoToDiagnostic(pub Direction);
+
+#[derive(Clone)]
+pub struct Scroll(pub Vector2F);
+
+#[derive(Clone)]
+pub struct Select(pub SelectPhase);
+
+#[derive(Clone)]
+pub struct Input(pub String);
+
+#[derive(Clone)]
+pub struct Tab(pub Direction);
+
+#[derive(Clone)]
+pub struct SelectToBeginningOfLine {
+    stop_at_soft_wraps: bool,
+}
+
+#[derive(Clone)]
+pub struct SelectToEndOfLine {
+    stop_at_soft_wraps: bool,
+}
+
+#[derive(Clone)]
+pub struct ToggleCodeActions(pub bool);
+
+#[derive(Clone)]
+pub struct ConfirmCompletion(pub Option<usize>);
+
+#[derive(Clone)]
+pub struct ConfirmCodeAction(pub Option<usize>);
+
+impl_actions!(
+    editor,
+    [
+        SelectNext,
+        GoToDiagnostic,
+        Scroll,
+        Select,
+        Input,
+        Tab,
+        SelectToBeginningOfLine,
+        SelectToEndOfLine,
+        ToggleCodeActions,
+        ConfirmCompletion,
+        ConfirmCodeAction,
+    ]
+);
+
+actions!(
+    editor,
+    [
+        Cancel,
+        Backspace,
+        Delete,
+        Newline,
+        Indent,
+        Outdent,
+        DeleteLine,
+        DeleteToPreviousWordStart,
+        DeleteToPreviousSubwordStart,
+        DeleteToNextWordEnd,
+        DeleteToNextSubwordEnd,
+        DeleteToBeginningOfLine,
+        DeleteToEndOfLine,
+        CutToEndOfLine,
+        DuplicateLine,
+        MoveLineUp,
+        MoveLineDown,
+        Cut,
+        Copy,
+        Paste,
+        Undo,
+        Redo,
+        MoveUp,
+        MoveDown,
+        MoveLeft,
+        MoveRight,
+        MoveToPreviousWordStart,
+        MoveToPreviousSubwordStart,
+        MoveToNextWordEnd,
+        MoveToNextSubwordEnd,
+        MoveToBeginningOfLine,
+        MoveToEndOfLine,
+        MoveToBeginning,
+        MoveToEnd,
+        SelectUp,
+        SelectDown,
+        SelectLeft,
+        SelectRight,
+        SelectToPreviousWordStart,
+        SelectToPreviousSubwordStart,
+        SelectToNextWordEnd,
+        SelectToNextSubwordEnd,
+        SelectToBeginning,
+        SelectToEnd,
+        SelectAll,
+        SelectLine,
+        SplitSelectionIntoLines,
+        AddSelectionAbove,
+        AddSelectionBelow,
+        ToggleComments,
+        SelectLargerSyntaxNode,
+        SelectSmallerSyntaxNode,
+        MoveToEnclosingBracket,
+        UndoSelection,
+        RedoSelection,
+        GoToDefinition,
+        FindAllReferences,
+        Rename,
+        ConfirmRename,
+        PageUp,
+        PageDown,
+        Fold,
+        UnfoldLines,
+        FoldSelectedRanges,
+        ShowCompletions,
+        OpenExcerpts,
+        RestartLanguageServer,
+    ]
+);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -256,7 +305,9 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("alt-shift-F", SelectToNextWordEnd, Some("Editor")),
         Binding::new(
             "cmd-shift-left",
-            SelectToBeginningOfLine(true),
+            SelectToBeginningOfLine {
+                stop_at_soft_wraps: true,
+            },
             Some("Editor"),
         ),
         Binding::new(
@@ -267,11 +318,25 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("ctrl-alt-shift-F", SelectToNextSubwordEnd, Some("Editor")),
         Binding::new(
             "ctrl-shift-A",
-            SelectToBeginningOfLine(true),
+            SelectToBeginningOfLine {
+                stop_at_soft_wraps: true,
+            },
             Some("Editor"),
         ),
-        Binding::new("cmd-shift-right", SelectToEndOfLine(true), Some("Editor")),
-        Binding::new("ctrl-shift-E", SelectToEndOfLine(true), Some("Editor")),
+        Binding::new(
+            "cmd-shift-right",
+            SelectToEndOfLine {
+                stop_at_soft_wraps: true,
+            },
+            Some("Editor"),
+        ),
+        Binding::new(
+            "ctrl-shift-E",
+            SelectToEndOfLine {
+                stop_at_soft_wraps: true,
+            },
+            Some("Editor"),
+        ),
         Binding::new("cmd-shift-up", SelectToBeginning, Some("Editor")),
         Binding::new("cmd-shift-down", SelectToEnd, Some("Editor")),
         Binding::new("cmd-a", SelectAll, Some("Editor")),
@@ -3860,12 +3925,12 @@ impl Editor {
 
     pub fn select_to_beginning_of_line(
         &mut self,
-        SelectToBeginningOfLine(stop_at_soft_boundaries): &SelectToBeginningOfLine,
+        action: &SelectToBeginningOfLine,
         cx: &mut ViewContext<Self>,
     ) {
         self.move_selection_heads(cx, |map, head, _| {
             (
-                movement::line_beginning(map, head, *stop_at_soft_boundaries),
+                movement::line_beginning(map, head, action.stop_at_soft_wraps),
                 SelectionGoal::None,
             )
         });
@@ -3877,7 +3942,12 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
-            this.select_to_beginning_of_line(&SelectToBeginningOfLine(false), cx);
+            this.select_to_beginning_of_line(
+                &SelectToBeginningOfLine {
+                    stop_at_soft_wraps: false,
+                },
+                cx,
+            );
             this.backspace(&Backspace, cx);
         });
     }
@@ -3890,12 +3960,12 @@ impl Editor {
 
     pub fn select_to_end_of_line(
         &mut self,
-        SelectToEndOfLine(stop_at_soft_boundaries): &SelectToEndOfLine,
+        action: &SelectToEndOfLine,
         cx: &mut ViewContext<Self>,
     ) {
         self.move_selection_heads(cx, |map, head, _| {
             (
-                movement::line_end(map, head, *stop_at_soft_boundaries),
+                movement::line_end(map, head, action.stop_at_soft_wraps),
                 SelectionGoal::None,
             )
         });
@@ -3903,14 +3973,24 @@ impl Editor {
 
     pub fn delete_to_end_of_line(&mut self, _: &DeleteToEndOfLine, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            this.select_to_end_of_line(&SelectToEndOfLine(false), cx);
+            this.select_to_end_of_line(
+                &SelectToEndOfLine {
+                    stop_at_soft_wraps: false,
+                },
+                cx,
+            );
             this.delete(&Delete, cx);
         });
     }
 
     pub fn cut_to_end_of_line(&mut self, _: &CutToEndOfLine, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            this.select_to_end_of_line(&SelectToEndOfLine(false), cx);
+            this.select_to_end_of_line(
+                &SelectToEndOfLine {
+                    stop_at_soft_wraps: false,
+                },
+                cx,
+            );
             this.cut(&Cut, cx);
         });
     }
@@ -7251,7 +7331,12 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.move_left(&MoveLeft, cx);
-            view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
+            view.select_to_beginning_of_line(
+                &SelectToBeginningOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                cx,
+            );
             assert_eq!(
                 view.selected_display_ranges(cx),
                 &[
@@ -7262,7 +7347,12 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
+            view.select_to_beginning_of_line(
+                &SelectToBeginningOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                cx,
+            );
             assert_eq!(
                 view.selected_display_ranges(cx),
                 &[
@@ -7273,7 +7363,12 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
+            view.select_to_beginning_of_line(
+                &SelectToBeginningOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                cx,
+            );
             assert_eq!(
                 view.selected_display_ranges(cx),
                 &[
@@ -7284,7 +7379,12 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_to_end_of_line(&SelectToEndOfLine(true), cx);
+            view.select_to_end_of_line(
+                &SelectToEndOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                cx,
+            );
             assert_eq!(
                 view.selected_display_ranges(cx),
                 &[

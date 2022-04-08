@@ -1,3 +1,4 @@
+use crate::Action;
 use anyhow::anyhow;
 use std::{
     any::Any,
@@ -5,8 +6,6 @@ use std::{
     fmt::Debug,
 };
 use tree_sitter::{Language, Node, Parser};
-
-use crate::{Action, AnyAction};
 
 extern "C" {
     fn tree_sitter_context_predicate() -> Language;
@@ -28,7 +27,7 @@ pub struct Keymap(Vec<Binding>);
 
 pub struct Binding {
     keystrokes: Vec<Keystroke>,
-    action: Box<dyn AnyAction>,
+    action: Box<dyn Action>,
     context: Option<ContextPredicate>,
 }
 
@@ -73,7 +72,7 @@ where
 pub enum MatchResult {
     None,
     Pending,
-    Action(Box<dyn AnyAction>),
+    Action(Box<dyn Action>),
 }
 
 impl Debug for MatchResult {
@@ -329,7 +328,7 @@ impl ContextPredicate {
 
 #[cfg(test)]
 mod tests {
-    use crate::action;
+    use crate::{actions, impl_actions};
 
     use super::*;
 
@@ -420,9 +419,10 @@ mod tests {
 
     #[test]
     fn test_matcher() -> anyhow::Result<()> {
-        action!(A, &'static str);
-        action!(B);
-        action!(Ab);
+        #[derive(Clone)]
+        pub struct A(pub &'static str);
+        impl_actions!(test, [A]);
+        actions!(test, [B, Ab]);
 
         impl PartialEq for A {
             fn eq(&self, other: &Self) -> bool {

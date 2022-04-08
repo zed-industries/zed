@@ -1,10 +1,9 @@
-use gpui::{action, keymap::Binding, MutableAppContext};
+use gpui::{actions, keymap::Binding, MutableAppContext};
 
-action!(Confirm);
-action!(SelectPrev);
-action!(SelectNext);
-action!(SelectFirst);
-action!(SelectLast);
+actions!(
+    menu,
+    [Confirm, SelectPrev, SelectNext, SelectFirst, SelectLast,]
+);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([

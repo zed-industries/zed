@@ -7,13 +7,16 @@ mod vim_test_context;
 
 use collections::HashMap;
 use editor::{CursorShape, Editor};
-use gpui::{action, MutableAppContext, ViewContext, WeakViewHandle};
+use gpui::{impl_actions, MutableAppContext, ViewContext, WeakViewHandle};
 
 use mode::Mode;
 use settings::Settings;
 use workspace::{self, Workspace};
 
-action!(SwitchMode, Mode);
+#[derive(Clone)]
+pub struct SwitchMode(pub Mode);
+
+impl_actions!(vim, [SwitchMode]);
 
 pub fn init(cx: &mut MutableAppContext) {
     editor_events::init(cx);

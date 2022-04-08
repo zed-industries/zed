@@ -13,7 +13,7 @@ use async_tungstenite::tungstenite::{
 };
 use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
 use gpui::{
-    action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AsyncAppContext,
+    actions, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AsyncAppContext,
     Entity, ModelContext, ModelHandle, MutableAppContext, Task, View, ViewContext, ViewHandle,
 };
 use http::HttpClient;
@@ -50,7 +50,7 @@ lazy_static! {
         .and_then(|s| if s.is_empty() { None } else { Some(s) });
 }
 
-action!(Authenticate);
+actions!(client, [Authenticate]);
 
 pub fn init(rpc: Arc<Client>, cx: &mut MutableAppContext) {
     cx.add_global_action(move |_: &Authenticate, cx| {
