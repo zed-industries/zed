@@ -1118,6 +1118,7 @@ mod tests {
         },
         time::Duration,
     };
+    use util::TryFutureExt;
     use workspace::{Item, SplitDirection, Workspace, WorkspaceParams};
 
     #[cfg(test)]
@@ -5151,6 +5152,7 @@ mod tests {
         });
         host_language_registry.add(Arc::new(language));
 
+        let host_disconnected = Rc::new(AtomicBool::new(false));
         user_ids.push(host.current_user_id(&host_cx));
         clients.push(cx.foreground().spawn(host.simulate_host(
             host_project,
@@ -5158,7 +5160,7 @@ mod tests {
             operations.clone(),
             max_operations,
             rng.clone(),
-            &mut host_cx,
+            host_cx,
         )));
 
         while operations.get() < max_operations {
@@ -5200,24 +5202,28 @@ mod tests {
                     operations.clone(),
                     max_operations,
                     rng.clone(),
+                    host_disconnected.clone(),
                     guest_cx,
                 )));
 
                 log::info!("Guest {} added", guest_id);
             } else if rng.lock().gen_bool(0.05) {
+                host_disconnected.store(true, SeqCst);
+                server.forbid_connections();
                 server.disconnect_client(user_ids[0]);
                 cx.foreground().advance_clock(RECEIVE_TIMEOUT);
                 let mut clients = futures::future::join_all(clients).await;
                 cx.foreground().run_until_parked();
 
-                let store = server.store.read();
-                let (host, host_cx) = clients.remove(0);
+                let (host, mut host_cx) = clients.remove(0);
                 host.project
                     .as_ref()
                     .unwrap()
                     .read_with(&host_cx, |project, _| assert!(!project.is_shared()));
-                for (guest, guest_cx) in clients {
-                    assert!(store
+                for (guest, mut guest_cx) in clients {
+                    assert!(server
+                        .store
+                        .read()
                         .contacts_for_user(guest.current_user_id(&guest_cx))
                         .is_empty());
                     guest
@@ -5225,7 +5231,9 @@ mod tests {
                         .as_ref()
                         .unwrap()
                         .read_with(&guest_cx, |project, _| assert!(project.is_read_only()));
+                    guest_cx.update(|_| drop(guest));
                 }
+                host_cx.update(|_| drop(host));
 
                 return;
             }
@@ -5619,121 +5627,148 @@ mod tests {
         }
 
         async fn simulate_host(
-            &mut self,
+            mut self,
             project: ModelHandle<Project>,
             files: Arc<Mutex<Vec<PathBuf>>>,
             operations: Rc<Cell<usize>>,
             max_operations: usize,
             rng: Arc<Mutex<StdRng>>,
-            cx: &mut TestAppContext,
-        ) -> anyhow::Result<()> {
-            let fs = project.read_with(cx, |project, _| project.fs().clone());
-            while operations.get() < max_operations {
-                operations.set(operations.get() + 1);
+            mut cx: TestAppContext,
+        ) -> (Self, TestAppContext) {
+            async fn simulate_host_internal(
+                client: &mut TestClient,
+                project: ModelHandle<Project>,
+                files: Arc<Mutex<Vec<PathBuf>>>,
+                operations: Rc<Cell<usize>>,
+                max_operations: usize,
+                rng: Arc<Mutex<StdRng>>,
+                cx: &mut TestAppContext,
+            ) -> anyhow::Result<()> {
+                let fs = project.read_with(cx, |project, _| project.fs().clone());
+                while operations.get() < max_operations {
+                    operations.set(operations.get() + 1);
 
-                let distribution = rng.lock().gen_range::<usize, _>(0..100);
-                match distribution {
-                    0..=20 if !files.lock().is_empty() => {
-                        let path = files.lock().choose(&mut *rng.lock()).unwrap().clone();
-                        let mut path = path.as_path();
-                        while let Some(parent_path) = path.parent() {
-                            path = parent_path;
+                    let distribution = rng.lock().gen_range::<usize, _>(0..100);
+                    match distribution {
+                        0..=20 if !files.lock().is_empty() => {
+                            let path = files.lock().choose(&mut *rng.lock()).unwrap().clone();
+                            let mut path = path.as_path();
+                            while let Some(parent_path) = path.parent() {
+                                path = parent_path;
+                                if rng.lock().gen() {
+                                    break;
+                                }
+                            }
+
+                            log::info!("Host: find/create local worktree {:?}", path);
+                            let find_or_create_worktree = project.update(cx, |project, cx| {
+                                project.find_or_create_local_worktree(path, true, cx)
+                            });
                             if rng.lock().gen() {
-                                break;
+                                cx.background().spawn(find_or_create_worktree).detach();
+                            } else {
+                                find_or_create_worktree.await?;
                             }
                         }
-
-                        log::info!("Host: find/create local worktree {:?}", path);
-                        let find_or_create_worktree = project.update(cx, |project, cx| {
-                            project.find_or_create_local_worktree(path, true, cx)
-                        });
-                        if rng.lock().gen() {
-                            cx.background().spawn(find_or_create_worktree).detach();
-                        } else {
-                            find_or_create_worktree.await?;
-                        }
-                    }
-                    10..=80 if !files.lock().is_empty() => {
-                        let buffer = if self.buffers.is_empty() || rng.lock().gen() {
-                            let file = files.lock().choose(&mut *rng.lock()).unwrap().clone();
-                            let (worktree, path) = project
-                                .update(cx, |project, cx| {
-                                    project.find_or_create_local_worktree(file.clone(), true, cx)
-                                })
-                                .await?;
-                            let project_path =
-                                worktree.read_with(cx, |worktree, _| (worktree.id(), path));
-                            log::info!(
-                                "Host: opening path {:?}, worktree {}, relative_path {:?}",
-                                file,
-                                project_path.0,
-                                project_path.1
-                            );
-                            let buffer = project
-                                .update(cx, |project, cx| project.open_buffer(project_path, cx))
-                                .await
-                                .unwrap();
-                            self.buffers.insert(buffer.clone());
-                            buffer
-                        } else {
-                            self.buffers
-                                .iter()
-                                .choose(&mut *rng.lock())
-                                .unwrap()
-                                .clone()
-                        };
-
-                        if rng.lock().gen_bool(0.1) {
-                            cx.update(|cx| {
+                        10..=80 if !files.lock().is_empty() => {
+                            let buffer = if client.buffers.is_empty() || rng.lock().gen() {
+                                let file = files.lock().choose(&mut *rng.lock()).unwrap().clone();
+                                let (worktree, path) = project
+                                    .update(cx, |project, cx| {
+                                        project.find_or_create_local_worktree(
+                                            file.clone(),
+                                            true,
+                                            cx,
+                                        )
+                                    })
+                                    .await?;
+                                let project_path =
+                                    worktree.read_with(cx, |worktree, _| (worktree.id(), path));
                                 log::info!(
-                                    "Host: dropping buffer {:?}",
-                                    buffer.read(cx).file().unwrap().full_path(cx)
+                                    "Host: opening path {:?}, worktree {}, relative_path {:?}",
+                                    file,
+                                    project_path.0,
+                                    project_path.1
                                 );
-                                self.buffers.remove(&buffer);
-                                drop(buffer);
-                            });
-                        } else {
-                            buffer.update(cx, |buffer, cx| {
-                                log::info!(
-                                    "Host: updating buffer {:?} ({})",
-                                    buffer.file().unwrap().full_path(cx),
-                                    buffer.remote_id()
-                                );
-                                buffer.randomly_edit(&mut *rng.lock(), 5, cx)
-                            });
+                                let buffer = project
+                                    .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                                    .await
+                                    .unwrap();
+                                client.buffers.insert(buffer.clone());
+                                buffer
+                            } else {
+                                client
+                                    .buffers
+                                    .iter()
+                                    .choose(&mut *rng.lock())
+                                    .unwrap()
+                                    .clone()
+                            };
+
+                            if rng.lock().gen_bool(0.1) {
+                                cx.update(|cx| {
+                                    log::info!(
+                                        "Host: dropping buffer {:?}",
+                                        buffer.read(cx).file().unwrap().full_path(cx)
+                                    );
+                                    client.buffers.remove(&buffer);
+                                    drop(buffer);
+                                });
+                            } else {
+                                buffer.update(cx, |buffer, cx| {
+                                    log::info!(
+                                        "Host: updating buffer {:?} ({})",
+                                        buffer.file().unwrap().full_path(cx),
+                                        buffer.remote_id()
+                                    );
+                                    buffer.randomly_edit(&mut *rng.lock(), 5, cx)
+                                });
+                            }
                         }
+                        _ => loop {
+                            let path_component_count = rng.lock().gen_range::<usize, _>(1..=5);
+                            let mut path = PathBuf::new();
+                            path.push("/");
+                            for _ in 0..path_component_count {
+                                let letter = rng.lock().gen_range(b'a'..=b'z');
+                                path.push(std::str::from_utf8(&[letter]).unwrap());
+                            }
+                            path.set_extension("rs");
+                            let parent_path = path.parent().unwrap();
+
+                            log::info!("Host: creating file {:?}", path,);
+
+                            if fs.create_dir(&parent_path).await.is_ok()
+                                && fs.create_file(&path, Default::default()).await.is_ok()
+                            {
+                                files.lock().push(path);
+                                break;
+                            } else {
+                                log::info!("Host: cannot create file");
+                            }
+                        },
                     }
-                    _ => loop {
-                        let path_component_count = rng.lock().gen_range::<usize, _>(1..=5);
-                        let mut path = PathBuf::new();
-                        path.push("/");
-                        for _ in 0..path_component_count {
-                            let letter = rng.lock().gen_range(b'a'..=b'z');
-                            path.push(std::str::from_utf8(&[letter]).unwrap());
-                        }
-                        path.set_extension("rs");
-                        let parent_path = path.parent().unwrap();
 
-                        log::info!("Host: creating file {:?}", path,);
-
-                        if fs.create_dir(&parent_path).await.is_ok()
-                            && fs.create_file(&path, Default::default()).await.is_ok()
-                        {
-                            files.lock().push(path);
-                            break;
-                        } else {
-                            log::info!("Host: cannot create file");
-                        }
-                    },
+                    cx.background().simulate_random_delay().await;
                 }
 
-                cx.background().simulate_random_delay().await;
+                Ok(())
             }
 
-            self.project = Some(project);
-
+            simulate_host_internal(
+                &mut self,
+                project.clone(),
+                files,
+                operations,
+                max_operations,
+                rng,
+                &mut cx,
+            )
+            .log_err()
+            .await;
             log::info!("Host done");
-            Ok(())
+            self.project = Some(project);
+            (self, cx)
         }
 
         pub async fn simulate_guest(
@@ -5743,244 +5778,292 @@ mod tests {
             operations: Rc<Cell<usize>>,
             max_operations: usize,
             rng: Arc<Mutex<StdRng>>,
+            host_disconnected: Rc<AtomicBool>,
             mut cx: TestAppContext,
         ) -> (Self, TestAppContext) {
-            while operations.get() < max_operations {
-                let buffer = if self.buffers.is_empty() || rng.lock().gen() {
-                    let worktree = if let Some(worktree) = project.read_with(&cx, |project, cx| {
-                        project
-                            .worktrees(&cx)
-                            .filter(|worktree| {
-                                let worktree = worktree.read(cx);
-                                worktree.is_visible()
-                                    && worktree.entries(false).any(|e| e.is_file())
+            async fn simulate_guest_internal(
+                client: &mut TestClient,
+                guest_id: usize,
+                project: ModelHandle<Project>,
+                operations: Rc<Cell<usize>>,
+                max_operations: usize,
+                rng: Arc<Mutex<StdRng>>,
+                cx: &mut TestAppContext,
+            ) -> anyhow::Result<()> {
+                while operations.get() < max_operations {
+                    let buffer = if client.buffers.is_empty() || rng.lock().gen() {
+                        let worktree = if let Some(worktree) =
+                            project.read_with(cx, |project, cx| {
+                                project
+                                    .worktrees(&cx)
+                                    .filter(|worktree| {
+                                        let worktree = worktree.read(cx);
+                                        worktree.is_visible()
+                                            && worktree.entries(false).any(|e| e.is_file())
+                                    })
+                                    .choose(&mut *rng.lock())
+                            }) {
+                            worktree
+                        } else {
+                            cx.background().simulate_random_delay().await;
+                            continue;
+                        };
+
+                        operations.set(operations.get() + 1);
+                        let (worktree_root_name, project_path) =
+                            worktree.read_with(cx, |worktree, _| {
+                                let entry = worktree
+                                    .entries(false)
+                                    .filter(|e| e.is_file())
+                                    .choose(&mut *rng.lock())
+                                    .unwrap();
+                                (
+                                    worktree.root_name().to_string(),
+                                    (worktree.id(), entry.path.clone()),
+                                )
+                            });
+                        log::info!(
+                            "Guest {}: opening path {:?} in worktree {} ({})",
+                            guest_id,
+                            project_path.1,
+                            project_path.0,
+                            worktree_root_name,
+                        );
+                        let buffer = project
+                            .update(cx, |project, cx| {
+                                project.open_buffer(project_path.clone(), cx)
                             })
-                            .choose(&mut *rng.lock())
-                    }) {
-                        worktree
+                            .await?;
+                        log::info!(
+                            "Guest {}: opened path {:?} in worktree {} ({}) with buffer id {}",
+                            guest_id,
+                            project_path.1,
+                            project_path.0,
+                            worktree_root_name,
+                            buffer.read_with(cx, |buffer, _| buffer.remote_id())
+                        );
+                        client.buffers.insert(buffer.clone());
+                        buffer
                     } else {
-                        cx.background().simulate_random_delay().await;
-                        continue;
+                        operations.set(operations.get() + 1);
+
+                        client
+                            .buffers
+                            .iter()
+                            .choose(&mut *rng.lock())
+                            .unwrap()
+                            .clone()
                     };
 
-                    operations.set(operations.get() + 1);
-                    let (worktree_root_name, project_path) =
-                        worktree.read_with(&cx, |worktree, _| {
-                            let entry = worktree
-                                .entries(false)
-                                .filter(|e| e.is_file())
-                                .choose(&mut *rng.lock())
-                                .unwrap();
-                            (
-                                worktree.root_name().to_string(),
-                                (worktree.id(), entry.path.clone()),
-                            )
-                        });
-                    log::info!(
-                        "Guest {}: opening path {:?} in worktree {} ({})",
-                        guest_id,
-                        project_path.1,
-                        project_path.0,
-                        worktree_root_name,
-                    );
-                    let buffer = project
-                        .update(&mut cx, |project, cx| {
-                            project.open_buffer(project_path.clone(), cx)
-                        })
-                        .await
-                        .unwrap();
-                    log::info!(
-                        "Guest {}: opened path {:?} in worktree {} ({}) with buffer id {}",
-                        guest_id,
-                        project_path.1,
-                        project_path.0,
-                        worktree_root_name,
-                        buffer.read_with(&cx, |buffer, _| buffer.remote_id())
-                    );
-                    self.buffers.insert(buffer.clone());
-                    buffer
-                } else {
-                    operations.set(operations.get() + 1);
-
-                    self.buffers
-                        .iter()
-                        .choose(&mut *rng.lock())
-                        .unwrap()
-                        .clone()
-                };
-
-                let choice = rng.lock().gen_range(0..100);
-                match choice {
-                    0..=9 => {
-                        cx.update(|cx| {
-                            log::info!(
-                                "Guest {}: dropping buffer {:?}",
-                                guest_id,
-                                buffer.read(cx).file().unwrap().full_path(cx)
-                            );
-                            self.buffers.remove(&buffer);
-                            drop(buffer);
-                        });
-                    }
-                    10..=19 => {
-                        let completions = project.update(&mut cx, |project, cx| {
-                            log::info!(
-                                "Guest {}: requesting completions for buffer {} ({:?})",
-                                guest_id,
-                                buffer.read(cx).remote_id(),
-                                buffer.read(cx).file().unwrap().full_path(cx)
-                            );
-                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
-                            project.completions(&buffer, offset, cx)
-                        });
-                        let completions = cx.background().spawn(async move {
-                            completions.await.expect("completions request failed");
-                        });
-                        if rng.lock().gen_bool(0.3) {
-                            log::info!("Guest {}: detaching completions request", guest_id);
-                            completions.detach();
-                        } else {
-                            completions.await;
+                    let choice = rng.lock().gen_range(0..100);
+                    match choice {
+                        0..=9 => {
+                            cx.update(|cx| {
+                                log::info!(
+                                    "Guest {}: dropping buffer {:?}",
+                                    guest_id,
+                                    buffer.read(cx).file().unwrap().full_path(cx)
+                                );
+                                client.buffers.remove(&buffer);
+                                drop(buffer);
+                            });
+                        }
+                        10..=19 => {
+                            let completions = project.update(cx, |project, cx| {
+                                log::info!(
+                                    "Guest {}: requesting completions for buffer {} ({:?})",
+                                    guest_id,
+                                    buffer.read(cx).remote_id(),
+                                    buffer.read(cx).file().unwrap().full_path(cx)
+                                );
+                                let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                                project.completions(&buffer, offset, cx)
+                            });
+                            let completions = cx.background().spawn(async move {
+                                completions
+                                    .await
+                                    .map_err(|err| anyhow!("completions request failed: {:?}", err))
+                            });
+                            if rng.lock().gen_bool(0.3) {
+                                log::info!("Guest {}: detaching completions request", guest_id);
+                                cx.update(|cx| completions.detach_and_log_err(cx));
+                            } else {
+                                completions.await?;
+                            }
+                        }
+                        20..=29 => {
+                            let code_actions = project.update(cx, |project, cx| {
+                                log::info!(
+                                    "Guest {}: requesting code actions for buffer {} ({:?})",
+                                    guest_id,
+                                    buffer.read(cx).remote_id(),
+                                    buffer.read(cx).file().unwrap().full_path(cx)
+                                );
+                                let range = buffer.read(cx).random_byte_range(0, &mut *rng.lock());
+                                project.code_actions(&buffer, range, cx)
+                            });
+                            let code_actions = cx.background().spawn(async move {
+                                code_actions.await.map_err(|err| {
+                                    anyhow!("code actions request failed: {:?}", err)
+                                })
+                            });
+                            if rng.lock().gen_bool(0.3) {
+                                log::info!("Guest {}: detaching code actions request", guest_id);
+                                cx.update(|cx| code_actions.detach_and_log_err(cx));
+                            } else {
+                                code_actions.await?;
+                            }
+                        }
+                        30..=39 if buffer.read_with(cx, |buffer, _| buffer.is_dirty()) => {
+                            let (requested_version, save) = buffer.update(cx, |buffer, cx| {
+                                log::info!(
+                                    "Guest {}: saving buffer {} ({:?})",
+                                    guest_id,
+                                    buffer.remote_id(),
+                                    buffer.file().unwrap().full_path(cx)
+                                );
+                                (buffer.version(), buffer.save(cx))
+                            });
+                            let save = cx.background().spawn(async move {
+                                let (saved_version, _) = save
+                                    .await
+                                    .map_err(|err| anyhow!("save request failed: {:?}", err))?;
+                                assert!(saved_version.observed_all(&requested_version));
+                                Ok::<_, anyhow::Error>(())
+                            });
+                            if rng.lock().gen_bool(0.3) {
+                                log::info!("Guest {}: detaching save request", guest_id);
+                                cx.update(|cx| save.detach_and_log_err(cx));
+                            } else {
+                                save.await?;
+                            }
+                        }
+                        40..=44 => {
+                            let prepare_rename = project.update(cx, |project, cx| {
+                                log::info!(
+                                    "Guest {}: preparing rename for buffer {} ({:?})",
+                                    guest_id,
+                                    buffer.read(cx).remote_id(),
+                                    buffer.read(cx).file().unwrap().full_path(cx)
+                                );
+                                let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                                project.prepare_rename(buffer, offset, cx)
+                            });
+                            let prepare_rename = cx.background().spawn(async move {
+                                prepare_rename.await.map_err(|err| {
+                                    anyhow!("prepare rename request failed: {:?}", err)
+                                })
+                            });
+                            if rng.lock().gen_bool(0.3) {
+                                log::info!("Guest {}: detaching prepare rename request", guest_id);
+                                cx.update(|cx| prepare_rename.detach_and_log_err(cx));
+                            } else {
+                                prepare_rename.await?;
+                            }
+                        }
+                        45..=49 => {
+                            let definitions = project.update(cx, |project, cx| {
+                                log::info!(
+                                    "Guest {}: requesting definitions for buffer {} ({:?})",
+                                    guest_id,
+                                    buffer.read(cx).remote_id(),
+                                    buffer.read(cx).file().unwrap().full_path(cx)
+                                );
+                                let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                                project.definition(&buffer, offset, cx)
+                            });
+                            let definitions = cx.background().spawn(async move {
+                                definitions
+                                    .await
+                                    .map_err(|err| anyhow!("definitions request failed: {:?}", err))
+                            });
+                            if rng.lock().gen_bool(0.3) {
+                                log::info!("Guest {}: detaching definitions request", guest_id);
+                                cx.update(|cx| definitions.detach_and_log_err(cx));
+                            } else {
+                                client
+                                    .buffers
+                                    .extend(definitions.await?.into_iter().map(|loc| loc.buffer));
+                            }
+                        }
+                        50..=54 => {
+                            let highlights = project.update(cx, |project, cx| {
+                                log::info!(
+                                    "Guest {}: requesting highlights for buffer {} ({:?})",
+                                    guest_id,
+                                    buffer.read(cx).remote_id(),
+                                    buffer.read(cx).file().unwrap().full_path(cx)
+                                );
+                                let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
+                                project.document_highlights(&buffer, offset, cx)
+                            });
+                            let highlights = cx.background().spawn(async move {
+                                highlights
+                                    .await
+                                    .map_err(|err| anyhow!("highlights request failed: {:?}", err))
+                            });
+                            if rng.lock().gen_bool(0.3) {
+                                log::info!("Guest {}: detaching highlights request", guest_id);
+                                cx.update(|cx| highlights.detach_and_log_err(cx));
+                            } else {
+                                highlights.await?;
+                            }
+                        }
+                        55..=59 => {
+                            let search = project.update(cx, |project, cx| {
+                                let query = rng.lock().gen_range('a'..='z');
+                                log::info!("Guest {}: project-wide search {:?}", guest_id, query);
+                                project.search(SearchQuery::text(query, false, false), cx)
+                            });
+                            let search = cx.background().spawn(async move {
+                                search
+                                    .await
+                                    .map_err(|err| anyhow!("search request failed: {:?}", err))
+                            });
+                            if rng.lock().gen_bool(0.3) {
+                                log::info!("Guest {}: detaching search request", guest_id);
+                                cx.update(|cx| search.detach_and_log_err(cx));
+                            } else {
+                                client.buffers.extend(search.await?.into_keys());
+                            }
+                        }
+                        _ => {
+                            buffer.update(cx, |buffer, cx| {
+                                log::info!(
+                                    "Guest {}: updating buffer {} ({:?})",
+                                    guest_id,
+                                    buffer.remote_id(),
+                                    buffer.file().unwrap().full_path(cx)
+                                );
+                                buffer.randomly_edit(&mut *rng.lock(), 5, cx)
+                            });
                         }
                     }
-                    20..=29 => {
-                        let code_actions = project.update(&mut cx, |project, cx| {
-                            log::info!(
-                                "Guest {}: requesting code actions for buffer {} ({:?})",
-                                guest_id,
-                                buffer.read(cx).remote_id(),
-                                buffer.read(cx).file().unwrap().full_path(cx)
-                            );
-                            let range = buffer.read(cx).random_byte_range(0, &mut *rng.lock());
-                            project.code_actions(&buffer, range, cx)
-                        });
-                        let code_actions = cx.background().spawn(async move {
-                            code_actions.await.expect("code actions request failed");
-                        });
-                        if rng.lock().gen_bool(0.3) {
-                            log::info!("Guest {}: detaching code actions request", guest_id);
-                            code_actions.detach();
-                        } else {
-                            code_actions.await;
-                        }
-                    }
-                    30..=39 if buffer.read_with(&cx, |buffer, _| buffer.is_dirty()) => {
-                        let (requested_version, save) = buffer.update(&mut cx, |buffer, cx| {
-                            log::info!(
-                                "Guest {}: saving buffer {} ({:?})",
-                                guest_id,
-                                buffer.remote_id(),
-                                buffer.file().unwrap().full_path(cx)
-                            );
-                            (buffer.version(), buffer.save(cx))
-                        });
-                        let save = cx.background().spawn(async move {
-                            let (saved_version, _) = save.await.expect("save request failed");
-                            assert!(saved_version.observed_all(&requested_version));
-                        });
-                        if rng.lock().gen_bool(0.3) {
-                            log::info!("Guest {}: detaching save request", guest_id);
-                            save.detach();
-                        } else {
-                            save.await;
-                        }
-                    }
-                    40..=44 => {
-                        let prepare_rename = project.update(&mut cx, |project, cx| {
-                            log::info!(
-                                "Guest {}: preparing rename for buffer {} ({:?})",
-                                guest_id,
-                                buffer.read(cx).remote_id(),
-                                buffer.read(cx).file().unwrap().full_path(cx)
-                            );
-                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
-                            project.prepare_rename(buffer, offset, cx)
-                        });
-                        let prepare_rename = cx.background().spawn(async move {
-                            prepare_rename.await.expect("prepare rename request failed");
-                        });
-                        if rng.lock().gen_bool(0.3) {
-                            log::info!("Guest {}: detaching prepare rename request", guest_id);
-                            prepare_rename.detach();
-                        } else {
-                            prepare_rename.await;
-                        }
-                    }
-                    45..=49 => {
-                        let definitions = project.update(&mut cx, |project, cx| {
-                            log::info!(
-                                "Guest {}: requesting definitions for buffer {} ({:?})",
-                                guest_id,
-                                buffer.read(cx).remote_id(),
-                                buffer.read(cx).file().unwrap().full_path(cx)
-                            );
-                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
-                            project.definition(&buffer, offset, cx)
-                        });
-                        let definitions = cx.background().spawn(async move {
-                            definitions.await.expect("definitions request failed")
-                        });
-                        if rng.lock().gen_bool(0.3) {
-                            log::info!("Guest {}: detaching definitions request", guest_id);
-                            definitions.detach();
-                        } else {
-                            self.buffers
-                                .extend(definitions.await.into_iter().map(|loc| loc.buffer));
-                        }
-                    }
-                    50..=54 => {
-                        let highlights = project.update(&mut cx, |project, cx| {
-                            log::info!(
-                                "Guest {}: requesting highlights for buffer {} ({:?})",
-                                guest_id,
-                                buffer.read(cx).remote_id(),
-                                buffer.read(cx).file().unwrap().full_path(cx)
-                            );
-                            let offset = rng.lock().gen_range(0..=buffer.read(cx).len());
-                            project.document_highlights(&buffer, offset, cx)
-                        });
-                        let highlights = cx.background().spawn(async move {
-                            highlights.await.expect("highlights request failed");
-                        });
-                        if rng.lock().gen_bool(0.3) {
-                            log::info!("Guest {}: detaching highlights request", guest_id);
-                            highlights.detach();
-                        } else {
-                            highlights.await;
-                        }
-                    }
-                    55..=59 => {
-                        let search = project.update(&mut cx, |project, cx| {
-                            let query = rng.lock().gen_range('a'..='z');
-                            log::info!("Guest {}: project-wide search {:?}", guest_id, query);
-                            project.search(SearchQuery::text(query, false, false), cx)
-                        });
-                        let search = cx
-                            .background()
-                            .spawn(async move { search.await.expect("search request failed") });
-                        if rng.lock().gen_bool(0.3) {
-                            log::info!("Guest {}: detaching search request", guest_id);
-                            search.detach();
-                        } else {
-                            self.buffers.extend(search.await.into_keys());
-                        }
-                    }
-                    _ => {
-                        buffer.update(&mut cx, |buffer, cx| {
-                            log::info!(
-                                "Guest {}: updating buffer {} ({:?})",
-                                guest_id,
-                                buffer.remote_id(),
-                                buffer.file().unwrap().full_path(cx)
-                            );
-                            buffer.randomly_edit(&mut *rng.lock(), 5, cx)
-                        });
-                    }
+                    cx.background().simulate_random_delay().await;
                 }
-                cx.background().simulate_random_delay().await;
+                Ok(())
             }
 
-            log::info!("Guest {} done", guest_id);
+            match simulate_guest_internal(
+                &mut self,
+                guest_id,
+                project.clone(),
+                operations,
+                max_operations,
+                rng,
+                &mut cx,
+            )
+            .await
+            {
+                Ok(()) => log::info!("guest {} done", guest_id),
+                Err(err) => {
+                    if host_disconnected.load(SeqCst) {
+                        log::error!("guest {} simulation error - {:?}", guest_id, err);
+                    } else {
+                        panic!("guest {} simulation error - {:?}", guest_id, err);
+                    }
+                }
+            }
 
             self.project = Some(project);
             (self, cx)
