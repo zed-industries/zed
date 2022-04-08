@@ -5209,7 +5209,6 @@ mod tests {
                 log::info!("Guest {} added", guest_id);
             } else if rng.lock().gen_bool(0.05) {
                 host_disconnected.store(true, SeqCst);
-                server.forbid_connections();
                 server.disconnect_client(user_ids[0]);
                 cx.foreground().advance_clock(RECEIVE_TIMEOUT);
                 let mut clients = futures::future::join_all(clients).await;
@@ -5221,11 +5220,14 @@ mod tests {
                     .unwrap()
                     .read_with(&host_cx, |project, _| assert!(!project.is_shared()));
                 for (guest, mut guest_cx) in clients {
-                    assert!(server
+                    let contacts = server
                         .store
                         .read()
-                        .contacts_for_user(guest.current_user_id(&guest_cx))
-                        .is_empty());
+                        .contacts_for_user(guest.current_user_id(&guest_cx));
+                    assert!(!contacts
+                        .iter()
+                        .flat_map(|contact| &contact.projects)
+                        .any(|project| project.id == host_project_id));
                     guest
                         .project
                         .as_ref()
