@@ -1216,7 +1216,7 @@ impl Project {
                 let file = File::from_dyn(buffer.file())?;
                 let abs_path = file.as_local()?.abs_path(cx);
                 let uri = lsp::Url::from_file_path(abs_path).unwrap();
-                let buffer_snapshots = self.buffer_snapshots.entry(buffer.remote_id()).or_default();
+                let buffer_snapshots = self.buffer_snapshots.get_mut(&buffer.remote_id())?;
                 let (version, prev_snapshot) = buffer_snapshots.last()?;
                 let next_snapshot = buffer.text_snapshot();
                 let next_version = version + 1;
