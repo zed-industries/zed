@@ -4007,6 +4007,7 @@ dependencies = [
  "async-tungstenite",
  "base64 0.13.0",
  "clock",
+ "collections",
  "futures",
  "gpui",
  "log",

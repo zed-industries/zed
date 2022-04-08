@@ -1,6 +1,9 @@
-use super::proto::{self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, RequestMessage};
-use super::Connection;
+use super::{
+    proto::{self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, RequestMessage},
+    Connection,
+};
 use anyhow::{anyhow, Context, Result};
+use collections::HashMap;
 use futures::{channel::oneshot, stream::BoxStream, FutureExt as _, StreamExt};
 use parking_lot::{Mutex, RwLock};
 use postage::{
@@ -10,7 +13,6 @@ use postage::{
 use smol_timeout::TimeoutExt as _;
 use std::sync::atomic::Ordering::SeqCst;
 use std::{
-    collections::HashMap,
     fmt,
     future::Future,
     marker::PhantomData,
