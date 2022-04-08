@@ -7,9 +7,9 @@ use gpui::{
     AppContext, Axis, Element, ElementBox, Entity, MutableAppContext, RenderContext, View,
     ViewContext, ViewHandle,
 };
+use settings::Settings;
 use std::{cmp, sync::Arc};
 use theme::{Theme, ThemeRegistry};
-use settings::Settings;
 use workspace::{
     menu::{Confirm, SelectNext, SelectPrev},
     Workspace,

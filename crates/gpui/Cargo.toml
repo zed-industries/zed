@@ -25,7 +25,7 @@ etagere = "0.2"
 futures = "0.3"
 image = "0.23"
 lazy_static = "1.4.0"
-log = "0.4"
+log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 num_cpus = "1.13"
 ordered-float = "2.1.1"
 parking = "2.0.0"
@@ -67,6 +67,6 @@ core-graphics = "0.22.2"
 core-text = "19.2"
 font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "8eaf7a918eafa28b0a37dc759e2e0e7683fa24f1" }
 foreign-types = "0.3"
-log = "0.4"
+log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 metal = "0.21.0"
 objc = "0.2"

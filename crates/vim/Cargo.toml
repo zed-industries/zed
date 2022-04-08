@@ -14,7 +14,7 @@ gpui = { path = "../gpui" }
 language = { path = "../language" }
 settings = { path = "../settings" }
 workspace = { path = "../workspace" }
-log = "0.4"
+log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 
 [dev-dependencies]
 indoc = "1.0.4"
