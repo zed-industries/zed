@@ -81,6 +81,10 @@ spec:
                 secretKeyRef:
                   name: api
                   key: token
+            - name: LOG_JSON
+              value: "1"
+            - name: RUST_LOG
+              value: "trace"
           securityContext:
             capabilities:
               # FIXME - Switch to the more restrictive `PERFMON` capability.
