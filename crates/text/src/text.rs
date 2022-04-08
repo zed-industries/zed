@@ -15,7 +15,7 @@ pub mod subscription;
 mod tests;
 
 pub use anchor::*;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use locator::Locator;
@@ -1700,14 +1700,14 @@ impl BufferSnapshot {
         })
     }
 
-    fn summary_for_anchor<'a, D>(&'a self, anchor: &Anchor) -> D
+    pub fn try_summary_for_anchor<'a, D>(&'a self, anchor: &Anchor) -> Result<D>
     where
         D: TextDimension,
     {
         if *anchor == Anchor::MIN {
-            D::default()
+            Ok(D::default())
         } else if *anchor == Anchor::MAX {
-            D::from_text_summary(&self.visible_text.summary())
+            Ok(D::from_text_summary(&self.visible_text.summary()))
         } else {
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,
@@ -1727,8 +1727,21 @@ impl BufferSnapshot {
             } else {
                 insertion_cursor.prev(&());
             }
-            let insertion = insertion_cursor.item().expect("invalid insertion");
-            assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
+
+            let insertion = insertion_cursor.item().ok_or_else(|| {
+                anyhow!(
+                    "can't find insertion id {:?}. went off end.",
+                    anchor.timestamp
+                )
+            })?;
+
+            if insertion.timestamp != anchor.timestamp {
+                Err(anyhow!(
+                    "can't find insertion id {:?}. closest insertion was {:?}",
+                    anchor.timestamp,
+                    insertion.timestamp
+                ))?;
+            }
 
             let mut fragment_cursor = self.fragments.cursor::<(Option<&Locator>, usize)>();
             fragment_cursor.seek(&Some(&insertion.fragment_id), Bias::Left, &None);
@@ -1737,8 +1750,15 @@ impl BufferSnapshot {
             if fragment.visible {
                 fragment_offset += anchor.offset - insertion.split_offset;
             }
-            self.text_summary_for_range(0..fragment_offset)
+            Ok(self.text_summary_for_range(0..fragment_offset))
         }
+    }
+
+    fn summary_for_anchor<'a, D>(&'a self, anchor: &Anchor) -> D
+    where
+        D: TextDimension,
+    {
+        self.try_summary_for_anchor(anchor).unwrap()
     }
 
     fn fragment_id_for_anchor(&self, anchor: &Anchor) -> &Locator {

@@ -4017,15 +4017,28 @@ impl Project {
                 .map(|buffer| buffer.upgrade(cx).unwrap())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })?;
+        let requested_version = deserialize_version(envelope.payload.version);
         buffer
             .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(envelope.payload.version))
+                buffer.wait_for_version(requested_version.clone())
             })
             .await;
-
         let version = buffer.read_with(&cx, |buffer, _| buffer.version());
+
+        buffer.read_with(&cx, |buffer, _| {
+            buffer.try_summary_for_anchor::<usize>(&start)?;
+            buffer.try_summary_for_anchor::<usize>(&end)?;
+            anyhow::Ok(())
+        }).with_context(|| format!(
+            "invalid anchors in code action request. local buffer version: {:?} requested buffer version: {:?} start: {:?} end: {:?}",
+            version,
+            requested_version,
+            start,
+            end
+        ))?;
+
         let code_actions = this.update(&mut cx, |this, cx| {
-            Ok::<_, anyhow::Error>(this.code_actions(&buffer, start..end, cx))
+            anyhow::Ok(this.code_actions(&buffer, start..end, cx))
         })?;
 
         Ok(proto::GetCodeActionsResponse {
