@@ -4012,7 +4012,6 @@ dependencies = [
  "gpui",
  "log",
  "parking_lot",
- "postage",
  "prost",
  "prost-build",
  "rand 0.8.3",

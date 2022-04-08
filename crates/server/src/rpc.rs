@@ -1094,7 +1094,6 @@ mod tests {
     };
     use lsp::{self, FakeLanguageServer};
     use parking_lot::Mutex;
-    use postage::barrier;
     use project::{
         fs::{FakeFs, Fs as _},
         search::SearchQuery,
@@ -5350,7 +5349,7 @@ mod tests {
         server: Arc<Server>,
         foreground: Rc<executor::Foreground>,
         notifications: mpsc::UnboundedReceiver<()>,
-        connection_killers: Arc<Mutex<HashMap<UserId, barrier::Sender>>>,
+        connection_killers: Arc<Mutex<HashMap<UserId, Arc<AtomicBool>>>>,
         forbid_connections: Arc<AtomicBool>,
         _test_db: TestDb,
     }
@@ -5418,9 +5417,9 @@ mod tests {
                                 "server is forbidding connections"
                             )))
                         } else {
-                            let (client_conn, server_conn, kill_conn) =
+                            let (client_conn, server_conn, killed) =
                                 Connection::in_memory(cx.background());
-                            connection_killers.lock().insert(user_id, kill_conn);
+                            connection_killers.lock().insert(user_id, killed);
                             cx.background()
                                 .spawn(server.handle_connection(
                                     server_conn,
@@ -5462,7 +5461,11 @@ mod tests {
         }
 
         fn disconnect_client(&self, user_id: UserId) {
-            self.connection_killers.lock().remove(&user_id);
+            self.connection_killers
+                .lock()
+                .remove(&user_id)
+                .unwrap()
+                .store(true, SeqCst);
         }
 
         fn forbid_connections(&self) {

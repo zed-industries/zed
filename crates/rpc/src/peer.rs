@@ -4,13 +4,13 @@ use super::{
 };
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
-use futures::{channel::oneshot, stream::BoxStream, FutureExt as _, StreamExt};
-use parking_lot::{Mutex, RwLock};
-use postage::{
-    barrier, mpsc,
-    prelude::{Sink as _, Stream as _},
+use futures::{
+    channel::{mpsc, oneshot},
+    stream::BoxStream,
+    FutureExt, SinkExt, StreamExt,
 };
-use smol_timeout::TimeoutExt as _;
+use parking_lot::{Mutex, RwLock};
+use smol_timeout::TimeoutExt;
 use std::sync::atomic::Ordering::SeqCst;
 use std::{
     fmt,
@@ -90,10 +90,10 @@ pub struct Peer {
 
 #[derive(Clone)]
 pub struct ConnectionState {
-    outgoing_tx: futures::channel::mpsc::UnboundedSender<proto::Message>,
+    outgoing_tx: mpsc::UnboundedSender<proto::Message>,
     next_message_id: Arc<AtomicU32>,
     response_channels:
-        Arc<Mutex<Option<HashMap<u32, oneshot::Sender<(proto::Envelope, barrier::Sender)>>>>>,
+        Arc<Mutex<Option<HashMap<u32, oneshot::Sender<(proto::Envelope, oneshot::Sender<()>)>>>>>,
 }
 
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
@@ -127,7 +127,7 @@ impl Peer {
         // bounded channel so that other peers will receive backpressure if they send
         // messages faster than this peer can process them.
         let (mut incoming_tx, incoming_rx) = mpsc::channel(64);
-        let (outgoing_tx, mut outgoing_rx) = futures::channel::mpsc::unbounded();
+        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded();
 
         let connection_id = ConnectionId(self.next_connection_id.fetch_add(1, SeqCst));
         let connection_state = ConnectionState {
@@ -208,14 +208,14 @@ impl Peer {
                 if let Some(responding_to) = incoming.responding_to {
                     let channel = response_channels.lock().as_mut()?.remove(&responding_to);
                     if let Some(tx) = channel {
-                        let mut requester_resumed = barrier::channel();
+                        let requester_resumed = oneshot::channel();
                         if let Err(error) = tx.send((incoming, requester_resumed.0)) {
                             log::debug!(
                                 "received RPC but request future was dropped {:?}",
                                 error.0
                             );
                         }
-                        requester_resumed.1.recv().await;
+                        let _ = requester_resumed.1.await;
                     } else {
                         log::warn!("received RPC response to unknown request {}", responding_to);
                     }
@@ -721,26 +721,26 @@ mod tests {
             .add_test_connection(client_conn, cx.background())
             .await;
 
-        let (mut io_ended_tx, mut io_ended_rx) = postage::barrier::channel();
+        let (io_ended_tx, io_ended_rx) = oneshot::channel();
         executor
             .spawn(async move {
                 io_handler.await.ok();
-                io_ended_tx.send(()).await.unwrap();
+                io_ended_tx.send(()).unwrap();
             })
             .detach();
 
-        let (mut messages_ended_tx, mut messages_ended_rx) = postage::barrier::channel();
+        let (messages_ended_tx, messages_ended_rx) = oneshot::channel();
         executor
             .spawn(async move {
                 incoming.next().await;
-                messages_ended_tx.send(()).await.unwrap();
+                messages_ended_tx.send(()).unwrap();
             })
             .detach();
 
         client.disconnect(connection_id);
 
-        io_ended_rx.recv().await;
-        messages_ended_rx.recv().await;
+        let _ = io_ended_rx.await;
+        let _ = messages_ended_rx.await;
         assert!(server_conn
             .send(WebSocketMessage::Binary(vec![]))
             .await
