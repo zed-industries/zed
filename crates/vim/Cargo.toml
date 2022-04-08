@@ -12,6 +12,7 @@ collections = { path = "../collections" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
+serde = { version = "1", features = ["derive"] }
 settings = { path = "../settings" }
 workspace = { path = "../workspace" }
 log = "0.4"

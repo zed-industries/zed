@@ -4,15 +4,16 @@ use crate::{mode::NormalState, Mode, SwitchMode, VimState};
 use editor::{char_kind, movement, Bias};
 use gpui::{actions, impl_actions, keymap::Binding, MutableAppContext, ViewContext};
 use language::SelectionGoal;
+use serde::Deserialize;
 use workspace::Workspace;
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 struct MoveToNextWordStart(pub bool);
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 struct MoveToNextWordEnd(pub bool);
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 struct MoveToPreviousWordStart(pub bool);
 
 impl_actions!(

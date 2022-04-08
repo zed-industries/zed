@@ -146,7 +146,7 @@ fn main() {
         });
         journal::init(app_state.clone(), cx);
         zed::init(&app_state, cx);
-        theme_selector::init(app_state.themes.clone(), cx);
+        theme_selector::init(cx);
 
         cx.set_menus(menus::menus(&app_state.clone()));
 

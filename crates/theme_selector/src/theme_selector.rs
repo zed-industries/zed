@@ -1,8 +1,8 @@
 use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
+    actions,
     elements::*,
-    impl_actions,
     keymap::{self, Binding},
     AppContext, Axis, Element, ElementBox, Entity, MutableAppContext, RenderContext, View,
     ViewContext, ViewHandle,
@@ -25,15 +25,9 @@ pub struct ThemeSelector {
     selection_completed: bool,
 }
 
-#[derive(Clone)]
-pub struct Toggle(pub Arc<ThemeRegistry>);
+actions!(theme_selector, [Toggle, Reload]);
 
-#[derive(Clone)]
-pub struct Reload(pub Arc<ThemeRegistry>);
-
-impl_actions!(theme_selector, [Toggle, Reload]);
-
-pub fn init(themes: Arc<ThemeRegistry>, cx: &mut MutableAppContext) {
+pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ThemeSelector::confirm);
     cx.add_action(ThemeSelector::select_prev);
     cx.add_action(ThemeSelector::select_next);
@@ -41,9 +35,9 @@ pub fn init(themes: Arc<ThemeRegistry>, cx: &mut MutableAppContext) {
     cx.add_action(ThemeSelector::reload);
 
     cx.add_bindings(vec![
-        Binding::new("cmd-k cmd-t", Toggle(themes.clone()), None),
-        Binding::new("cmd-k t", Reload(themes.clone()), None),
-        Binding::new("escape", Toggle(themes.clone()), Some("ThemeSelector")),
+        Binding::new("cmd-k cmd-t", Toggle, None),
+        Binding::new("cmd-k t", Reload, None),
+        Binding::new("escape", Toggle, Some("ThemeSelector")),
     ]);
 }
 
@@ -79,18 +73,20 @@ impl ThemeSelector {
         this
     }
 
-    fn toggle(workspace: &mut Workspace, action: &Toggle, cx: &mut ViewContext<Workspace>) {
+    fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
+        let themes = workspace.themes();
         workspace.toggle_modal(cx, |cx, _| {
-            let selector = cx.add_view(|cx| Self::new(action.0.clone(), cx));
+            let selector = cx.add_view(|cx| Self::new(themes, cx));
             cx.subscribe(&selector, Self::on_event).detach();
             selector
         });
     }
 
-    fn reload(_: &mut Workspace, action: &Reload, cx: &mut ViewContext<Workspace>) {
+    fn reload(workspace: &mut Workspace, _: &Reload, cx: &mut ViewContext<Workspace>) {
         let current_theme_name = cx.global::<Settings>().theme.name.clone();
-        action.0.clear();
-        match action.0.get(&current_theme_name) {
+        let themes = workspace.themes();
+        themes.clear();
+        match themes.get(&current_theme_name) {
             Ok(theme) => {
                 Self::set_theme(theme, cx);
                 log::info!("reloaded theme {}", current_theme_name);

@@ -4,7 +4,7 @@ use gpui::{
         Align, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement, ScrollTarget,
         Svg, UniformList, UniformListState,
     },
-    impl_actions,
+    impl_internal_actions,
     keymap::{self, Binding},
     platform::CursorStyle,
     AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, View, ViewContext,
@@ -54,7 +54,7 @@ pub struct ToggleExpanded(pub ProjectEntryId);
 pub struct Open(pub ProjectEntryId);
 
 actions!(project_panel, [ExpandSelectedEntry, CollapseSelectedEntry]);
-impl_actions!(project_panel, [Open, ToggleExpanded]);
+impl_internal_actions!(project_panel, [Open, ToggleExpanded]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::expand_selected_entry);

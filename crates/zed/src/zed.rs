@@ -14,7 +14,6 @@ pub use editor;
 use gpui::{
     actions,
     geometry::vector::vec2f,
-    impl_actions,
     keymap::Binding,
     platform::{WindowBounds, WindowOptions},
     ModelHandle, ViewContext,
@@ -30,12 +29,16 @@ use std::{path::PathBuf, sync::Arc};
 pub use workspace;
 use workspace::{AppState, Workspace, WorkspaceParams};
 
-actions!(zed, [About, Quit, OpenSettings]);
-
-#[derive(Clone)]
-pub struct AdjustBufferFontSize(pub f32);
-
-impl_actions!(zed, [AdjustBufferFontSize]);
+actions!(
+    zed,
+    [
+        About,
+        Quit,
+        OpenSettings,
+        IncreaseBufferFontSize,
+        DecreaseBufferFontSize
+    ]
+);
 
 const MIN_FONT_SIZE: f32 = 6.0;
 
@@ -48,16 +51,18 @@ lazy_static! {
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_global_action(quit);
-    cx.add_global_action({
-        move |action: &AdjustBufferFontSize, cx| {
-            cx.update_global::<Settings, _, _>(|settings, cx| {
-                settings.buffer_font_size =
-                    (settings.buffer_font_size + action.0).max(MIN_FONT_SIZE);
-                cx.refresh_windows();
-            });
-        }
+    cx.add_global_action(move |_: &IncreaseBufferFontSize, cx| {
+        cx.update_global::<Settings, _, _>(|settings, cx| {
+            settings.buffer_font_size = (settings.buffer_font_size + 1.0).max(MIN_FONT_SIZE);
+            cx.refresh_windows();
+        });
     });
-
+    cx.add_global_action(move |_: &DecreaseBufferFontSize, cx| {
+        cx.update_global::<Settings, _, _>(|settings, cx| {
+            settings.buffer_font_size = (settings.buffer_font_size - 1.0).max(MIN_FONT_SIZE);
+            cx.refresh_windows();
+        });
+    });
     cx.add_action({
         let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
@@ -100,8 +105,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     workspace::lsp_status::init(cx);
 
     cx.add_bindings(vec![
-        Binding::new("cmd-=", AdjustBufferFontSize(1.), None),
-        Binding::new("cmd--", AdjustBufferFontSize(-1.), None),
+        Binding::new("cmd-=", IncreaseBufferFontSize, None),
+        Binding::new("cmd--", DecreaseBufferFontSize, None),
         Binding::new("cmd-,", OpenSettings, None),
     ])
 }
@@ -134,6 +139,7 @@ pub fn build_workspace(
         client: app_state.client.clone(),
         fs: app_state.fs.clone(),
         languages: app_state.languages.clone(),
+        themes: app_state.themes.clone(),
         user_store: app_state.user_store.clone(),
         channel_list: app_state.channel_list.clone(),
     };

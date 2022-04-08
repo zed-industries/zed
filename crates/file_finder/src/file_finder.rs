@@ -3,7 +3,7 @@ use fuzzy::PathMatch;
 use gpui::{
     actions,
     elements::*,
-    impl_actions,
+    impl_internal_actions,
     keymap::{self, Binding},
     AppContext, Axis, Entity, ModelHandle, MutableAppContext, RenderContext, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
@@ -41,8 +41,8 @@ pub struct FileFinder {
 #[derive(Clone)]
 pub struct Select(pub ProjectPath);
 
-impl_actions!(file_finder, [Select]);
 actions!(file_finder, [Toggle]);
+impl_internal_actions!(file_finder, [Select]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(FileFinder::toggle);

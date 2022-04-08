@@ -22,7 +22,7 @@ use gpui::{
     executor,
     fonts::{self, HighlightStyle, TextStyle},
     geometry::vector::{vec2f, Vector2F},
-    impl_actions,
+    impl_actions, impl_internal_actions,
     keymap::Binding,
     platform::CursorStyle,
     text_layout, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
@@ -66,8 +66,11 @@ const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 
-#[derive(Clone)]
-pub struct SelectNext(pub bool);
+#[derive(Clone, Deserialize)]
+pub struct SelectNext {
+    #[serde(default)]
+    pub replace_newest: bool,
+}
 
 #[derive(Clone)]
 pub struct GoToDiagnostic(pub Direction);
@@ -81,44 +84,26 @@ pub struct Select(pub SelectPhase);
 #[derive(Clone)]
 pub struct Input(pub String);
 
-#[derive(Clone)]
-pub struct Tab(pub Direction);
-
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 pub struct SelectToBeginningOfLine {
+    #[serde(default)]
     stop_at_soft_wraps: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 pub struct SelectToEndOfLine {
+    #[serde(default)]
     stop_at_soft_wraps: bool,
 }
 
-#[derive(Clone)]
-pub struct ToggleCodeActions(pub bool);
+#[derive(Clone, Deserialize)]
+pub struct ToggleCodeActions(#[serde(default)] pub bool);
 
-#[derive(Clone)]
-pub struct ConfirmCompletion(pub Option<usize>);
+#[derive(Clone, Deserialize)]
+pub struct ConfirmCompletion(#[serde(default)] pub Option<usize>);
 
-#[derive(Clone)]
-pub struct ConfirmCodeAction(pub Option<usize>);
-
-impl_actions!(
-    editor,
-    [
-        SelectNext,
-        GoToDiagnostic,
-        Scroll,
-        Select,
-        Input,
-        Tab,
-        SelectToBeginningOfLine,
-        SelectToEndOfLine,
-        ToggleCodeActions,
-        ConfirmCompletion,
-        ConfirmCodeAction,
-    ]
-);
+#[derive(Clone, Deserialize)]
+pub struct ConfirmCodeAction(#[serde(default)] pub Option<usize>);
 
 actions!(
     editor,
@@ -127,6 +112,8 @@ actions!(
         Backspace,
         Delete,
         Newline,
+        GoToNextDiagnostic,
+        GoToPrevDiagnostic,
         Indent,
         Outdent,
         DeleteLine,
@@ -172,6 +159,8 @@ actions!(
         SplitSelectionIntoLines,
         AddSelectionAbove,
         AddSelectionBelow,
+        Tab,
+        TabPrev,
         ToggleComments,
         SelectLargerSyntaxNode,
         SelectSmallerSyntaxNode,
@@ -192,6 +181,20 @@ actions!(
         RestartLanguageServer,
     ]
 );
+
+impl_actions!(
+    editor,
+    [
+        SelectNext,
+        SelectToBeginningOfLine,
+        SelectToEndOfLine,
+        ToggleCodeActions,
+        ConfirmCompletion,
+        ConfirmCodeAction,
+    ]
+);
+
+impl_internal_actions!(editor, [Scroll, Select, Input]);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -226,8 +229,8 @@ pub fn init(cx: &mut MutableAppContext) {
             Some("Editor && showing_code_actions"),
         ),
         Binding::new("enter", ConfirmRename, Some("Editor && renaming")),
-        Binding::new("tab", Tab(Direction::Next), Some("Editor")),
-        Binding::new("shift-tab", Tab(Direction::Prev), Some("Editor")),
+        Binding::new("tab", Tab, Some("Editor")),
+        Binding::new("shift-tab", TabPrev, Some("Editor")),
         Binding::new(
             "tab",
             ConfirmCompletion(None),
@@ -346,8 +349,20 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("cmd-ctrl-p", AddSelectionAbove, Some("Editor")),
         Binding::new("cmd-alt-down", AddSelectionBelow, Some("Editor")),
         Binding::new("cmd-ctrl-n", AddSelectionBelow, Some("Editor")),
-        Binding::new("cmd-d", SelectNext(false), Some("Editor")),
-        Binding::new("cmd-k cmd-d", SelectNext(true), Some("Editor")),
+        Binding::new(
+            "cmd-d",
+            SelectNext {
+                replace_newest: false,
+            },
+            Some("Editor"),
+        ),
+        Binding::new(
+            "cmd-k cmd-d",
+            SelectNext {
+                replace_newest: true,
+            },
+            Some("Editor"),
+        ),
         Binding::new("cmd-/", ToggleComments, Some("Editor")),
         Binding::new("alt-up", SelectLargerSyntaxNode, Some("Editor")),
         Binding::new("ctrl-w", SelectLargerSyntaxNode, Some("Editor")),
@@ -355,8 +370,8 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("ctrl-shift-W", SelectSmallerSyntaxNode, Some("Editor")),
         Binding::new("cmd-u", UndoSelection, Some("Editor")),
         Binding::new("cmd-shift-U", RedoSelection, Some("Editor")),
-        Binding::new("f8", GoToDiagnostic(Direction::Next), Some("Editor")),
-        Binding::new("shift-f8", GoToDiagnostic(Direction::Prev), Some("Editor")),
+        Binding::new("f8", GoToNextDiagnostic, Some("Editor")),
+        Binding::new("shift-f8", GoToPrevDiagnostic, Some("Editor")),
         Binding::new("f2", Rename, Some("Editor")),
         Binding::new("f12", GoToDefinition, Some("Editor")),
         Binding::new("alt-shift-f12", FindAllReferences, Some("Editor")),
@@ -435,7 +450,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::move_to_enclosing_bracket);
     cx.add_action(Editor::undo_selection);
     cx.add_action(Editor::redo_selection);
-    cx.add_action(Editor::go_to_diagnostic);
+    cx.add_action(Editor::go_to_next_diagnostic);
+    cx.add_action(Editor::go_to_prev_diagnostic);
     cx.add_action(Editor::go_to_definition);
     cx.add_action(Editor::page_up);
     cx.add_action(Editor::page_down);
@@ -2940,8 +2956,8 @@ impl Editor {
         self.move_to_snippet_tabstop(Bias::Right, cx)
     }
 
-    pub fn move_to_prev_snippet_tabstop(&mut self, cx: &mut ViewContext<Self>) {
-        self.move_to_snippet_tabstop(Bias::Left, cx);
+    pub fn move_to_prev_snippet_tabstop(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        self.move_to_snippet_tabstop(Bias::Left, cx)
     }
 
     pub fn move_to_snippet_tabstop(&mut self, bias: Bias, cx: &mut ViewContext<Self>) -> bool {
@@ -3046,54 +3062,46 @@ impl Editor {
         });
     }
 
-    pub fn tab(&mut self, &Tab(direction): &Tab, cx: &mut ViewContext<Self>) {
-        match direction {
-            Direction::Prev => {
-                if !self.snippet_stack.is_empty() {
-                    self.move_to_prev_snippet_tabstop(cx);
-                    return;
-                }
+    pub fn tab_prev(&mut self, _: &TabPrev, cx: &mut ViewContext<Self>) {
+        if self.move_to_prev_snippet_tabstop(cx) {
+            return;
+        }
 
-                self.outdent(&Outdent, cx);
-            }
-            Direction::Next => {
-                if self.move_to_next_snippet_tabstop(cx) {
-                    return;
-                }
+        self.outdent(&Outdent, cx);
+    }
 
-                let mut selections = self.local_selections::<Point>(cx);
-                if selections.iter().all(|s| s.is_empty()) {
-                    self.transact(cx, |this, cx| {
-                        this.buffer.update(cx, |buffer, cx| {
-                            for selection in &mut selections {
-                                let language_name =
-                                    buffer.language_at(selection.start, cx).map(|l| l.name());
-                                let tab_size =
-                                    cx.global::<Settings>().tab_size(language_name.as_deref());
-                                let char_column = buffer
-                                    .read(cx)
-                                    .text_for_range(
-                                        Point::new(selection.start.row, 0)..selection.start,
-                                    )
-                                    .flat_map(str::chars)
-                                    .count();
-                                let chars_to_next_tab_stop =
-                                    tab_size - (char_column as u32 % tab_size);
-                                buffer.edit(
-                                    [selection.start..selection.start],
-                                    " ".repeat(chars_to_next_tab_stop as usize),
-                                    cx,
-                                );
-                                selection.start.column += chars_to_next_tab_stop;
-                                selection.end = selection.start;
-                            }
-                        });
-                        this.update_selections(selections, Some(Autoscroll::Fit), cx);
-                    });
-                } else {
-                    self.indent(&Indent, cx);
-                }
-            }
+    pub fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
+        if self.move_to_next_snippet_tabstop(cx) {
+            return;
+        }
+
+        let mut selections = self.local_selections::<Point>(cx);
+        if selections.iter().all(|s| s.is_empty()) {
+            self.transact(cx, |this, cx| {
+                this.buffer.update(cx, |buffer, cx| {
+                    for selection in &mut selections {
+                        let language_name =
+                            buffer.language_at(selection.start, cx).map(|l| l.name());
+                        let tab_size = cx.global::<Settings>().tab_size(language_name.as_deref());
+                        let char_column = buffer
+                            .read(cx)
+                            .text_for_range(Point::new(selection.start.row, 0)..selection.start)
+                            .flat_map(str::chars)
+                            .count();
+                        let chars_to_next_tab_stop = tab_size - (char_column as u32 % tab_size);
+                        buffer.edit(
+                            [selection.start..selection.start],
+                            " ".repeat(chars_to_next_tab_stop as usize),
+                            cx,
+                        );
+                        selection.start.column += chars_to_next_tab_stop;
+                        selection.end = selection.start;
+                    }
+                });
+                this.update_selections(selections, Some(Autoscroll::Fit), cx);
+            });
+        } else {
+            self.indent(&Indent, cx);
         }
     }
 
@@ -4237,7 +4245,6 @@ impl Editor {
 
     pub fn select_next(&mut self, action: &SelectNext, cx: &mut ViewContext<Self>) {
         self.push_to_selection_history();
-        let replace_newest = action.0;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
         let mut selections = self.local_selections::<usize>(cx);
@@ -4276,7 +4283,7 @@ impl Editor {
                 }
 
                 if let Some(next_selected_range) = next_selected_range {
-                    if replace_newest {
+                    if action.replace_newest {
                         if let Some(newest_id) =
                             selections.iter().max_by_key(|s| s.id).map(|s| s.id)
                         {
@@ -4547,11 +4554,15 @@ impl Editor {
         self.selection_history.mode = SelectionHistoryMode::Normal;
     }
 
-    pub fn go_to_diagnostic(
-        &mut self,
-        &GoToDiagnostic(direction): &GoToDiagnostic,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn go_to_next_diagnostic(&mut self, _: &GoToNextDiagnostic, cx: &mut ViewContext<Self>) {
+        self.go_to_diagnostic(Direction::Next, cx)
+    }
+
+    fn go_to_prev_diagnostic(&mut self, _: &GoToNextDiagnostic, cx: &mut ViewContext<Self>) {
+        self.go_to_diagnostic(Direction::Prev, cx)
+    }
+
+    pub fn go_to_diagnostic(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selection = self.newest_selection_with_snapshot::<usize>(&buffer);
         let mut active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
@@ -7771,7 +7782,7 @@ mod tests {
             );
 
             // indent from mid-tabstop to full tabstop
-            view.tab(&Tab(Direction::Next), cx);
+            view.tab(&Tab, cx);
             assert_text_with_selections(
                 view,
                 indoc! {"
@@ -7782,7 +7793,7 @@ mod tests {
             );
 
             // outdent from 1 tabstop to 0 tabstops
-            view.tab(&Tab(Direction::Prev), cx);
+            view.tab_prev(&TabPrev, cx);
             assert_text_with_selections(
                 view,
                 indoc! {"
@@ -7803,7 +7814,7 @@ mod tests {
             );
 
             // indent and outdent affect only the preceding line
-            view.tab(&Tab(Direction::Next), cx);
+            view.tab(&Tab, cx);
             assert_text_with_selections(
                 view,
                 indoc! {"
@@ -7812,7 +7823,7 @@ mod tests {
                     ] four"},
                 cx,
             );
-            view.tab(&Tab(Direction::Prev), cx);
+            view.tab_prev(&TabPrev, cx);
             assert_text_with_selections(
                 view,
                 indoc! {"
@@ -7831,7 +7842,7 @@ mod tests {
                      four"},
                 cx,
             );
-            view.tab(&Tab(Direction::Next), cx);
+            view.tab(&Tab, cx);
             assert_text_with_selections(
                 view,
                 indoc! {"
@@ -7849,7 +7860,7 @@ mod tests {
                      four"},
                 cx,
             );
-            view.tab(&Tab(Direction::Prev), cx);
+            view.tab_prev(&TabPrev, cx);
             assert_text_with_selections(
                 view,
                 indoc! {"
@@ -7939,7 +7950,7 @@ mod tests {
                 cx,
             );
 
-            editor.tab(&Tab(Direction::Next), cx);
+            editor.tab(&Tab, cx);
             assert_text_with_selections(
                 &mut editor,
                 indoc! {"
@@ -7950,7 +7961,7 @@ mod tests {
                 "},
                 cx,
             );
-            editor.tab(&Tab(Direction::Prev), cx);
+            editor.tab_prev(&TabPrev, cx);
             assert_text_with_selections(
                 &mut editor,
                 indoc! {"
@@ -8693,10 +8704,20 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.select_ranges([ranges[1].start + 1..ranges[1].start + 1], None, cx);
-            view.select_next(&SelectNext(false), cx);
+            view.select_next(
+                &SelectNext {
+                    replace_newest: false,
+                },
+                cx,
+            );
             assert_eq!(view.selected_ranges(cx), &ranges[1..2]);
 
-            view.select_next(&SelectNext(false), cx);
+            view.select_next(
+                &SelectNext {
+                    replace_newest: false,
+                },
+                cx,
+            );
             assert_eq!(view.selected_ranges(cx), &ranges[1..3]);
 
             view.undo_selection(&UndoSelection, cx);
@@ -8705,10 +8726,20 @@ mod tests {
             view.redo_selection(&RedoSelection, cx);
             assert_eq!(view.selected_ranges(cx), &ranges[1..3]);
 
-            view.select_next(&SelectNext(false), cx);
+            view.select_next(
+                &SelectNext {
+                    replace_newest: false,
+                },
+                cx,
+            );
             assert_eq!(view.selected_ranges(cx), &ranges[1..4]);
 
-            view.select_next(&SelectNext(false), cx);
+            view.select_next(
+                &SelectNext {
+                    replace_newest: false,
+                },
+                cx,
+            );
             assert_eq!(view.selected_ranges(cx), &ranges[0..4]);
         });
     }

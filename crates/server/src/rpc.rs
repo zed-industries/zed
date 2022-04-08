@@ -1117,6 +1117,7 @@ mod tests {
         },
         time::Duration,
     };
+    use theme::ThemeRegistry;
     use util::TryFutureExt;
     use workspace::{Item, SplitDirection, ToggleFollow, Workspace, WorkspaceParams};
 
@@ -5633,6 +5634,7 @@ mod tests {
                         project: project.clone(),
                         user_store: self.user_store.clone(),
                         languages: self.language_registry.clone(),
+                        themes: ThemeRegistry::new((), cx.font_cache().clone()),
                         channel_list: cx.add_model(|cx| {
                             ChannelList::new(self.user_store.clone(), self.client.clone(), cx)
                         }),

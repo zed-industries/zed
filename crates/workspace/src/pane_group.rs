@@ -4,6 +4,7 @@ use client::PeerId;
 use collections::HashMap;
 use gpui::{elements::*, Axis, Border, ViewHandle};
 use project::Collaborator;
+use serde::Deserialize;
 use theme::Theme;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -254,7 +255,8 @@ impl PaneAxis {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SplitDirection {
     Up,
     Down,

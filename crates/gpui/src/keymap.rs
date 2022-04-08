@@ -328,6 +328,8 @@ impl ContextPredicate {
 
 #[cfg(test)]
 mod tests {
+    use serde::Deserialize;
+
     use crate::{actions, impl_actions};
 
     use super::*;
@@ -419,22 +421,10 @@ mod tests {
 
     #[test]
     fn test_matcher() -> anyhow::Result<()> {
-        #[derive(Clone)]
-        pub struct A(pub &'static str);
+        #[derive(Clone, Deserialize, PartialEq, Eq, Debug)]
+        pub struct A(pub String);
         impl_actions!(test, [A]);
         actions!(test, [B, Ab]);
-
-        impl PartialEq for A {
-            fn eq(&self, other: &Self) -> bool {
-                self.0 == other.0
-            }
-        }
-        impl Eq for A {}
-        impl Debug for A {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "A({:?})", &self.0)
-            }
-        }
 
         #[derive(Clone, Debug, Eq, PartialEq)]
         struct ActionArg {
@@ -442,7 +432,7 @@ mod tests {
         }
 
         let keymap = Keymap(vec![
-            Binding::new("a", A("x"), Some("a")),
+            Binding::new("a", A("x".to_string()), Some("a")),
             Binding::new("b", B, Some("a")),
             Binding::new("a b", Ab, Some("a || b")),
         ]);
@@ -456,40 +446,54 @@ mod tests {
         let mut matcher = Matcher::new(keymap);
 
         // Basic match
-        assert_eq!(matcher.test_keystroke("a", 1, &ctx_a), Some(A("x")));
+        assert_eq!(
+            downcast(&matcher.test_keystroke("a", 1, &ctx_a)),
+            Some(&A("x".to_string()))
+        );
 
         // Multi-keystroke match
-        assert_eq!(matcher.test_keystroke::<A>("a", 1, &ctx_b), None);
-        assert_eq!(matcher.test_keystroke("b", 1, &ctx_b), Some(Ab));
+        assert!(matcher.test_keystroke("a", 1, &ctx_b).is_none());
+        assert_eq!(downcast(&matcher.test_keystroke("b", 1, &ctx_b)), Some(&Ab));
 
         // Failed matches don't interfere with matching subsequent keys
-        assert_eq!(matcher.test_keystroke::<A>("x", 1, &ctx_a), None);
-        assert_eq!(matcher.test_keystroke("a", 1, &ctx_a), Some(A("x")));
+        assert!(matcher.test_keystroke("x", 1, &ctx_a).is_none());
+        assert_eq!(
+            downcast(&matcher.test_keystroke("a", 1, &ctx_a)),
+            Some(&A("x".to_string()))
+        );
 
         // Pending keystrokes are cleared when the context changes
-        assert_eq!(matcher.test_keystroke::<A>("a", 1, &ctx_b), None);
-        assert_eq!(matcher.test_keystroke("b", 1, &ctx_a), Some(B));
+        assert!(&matcher.test_keystroke("a", 1, &ctx_b).is_none());
+        assert_eq!(downcast(&matcher.test_keystroke("b", 1, &ctx_a)), Some(&B));
 
         let mut ctx_c = Context::default();
         ctx_c.set.insert("c".into());
 
         // Pending keystrokes are maintained per-view
-        assert_eq!(matcher.test_keystroke::<A>("a", 1, &ctx_b), None);
-        assert_eq!(matcher.test_keystroke::<A>("a", 2, &ctx_c), None);
-        assert_eq!(matcher.test_keystroke("b", 1, &ctx_b), Some(Ab));
+        assert!(matcher.test_keystroke("a", 1, &ctx_b).is_none());
+        assert!(matcher.test_keystroke("a", 2, &ctx_c).is_none());
+        assert_eq!(downcast(&matcher.test_keystroke("b", 1, &ctx_b)), Some(&Ab));
 
         Ok(())
     }
 
+    fn downcast<'a, A: Action>(action: &'a Option<Box<dyn Action>>) -> Option<&'a A> {
+        action
+            .as_ref()
+            .and_then(|action| action.as_any().downcast_ref())
+    }
+
     impl Matcher {
-        fn test_keystroke<A>(&mut self, keystroke: &str, view_id: usize, cx: &Context) -> Option<A>
-        where
-            A: Action + Debug + Eq,
-        {
+        fn test_keystroke(
+            &mut self,
+            keystroke: &str,
+            view_id: usize,
+            cx: &Context,
+        ) -> Option<Box<dyn Action>> {
             if let MatchResult::Action(action) =
                 self.push_keystroke(Keystroke::parse(keystroke).unwrap(), view_id, cx)
             {
-                Some(*action.boxed_clone_as_any().downcast().unwrap())
+                Some(action.boxed_clone())
             } else {
                 None
             }
