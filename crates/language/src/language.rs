@@ -234,6 +234,14 @@ impl LanguageRegistry {
             .cloned()
     }
 
+    pub fn language_names(&self) -> Vec<String> {
+        self.languages
+            .read()
+            .iter()
+            .map(|language| language.name().to_string())
+            .collect()
+    }
+
     pub fn select_language(&self, path: impl AsRef<Path>) -> Option<Arc<Language>> {
         let path = path.as_ref();
         let filename = path.file_name().and_then(|name| name.to_str());
