@@ -175,8 +175,10 @@ impl Peer {
                             let incoming = incoming.context("received invalid RPC message")?;
                             receive_timeout.set(create_timer(RECEIVE_TIMEOUT).fuse());
                             if let proto::Message::Envelope(incoming) = incoming {
-                                if incoming_tx.send(incoming).await.is_err() {
-                                    return Ok(());
+                                match incoming_tx.send(incoming).timeout(RECEIVE_TIMEOUT).await {
+                                    Some(Ok(_)) => {},
+                                    Some(Err(_)) => return Ok(()),
+                                    None => Err(anyhow!("timed out processing incoming message"))?,
                                 }
                             }
                             break;
