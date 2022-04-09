@@ -9,7 +9,7 @@ use schemars::{
 };
 use serde::Deserialize;
 use serde_json::Value;
-use std::{collections::HashMap, fmt::Display, os::unix::fs::chroot, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 use theme::{Theme, ThemeRegistry};
 use util::ResultExt as _;
 
