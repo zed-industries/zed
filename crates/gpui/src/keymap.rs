@@ -1,5 +1,5 @@
 use crate::Action;
-use anyhow::anyhow;
+use anyhow::{anyhow, Result};
 use std::{
     any::Any,
     collections::{HashMap, HashSet},
@@ -168,20 +168,26 @@ impl Keymap {
 
 impl Binding {
     pub fn new<A: Action>(keystrokes: &str, action: A, context: Option<&str>) -> Self {
+        Self::load(keystrokes, Box::new(action), context).unwrap()
+    }
+
+    pub fn load(keystrokes: &str, action: Box<dyn Action>, context: Option<&str>) -> Result<Self> {
         let context = if let Some(context) = context {
-            Some(ContextPredicate::parse(context).unwrap())
+            Some(ContextPredicate::parse(context)?)
         } else {
             None
         };
 
-        Self {
-            keystrokes: keystrokes
-                .split_whitespace()
-                .map(|key| Keystroke::parse(key).unwrap())
-                .collect(),
-            action: Box::new(action),
+        let keystrokes = keystrokes
+            .split_whitespace()
+            .map(|key| Keystroke::parse(key))
+            .collect::<Result<_>>()?;
+
+        Ok(Self {
+            keystrokes,
+            action,
             context,
-        }
+        })
     }
 }
 

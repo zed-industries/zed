@@ -19,7 +19,6 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     impl_internal_actions,
     json::{self, to_string_pretty, ToJson},
-    keymap::Binding,
     platform::{CursorStyle, WindowOptions},
     AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Border, ClipboardItem, Entity,
     ImageData, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task,
@@ -32,7 +31,7 @@ pub use pane_group::*;
 use postage::prelude::Stream;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, Worktree};
 use settings::Settings;
-use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus};
+use sidebar::{Side, Sidebar, ToggleSidebarItem, ToggleSidebarItemFocus};
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
@@ -108,7 +107,6 @@ impl_internal_actions!(
 
 pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     pane::init(cx);
-    menu::init(cx);
 
     cx.add_global_action(open);
     cx.add_global_action(move |action: &OpenPaths, cx: &mut MutableAppContext| {
@@ -144,29 +142,6 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
         workspace.activate_next_pane(cx)
     });
-    cx.add_bindings(vec![
-        Binding::new("ctrl-alt-cmd-f", FollowNextCollaborator, None),
-        Binding::new("cmd-s", Save, None),
-        Binding::new("cmd-alt-i", DebugElements, None),
-        Binding::new("cmd-k cmd-left", ActivatePreviousPane, None),
-        Binding::new("cmd-k cmd-right", ActivateNextPane, None),
-        Binding::new(
-            "cmd-shift-!",
-            ToggleSidebarItem(SidebarItemId {
-                side: Side::Left,
-                item_index: 0,
-            }),
-            None,
-        ),
-        Binding::new(
-            "cmd-1",
-            ToggleSidebarItemFocus(SidebarItemId {
-                side: Side::Left,
-                item_index: 0,
-            }),
-            None,
-        ),
-    ]);
 
     client.add_view_request_handler(Workspace::handle_follow);
     client.add_view_message_handler(Workspace::handle_unfollow);

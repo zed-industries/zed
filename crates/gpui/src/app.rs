@@ -10,7 +10,7 @@ use crate::{
     AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
 };
 pub use action::*;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use collections::btree_map;
 use keymap::MatchResult;
 use lazy_static::lazy_static;
@@ -870,6 +870,7 @@ impl MutableAppContext {
             .get(name)
             .ok_or_else(|| anyhow!("unknown action {}", name))?;
         callback(argument.unwrap_or("{}"))
+            .with_context(|| format!("invalid data for action {}", name))
     }
 
     pub fn add_action<A, V, F>(&mut self, handler: F)

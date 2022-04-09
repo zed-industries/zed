@@ -1,10 +1,12 @@
 pub mod assets;
+mod keymap_file;
 pub mod languages;
 pub mod menus;
 pub mod settings_file;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+use assets::Assets;
 use breadcrumbs::Breadcrumbs;
 use chat_panel::ChatPanel;
 pub use client;
@@ -14,7 +16,6 @@ pub use editor;
 use gpui::{
     actions,
     geometry::vector::vec2f,
-    keymap::Binding,
     platform::{WindowBounds, WindowOptions},
     ModelHandle, ViewContext,
 };
@@ -104,11 +105,11 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
 
     workspace::lsp_status::init(cx);
 
-    cx.add_bindings(vec![
-        Binding::new("cmd-=", IncreaseBufferFontSize, None),
-        Binding::new("cmd--", DecreaseBufferFontSize, None),
-        Binding::new("cmd-,", OpenSettings, None),
-    ])
+    keymap_file::load_keymap(
+        cx,
+        std::str::from_utf8(Assets::get("keymaps/default.json").unwrap().data.as_ref()).unwrap(),
+    )
+    .unwrap();
 }
 
 pub fn build_workspace(
@@ -208,9 +209,8 @@ fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
 
 #[cfg(test)]
 mod tests {
-    use crate::assets::Assets;
-
     use super::*;
+    use crate::assets::Assets;
     use editor::{DisplayPoint, Editor};
     use gpui::{AssetSource, MutableAppContext, TestAppContext, ViewHandle};
     use project::{Fs, ProjectPath};

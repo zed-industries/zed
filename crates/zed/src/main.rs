@@ -145,8 +145,8 @@ fn main() {
             build_workspace: &build_workspace,
         });
         journal::init(app_state.clone(), cx);
-        zed::init(&app_state, cx);
         theme_selector::init(cx);
+        zed::init(&app_state, cx);
 
         cx.set_menus(menus::menus(&app_state.clone()));
 
