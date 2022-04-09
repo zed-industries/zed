@@ -1,12 +1,12 @@
 [package]
 authors = ["Nathan Sobo <nathan@warp.dev>"]
-default-run = "zed-server"
+default-run = "collab"
 edition = "2021"
-name = "zed-server"
+name = "collab"
 version = "0.1.0"
 
 [[bin]]
-name = "zed-server"
+name = "collab"
 
 [[bin]]
 name = "seed"

@@ -28,7 +28,7 @@ if [[ $ZED_KUBE_NAMESPACE == "production" && -n $(git status --short) ]]; then
 fi
 
 git_sha=$(git rev-parse HEAD)
-export ZED_IMAGE_ID="registry.digitalocean.com/zed/zed-server:${ZED_KUBE_NAMESPACE}-${git_sha}"
+export ZED_IMAGE_ID="registry.digitalocean.com/zed/collab:${ZED_KUBE_NAMESPACE}-${git_sha}"
 export $(cat $ENV_FILE)
 
 docker build . --tag "$ZED_IMAGE_ID"
