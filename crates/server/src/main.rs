@@ -27,7 +27,7 @@ use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use surf::http::cookies::SameSite;
-use tide::{log, sessions::SessionMiddleware};
+use tide::sessions::SessionMiddleware;
 use tide_compress::CompressMiddleware;
 
 type Request = tide::Request<Arc<AppState>>;
@@ -138,7 +138,11 @@ struct LayoutData {
 
 #[async_std::main]
 async fn main() -> tide::Result<()> {
-    log::start();
+    if std::env::var("LOG_JSON").is_ok() {
+        json_env_logger::init();
+    } else {
+        tide::log::start();
+    }
 
     if let Err(error) = env::load_dotenv() {
         log::error!(

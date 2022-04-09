@@ -11,6 +11,7 @@ use async_std::task;
 use async_tungstenite::{tungstenite::protocol::Role, WebSocketStream};
 use collections::{HashMap, HashSet};
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, SinkExt, StreamExt};
+use log::{as_debug, as_display};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use rpc::{
     proto::{self, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},
@@ -25,7 +26,6 @@ use std::{
 };
 use store::{Store, Worktree};
 use surf::StatusCode;
-use tide::log;
 use tide::{
     http::headers::{HeaderName, CONNECTION, UPGRADE},
     Request, Response,
@@ -218,16 +218,16 @@ impl Server {
                         if let Some(message) = message {
                             let start_time = Instant::now();
                             let type_name = message.payload_type_name();
-                            log::info!("rpc message received. connection:{}, type:{}", connection_id, type_name);
+                            log::info!(connection_id = connection_id.0, type_name = type_name; "rpc message received");
                             if let Some(handler) = this.handlers.get(&message.payload_type_id()) {
                                 let notifications = this.notifications.clone();
                                 let is_background = message.is_background();
                                 let handle_message = (handler)(this.clone(), message);
                                 let handle_message = async move {
                                     if let Err(err) = handle_message.await {
-                                        log::error!("rpc message error. connection:{}, type:{}, error:{:?}", connection_id, type_name, err);
+                                        log::error!(connection_id = connection_id.0, type = type_name, error = as_display!(err); "rpc message error");
                                     } else {
-                                        log::info!("rpc message handled. connection:{}, type:{}, duration:{:?}", connection_id, type_name, start_time.elapsed());
+                                        log::info!(connection_id = connection_id.0, type = type_name, duration = as_debug!(start_time.elapsed()); "rpc message handled");
                                     }
                                     if let Some(mut notifications) = notifications {
                                         let _ = notifications.send(()).await;
@@ -242,7 +242,7 @@ impl Server {
                                 log::warn!("unhandled message: {}", type_name);
                             }
                         } else {
-                            log::info!("rpc connection closed {:?}", addr);
+                            log::info!(address = as_debug!(addr); "rpc connection closed");
                             break;
                         }
                     }

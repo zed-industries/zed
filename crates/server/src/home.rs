@@ -1,7 +1,8 @@
 use crate::{AppState, Request, RequestExt as _};
-use serde::Deserialize;
+use log::as_serde;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tide::{http::mime, log, Server};
+use tide::{http::mime, Server};
 
 pub fn add_routes(app: &mut Server<Arc<AppState>>) {
     app.at("/").get(get_home);
@@ -18,7 +19,7 @@ async fn get_home(mut request: Request) -> tide::Result {
 }
 
 async fn post_signup(mut request: Request) -> tide::Result {
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, Serialize)]
     struct Form {
         github_login: String,
         email_address: String,
@@ -38,7 +39,7 @@ async fn post_signup(mut request: Request) -> tide::Result {
         .map(str::to_string)
         .unwrap_or(form.github_login);
 
-    log::info!("Signup submitted: {:?}", form);
+    log::info!(form = as_serde!(form); "signup submitted");
 
     // Save signup in the database
     request
