@@ -51,7 +51,9 @@
         "cmd-k cmd-t": "theme_selector::Toggle",
         "cmd-k t": "theme_selector::Reload",
         "cmd-t": "project_symbols::Toggle",
-        "cmd-p": "file_finder::Toggle"
+        "cmd-p": "file_finder::Toggle",
+        "alt-shift-D": "diagnostics::Deploy",
+        "ctrl-alt-cmd-j": "journal::NewJournalEntry"
     },
     "ProjectSearchBar": {
         "enter": "project_search::Search",
@@ -246,5 +248,68 @@
     },
     "FileFinder": {
         "escape": "file_finder::Toggle"
+    },
+    "ChatPanel": {
+        "enter": "chat_panel::Send"
+    },
+    "ProjectPanel": {
+        "left": "project_panel::CollapseSelectedEntry",
+        "right": "project_panel::ExpandSelectedEntry"
+    },
+    "Editor && vim_mode == insert": {
+        "escape": "vim::NormalBefore",
+        "ctrl-c": "vim::NormalBefore"
+    },
+    "Editor && vim_mode == normal && vim_submode == g": {
+        "g": "vim::MoveToStart",
+        "escape": [
+            "vim::SwitchMode",
+            {
+                "Normal": "None"
+            }
+        ]
+    },
+    "Editor && vim_mode == normal": {
+        "i": [
+            "vim::SwitchMode",
+            "Insert"
+        ],
+        "g": [
+            "vim::SwitchMode",
+            {
+                "Normal": "GPrefix"
+            }
+        ],
+        "h": "vim::MoveLeft",
+        "j": "vim::MoveDown",
+        "k": "vim::MoveUp",
+        "l": "vim::MoveRight",
+        "0": "vim::MoveToStartOfLine",
+        "shift-$": "vim::MoveToEndOfLine",
+        "shift-G": "vim::MoveToEnd",
+        "w": [
+            "vim::MoveToNextWordStart",
+            false
+        ],
+        "shift-W": [
+            "vim::MoveToNextWordStart",
+            true
+        ],
+        "e": [
+            "vim::MoveToNextWordEnd",
+            false
+        ],
+        "shift-E": [
+            "vim::MoveToNextWordEnd",
+            true
+        ],
+        "b": [
+            "vim::MoveToPreviousWordStart",
+            false
+        ],
+        "shift-B": [
+            "vim::MoveToPreviousWordStart",
+            true
+        ]
     }
 }

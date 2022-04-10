@@ -1,18 +1,12 @@
 use crate::{mode::Mode, SwitchMode, VimState};
 use editor::Bias;
-use gpui::{actions, keymap::Binding, MutableAppContext, ViewContext};
+use gpui::{actions, MutableAppContext, ViewContext};
 use language::SelectionGoal;
 use workspace::Workspace;
 
 actions!(vim, [NormalBefore]);
 
 pub fn init(cx: &mut MutableAppContext) {
-    let context = Some("Editor && vim_mode == insert");
-    cx.add_bindings(vec![
-        Binding::new("escape", NormalBefore, context),
-        Binding::new("ctrl-c", NormalBefore, context),
-    ]);
-
     cx.add_action(normal_before);
 }
 

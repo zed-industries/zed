@@ -1,6 +1,6 @@
 use chrono::{Datelike, Local, Timelike};
 use editor::{Autoscroll, Editor};
-use gpui::{actions, keymap::Binding, MutableAppContext};
+use gpui::{actions, MutableAppContext};
 use std::{fs::OpenOptions, sync::Arc};
 use util::TryFutureExt as _;
 use workspace::AppState;
@@ -8,7 +8,6 @@ use workspace::AppState;
 actions!(journal, [NewJournalEntry]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
-    cx.add_bindings(vec![Binding::new("ctrl-alt-cmd-j", NewJournalEntry, None)]);
     cx.add_global_action(move |_: &NewJournalEntry, cx| new_journal_entry(app_state.clone(), cx));
 }
 

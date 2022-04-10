@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use collections::BTreeMap;
 use gpui::{keymap::Binding, MutableAppContext};
 use serde::Deserialize;
@@ -28,7 +28,12 @@ pub fn load_keymap(cx: &mut MutableAppContext, content: &str) -> Result<()> {
                     } else {
                         let name = serde_json::from_str(action)?;
                         cx.deserialize_action(name, None)
-                    }?;
+                    }
+                    .with_context(|| {
+                        format!(
+                            "invalid binding value for keystroke {keystroke}, context {context:?}"
+                        )
+                    })?;
                     Binding::load(keystroke, action, context)
                 })
                 .collect::<Result<Vec<_>>>()?,
