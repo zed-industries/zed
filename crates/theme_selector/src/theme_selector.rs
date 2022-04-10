@@ -1,11 +1,8 @@
 use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions,
-    elements::*,
-    keymap::{self, Binding},
-    AppContext, Axis, Element, ElementBox, Entity, MutableAppContext, RenderContext, View,
-    ViewContext, ViewHandle,
+    actions, elements::*, keymap, AppContext, Axis, Element, ElementBox, Entity, MutableAppContext,
+    RenderContext, View, ViewContext, ViewHandle,
 };
 use settings::Settings;
 use std::{cmp, sync::Arc};
@@ -33,12 +30,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ThemeSelector::select_next);
     cx.add_action(ThemeSelector::toggle);
     cx.add_action(ThemeSelector::reload);
-
-    cx.add_bindings(vec![
-        Binding::new("cmd-k cmd-t", Toggle, None),
-        Binding::new("cmd-k t", Reload, None),
-        Binding::new("escape", Toggle, Some("ThemeSelector")),
-    ]);
 }
 
 pub enum Event {

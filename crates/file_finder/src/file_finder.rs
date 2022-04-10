@@ -1,12 +1,8 @@
 use editor::Editor;
 use fuzzy::PathMatch;
 use gpui::{
-    actions,
-    elements::*,
-    impl_internal_actions,
-    keymap::{self, Binding},
-    AppContext, Axis, Entity, ModelHandle, MutableAppContext, RenderContext, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    actions, elements::*, impl_internal_actions, keymap, AppContext, Axis, Entity, ModelHandle,
+    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectPath, WorktreeId};
 use settings::Settings;
@@ -50,11 +46,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(FileFinder::select);
     cx.add_action(FileFinder::select_prev);
     cx.add_action(FileFinder::select_next);
-
-    cx.add_bindings(vec![
-        Binding::new("cmd-p", Toggle, None),
-        Binding::new("escape", Toggle, Some("FileFinder")),
-    ]);
 }
 
 pub enum Event {
