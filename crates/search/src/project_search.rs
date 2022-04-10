@@ -5,9 +5,9 @@ use crate::{
 use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll};
 use gpui::{
-    actions, elements::*, keymap::Binding, platform::CursorStyle, AppContext, ElementBox, Entity,
-    ModelContext, ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View,
-    ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    actions, elements::*, platform::CursorStyle, AppContext, ElementBox, Entity, ModelContext,
+    ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
+    ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use project::{search::SearchQuery, Project};
 use settings::Settings;
@@ -28,15 +28,6 @@ struct ActiveSearches(HashMap<WeakModelHandle<Project>, WeakViewHandle<ProjectSe
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.set_global(ActiveSearches::default());
-    cx.add_bindings([
-        Binding::new("cmd-shift-F", ToggleFocus, Some("Pane")),
-        Binding::new("cmd-f", ToggleFocus, Some("Pane")),
-        Binding::new("cmd-shift-F", Deploy, Some("Workspace")),
-        Binding::new("enter", Search, Some("ProjectSearchBar")),
-        Binding::new("cmd-enter", SearchInNew, Some("ProjectSearchBar")),
-        Binding::new("cmd-g", SelectNextMatch, Some("Pane")),
-        Binding::new("cmd-shift-G", SelectPrevMatch, Some("Pane")),
-    ]);
     cx.add_action(ProjectSearchView::deploy);
     cx.add_action(ProjectSearchBar::search);
     cx.add_action(ProjectSearchBar::search_in_new);

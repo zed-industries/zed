@@ -40,7 +40,24 @@
         "cmd-k right": [
             "pane::Split",
             "Right"
-        ]
+        ],
+        "cmd-shift-F": "project_search::ToggleFocus",
+        "cmd-f": "project_search::ToggleFocus",
+        "cmd-g": "search::SelectNextMatch",
+        "cmd-shift-G": "search::SelectPrevMatch"
+    },
+    "Workspace": {
+        "cmd-shift-F": "project_search::Deploy"
+    },
+    "ProjectSearchBar": {
+        "enter": "project_search::Search",
+        "cmd-enter": "project_search::SearchInNew"
+    },
+    "BufferSearchBar": {
+        "escape": "buffer_search::Dismiss",
+        "cmd-f": "buffer_search::FocusEditor",
+        "enter": "search::SelectNextMatch",
+        "shift-enter": "search::SelectPrevMatch"
     },
     "Editor": {
         "escape": "editor::Cancel",
@@ -188,7 +205,19 @@
         "enter": "editor::ConfirmCodeAction"
     },
     "Editor && mode == full": {
-        "enter": "editor::Newline"
+        "enter": "editor::Newline",
+        "cmd-f": [
+            "buffer_search::Deploy",
+            {
+                "focus": true
+            }
+        ],
+        "cmd-e": [
+            "buffer_search::Deploy",
+            {
+                "focus": false
+            }
+        ]
     },
     "Editor && mode == auto_height": {
         "alt-enter": [

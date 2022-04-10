@@ -5,9 +5,9 @@ use crate::{
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, Anchor, Autoscroll, Bias, Editor};
 use gpui::{
-    actions, elements::*, impl_actions, impl_internal_actions, keymap::Binding,
-    platform::CursorStyle, AppContext, Entity, MutableAppContext, RenderContext, Subscription,
-    Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    actions, elements::*, impl_actions, impl_internal_actions, platform::CursorStyle, AppContext,
+    Entity, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use language::OffsetRangeExt;
 use project::search::SearchQuery;
@@ -33,24 +33,6 @@ pub enum Event {
 }
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_bindings([
-        Binding::new(
-            "cmd-f",
-            Deploy { focus: true },
-            Some("Editor && mode == full"),
-        ),
-        Binding::new(
-            "cmd-e",
-            Deploy { focus: false },
-            Some("Editor && mode == full"),
-        ),
-        Binding::new("escape", Dismiss, Some("BufferSearchBar")),
-        Binding::new("cmd-f", FocusEditor, Some("BufferSearchBar")),
-        Binding::new("enter", SelectNextMatch, Some("BufferSearchBar")),
-        Binding::new("shift-enter", SelectPrevMatch, Some("BufferSearchBar")),
-        Binding::new("cmd-g", SelectNextMatch, Some("Pane")),
-        Binding::new("cmd-shift-G", SelectPrevMatch, Some("Pane")),
-    ]);
     cx.add_action(BufferSearchBar::deploy);
     cx.add_action(BufferSearchBar::dismiss);
     cx.add_action(BufferSearchBar::focus_editor);
