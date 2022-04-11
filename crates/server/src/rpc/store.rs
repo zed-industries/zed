@@ -130,9 +130,6 @@ impl Store {
             }
         }
 
-        #[cfg(test)]
-        self.check_invariants();
-
         Ok(result)
     }
 
@@ -275,8 +272,6 @@ impl Store {
                 share.worktrees.insert(worktree_id, Default::default());
             }
 
-            #[cfg(test)]
-            self.check_invariants();
             Ok(())
         } else {
             Err(anyhow!("no such project"))?
@@ -313,8 +308,6 @@ impl Store {
                         }
                     }
 
-                    #[cfg(test)]
-                    self.check_invariants();
                     Ok(project)
                 } else {
                     Err(anyhow!("no such project"))?
@@ -359,9 +352,6 @@ impl Store {
             }
         }
 
-        #[cfg(test)]
-        self.check_invariants();
-
         Ok((worktree, guest_connection_ids))
     }
 
@@ -402,9 +392,6 @@ impl Store {
                     connection.projects.remove(&project_id);
                 }
             }
-
-            #[cfg(test)]
-            self.check_invariants();
 
             Ok(UnsharedProject {
                 connection_ids,
@@ -491,9 +478,6 @@ impl Store {
         share.active_replica_ids.insert(replica_id);
         share.guests.insert(connection_id, (replica_id, user_id));
 
-        #[cfg(test)]
-        self.check_invariants();
-
         Ok(JoinedProject {
             replica_id,
             project: &self.projects[&project_id],
@@ -526,9 +510,6 @@ impl Store {
         let connection_ids = project.connection_ids();
         let authorized_user_ids = project.authorized_user_ids();
 
-        #[cfg(test)]
-        self.check_invariants();
-
         Ok(LeftProject {
             connection_ids,
             authorized_user_ids,
@@ -556,10 +537,6 @@ impl Store {
             worktree.entries.insert(entry.id, entry.clone());
         }
         let connection_ids = project.connection_ids();
-
-        #[cfg(test)]
-        self.check_invariants();
-
         Ok(connection_ids)
     }
 
@@ -633,7 +610,7 @@ impl Store {
     }
 
     #[cfg(test)]
-    fn check_invariants(&self) {
+    pub fn check_invariants(&self) {
         for (connection_id, connection) in &self.connections {
             for project_id in &connection.projects {
                 let project = &self.projects.get(&project_id).unwrap();
