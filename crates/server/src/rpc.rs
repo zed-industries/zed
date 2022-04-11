@@ -1087,7 +1087,11 @@ mod tests {
         self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Input, Redo, Rename,
         ToOffset, ToggleCodeActions, Undo,
     };
-    use gpui::{executor, geometry::vector::vec2f, ModelHandle, TestAppContext, ViewHandle};
+    use gpui::{
+        executor::{self, Deterministic},
+        geometry::vector::vec2f,
+        ModelHandle, TestAppContext, ViewHandle,
+    };
     use language::{
         range_to_lsp, tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
         LanguageConfig, LanguageRegistry, OffsetRangeExt, Point, Rope,
@@ -4969,7 +4973,11 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    async fn test_random_collaboration(cx: &mut TestAppContext, rng: StdRng) {
+    async fn test_random_collaboration(
+        cx: &mut TestAppContext,
+        deterministic: Arc<Deterministic>,
+        rng: StdRng,
+    ) {
         cx.foreground().forbid_parking();
         let max_peers = env::var("MAX_PEERS")
             .map(|i| i.parse().expect("invalid `MAX_PEERS` variable"))
@@ -5002,8 +5010,8 @@ mod tests {
         let mut host_cx = TestAppContext::new(
             cx.foreground_platform(),
             cx.platform(),
-            cx.foreground(),
-            cx.background(),
+            deterministic.build_foreground(next_entity_id),
+            deterministic.build_background(),
             cx.font_cache(),
             cx.leak_detector(),
             next_entity_id,
@@ -5165,7 +5173,7 @@ mod tests {
 
         let host_disconnected = Rc::new(AtomicBool::new(false));
         user_ids.push(host.current_user_id(&host_cx));
-        clients.push(cx.foreground().spawn(host.simulate_host(
+        clients.push(host_cx.foreground().spawn(host.simulate_host(
             host_project,
             files,
             operations.clone(),
@@ -5187,8 +5195,8 @@ mod tests {
                 let mut guest_cx = TestAppContext::new(
                     cx.foreground_platform(),
                     cx.platform(),
-                    cx.foreground(),
-                    cx.background(),
+                    deterministic.build_foreground(next_entity_id),
+                    deterministic.build_background(),
                     cx.font_cache(),
                     cx.leak_detector(),
                     next_entity_id,
@@ -5207,7 +5215,7 @@ mod tests {
                 .await
                 .unwrap();
                 user_ids.push(guest.current_user_id(&guest_cx));
-                clients.push(cx.foreground().spawn(guest.simulate_guest(
+                clients.push(guest_cx.foreground().spawn(guest.simulate_guest(
                     guest_id,
                     guest_project,
                     operations.clone(),
