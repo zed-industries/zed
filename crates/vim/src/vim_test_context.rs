@@ -23,7 +23,10 @@ impl<'a> VimTestContext<'a> {
         cx.update(|cx| {
             editor::init(cx);
             crate::init(cx);
+
+            settings::keymap_file::load_built_in_keymaps(cx);
         });
+
         let params = cx.update(WorkspaceParams::test);
 
         cx.update(|cx| {

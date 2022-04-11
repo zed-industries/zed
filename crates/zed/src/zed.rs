@@ -1,11 +1,9 @@
-pub mod assets;
 pub mod languages;
 pub mod menus;
 pub mod settings_file;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-use assets::Assets;
 use breadcrumbs::Breadcrumbs;
 use chat_panel::ChatPanel;
 pub use client;
@@ -104,11 +102,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
 
     workspace::lsp_status::init(cx);
 
-    settings::keymap_file::load_keymap(
-        cx,
-        std::str::from_utf8(Assets::get("keymaps/default.json").unwrap().data.as_ref()).unwrap(),
-    )
-    .unwrap();
+    settings::keymap_file::load_built_in_keymaps(cx);
 }
 
 pub fn build_workspace(
@@ -209,7 +203,7 @@ fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assets::Assets;
+    use assets::Assets;
     use editor::{DisplayPoint, Editor};
     use gpui::{AssetSource, MutableAppContext, TestAppContext, ViewHandle};
     use project::{Fs, ProjectPath};

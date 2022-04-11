@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use assets::Assets;
 use collections::BTreeMap;
 use gpui::{keymap::Binding, MutableAppContext};
 use serde::Deserialize;
@@ -8,6 +9,16 @@ use serde_json::value::RawValue;
 struct ActionWithData<'a>(#[serde(borrow)] &'a str, #[serde(borrow)] &'a RawValue);
 type ActionSetsByContext<'a> = BTreeMap<&'a str, ActionsByKeystroke<'a>>;
 type ActionsByKeystroke<'a> = BTreeMap<&'a str, &'a RawValue>;
+
+pub fn load_built_in_keymaps(cx: &mut MutableAppContext) {
+    for path in ["keymaps/default.json", "keymaps/vim.json"] {
+        load_keymap(
+            cx,
+            std::str::from_utf8(Assets::get(path).unwrap().data.as_ref()).unwrap(),
+        )
+        .unwrap();
+    }
+}
 
 pub fn load_keymap(cx: &mut MutableAppContext, content: &str) -> Result<()> {
     let actions: ActionSetsByContext = serde_json::from_str(content)?;

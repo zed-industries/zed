@@ -1,0 +1,14 @@
+[package]
+name = "assets"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/assets.rs"
+doctest = false
+
+[dependencies]
+gpui = { path = "../gpui" }
+anyhow = "1.0.38"
+rust-embed = { version = "6.3", features = ["include-exclude"] }
+

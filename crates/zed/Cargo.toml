@@ -29,6 +29,7 @@ test-support = [
 ]
 
 [dependencies]
+assets = { path = "../assets" }
 breadcrumbs = { path = "../breadcrumbs" }
 chat_panel = { path = "../chat_panel" }
 collections = { path = "../collections" }

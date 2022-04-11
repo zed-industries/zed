@@ -8,7 +8,7 @@ path = "src/workspace.rs"
 doctest = false
 
 [features]
-test-support = ["client/test-support", "project/test-support"]
+test-support = ["client/test-support", "project/test-support", "settings/test-support"]
 
 [dependencies]
 client = { path = "../client" }

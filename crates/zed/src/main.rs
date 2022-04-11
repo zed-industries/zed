@@ -15,9 +15,9 @@ use std::{env, fs, path::PathBuf, sync::Arc};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
 use util::ResultExt;
 use workspace::{self, AppState, OpenNew, OpenPaths};
+use assets::Assets;
 use zed::{
     self,
-    assets::Assets,
     build_window_options, build_workspace,
     fs::RealFs,
     languages, menus,
