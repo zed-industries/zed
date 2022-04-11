@@ -1,3 +1,5 @@
+pub mod keymap_file;
+
 use anyhow::Result;
 use gpui::font_cache::{FamilyId, FontCache};
 use schemars::{schema_for, JsonSchema};

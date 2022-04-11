@@ -1,5 +1,4 @@
 pub mod assets;
-mod keymap_file;
 pub mod languages;
 pub mod menus;
 pub mod settings_file;
@@ -105,7 +104,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
 
     workspace::lsp_status::init(cx);
 
-    keymap_file::load_keymap(
+    settings::keymap_file::load_keymap(
         cx,
         std::str::from_utf8(Assets::get("keymaps/default.json").unwrap().data.as_ref()).unwrap(),
     )
