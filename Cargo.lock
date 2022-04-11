@@ -623,7 +623,7 @@ dependencies = [
  "cexpr",
  "clang-sys",
  "clap 2.33.3",
- "env_logger",
+ "env_logger 0.8.3",
  "lazy_static",
  "lazycell",
  "log",
@@ -1643,7 +1643,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "env_logger",
+ "env_logger 0.8.3",
  "futures",
  "fuzzy",
  "gpui",
@@ -1713,6 +1713,15 @@ checksum = "b5320ae4c3782150d900b79807611a59a99fc9a1d61d686faafc24b93fc8d7ca"
 
 [[package]]
 name = "env_logger"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44533bbbb3bb3c1fa17d9f2e4e38bbbaf8396ba82193c4cb1b6445d711445d36"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "env_logger"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "17392a012ea30ef05a610aa97dfb49496e71c9f676b27879922ea5bdf60d9d3f"
@@ -1729,6 +1738,15 @@ name = "envy"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f47e0157f2cb54f5ae1bd371b30a2ae4311e1c028f575cd4e81de7353215965"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "erased-serde"
+version = "0.3.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad132dd8d0d0b546348d7d86cb3191aad14b34e5f979781fc005c80d4ac67ffd"
 dependencies = [
  "serde",
 ]
@@ -1815,7 +1833,7 @@ version = "0.1.0"
 dependencies = [
  "ctor",
  "editor",
- "env_logger",
+ "env_logger 0.8.3",
  "fuzzy",
  "gpui",
  "postage",
@@ -2244,7 +2262,7 @@ dependencies = [
  "core-text",
  "ctor",
  "dhat",
- "env_logger",
+ "env_logger 0.8.3",
  "etagere",
  "font-kit",
  "foreign-types",
@@ -2662,6 +2680,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "json_env_logger"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e2ec540ea0448b187d3a8b4a9f13e75527d06ef76b3a2baa1cd982aecb62ce2"
+dependencies = [
+ "env_logger 0.7.1",
+ "kv-log-macro",
+ "log",
+ "serde_json",
+]
+
+[[package]]
 name = "jwt-simple"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2724,7 +2754,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "env_logger",
+ "env_logger 0.8.3",
  "futures",
  "fuzzy",
  "gpui",
@@ -2843,11 +2873,12 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.14"
+version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51b9bbe6c47d51fc3e1a9b945965946b4c44142ab8792c50835a980d362c2710"
+checksum = "6389c490849ff5bc16be905ae24bc913a9c8892e19b2341dbc175e14c341c2b8"
 dependencies = [
  "cfg-if 1.0.0",
+ "serde",
  "value-bag",
 ]
 
@@ -2880,7 +2911,7 @@ dependencies = [
  "async-pipe",
  "collections",
  "ctor",
- "env_logger",
+ "env_logger 0.8.3",
  "futures",
  "gpui",
  "log",
@@ -4353,6 +4384,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_fmt"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2963a69a2b3918c1dc75a45a18bd3fcd1120e31d3f59deb1b2f9b5d5ffb8baa4"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_json"
 version = "1.0.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4998,7 +5038,7 @@ version = "0.1.0"
 dependencies = [
  "arrayvec 0.7.1",
  "ctor",
- "env_logger",
+ "env_logger 0.8.3",
  "log",
  "rand 0.8.3",
 ]
@@ -5030,6 +5070,9 @@ name = "sval"
 version = "1.0.0-alpha.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "45f6ee7c7b87caf59549e9fe45d6a69c75c8019e79e212a835c5da0e92f0ba08"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "svg_fmt"
@@ -5128,7 +5171,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "env_logger",
+ "env_logger 0.8.3",
  "gpui",
  "lazy_static",
  "log",
@@ -5716,11 +5759,14 @@ checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
 
 [[package]]
 name = "value-bag"
-version = "1.0.0-alpha.7"
+version = "1.0.0-alpha.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd320e1520f94261153e96f7534476ad869c14022aee1e59af7c778075d840ae"
+checksum = "79923f7731dc61ebfba3633098bf3ac533bbd35ccd8c57e7088d9a5eebe0263f"
 dependencies = [
  "ctor",
+ "erased-serde",
+ "serde",
+ "serde_fmt",
  "sval",
  "version_check",
 ]
@@ -6045,7 +6091,7 @@ dependencies = [
  "dirs 3.0.1",
  "easy-parallel",
  "editor",
- "env_logger",
+ "env_logger 0.8.3",
  "file_finder",
  "fsevent",
  "futures",
@@ -6123,16 +6169,18 @@ dependencies = [
  "ctor",
  "editor",
  "either",
- "env_logger",
+ "env_logger 0.8.3",
  "envy",
  "futures",
  "gpui",
  "handlebars",
  "http-auth-basic",
+ "json_env_logger",
  "jwt-simple",
  "language",
  "lazy_static",
  "lipsum",
+ "log",
  "lsp",
  "oauth2",
  "oauth2-surf",

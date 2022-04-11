@@ -17,7 +17,7 @@ util = { path = "../util" }
 anyhow = "1.0"
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553", optional = true }
 futures = "0.3"
-log = "0.4"
+log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 lsp-types = "0.91"
 parking_lot = "0.11"
 postage = { version = "0.4.1", features = ["futures-traits"] }

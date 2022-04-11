@@ -2,8 +2,15 @@ pub mod keymap_file;
 
 use anyhow::Result;
 use gpui::font_cache::{FamilyId, FontCache};
-use schemars::{schema_for, JsonSchema};
+use schemars::{
+    gen::{SchemaGenerator, SchemaSettings},
+    schema::{
+        InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec, SubschemaValidation,
+    },
+    JsonSchema,
+};
 use serde::Deserialize;
+use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 use theme::{Theme, ThemeRegistry};
 use util::ResultExt as _;
@@ -69,8 +76,88 @@ impl Settings {
         })
     }
 
-    pub fn file_json_schema() -> serde_json::Value {
-        serde_json::to_value(schema_for!(SettingsFileContent)).unwrap()
+    pub fn file_json_schema(
+        theme_names: Vec<String>,
+        language_names: Vec<String>,
+    ) -> serde_json::Value {
+        let settings = SchemaSettings::draft07().with(|settings| {
+            settings.option_add_null_type = false;
+        });
+        let generator = SchemaGenerator::new(settings);
+        let mut root_schema = generator.into_root_schema_for::<SettingsFileContent>();
+
+        // Construct theme names reference type
+        let theme_names = theme_names
+            .into_iter()
+            .map(|name| Value::String(name))
+            .collect();
+        let theme_names_schema = Schema::Object(SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
+            enum_values: Some(theme_names),
+            ..Default::default()
+        });
+        root_schema
+            .definitions
+            .insert("ThemeName".to_owned(), theme_names_schema);
+
+        // Construct language overrides reference type
+        let language_override_schema_reference = Schema::Object(SchemaObject {
+            reference: Some("#/definitions/LanguageOverride".to_owned()),
+            ..Default::default()
+        });
+        let language_overrides_properties = language_names
+            .into_iter()
+            .map(|name| {
+                (
+                    name,
+                    Schema::Object(SchemaObject {
+                        subschemas: Some(Box::new(SubschemaValidation {
+                            all_of: Some(vec![language_override_schema_reference.clone()]),
+                            ..Default::default()
+                        })),
+                        ..Default::default()
+                    }),
+                )
+            })
+            .collect();
+        let language_overrides_schema = Schema::Object(SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(ObjectValidation {
+                properties: language_overrides_properties,
+                ..Default::default()
+            })),
+            ..Default::default()
+        });
+        root_schema
+            .definitions
+            .insert("LanguageOverrides".to_owned(), language_overrides_schema);
+
+        // Modify theme property to use new theme reference type
+        let settings_file_schema = root_schema.schema.object.as_mut().unwrap();
+        let language_overrides_schema_reference = Schema::Object(SchemaObject {
+            reference: Some("#/definitions/ThemeName".to_owned()),
+            ..Default::default()
+        });
+        settings_file_schema.properties.insert(
+            "theme".to_owned(),
+            Schema::Object(SchemaObject {
+                subschemas: Some(Box::new(SubschemaValidation {
+                    all_of: Some(vec![language_overrides_schema_reference]),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            }),
+        );
+
+        // Modify language_overrides property to use LanguageOverrides reference
+        settings_file_schema.properties.insert(
+            "language_overrides".to_owned(),
+            Schema::Object(SchemaObject {
+                reference: Some("#/definitions/LanguageOverrides".to_owned()),
+                ..Default::default()
+            }),
+        );
+        serde_json::to_value(root_schema).unwrap()
     }
 
     pub fn with_overrides(
@@ -130,7 +217,7 @@ impl Settings {
             }
         }
         if let Some(value) = &data.theme {
-            if let Some(theme) = theme_registry.get(value).log_err() {
+            if let Some(theme) = theme_registry.get(&value.to_string()).log_err() {
                 self.theme = theme;
             }
         }
@@ -144,10 +231,10 @@ impl Settings {
             data.editor.preferred_line_length,
         );
 
-        for (language_name, settings) in &data.language_overrides {
+        for (language_name, settings) in data.language_overrides.clone().into_iter() {
             let target = self
                 .language_overrides
-                .entry(language_name.clone())
+                .entry(language_name.into())
                 .or_default();
 
             merge_option(&mut target.tab_size, settings.tab_size);

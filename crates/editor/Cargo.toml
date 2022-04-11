@@ -40,7 +40,7 @@ futures = "0.3"
 indoc = "1.0.4"
 itertools = "0.10"
 lazy_static = "1.4"
-log = "0.4"
+log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 ordered-float = "2.1.1"
 parking_lot = "0.11"
 postage = { version = "0.4", features = ["futures-traits"] }

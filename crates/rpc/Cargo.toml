@@ -21,7 +21,7 @@ async-lock = "2.4"
 async-tungstenite = "0.16"
 base64 = "0.13"
 futures = "0.3"
-log = "0.4"
+log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"
 prost = "0.8"
 rand = "0.8"

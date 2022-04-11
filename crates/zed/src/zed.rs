@@ -140,13 +140,16 @@ pub fn build_workspace(
     let mut workspace = Workspace::new(&workspace_params, cx);
     let project = workspace.project().clone();
 
+    let theme_names = app_state.themes.list().collect();
+    let language_names = app_state.languages.language_names();
+
     project.update(cx, |project, _| {
         project.set_language_server_settings(serde_json::json!({
             "json": {
                 "schemas": [
                     {
                         "fileMatch": "**/.zed/settings.json",
-                        "schema": Settings::file_json_schema(),
+                        "schema": Settings::file_json_schema(theme_names, language_names),
                     }
                 ]
             }

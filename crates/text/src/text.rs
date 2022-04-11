@@ -826,6 +826,8 @@ impl Buffer {
                         edit.timestamp,
                     );
                     self.snapshot.version.observe(edit.timestamp.local());
+                    self.local_clock.observe(edit.timestamp.local());
+                    self.lamport_clock.observe(edit.timestamp.lamport());
                     self.resolve_edit(edit.timestamp.local());
                 }
             }
@@ -836,6 +838,7 @@ impl Buffer {
                 if !self.version.observed(undo.id) {
                     self.apply_undo(&undo)?;
                     self.snapshot.version.observe(undo.id);
+                    self.local_clock.observe(undo.id);
                     self.lamport_clock.observe(lamport_timestamp);
                 }
             }
@@ -1033,8 +1036,6 @@ impl Buffer {
         self.snapshot.visible_text = visible_text;
         self.snapshot.deleted_text = deleted_text;
         self.snapshot.insertions.edit(new_insertions, &());
-        self.local_clock.observe(timestamp.local());
-        self.lamport_clock.observe(timestamp.lamport());
         self.subscriptions.publish_mut(&edits);
     }
 
