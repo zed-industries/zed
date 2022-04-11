@@ -62,6 +62,13 @@ fn main() {
                 tab_size: Some(2),
                 ..Default::default()
             },
+        )
+        .with_overrides(
+            "TSX",
+            settings::LanguageOverride {
+                tab_size: Some(2),
+                ..Default::default()
+            },
         );
     let settings_file = load_settings_file(&app, fs.clone());
 
