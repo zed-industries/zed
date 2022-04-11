@@ -1851,33 +1851,37 @@ impl Editor {
             return;
         }
 
-        if self.mode != EditorMode::Full {
-            cx.propagate_action();
-            return;
-        }
-
-        if self.active_diagnostics.is_some() {
-            self.dismiss_diagnostics(cx);
-        } else if let Some(pending) = self.pending_selection.clone() {
-            let mut selections = self.selections.clone();
-            if selections.is_empty() {
-                selections = Arc::from([pending.selection]);
+        if self.mode == EditorMode::Full {
+            if self.active_diagnostics.is_some() {
+                self.dismiss_diagnostics(cx);
+                return;
             }
-            self.set_selections(selections, None, true, cx);
-            self.request_autoscroll(Autoscroll::Fit, cx);
-        } else {
-            let mut oldest_selection = self.oldest_selection::<usize>(&cx);
-            if self.selection_count() == 1 {
-                if oldest_selection.is_empty() {
-                    cx.propagate_action();
-                    return;
-                }
 
+            if let Some(pending) = self.pending_selection.clone() {
+                let mut selections = self.selections.clone();
+                if selections.is_empty() {
+                    selections = Arc::from([pending.selection]);
+                }
+                self.set_selections(selections, None, true, cx);
+                self.request_autoscroll(Autoscroll::Fit, cx);
+                return;
+            }
+
+            let mut oldest_selection = self.oldest_selection::<usize>(&cx);
+            if self.selection_count() > 1 {
+                self.update_selections(vec![oldest_selection], Some(Autoscroll::Fit), cx);
+                return;
+            }
+
+            if !oldest_selection.is_empty() {
                 oldest_selection.start = oldest_selection.head().clone();
                 oldest_selection.end = oldest_selection.head().clone();
+                self.update_selections(vec![oldest_selection], Some(Autoscroll::Fit), cx);
+                return;
             }
-            self.update_selections(vec![oldest_selection], Some(Autoscroll::Fit), cx);
         }
+
+        cx.propagate_action();
     }
 
     #[cfg(any(test, feature = "test-support"))]
