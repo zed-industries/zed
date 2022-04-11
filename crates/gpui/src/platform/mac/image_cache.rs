@@ -33,7 +33,7 @@ impl ImageCache {
             .remove(&image.id)
             .or_else(|| self.curr_frame.get(&image.id).copied())
             .or_else(|| self.atlases.upload(image.size(), image.as_bytes()))
-            .ok_or_else(|| anyhow!("Could not upload image of size {:?}", image.size()))
+            .ok_or_else(|| anyhow!("could not upload image of size {:?}", image.size()))
             .unwrap();
         self.curr_frame.insert(image.id, (alloc_id, atlas_bounds));
         (alloc_id, atlas_bounds)

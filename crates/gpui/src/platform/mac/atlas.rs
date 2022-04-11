@@ -4,6 +4,7 @@ use crate::geometry::{
 };
 use etagere::BucketedAtlasAllocator;
 use foreign_types::ForeignType;
+use log::warn;
 use metal::{Device, TextureDescriptor};
 use objc::{msg_send, sel, sel_impl};
 
@@ -41,7 +42,7 @@ impl AtlasAllocator {
     }
 
     pub fn allocate(&mut self, requested_size: Vector2I) -> Option<(AllocId, Vector2I)> {
-        let (alloc_id, origin) = self
+        let allocation = self
             .atlases
             .last_mut()
             .unwrap()
@@ -51,7 +52,16 @@ impl AtlasAllocator {
                 let (id, origin) = atlas.allocate(requested_size)?;
                 self.atlases.push(atlas);
                 Some((id, origin))
-            })?;
+            });
+
+        if allocation.is_none() {
+            warn!(
+                "allocation of size {:?} could not be created",
+                requested_size,
+            );
+        }
+
+        let (alloc_id, origin) = allocation?;
 
         let id = AllocId {
             atlas_id: self.atlases.len() - 1,

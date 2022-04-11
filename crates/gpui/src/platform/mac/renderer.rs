@@ -9,6 +9,7 @@ use crate::{
     scene::{Glyph, Icon, Image, Layer, Quad, Scene, Shadow, Underline},
 };
 use cocoa::foundation::NSUInteger;
+use log::warn;
 use metal::{MTLPixelFormat, MTLResourceOptions, NSRange};
 use shaders::ToFloat2 as _;
 use std::{collections::HashMap, ffi::c_void, iter::Peekable, mem, sync::Arc, vec};
@@ -176,6 +177,7 @@ impl Renderer {
                 let path_allocation = self.path_atlases.allocate(size.to_i32());
                 if path_allocation.is_none() {
                     // Path size was likely zero.
+                    warn!("could not allocate path texture of size {:?}", size);
                     continue;
                 }
                 let (alloc_id, atlas_origin) = path_allocation.unwrap();

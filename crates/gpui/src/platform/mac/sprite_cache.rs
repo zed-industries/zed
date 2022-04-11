@@ -117,7 +117,7 @@ impl SpriteCache {
 
                 let (alloc_id, atlas_bounds) = atlases
                     .upload(glyph_bounds.size(), &mask)
-                    .expect("Could not upload glyph");
+                    .expect("could not upload glyph");
                 Some(GlyphSprite {
                     atlas_id: alloc_id.atlas_id,
                     atlas_origin: atlas_bounds.origin(),
