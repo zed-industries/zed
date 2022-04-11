@@ -139,6 +139,7 @@ impl ProjectSearch {
 
 pub enum ViewEvent {
     UpdateTab,
+    EditorEvent(editor::Event),
 }
 
 impl Entity for ProjectSearchView {
@@ -307,6 +308,14 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.navigate(data, cx))
     }
 
+    fn should_activate_item_on_event(event: &Self::Event) -> bool {
+        if let ViewEvent::EditorEvent(editor_event) = event {
+            Editor::should_activate_item_on_event(editor_event)
+        } else {
+            false
+        }
+    }
+
     fn should_update_tab_on_event(event: &ViewEvent) -> bool {
         matches!(event, ViewEvent::UpdateTab)
     }
@@ -341,6 +350,11 @@ impl ProjectSearchView {
             editor.set_text(query_text, cx);
             editor
         });
+        // Subcribe to query_editor in order to reraise editor events for workspace item activation purposes
+        cx.subscribe(&query_editor, |_, _, event, cx| {
+            cx.emit(ViewEvent::EditorEvent(event.clone()))
+        })
+        .detach();
 
         let results_editor = cx.add_view(|cx| {
             let mut editor = Editor::for_multibuffer(excerpts, Some(project), cx);
@@ -353,6 +367,8 @@ impl ProjectSearchView {
             if matches!(event, editor::Event::SelectionsChanged { .. }) {
                 this.update_match_index(cx);
             }
+            // Reraise editor events for workspace item activation purposes
+            cx.emit(ViewEvent::EditorEvent(event.clone()));
         })
         .detach();
 
