@@ -1,17 +1,22 @@
 use futures::{stream, StreamExt};
-use gpui::{executor, FontCache};
+use gpui::{executor, AsyncAppContext, FontCache};
 use postage::sink::Sink as _;
 use postage::{prelude::Stream, watch};
 use project::Fs;
+use serde::Deserialize;
+use settings::KeyMapFile;
 use settings::{Settings, SettingsFileContent};
 use std::{path::Path, sync::Arc, time::Duration};
 use theme::ThemeRegistry;
 use util::ResultExt;
 
 #[derive(Clone)]
-pub struct SettingsFile(watch::Receiver<SettingsFileContent>);
+pub struct WatchedJsonFile<T>(watch::Receiver<T>);
 
-impl SettingsFile {
+impl<T> WatchedJsonFile<T>
+where
+    T: 'static + for<'de> Deserialize<'de> + Clone + Default + Send + Sync,
+{
     pub async fn new(
         fs: Arc<dyn Fs>,
         executor: &executor::Background,
@@ -35,21 +40,21 @@ impl SettingsFile {
         Self(rx)
     }
 
-    async fn load(fs: Arc<dyn Fs>, path: &Path) -> Option<SettingsFileContent> {
+    async fn load(fs: Arc<dyn Fs>, path: &Path) -> Option<T> {
         if fs.is_file(&path).await {
             fs.load(&path)
                 .await
                 .log_err()
                 .and_then(|data| serde_json::from_str(&data).log_err())
         } else {
-            Some(SettingsFileContent::default())
+            Some(T::default())
         }
     }
 }
 
 pub fn settings_from_files(
     defaults: Settings,
-    sources: Vec<SettingsFile>,
+    sources: Vec<WatchedJsonFile<SettingsFileContent>>,
     theme_registry: Arc<ThemeRegistry>,
     font_cache: Arc<FontCache>,
 ) -> impl futures::stream::Stream<Item = Settings> {
@@ -70,6 +75,16 @@ pub fn settings_from_files(
         }
         settings
     })
+}
+
+pub async fn watch_keymap_file(mut file: WatchedJsonFile<KeyMapFile>, mut cx: AsyncAppContext) {
+    while let Some(content) = file.0.recv().await {
+        cx.update(|cx| {
+            cx.clear_bindings();
+            settings::KeyMapFile::load_defaults(cx);
+            content.add(cx).log_err();
+        });
+    }
 }
 
 #[cfg(test)]
@@ -102,9 +117,9 @@ mod tests {
         .await
         .unwrap();
 
-        let source1 = SettingsFile::new(fs.clone(), &executor, "/settings1.json".as_ref()).await;
-        let source2 = SettingsFile::new(fs.clone(), &executor, "/settings2.json".as_ref()).await;
-        let source3 = SettingsFile::new(fs.clone(), &executor, "/settings3.json".as_ref()).await;
+        let source1 = WatchedJsonFile::new(fs.clone(), &executor, "/settings1.json".as_ref()).await;
+        let source2 = WatchedJsonFile::new(fs.clone(), &executor, "/settings2.json".as_ref()).await;
+        let source3 = WatchedJsonFile::new(fs.clone(), &executor, "/settings3.json".as_ref()).await;
 
         let mut settings_rx = settings_from_files(
             cx.read(Settings::test),

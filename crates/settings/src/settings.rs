@@ -1,4 +1,4 @@
-pub mod keymap_file;
+mod keymap_file;
 
 use anyhow::Result;
 use gpui::font_cache::{FamilyId, FontCache};
@@ -14,6 +14,8 @@ use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 use theme::{Theme, ThemeRegistry};
 use util::ResultExt as _;
+
+pub use keymap_file::KeyMapFile;
 
 #[derive(Clone)]
 pub struct Settings {

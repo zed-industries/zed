@@ -45,6 +45,7 @@ lazy_static! {
         .expect("failed to determine home directory")
         .join(".zed");
     pub static ref SETTINGS_PATH: PathBuf = ROOT_PATH.join("settings.json");
+    pub static ref BINDINGS_PATH: PathBuf = ROOT_PATH.join("bindings.json");
 }
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
@@ -102,7 +103,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
 
     workspace::lsp_status::init(cx);
 
-    settings::keymap_file::load_built_in_keymaps(cx);
+    settings::KeyMapFile::load_defaults(cx);
 }
 
 pub fn build_workspace(

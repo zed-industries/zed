@@ -1358,6 +1358,10 @@ impl MutableAppContext {
         self.keystroke_matcher.add_bindings(bindings);
     }
 
+    pub fn clear_bindings(&mut self) {
+        self.keystroke_matcher.clear_bindings();
+    }
+
     pub fn dispatch_keystroke(
         &mut self,
         window_id: usize,

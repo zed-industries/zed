@@ -106,6 +106,11 @@ impl Matcher {
         self.keymap.add_bindings(bindings);
     }
 
+    pub fn clear_bindings(&mut self) {
+        self.pending.clear();
+        self.keymap.clear();
+    }
+
     pub fn clear_pending(&mut self) {
         self.pending.clear();
     }
@@ -163,6 +168,10 @@ impl Keymap {
 
     fn add_bindings<T: IntoIterator<Item = Binding>>(&mut self, bindings: T) {
         self.0.extend(bindings.into_iter());
+    }
+
+    fn clear(&mut self) {
+        self.0.clear();
     }
 }
 

@@ -2,6 +2,7 @@
 #![allow(non_snake_case)]
 
 use anyhow::{anyhow, Context, Result};
+use assets::Assets;
 use client::{self, http, ChannelList, UserStore};
 use fs::OpenOptions;
 use futures::{channel::oneshot, StreamExt};
@@ -9,19 +10,17 @@ use gpui::{App, AssetSource, Task};
 use log::LevelFilter;
 use parking_lot::Mutex;
 use project::Fs;
-use settings::{self, Settings};
+use settings::{self, KeyMapFile, Settings, SettingsFileContent};
 use smol::process::Command;
 use std::{env, fs, path::PathBuf, sync::Arc};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
 use util::ResultExt;
 use workspace::{self, AppState, OpenNew, OpenPaths};
-use assets::Assets;
 use zed::{
-    self,
-    build_window_options, build_workspace,
+    self, build_window_options, build_workspace,
     fs::RealFs,
     languages, menus,
-    settings_file::{settings_from_files, SettingsFile},
+    settings_file::{settings_from_files, watch_keymap_file, WatchedJsonFile},
 };
 
 fn main() {
@@ -63,7 +62,8 @@ fn main() {
                 ..Default::default()
             },
         );
-    let settings_file = load_settings_file(&app, fs.clone());
+
+    let config_files = load_config_files(&app, fs.clone());
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
         Task::ready(())
@@ -112,13 +112,16 @@ fn main() {
         })
         .detach_and_log_err(cx);
 
-        let settings_file = cx.background().block(settings_file).unwrap();
+        let (settings_file, bindings_file) = cx.background().block(config_files).unwrap();
         let mut settings_rx = settings_from_files(
             default_settings,
             vec![settings_file],
             themes.clone(),
             cx.font_cache().clone(),
         );
+
+        cx.spawn(|cx| watch_keymap_file(bindings_file, cx)).detach();
+
         let settings = cx.background().block(settings_rx.next()).unwrap();
         cx.spawn(|mut cx| async move {
             while let Some(settings) = settings_rx.next().await {
@@ -254,14 +257,23 @@ fn load_embedded_fonts(app: &App) {
         .unwrap();
 }
 
-fn load_settings_file(app: &App, fs: Arc<dyn Fs>) -> oneshot::Receiver<SettingsFile> {
+fn load_config_files(
+    app: &App,
+    fs: Arc<dyn Fs>,
+) -> oneshot::Receiver<(
+    WatchedJsonFile<SettingsFileContent>,
+    WatchedJsonFile<KeyMapFile>,
+)> {
     let executor = app.background();
     let (tx, rx) = oneshot::channel();
     executor
         .clone()
         .spawn(async move {
-            let file = SettingsFile::new(fs, &executor, zed::SETTINGS_PATH.clone()).await;
-            tx.send(file).ok()
+            let settings_file =
+                WatchedJsonFile::new(fs.clone(), &executor, zed::SETTINGS_PATH.clone()).await;
+            let bindings_file =
+                WatchedJsonFile::new(fs, &executor, zed::BINDINGS_PATH.clone()).await;
+            tx.send((settings_file, bindings_file)).ok()
         })
         .detach();
     rx
