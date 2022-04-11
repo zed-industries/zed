@@ -596,20 +596,19 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::SaveBuffer>,
     ) -> tide::Result<proto::BufferSaved> {
-        let host;
-        let mut guests;
-        {
-            let state = self.state();
-            let project = state.read_project(request.payload.project_id, request.sender_id)?;
-            host = project.host_connection_id;
-            guests = project.guest_connection_ids()
-        }
-
+        let host = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .host_connection_id;
         let response = self
             .peer
             .forward_request(request.sender_id, host, request.payload.clone())
             .await?;
 
+        let mut guests = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .connection_ids();
         guests.retain(|guest_connection_id| *guest_connection_id != request.sender_id);
         broadcast(host, guests, |conn_id| {
             self.peer.forward_send(host, conn_id, response.clone())
