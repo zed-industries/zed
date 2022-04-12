@@ -7,4 +7,4 @@ cd ./script
 if [[ $1 == --release ]]; then
     export NODE_ENV=production # Purge unused styles in --release mode
 fi
-npx tailwindcss build ../crates/server/styles.css --output ../crates/server/static/styles.css
+npx tailwindcss build ../crates/collab/styles.css --output ../crates/collab/static/styles.css
