@@ -40,7 +40,7 @@ module.exports = {
     },
     darkMode: false,
     purge: [
-        "../crates/server/templates/**/*.hbs",
-        "../crates/server/templates/*.hbs"
+        "../crates/collab/templates/**/*.hbs",
+        "../crates/collab/templates/*.hbs"
     ]
 }

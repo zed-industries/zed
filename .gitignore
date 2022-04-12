@@ -3,6 +3,6 @@
 .DS_Store
 /script/node_modules
 /styles/node_modules
-/crates/server/.env.toml
-/crates/server/static/styles.css
+/crates/collab/.env.toml
+/crates/collab/static/styles.css
 /vendor/bin

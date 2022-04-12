@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
 
-cd crates/server
+cd crates/collab
 
 # Export contents of .env.toml
 eval "$(cargo run --bin dotenv)"
 
-cargo run --package=zed-server --features seed-support --bin seed
+cargo run --package=collab --features seed-support --bin seed
