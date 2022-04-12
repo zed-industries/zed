@@ -8,12 +8,13 @@ mod vim_test_context;
 use collections::HashMap;
 use editor::{CursorShape, Editor};
 use gpui::{impl_actions, MutableAppContext, ViewContext, WeakViewHandle};
+use serde::Deserialize;
 
 use mode::Mode;
 use settings::Settings;
 use workspace::{self, Workspace};
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 pub struct SwitchMode(pub Mode);
 
 impl_actions!(vim, [SwitchMode]);

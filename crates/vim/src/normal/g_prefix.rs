@@ -1,16 +1,10 @@
 use crate::{mode::Mode, SwitchMode, VimState};
-use gpui::{actions, keymap::Binding, MutableAppContext, ViewContext};
+use gpui::{actions, MutableAppContext, ViewContext};
 use workspace::Workspace;
 
 actions!(vim, [MoveToStart]);
 
 pub fn init(cx: &mut MutableAppContext) {
-    let context = Some("Editor && vim_mode == normal && vim_submode == g");
-    cx.add_bindings(vec![
-        Binding::new("g", MoveToStart, context),
-        Binding::new("escape", SwitchMode(Mode::normal()), context),
-    ]);
-
     cx.add_action(move_to_start);
 }
 

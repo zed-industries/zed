@@ -6,7 +6,6 @@ use editor::Editor;
 use gpui::{
     actions,
     elements::*,
-    keymap::Binding,
     platform::CursorStyle,
     views::{ItemType, Select, SelectStyle},
     AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View,
@@ -38,8 +37,6 @@ actions!(chat_panel, [Send, LoadMoreMessages]);
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ChatPanel::send);
     cx.add_action(ChatPanel::load_more_messages);
-
-    cx.add_bindings(vec![Binding::new("enter", Send, Some("ChatPanel"))]);
 }
 
 impl ChatPanel {

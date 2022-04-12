@@ -8,9 +8,8 @@ use editor::{
     highlight_diagnostic_message, Editor, ExcerptId, MultiBuffer, ToOffset,
 };
 use gpui::{
-    actions, elements::*, fonts::TextStyle, keymap::Binding, AnyViewHandle, AppContext, Entity,
-    ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    actions, elements::*, fonts::TextStyle, AnyViewHandle, AppContext, Entity, ModelHandle,
+    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{
     Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
@@ -33,7 +32,6 @@ actions!(diagnostics, [Deploy]);
 const CONTEXT_LINE_COUNT: u32 = 1;
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_bindings([Binding::new("alt-shift-D", Deploy, Some("Workspace"))]);
     cx.add_action(ProjectDiagnosticsEditor::deploy);
 }
 

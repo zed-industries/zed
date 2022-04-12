@@ -3,7 +3,7 @@ use gpui::AssetSource;
 use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
-#[folder = "assets"]
+#[folder = "../../assets"]
 #[exclude = "*.DS_Store"]
 pub struct Assets;
 

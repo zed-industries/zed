@@ -169,6 +169,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbf56136a5198c7b01a49e3afcbef6cf84597273d298f54432926024107b0109"
 
 [[package]]
+name = "assets"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "rust-embed",
+]
+
+[[package]]
 name = "async-attributes"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4300,6 +4309,7 @@ dependencies = [
  "log",
  "postage",
  "project",
+ "serde",
  "serde_json",
  "settings",
  "theme",
@@ -4464,6 +4474,8 @@ name = "settings"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assets",
+ "collections",
  "gpui",
  "schemars",
  "serde",
@@ -5787,6 +5799,7 @@ checksum = "b5a972e5669d67ba988ce3dc826706fb0a8b01471c088cb0b6110b805cc36aed"
 name = "vim"
 version = "0.1.0"
 dependencies = [
+ "assets",
  "collections",
  "editor",
  "gpui",
@@ -5794,6 +5807,7 @@ dependencies = [
  "language",
  "log",
  "project",
+ "serde",
  "settings",
  "util",
  "workspace",
@@ -6061,6 +6075,7 @@ name = "zed"
 version = "0.25.0"
 dependencies = [
  "anyhow",
+ "assets",
  "async-compression",
  "async-recursion",
  "async-trait",
@@ -6181,6 +6196,7 @@ dependencies = [
  "sha-1 0.9.6",
  "sqlx 0.5.5",
  "surf",
+ "theme",
  "tide",
  "tide-compress",
  "time 0.2.27",
