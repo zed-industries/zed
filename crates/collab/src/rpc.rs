@@ -5390,7 +5390,7 @@ mod tests {
                     log::info!("Added connection for {}", guest_username);
                     operations += 1;
                 }
-                20..=30 if clients.len() > 1 => {
+                20..=29 if clients.len() > 1 => {
                     log::info!("Removing guest");
                     let guest_ix = rng.lock().gen_range(1..clients.len());
                     let removed_guest_id = user_ids.remove(guest_ix);
