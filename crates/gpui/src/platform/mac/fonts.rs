@@ -13,13 +13,12 @@ use core_foundation::{
     array::CFIndex,
     attributed_string::{CFAttributedStringRef, CFMutableAttributedString},
     base::{CFRange, TCFType},
-    number::CFNumber,
     string::CFString,
 };
 use core_graphics::{
     base::CGGlyph, color_space::CGColorSpace, context::CGContext, geometry::CGAffineTransform,
 };
-use core_text::{line::CTLine, string_attributes::kCTFontAttributeName};
+use core_text::{font::CTFont, line::CTLine, string_attributes::kCTFontAttributeName};
 use font_kit::{
     canvas::RasterizationOptions, handle::Handle, hinting::HintingOptions, source::SystemSource,
     sources::mem::MemSource,
@@ -91,7 +90,7 @@ impl platform::FontSystem for FontSystem {
     }
 
     fn layout_line(&self, text: &str, font_size: f32, runs: &[(usize, RunStyle)]) -> LineLayout {
-        self.0.read().layout_line(text, font_size, runs)
+        self.0.write().layout_line(text, font_size, runs)
     }
 
     fn wrap_line(&self, text: &str, font_id: FontId, font_size: f32, width: f32) -> Vec<usize> {
@@ -147,6 +146,19 @@ impl FontSystemState {
 
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
         self.fonts[font_id.0].glyph_for_char(ch)
+    }
+
+    fn id_for_font(&mut self, requested_font: font_kit::font::Font) -> FontId {
+        // TODO: don't allocate the postscript name
+        // Note: Coretext always returns a Some option for postscript_name
+        let requested_font_name = requested_font.postscript_name();
+        for (id, font) in self.fonts.iter().enumerate() {
+            if font.postscript_name() == requested_font_name {
+                return FontId(id);
+            }
+        }
+        self.fonts.push(requested_font);
+        FontId(self.fonts.len() - 1)
     }
 
     fn rasterize_glyph(
@@ -217,9 +229,12 @@ impl FontSystemState {
         }
     }
 
-    fn layout_line(&self, text: &str, font_size: f32, runs: &[(usize, RunStyle)]) -> LineLayout {
-        let font_id_attr_name = CFString::from_static_string("zed_font_id");
-
+    fn layout_line(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        runs: &[(usize, RunStyle)],
+    ) -> LineLayout {
         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
         let mut string = CFMutableAttributedString::new();
         {
@@ -269,11 +284,6 @@ impl FontSystemState {
                         kCTFontAttributeName,
                         &font.native_font().clone_with_font_size(font_size as f64),
                     );
-                    string.set_attribute(
-                        cf_range,
-                        font_id_attr_name.as_concrete_TypeRef(),
-                        &CFNumber::from(font_id.0 as i64),
-                    );
                 }
 
                 if utf16_end == utf16_line_len {
@@ -287,15 +297,15 @@ impl FontSystemState {
 
         let mut runs = Vec::new();
         for run in line.glyph_runs().into_iter() {
-            let font_id = FontId(
-                run.attributes()
-                    .unwrap()
-                    .get(&font_id_attr_name)
-                    .downcast::<CFNumber>()
-                    .unwrap()
-                    .to_i64()
-                    .unwrap() as usize,
-            );
+            let attributes = run.attributes().unwrap();
+            let font = unsafe {
+                let native_font = attributes
+                    .get(kCTFontAttributeName)
+                    .downcast::<CTFont>()
+                    .unwrap();
+                font_kit::font::Font::from_native_font(native_font)
+            };
+            let font_id = self.id_for_font(font);
 
             let mut ix_converter = StringIndexConverter::new(text);
             let mut glyphs = Vec::new();
