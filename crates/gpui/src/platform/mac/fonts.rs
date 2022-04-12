@@ -198,15 +198,18 @@ impl FontSystemState {
                 ty: -transform.vector.y() as CGFloat,
             });
 
-            cx.set_font(&font.native_font().copy_to_CGFont());
-            cx.set_font_size(font_size as CGFloat);
-            cx.show_glyphs_at_positions(
-                &[glyph_id as CGGlyph],
-                &[CGPoint::new(
-                    (subpixel_shift.x() / scale_factor) as CGFloat,
-                    (subpixel_shift.y() / scale_factor) as CGFloat,
-                )],
-            );
+            cx.set_should_subpixel_position_fonts(true);
+            cx.set_should_subpixel_quantize_fonts(false);
+            font.native_font()
+                .clone_with_font_size(font_size as CGFloat)
+                .draw_glyphs(
+                    &[glyph_id as CGGlyph],
+                    &[CGPoint::new(
+                        (subpixel_shift.x() / scale_factor) as CGFloat,
+                        (subpixel_shift.y() / scale_factor) as CGFloat,
+                    )],
+                    cx,
+                );
 
             Some((bounds, pixels))
         }
