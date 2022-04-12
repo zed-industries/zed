@@ -1,5 +1,5 @@
 {
-    "": {
+    "*": {
         "ctrl-alt-cmd-f": "workspace::FollowNextCollaborator",
         "cmd-s": "workspace::Save",
         "cmd-alt-i": "workspace::DebugElements",

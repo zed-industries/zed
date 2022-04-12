@@ -29,16 +29,17 @@ impl KeymapFile {
 
     pub fn add(self, cx: &mut MutableAppContext) -> Result<()> {
         for (context, actions) in self.0 {
-            let context = if context.is_empty() {
-                None
-            } else {
-                Some(context)
-            };
+            let context = if context == "*" { None } else { Some(context) };
             cx.add_bindings(
                 actions
                     .into_iter()
                     .map(|(keystroke, action)| {
                         let action = action.get();
+
+                        // This is a workaround for a limitation in serde: serde-rs/json#497
+                        // We want to deserialize the action data as a `RawValue` so that we can
+                        // deserialize the action itself dynamically directly from the JSON
+                        // string. But `RawValue` currently does not work inside of an untagged enum.
                         let action = if action.starts_with('[') {
                             let ActionWithData(name, data) = serde_json::from_str(action)?;
                             cx.deserialize_action(name, Some(data.get()))
