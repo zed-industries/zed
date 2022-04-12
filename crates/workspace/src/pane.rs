@@ -7,13 +7,13 @@ use gpui::{
     actions,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    impl_actions,
-    keymap::Binding,
+    impl_actions, impl_internal_actions,
     platform::{CursorStyle, NavigationDirection},
     AppContext, Entity, MutableAppContext, PromptLevel, Quad, RenderContext, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{ProjectEntryId, ProjectPath};
+use serde::Deserialize;
 use settings::Settings;
 use std::{any::Any, cell::RefCell, cmp, mem, path::Path, rc::Rc};
 use util::ResultExt;
@@ -28,28 +28,32 @@ actions!(
     ]
 );
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 pub struct Split(pub SplitDirection);
 
 #[derive(Clone)]
-pub struct CloseItem(pub CloseItemParams);
-
-#[derive(Clone)]
-pub struct ActivateItem(pub usize);
-
-#[derive(Clone)]
-pub struct GoBack(pub Option<WeakViewHandle<Pane>>);
-
-#[derive(Clone)]
-pub struct GoForward(pub Option<WeakViewHandle<Pane>>);
-
-impl_actions!(pane, [Split, CloseItem, ActivateItem, GoBack, GoForward,]);
-
-#[derive(Clone)]
-pub struct CloseItemParams {
+pub struct CloseItem {
     pub item_id: usize,
     pub pane: WeakViewHandle<Pane>,
 }
+
+#[derive(Clone, Deserialize)]
+pub struct ActivateItem(pub usize);
+
+#[derive(Clone, Deserialize)]
+pub struct GoBack {
+    #[serde(skip_deserializing)]
+    pub pane: Option<WeakViewHandle<Pane>>,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct GoForward {
+    #[serde(skip_deserializing)]
+    pub pane: Option<WeakViewHandle<Pane>>,
+}
+
+impl_actions!(pane, [Split, GoBack, GoForward]);
+impl_internal_actions!(pane, [CloseItem, ActivateItem]);
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -66,8 +70,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(Pane::close_active_item);
     cx.add_async_action(Pane::close_inactive_items);
     cx.add_async_action(|workspace: &mut Workspace, action: &CloseItem, cx| {
-        let pane = action.0.pane.upgrade(cx)?;
-        Some(Pane::close_item(workspace, pane, action.0.item_id, cx))
+        let pane = action.pane.upgrade(cx)?;
+        Some(Pane::close_item(workspace, pane, action.item_id, cx))
     });
     cx.add_action(|pane: &mut Pane, action: &Split, cx| {
         pane.split(action.0, cx);
@@ -76,7 +80,7 @@ pub fn init(cx: &mut MutableAppContext) {
         Pane::go_back(
             workspace,
             action
-                .0
+                .pane
                 .as_ref()
                 .and_then(|weak_handle| weak_handle.upgrade(cx)),
             cx,
@@ -87,26 +91,13 @@ pub fn init(cx: &mut MutableAppContext) {
         Pane::go_forward(
             workspace,
             action
-                .0
+                .pane
                 .as_ref()
                 .and_then(|weak_handle| weak_handle.upgrade(cx)),
             cx,
         )
         .detach();
     });
-
-    cx.add_bindings(vec![
-        Binding::new("shift-cmd-{", ActivatePrevItem, Some("Pane")),
-        Binding::new("shift-cmd-}", ActivateNextItem, Some("Pane")),
-        Binding::new("cmd-w", CloseActiveItem, Some("Pane")),
-        Binding::new("alt-cmd-w", CloseInactiveItems, Some("Pane")),
-        Binding::new("cmd-k up", Split(SplitDirection::Up), Some("Pane")),
-        Binding::new("cmd-k down", Split(SplitDirection::Down), Some("Pane")),
-        Binding::new("cmd-k left", Split(SplitDirection::Left), Some("Pane")),
-        Binding::new("cmd-k right", Split(SplitDirection::Right), Some("Pane")),
-        Binding::new("ctrl--", GoBack(None), Some("Pane")),
-        Binding::new("shift-ctrl-_", GoForward(None), Some("Pane")),
-    ]);
 }
 
 pub enum Event {
@@ -747,10 +738,10 @@ impl Pane {
                                             .on_click({
                                                 let pane = pane.clone();
                                                 move |cx| {
-                                                    cx.dispatch_action(CloseItem(CloseItemParams {
+                                                    cx.dispatch_action(CloseItem {
                                                         item_id,
                                                         pane: pane.clone(),
-                                                    }))
+                                                    })
                                                 }
                                             })
                                             .named("close-tab-icon")
@@ -816,8 +807,8 @@ impl View for Pane {
         .on_navigate_mouse_down(move |direction, cx| {
             let this = this.clone();
             match direction {
-                NavigationDirection::Back => cx.dispatch_action(GoBack(Some(this))),
-                NavigationDirection::Forward => cx.dispatch_action(GoForward(Some(this))),
+                NavigationDirection::Back => cx.dispatch_action(GoBack { pane: Some(this) }),
+                NavigationDirection::Forward => cx.dispatch_action(GoForward { pane: Some(this) }),
             }
 
             true

@@ -4,8 +4,7 @@ use gpui::{
         Align, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement, ScrollTarget,
         Svg, UniformList, UniformListState,
     },
-    impl_actions,
-    keymap::{self, Binding},
+    impl_internal_actions, keymap,
     platform::CursorStyle,
     AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, View, ViewContext,
     ViewHandle, WeakViewHandle,
@@ -54,7 +53,7 @@ pub struct ToggleExpanded(pub ProjectEntryId);
 pub struct Open(pub ProjectEntryId);
 
 actions!(project_panel, [ExpandSelectedEntry, CollapseSelectedEntry]);
-impl_actions!(project_panel, [Open, ToggleExpanded]);
+impl_internal_actions!(project_panel, [Open, ToggleExpanded]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::expand_selected_entry);
@@ -63,10 +62,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::select_prev);
     cx.add_action(ProjectPanel::select_next);
     cx.add_action(ProjectPanel::open_entry);
-    cx.add_bindings([
-        Binding::new("right", ExpandSelectedEntry, Some("ProjectPanel")),
-        Binding::new("left", CollapseSelectedEntry, Some("ProjectPanel")),
-    ]);
 }
 
 pub enum Event {

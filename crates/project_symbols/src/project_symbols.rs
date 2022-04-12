@@ -3,11 +3,8 @@ use editor::{
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions,
-    elements::*,
-    keymap::{self, Binding},
-    AppContext, Axis, Entity, ModelHandle, MutableAppContext, RenderContext, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    actions, elements::*, keymap, AppContext, Axis, Entity, ModelHandle, MutableAppContext,
+    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use ordered_float::OrderedFloat;
 use project::{Project, Symbol};
@@ -25,10 +22,6 @@ use workspace::{
 actions!(project_symbols, [Toggle]);
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_bindings([
-        Binding::new("cmd-t", Toggle, None),
-        Binding::new("escape", Toggle, Some("ProjectSymbolsView")),
-    ]);
     cx.add_action(ProjectSymbolsView::toggle);
     cx.add_action(ProjectSymbolsView::confirm);
     cx.add_action(ProjectSymbolsView::select_prev);

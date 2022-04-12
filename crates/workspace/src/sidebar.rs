@@ -1,5 +1,7 @@
 use super::Workspace;
-use gpui::{elements::*, impl_actions, platform::CursorStyle, AnyViewHandle, RenderContext};
+use gpui::{
+    elements::*, impl_internal_actions, platform::CursorStyle, AnyViewHandle, RenderContext,
+};
 use std::{cell::RefCell, rc::Rc};
 use theme::Theme;
 
@@ -27,7 +29,7 @@ pub struct ToggleSidebarItem(pub SidebarItemId);
 #[derive(Clone)]
 pub struct ToggleSidebarItemFocus(pub SidebarItemId);
 
-impl_actions!(workspace, [ToggleSidebarItem, ToggleSidebarItemFocus]);
+impl_internal_actions!(workspace, [ToggleSidebarItem, ToggleSidebarItemFocus]);
 
 #[derive(Clone)]
 pub struct SidebarItemId {

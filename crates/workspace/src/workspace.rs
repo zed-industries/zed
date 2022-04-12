@@ -17,9 +17,8 @@ use gpui::{
     color::Color,
     elements::*,
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
-    impl_actions,
+    impl_internal_actions,
     json::{self, to_string_pretty, ToJson},
-    keymap::Binding,
     platform::{CursorStyle, WindowOptions},
     AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Border, ClipboardItem, Entity,
     ImageData, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task,
@@ -32,7 +31,7 @@ pub use pane_group::*;
 use postage::prelude::Stream;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, Worktree};
 use settings::Settings;
-use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus};
+use sidebar::{Side, Sidebar, ToggleSidebarItem, ToggleSidebarItemFocus};
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
@@ -101,14 +100,13 @@ pub struct ToggleFollow(pub PeerId);
 #[derive(Clone)]
 pub struct JoinProject(pub JoinProjectParams);
 
-impl_actions!(
+impl_internal_actions!(
     workspace,
     [Open, OpenNew, OpenPaths, ToggleFollow, JoinProject]
 );
 
 pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     pane::init(cx);
-    menu::init(cx);
 
     cx.add_global_action(open);
     cx.add_global_action(move |action: &OpenPaths, cx: &mut MutableAppContext| {
@@ -144,29 +142,6 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
         workspace.activate_next_pane(cx)
     });
-    cx.add_bindings(vec![
-        Binding::new("ctrl-alt-cmd-f", FollowNextCollaborator, None),
-        Binding::new("cmd-s", Save, None),
-        Binding::new("cmd-alt-i", DebugElements, None),
-        Binding::new("cmd-k cmd-left", ActivatePreviousPane, None),
-        Binding::new("cmd-k cmd-right", ActivateNextPane, None),
-        Binding::new(
-            "cmd-shift-!",
-            ToggleSidebarItem(SidebarItemId {
-                side: Side::Left,
-                item_index: 0,
-            }),
-            None,
-        ),
-        Binding::new(
-            "cmd-1",
-            ToggleSidebarItemFocus(SidebarItemId {
-                side: Side::Left,
-                item_index: 0,
-            }),
-            None,
-        ),
-    ]);
 
     client.add_view_request_handler(Workspace::handle_follow);
     client.add_view_message_handler(Workspace::handle_unfollow);
@@ -630,6 +605,7 @@ pub struct WorkspaceParams {
     pub client: Arc<Client>,
     pub fs: Arc<dyn Fs>,
     pub languages: Arc<LanguageRegistry>,
+    pub themes: Arc<ThemeRegistry>,
     pub user_store: ModelHandle<UserStore>,
     pub channel_list: ModelHandle<ChannelList>,
 }
@@ -659,6 +635,7 @@ impl WorkspaceParams {
             channel_list: cx
                 .add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx)),
             client,
+            themes: ThemeRegistry::new((), cx.font_cache().clone()),
             fs,
             languages,
             user_store,
@@ -677,6 +654,7 @@ impl WorkspaceParams {
             ),
             client: app_state.client.clone(),
             fs: app_state.fs.clone(),
+            themes: app_state.themes.clone(),
             languages: app_state.languages.clone(),
             user_store: app_state.user_store.clone(),
             channel_list: app_state.channel_list.clone(),
@@ -694,6 +672,7 @@ pub struct Workspace {
     user_store: ModelHandle<client::UserStore>,
     remote_entity_subscription: Option<Subscription>,
     fs: Arc<dyn Fs>,
+    themes: Arc<ThemeRegistry>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
     left_sidebar: Sidebar,
@@ -802,6 +781,7 @@ impl Workspace {
             remote_entity_subscription: None,
             user_store: params.user_store.clone(),
             fs: params.fs.clone(),
+            themes: params.themes.clone(),
             left_sidebar: Sidebar::new(Side::Left),
             right_sidebar: Sidebar::new(Side::Right),
             project: params.project.clone(),
@@ -832,6 +812,10 @@ impl Workspace {
 
     pub fn project(&self) -> &ModelHandle<Project> {
         &self.project
+    }
+
+    pub fn themes(&self) -> Arc<ThemeRegistry> {
+        self.themes.clone()
     }
 
     pub fn worktrees<'a>(
