@@ -66,6 +66,10 @@ pub struct JoinedProject<'a> {
     pub project: &'a Project,
 }
 
+pub struct SharedProject {
+    pub authorized_user_ids: Vec<UserId>,
+}
+
 pub struct UnsharedProject {
     pub connection_ids: Vec<ConnectionId>,
     pub authorized_user_ids: Vec<UserId>,
@@ -355,7 +359,11 @@ impl Store {
         Ok((worktree, guest_connection_ids))
     }
 
-    pub fn share_project(&mut self, project_id: u64, connection_id: ConnectionId) -> bool {
+    pub fn share_project(
+        &mut self,
+        project_id: u64,
+        connection_id: ConnectionId,
+    ) -> tide::Result<SharedProject> {
         if let Some(project) = self.projects.get_mut(&project_id) {
             if project.host_connection_id == connection_id {
                 let mut share = ProjectShare::default();
@@ -363,10 +371,12 @@ impl Store {
                     share.worktrees.insert(*worktree_id, Default::default());
                 }
                 project.share = Some(share);
-                return true;
+                return Ok(SharedProject {
+                    authorized_user_ids: project.authorized_user_ids(),
+                });
             }
         }
-        false
+        Err(anyhow!("no such project"))?
     }
 
     pub fn unshare_project(
