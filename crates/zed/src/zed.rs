@@ -10,6 +10,7 @@ pub use client;
 pub use contacts_panel;
 use contacts_panel::ContactsPanel;
 pub use editor;
+use editor::Editor;
 use gpui::{
     actions,
     geometry::vector::vec2f,
@@ -22,8 +23,10 @@ use project::Project;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
+use serde_json::to_string_pretty;
 use settings::Settings;
 use std::{path::PathBuf, sync::Arc};
+use util::ResultExt;
 pub use workspace;
 use workspace::{AppState, Workspace, WorkspaceParams};
 
@@ -32,6 +35,7 @@ actions!(
     [
         About,
         Quit,
+        DebugElements,
         OpenSettings,
         IncreaseBufferFontSize,
         DecreaseBufferFontSize
@@ -100,6 +104,28 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             .detach_and_log_err(cx);
         }
     });
+    cx.add_action(
+        |workspace: &mut Workspace, _: &DebugElements, cx: &mut ViewContext<Workspace>| {
+            let content = to_string_pretty(&cx.debug_elements()).unwrap();
+            let project = workspace.project().clone();
+            let json_language = project.read(cx).languages().get_language("JSON").unwrap();
+            if project.read(cx).is_remote() {
+                cx.propagate_action();
+            } else if let Some(buffer) = project
+                .update(cx, |project, cx| {
+                    project.create_buffer(&content, Some(json_language), cx)
+                })
+                .log_err()
+            {
+                workspace.add_item(
+                    Box::new(
+                        cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
+                    ),
+                    cx,
+                );
+            }
+        },
+    );
 
     workspace::lsp_status::init(cx);
 

@@ -2,7 +2,7 @@
     "*": {
         "ctrl-alt-cmd-f": "workspace::FollowNextCollaborator",
         "cmd-s": "workspace::Save",
-        "cmd-alt-i": "workspace::DebugElements",
+        "cmd-alt-i": "zed::DebugElements",
         "cmd-k cmd-left": "workspace::ActivatePreviousPane",
         "cmd-k cmd-right": "workspace::ActivateNextPane",
         "cmd-=": "zed::IncreaseBufferFontSize",

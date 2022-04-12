@@ -1,6 +1,7 @@
 use crate::render_summary;
 use gpui::{
-    elements::*, platform::CursorStyle, Entity, ModelHandle, RenderContext, View, ViewContext,
+    elements::*, platform::CursorStyle, serde_json, Entity, ModelHandle, RenderContext, View,
+    ViewContext,
 };
 use project::Project;
 use settings::Settings;
@@ -66,6 +67,10 @@ impl View for DiagnosticSummary {
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(|cx| cx.dispatch_action(crate::Deploy))
         .boxed()
+    }
+
+    fn debug_json(&self, _: &gpui::AppContext) -> serde_json::Value {
+        serde_json::json!({ "summary": self.summary })
     }
 }
 

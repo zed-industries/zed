@@ -62,6 +62,9 @@ pub trait View: Entity + Sized {
         cx.set.insert(Self::ui_name().into());
         cx
     }
+    fn debug_json(&self, _: &AppContext) -> serde_json::Value {
+        serde_json::Value::Null
+    }
 }
 
 pub trait ReadModel {
@@ -2277,6 +2280,12 @@ pub struct AppContext {
 }
 
 impl AppContext {
+    pub(crate) fn root_view(&self, window_id: usize) -> Option<AnyViewHandle> {
+        self.windows
+            .get(&window_id)
+            .map(|window| window.root_view.clone())
+    }
+
     pub fn root_view_id(&self, window_id: usize) -> Option<usize> {
         self.windows
             .get(&window_id)
@@ -2590,6 +2599,7 @@ pub trait AnyView {
     fn on_focus(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
     fn on_blur(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
     fn keymap_context(&self, cx: &AppContext) -> keymap::Context;
+    fn debug_json(&self, cx: &AppContext) -> serde_json::Value;
 }
 
 impl<T> AnyView for T
@@ -2652,6 +2662,10 @@ where
 
     fn keymap_context(&self, cx: &AppContext) -> keymap::Context {
         View::keymap_context(self, cx)
+    }
+
+    fn debug_json(&self, cx: &AppContext) -> serde_json::Value {
+        View::debug_json(self, cx)
     }
 }
 
@@ -3926,6 +3940,12 @@ impl AnyViewHandle {
 
     pub fn view_type(&self) -> TypeId {
         self.view_type
+    }
+
+    pub fn debug_json(&self, cx: &AppContext) -> serde_json::Value {
+        cx.views
+            .get(&(self.window_id, self.view_id))
+            .map_or_else(|| serde_json::Value::Null, |view| view.debug_json(cx))
     }
 }
 
