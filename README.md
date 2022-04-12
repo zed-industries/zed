@@ -23,7 +23,7 @@ script/sqlx migrate run
 script/seed-db
 ```
 
-Run `zed.dev` and the collaboration server.
+Run the web frontend and the collaboration server.
 
 ```
 brew install foreman

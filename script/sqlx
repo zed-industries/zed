@@ -5,7 +5,7 @@ set -e
 # Install sqlx-cli if needed
 [[ "$(sqlx --version)" == "sqlx-cli 0.5.7" ]] || cargo install sqlx-cli --version 0.5.7
 
-cd crates/server
+cd crates/collab
 
 # Export contents of .env.toml
 eval "$(cargo run --bin dotenv)"

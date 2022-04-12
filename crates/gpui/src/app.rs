@@ -10,7 +10,7 @@ use crate::{
     AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
 };
 pub use action::*;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use collections::btree_map;
 use keymap::MatchResult;
 use lazy_static::lazy_static;
@@ -61,6 +61,9 @@ pub trait View: Entity + Sized {
         let mut cx = keymap::Context::default();
         cx.set.insert(Self::ui_name().into());
         cx
+    }
+    fn debug_json(&self, _: &AppContext) -> serde_json::Value {
+        serde_json::Value::Null
     }
 }
 
@@ -715,12 +718,14 @@ type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type GlobalObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
+type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
 
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
     foreground_platform: Rc<dyn platform::ForegroundPlatform>,
     assets: Arc<AssetCache>,
     cx: AppContext,
+    action_deserializers: HashMap<&'static str, DeserializeActionCallback>,
     capture_actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     global_actions: HashMap<TypeId, Box<GlobalActionCallback>>,
@@ -773,6 +778,7 @@ impl MutableAppContext {
                 font_cache,
                 platform,
             },
+            action_deserializers: HashMap::new(),
             capture_actions: HashMap::new(),
             actions: HashMap::new(),
             global_actions: HashMap::new(),
@@ -857,6 +863,19 @@ impl MutableAppContext {
             .and_then(|(presenter, _)| presenter.borrow().debug_elements(self))
     }
 
+    pub fn deserialize_action(
+        &self,
+        name: &str,
+        argument: Option<&str>,
+    ) -> Result<Box<dyn Action>> {
+        let callback = self
+            .action_deserializers
+            .get(name)
+            .ok_or_else(|| anyhow!("unknown action {}", name))?;
+        callback(argument.unwrap_or("{}"))
+            .with_context(|| format!("invalid data for action {}", name))
+    }
+
     pub fn add_action<A, V, F>(&mut self, handler: F)
     where
         A: Action,
@@ -899,6 +918,10 @@ impl MutableAppContext {
             },
         );
 
+        self.action_deserializers
+            .entry(A::qualified_name())
+            .or_insert(A::from_json_str);
+
         let actions = if capture {
             &mut self.capture_actions
         } else {
@@ -933,6 +956,10 @@ impl MutableAppContext {
             let action = action.as_any().downcast_ref().unwrap();
             handler(action, cx);
         });
+
+        self.action_deserializers
+            .entry(A::qualified_name())
+            .or_insert(A::from_json_str);
 
         if self
             .global_actions
@@ -1332,6 +1359,10 @@ impl MutableAppContext {
 
     pub fn add_bindings<T: IntoIterator<Item = keymap::Binding>>(&mut self, bindings: T) {
         self.keystroke_matcher.add_bindings(bindings);
+    }
+
+    pub fn clear_bindings(&mut self) {
+        self.keystroke_matcher.clear_bindings();
     }
 
     pub fn dispatch_keystroke(
@@ -2249,6 +2280,12 @@ pub struct AppContext {
 }
 
 impl AppContext {
+    pub(crate) fn root_view(&self, window_id: usize) -> Option<AnyViewHandle> {
+        self.windows
+            .get(&window_id)
+            .map(|window| window.root_view.clone())
+    }
+
     pub fn root_view_id(&self, window_id: usize) -> Option<usize> {
         self.windows
             .get(&window_id)
@@ -2562,6 +2599,7 @@ pub trait AnyView {
     fn on_focus(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
     fn on_blur(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
     fn keymap_context(&self, cx: &AppContext) -> keymap::Context;
+    fn debug_json(&self, cx: &AppContext) -> serde_json::Value;
 }
 
 impl<T> AnyView for T
@@ -2624,6 +2662,10 @@ where
 
     fn keymap_context(&self, cx: &AppContext) -> keymap::Context {
         View::keymap_context(self, cx)
+    }
+
+    fn debug_json(&self, cx: &AppContext) -> serde_json::Value {
+        View::debug_json(self, cx)
     }
 }
 
@@ -3899,6 +3941,12 @@ impl AnyViewHandle {
     pub fn view_type(&self) -> TypeId {
         self.view_type
     }
+
+    pub fn debug_json(&self, cx: &AppContext) -> serde_json::Value {
+        cx.views
+            .get(&(self.window_id, self.view_id))
+            .map_or_else(|| serde_json::Value::Null, |view| view.debug_json(cx))
+    }
 }
 
 impl Clone for AnyViewHandle {
@@ -4575,7 +4623,8 @@ impl RefCounts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{elements::*, impl_actions};
+    use crate::{actions, elements::*, impl_actions};
+    use serde::Deserialize;
     use smol::future::poll_once;
     use std::{
         cell::Cell,
@@ -5684,6 +5733,42 @@ mod tests {
     }
 
     #[crate::test(self)]
+    fn test_deserialize_actions(cx: &mut MutableAppContext) {
+        #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+        pub struct ComplexAction {
+            arg: String,
+            count: usize,
+        }
+
+        actions!(test::something, [SimpleAction]);
+        impl_actions!(test::something, [ComplexAction]);
+
+        cx.add_global_action(move |_: &SimpleAction, _: &mut MutableAppContext| {});
+        cx.add_global_action(move |_: &ComplexAction, _: &mut MutableAppContext| {});
+
+        let action1 = cx
+            .deserialize_action(
+                "test::something::ComplexAction",
+                Some(r#"{"arg": "a", "count": 5}"#),
+            )
+            .unwrap();
+        let action2 = cx
+            .deserialize_action("test::something::SimpleAction", None)
+            .unwrap();
+        assert_eq!(
+            action1.as_any().downcast_ref::<ComplexAction>().unwrap(),
+            &ComplexAction {
+                arg: "a".to_string(),
+                count: 5,
+            }
+        );
+        assert_eq!(
+            action2.as_any().downcast_ref::<SimpleAction>().unwrap(),
+            &SimpleAction
+        );
+    }
+
+    #[crate::test(self)]
     fn test_dispatch_action(cx: &mut MutableAppContext) {
         struct ViewA {
             id: usize,
@@ -5721,32 +5806,32 @@ mod tests {
             }
         }
 
-        #[derive(Clone)]
-        pub struct Action(pub &'static str);
+        #[derive(Clone, Deserialize)]
+        pub struct Action(pub String);
 
         impl_actions!(test, [Action]);
 
         let actions = Rc::new(RefCell::new(Vec::new()));
 
-        {
+        cx.add_global_action({
             let actions = actions.clone();
-            cx.add_global_action(move |_: &Action, _: &mut MutableAppContext| {
+            move |_: &Action, _: &mut MutableAppContext| {
                 actions.borrow_mut().push("global".to_string());
-            });
-        }
+            }
+        });
 
-        {
+        cx.add_action({
             let actions = actions.clone();
-            cx.add_action(move |view: &mut ViewA, action: &Action, cx| {
+            move |view: &mut ViewA, action: &Action, cx| {
                 assert_eq!(action.0, "bar");
                 cx.propagate_action();
                 actions.borrow_mut().push(format!("{} a", view.id));
-            });
-        }
+            }
+        });
 
-        {
+        cx.add_action({
             let actions = actions.clone();
-            cx.add_action(move |view: &mut ViewA, _: &Action, cx| {
+            move |view: &mut ViewA, _: &Action, cx| {
                 if view.id != 1 {
                     cx.add_view(|cx| {
                         cx.propagate_action(); // Still works on a nested ViewContext
@@ -5754,32 +5839,32 @@ mod tests {
                     });
                 }
                 actions.borrow_mut().push(format!("{} b", view.id));
-            });
-        }
+            }
+        });
 
-        {
+        cx.add_action({
             let actions = actions.clone();
-            cx.add_action(move |view: &mut ViewB, _: &Action, cx| {
+            move |view: &mut ViewB, _: &Action, cx| {
                 cx.propagate_action();
                 actions.borrow_mut().push(format!("{} c", view.id));
-            });
-        }
+            }
+        });
 
-        {
+        cx.add_action({
             let actions = actions.clone();
-            cx.add_action(move |view: &mut ViewB, _: &Action, cx| {
+            move |view: &mut ViewB, _: &Action, cx| {
                 cx.propagate_action();
                 actions.borrow_mut().push(format!("{} d", view.id));
-            });
-        }
+            }
+        });
 
-        {
+        cx.capture_action({
             let actions = actions.clone();
-            cx.capture_action(move |view: &mut ViewA, _: &Action, cx| {
+            move |view: &mut ViewA, _: &Action, cx| {
                 cx.propagate_action();
                 actions.borrow_mut().push(format!("{} capture", view.id));
-            });
-        }
+            }
+        });
 
         let (window_id, view_1) = cx.add_window(Default::default(), |_| ViewA { id: 1 });
         let view_2 = cx.add_view(window_id, |_| ViewB { id: 2 });
@@ -5789,7 +5874,7 @@ mod tests {
         cx.dispatch_action(
             window_id,
             vec![view_1.id(), view_2.id(), view_3.id(), view_4.id()],
-            &Action("bar"),
+            &Action("bar".to_string()),
         );
 
         assert_eq!(
@@ -5812,7 +5897,7 @@ mod tests {
         cx.dispatch_action(
             window_id,
             vec![view_2.id(), view_3.id(), view_4.id()],
-            &Action("bar"),
+            &Action("bar".to_string()),
         );
 
         assert_eq!(
@@ -5832,8 +5917,8 @@ mod tests {
 
     #[crate::test(self)]
     fn test_dispatch_keystroke(cx: &mut MutableAppContext) {
-        #[derive(Clone)]
-        pub struct Action(pub &'static str);
+        #[derive(Clone, Deserialize)]
+        pub struct Action(String);
 
         impl_actions!(test, [Action]);
 
@@ -5887,16 +5972,20 @@ mod tests {
         // "a" and "b" in its context, but not "c".
         cx.add_bindings(vec![keymap::Binding::new(
             "a",
-            Action("a"),
+            Action("a".to_string()),
             Some("a && b && !c"),
         )]);
 
-        cx.add_bindings(vec![keymap::Binding::new("b", Action("b"), None)]);
+        cx.add_bindings(vec![keymap::Binding::new(
+            "b",
+            Action("b".to_string()),
+            None,
+        )]);
 
         let actions = Rc::new(RefCell::new(Vec::new()));
-        {
+        cx.add_action({
             let actions = actions.clone();
-            cx.add_action(move |view: &mut View, action: &Action, cx| {
+            move |view: &mut View, action: &Action, cx| {
                 if action.0 == "a" {
                     actions.borrow_mut().push(format!("{} a", view.id));
                 } else {
@@ -5905,14 +5994,15 @@ mod tests {
                         .push(format!("{} {}", view.id, action.0));
                     cx.propagate_action();
                 }
-            });
-        }
-        {
+            }
+        });
+
+        cx.add_global_action({
             let actions = actions.clone();
-            cx.add_global_action(move |action: &Action, _| {
+            move |action: &Action, _| {
                 actions.borrow_mut().push(format!("global {}", action.0));
-            });
-        }
+            }
+        });
 
         cx.dispatch_keystroke(
             window_id,

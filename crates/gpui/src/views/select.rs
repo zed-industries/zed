@@ -1,3 +1,5 @@
+use serde::Deserialize;
+
 use crate::{
     actions, elements::*, impl_actions, AppContext, Entity, MutableAppContext, RenderContext, View,
     ViewContext, WeakViewHandle,
@@ -25,7 +27,7 @@ pub enum ItemType {
     Unselected,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 pub struct SelectItem(pub usize);
 
 actions!(select, [ToggleSelect]);

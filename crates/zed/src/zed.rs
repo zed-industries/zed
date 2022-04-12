@@ -1,4 +1,3 @@
-pub mod assets;
 pub mod languages;
 pub mod menus;
 pub mod settings_file;
@@ -11,11 +10,10 @@ pub use client;
 pub use contacts_panel;
 use contacts_panel::ContactsPanel;
 pub use editor;
+use editor::Editor;
 use gpui::{
     actions,
     geometry::vector::vec2f,
-    impl_actions,
-    keymap::Binding,
     platform::{WindowBounds, WindowOptions},
     ModelHandle, ViewContext,
 };
@@ -25,17 +23,24 @@ use project::Project;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
+use serde_json::to_string_pretty;
 use settings::Settings;
 use std::{path::PathBuf, sync::Arc};
+use util::ResultExt;
 pub use workspace;
 use workspace::{AppState, Workspace, WorkspaceParams};
 
-actions!(zed, [About, Quit, OpenSettings]);
-
-#[derive(Clone)]
-pub struct AdjustBufferFontSize(pub f32);
-
-impl_actions!(zed, [AdjustBufferFontSize]);
+actions!(
+    zed,
+    [
+        About,
+        Quit,
+        DebugElements,
+        OpenSettings,
+        IncreaseBufferFontSize,
+        DecreaseBufferFontSize
+    ]
+);
 
 const MIN_FONT_SIZE: f32 = 6.0;
 
@@ -44,20 +49,23 @@ lazy_static! {
         .expect("failed to determine home directory")
         .join(".zed");
     pub static ref SETTINGS_PATH: PathBuf = ROOT_PATH.join("settings.json");
+    pub static ref KEYMAP_PATH: PathBuf = ROOT_PATH.join("keymap.json");
 }
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_global_action(quit);
-    cx.add_global_action({
-        move |action: &AdjustBufferFontSize, cx| {
-            cx.update_global::<Settings, _, _>(|settings, cx| {
-                settings.buffer_font_size =
-                    (settings.buffer_font_size + action.0).max(MIN_FONT_SIZE);
-                cx.refresh_windows();
-            });
-        }
+    cx.add_global_action(move |_: &IncreaseBufferFontSize, cx| {
+        cx.update_global::<Settings, _, _>(|settings, cx| {
+            settings.buffer_font_size = (settings.buffer_font_size + 1.0).max(MIN_FONT_SIZE);
+            cx.refresh_windows();
+        });
     });
-
+    cx.add_global_action(move |_: &DecreaseBufferFontSize, cx| {
+        cx.update_global::<Settings, _, _>(|settings, cx| {
+            settings.buffer_font_size = (settings.buffer_font_size - 1.0).max(MIN_FONT_SIZE);
+            cx.refresh_windows();
+        });
+    });
     cx.add_action({
         let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
@@ -96,14 +104,32 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             .detach_and_log_err(cx);
         }
     });
+    cx.add_action(
+        |workspace: &mut Workspace, _: &DebugElements, cx: &mut ViewContext<Workspace>| {
+            let content = to_string_pretty(&cx.debug_elements()).unwrap();
+            let project = workspace.project().clone();
+            let json_language = project.read(cx).languages().get_language("JSON").unwrap();
+            if project.read(cx).is_remote() {
+                cx.propagate_action();
+            } else if let Some(buffer) = project
+                .update(cx, |project, cx| {
+                    project.create_buffer(&content, Some(json_language), cx)
+                })
+                .log_err()
+            {
+                workspace.add_item(
+                    Box::new(
+                        cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
+                    ),
+                    cx,
+                );
+            }
+        },
+    );
 
     workspace::lsp_status::init(cx);
 
-    cx.add_bindings(vec![
-        Binding::new("cmd-=", AdjustBufferFontSize(1.), None),
-        Binding::new("cmd--", AdjustBufferFontSize(-1.), None),
-        Binding::new("cmd-,", OpenSettings, None),
-    ])
+    settings::KeymapFile::load_defaults(cx);
 }
 
 pub fn build_workspace(
@@ -134,6 +160,7 @@ pub fn build_workspace(
         client: app_state.client.clone(),
         fs: app_state.fs.clone(),
         languages: app_state.languages.clone(),
+        themes: app_state.themes.clone(),
         user_store: app_state.user_store.clone(),
         channel_list: app_state.channel_list.clone(),
     };
@@ -205,9 +232,8 @@ fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
 
 #[cfg(test)]
 mod tests {
-    use crate::assets::Assets;
-
     use super::*;
+    use assets::Assets;
     use editor::{DisplayPoint, Editor};
     use gpui::{AssetSource, MutableAppContext, TestAppContext, ViewHandle};
     use project::{Fs, ProjectPath};

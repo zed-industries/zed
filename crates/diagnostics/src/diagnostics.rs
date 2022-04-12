@@ -8,7 +8,7 @@ use editor::{
     highlight_diagnostic_message, Editor, ExcerptId, MultiBuffer, ToOffset,
 };
 use gpui::{
-    actions, elements::*, fonts::TextStyle, keymap::Binding, AnyViewHandle, AppContext, Entity,
+    actions, elements::*, fonts::TextStyle, serde_json, AnyViewHandle, AppContext, Entity,
     ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
@@ -16,6 +16,7 @@ use language::{
     Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
 };
 use project::{DiagnosticSummary, Project, ProjectPath};
+use serde_json::json;
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
@@ -33,7 +34,6 @@ actions!(diagnostics, [Deploy]);
 const CONTEXT_LINE_COUNT: u32 = 1;
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_bindings([Binding::new("alt-shift-D", Deploy, Some("Workspace"))]);
     cx.add_action(ProjectDiagnosticsEditor::deploy);
 }
 
@@ -91,6 +91,31 @@ impl View for ProjectDiagnosticsEditor {
         if !self.path_states.is_empty() {
             cx.focus(&self.editor);
         }
+    }
+
+    fn debug_json(&self, cx: &AppContext) -> serde_json::Value {
+        let project = self.project.read(cx);
+        json!({
+            "project": json!({
+                "language_servers": project.language_server_statuses().collect::<Vec<_>>(),
+                "summary": project.diagnostic_summary(cx),
+            }),
+            "summary": self.summary,
+            "paths_to_update": self.paths_to_update.iter().map(|path|
+                path.path.to_string_lossy()
+            ).collect::<Vec<_>>(),
+            "paths_states": self.path_states.iter().map(|state|
+                json!({
+                    "path": state.path.path.to_string_lossy(),
+                    "groups": state.diagnostic_groups.iter().map(|group|
+                        json!({
+                            "block_count": group.blocks.len(),
+                            "excerpt_count": group.excerpts.len(),
+                        })
+                    ).collect::<Vec<_>>(),
+                })
+            ).collect::<Vec<_>>(),
+        })
     }
 }
 

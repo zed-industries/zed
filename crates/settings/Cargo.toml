@@ -11,6 +11,8 @@ doctest = false
 test-support = []
 
 [dependencies]
+assets = { path = "../assets" }
+collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 theme = { path = "../theme" }
 util = { path = "../util" }

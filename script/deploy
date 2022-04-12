@@ -16,7 +16,7 @@ if [[ $# < 1 ]]; then
 fi
 
 export ZED_KUBE_NAMESPACE=$1
-ENV_FILE="crates/server/k8s/environments/${ZED_KUBE_NAMESPACE}.sh"
+ENV_FILE="crates/collab/k8s/environments/${ZED_KUBE_NAMESPACE}.sh"
 if [[ ! -f $ENV_FILE ]]; then
   echo "Invalid environment name '${ZED_KUBE_NAMESPACE}'"
   exit 1
@@ -28,10 +28,10 @@ if [[ $ZED_KUBE_NAMESPACE == "production" && -n $(git status --short) ]]; then
 fi
 
 git_sha=$(git rev-parse HEAD)
-export ZED_IMAGE_ID="registry.digitalocean.com/zed/zed-server:${ZED_KUBE_NAMESPACE}-${git_sha}"
+export ZED_IMAGE_ID="registry.digitalocean.com/zed/collab:${ZED_KUBE_NAMESPACE}-${git_sha}"
 export $(cat $ENV_FILE)
 
 docker build . --tag "$ZED_IMAGE_ID"
 docker push "$ZED_IMAGE_ID"
 
-envsubst < crates/server/k8s/manifest.template.yml | kubectl apply -f -
+envsubst < crates/collab/k8s/manifest.template.yml | kubectl apply -f -

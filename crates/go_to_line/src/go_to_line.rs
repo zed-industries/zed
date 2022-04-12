@@ -1,7 +1,7 @@
 use editor::{display_map::ToDisplayPoint, Autoscroll, DisplayPoint, Editor};
 use gpui::{
-    actions, elements::*, geometry::vector::Vector2F, keymap::Binding, Axis, Entity,
-    MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
+    actions, elements::*, geometry::vector::Vector2F, Axis, Entity, MutableAppContext,
+    RenderContext, View, ViewContext, ViewHandle,
 };
 use settings::Settings;
 use text::{Bias, Point};
@@ -10,11 +10,6 @@ use workspace::Workspace;
 actions!(go_to_line, [Toggle, Confirm]);
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_bindings([
-        Binding::new("ctrl-g", Toggle, Some("Editor")),
-        Binding::new("escape", Toggle, Some("GoToLine")),
-        Binding::new("enter", Confirm, Some("GoToLine")),
-    ]);
     cx.add_action(GoToLine::toggle);
     cx.add_action(GoToLine::confirm);
 }

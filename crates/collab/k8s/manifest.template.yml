@@ -8,14 +8,14 @@ kind: Service
 apiVersion: v1
 metadata:
   namespace: ${ZED_KUBE_NAMESPACE}
-  name: zed
+  name: collab
   annotations:
     service.beta.kubernetes.io/do-loadbalancer-tls-ports: "443"
-    service.beta.kubernetes.io/do-loadbalancer-certificate-id: "2634d353-1ab4-437f-add2-4ffd8f315233"
+    service.beta.kubernetes.io/do-loadbalancer-certificate-id: "40879815-9a6b-4bbb-8207-8f2c7c0218f9"
 spec:
   type: LoadBalancer
   selector:
-    app: zed
+    app: collab
   ports:
     - name: web
       protocol: TCP
@@ -26,19 +26,19 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   namespace: ${ZED_KUBE_NAMESPACE}
-  name: zed
+  name: collab
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: zed
+      app: collab
   template:
     metadata:
       labels:
-        app: zed
+        app: collab
     spec:
       containers:
-        - name: zed
+        - name: collab
           image: "${ZED_IMAGE_ID}"
           ports:
             - containerPort: 8080

@@ -1,2 +1,2 @@
-web: ./target/release/zed-server
+collab: ./target/release/collab
 release: ./target/release/sqlx migrate run

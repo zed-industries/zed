@@ -1,12 +1,12 @@
 [package]
 authors = ["Nathan Sobo <nathan@warp.dev>"]
-default-run = "zed-server"
+default-run = "collab"
 edition = "2021"
-name = "zed-server"
+name = "collab"
 version = "0.1.0"
 
 [[bin]]
-name = "zed-server"
+name = "collab"
 
 [[bin]]
 name = "seed"
@@ -67,6 +67,7 @@ language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
+theme = { path = "../theme" }
 workspace = { path = "../workspace", features = ["test-support"] }
 ctor = "0.1"
 env_logger = "0.8"

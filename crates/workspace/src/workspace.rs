@@ -17,13 +17,12 @@ use gpui::{
     color::Color,
     elements::*,
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
-    impl_actions,
-    json::{self, to_string_pretty, ToJson},
-    keymap::Binding,
+    impl_internal_actions,
+    json::{self, ToJson},
     platform::{CursorStyle, WindowOptions},
-    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Border, ClipboardItem, Entity,
-    ImageData, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle,
+    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Border, Entity, ImageData,
+    ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::LanguageRegistry;
 use log::error;
@@ -32,7 +31,7 @@ pub use pane_group::*;
 use postage::prelude::Stream;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, Worktree};
 use settings::Settings;
-use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus};
+use sidebar::{Side, Sidebar, ToggleSidebarItem, ToggleSidebarItemFocus};
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
@@ -76,7 +75,6 @@ actions!(
         ToggleShare,
         Unfollow,
         Save,
-        DebugElements,
         ActivatePreviousPane,
         ActivateNextPane,
         FollowNextCollaborator,
@@ -101,14 +99,13 @@ pub struct ToggleFollow(pub PeerId);
 #[derive(Clone)]
 pub struct JoinProject(pub JoinProjectParams);
 
-impl_actions!(
+impl_internal_actions!(
     workspace,
     [Open, OpenNew, OpenPaths, ToggleFollow, JoinProject]
 );
 
 pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     pane::init(cx);
-    menu::init(cx);
 
     cx.add_global_action(open);
     cx.add_global_action(move |action: &OpenPaths, cx: &mut MutableAppContext| {
@@ -135,7 +132,6 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
             workspace.save_active_item(cx).detach_and_log_err(cx);
         },
     );
-    cx.add_action(Workspace::debug_elements);
     cx.add_action(Workspace::toggle_sidebar_item);
     cx.add_action(Workspace::toggle_sidebar_item_focus);
     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
@@ -144,29 +140,6 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
         workspace.activate_next_pane(cx)
     });
-    cx.add_bindings(vec![
-        Binding::new("ctrl-alt-cmd-f", FollowNextCollaborator, None),
-        Binding::new("cmd-s", Save, None),
-        Binding::new("cmd-alt-i", DebugElements, None),
-        Binding::new("cmd-k cmd-left", ActivatePreviousPane, None),
-        Binding::new("cmd-k cmd-right", ActivateNextPane, None),
-        Binding::new(
-            "cmd-shift-!",
-            ToggleSidebarItem(SidebarItemId {
-                side: Side::Left,
-                item_index: 0,
-            }),
-            None,
-        ),
-        Binding::new(
-            "cmd-1",
-            ToggleSidebarItemFocus(SidebarItemId {
-                side: Side::Left,
-                item_index: 0,
-            }),
-            None,
-        ),
-    ]);
 
     client.add_view_request_handler(Workspace::handle_follow);
     client.add_view_message_handler(Workspace::handle_unfollow);
@@ -630,6 +603,7 @@ pub struct WorkspaceParams {
     pub client: Arc<Client>,
     pub fs: Arc<dyn Fs>,
     pub languages: Arc<LanguageRegistry>,
+    pub themes: Arc<ThemeRegistry>,
     pub user_store: ModelHandle<UserStore>,
     pub channel_list: ModelHandle<ChannelList>,
 }
@@ -659,6 +633,7 @@ impl WorkspaceParams {
             channel_list: cx
                 .add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx)),
             client,
+            themes: ThemeRegistry::new((), cx.font_cache().clone()),
             fs,
             languages,
             user_store,
@@ -677,6 +652,7 @@ impl WorkspaceParams {
             ),
             client: app_state.client.clone(),
             fs: app_state.fs.clone(),
+            themes: app_state.themes.clone(),
             languages: app_state.languages.clone(),
             user_store: app_state.user_store.clone(),
             channel_list: app_state.channel_list.clone(),
@@ -694,6 +670,7 @@ pub struct Workspace {
     user_store: ModelHandle<client::UserStore>,
     remote_entity_subscription: Option<Subscription>,
     fs: Arc<dyn Fs>,
+    themes: Arc<ThemeRegistry>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
     left_sidebar: Sidebar,
@@ -802,6 +779,7 @@ impl Workspace {
             remote_entity_subscription: None,
             user_store: params.user_store.clone(),
             fs: params.fs.clone(),
+            themes: params.themes.clone(),
             left_sidebar: Sidebar::new(Side::Left),
             right_sidebar: Sidebar::new(Side::Right),
             project: params.project.clone(),
@@ -832,6 +810,10 @@ impl Workspace {
 
     pub fn project(&self) -> &ModelHandle<Project> {
         &self.project
+    }
+
+    pub fn themes(&self) -> Arc<ThemeRegistry> {
+        self.themes.clone()
     }
 
     pub fn worktrees<'a>(
@@ -1067,22 +1049,6 @@ impl Workspace {
             }
         }
         cx.notify();
-    }
-
-    pub fn debug_elements(&mut self, _: &DebugElements, cx: &mut ViewContext<Self>) {
-        match to_string_pretty(&cx.debug_elements()) {
-            Ok(json) => {
-                let kib = json.len() as f32 / 1024.;
-                cx.as_mut().write_to_clipboard(ClipboardItem::new(json));
-                log::info!(
-                    "copied {:.1} KiB of element debug JSON to the clipboard",
-                    kib
-                );
-            }
-            Err(error) => {
-                log::error!("error debugging elements: {}", error);
-            }
-        };
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {

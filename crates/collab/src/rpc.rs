@@ -1227,6 +1227,8 @@ mod tests {
         },
         time::Duration,
     };
+    use theme::ThemeRegistry;
+    use util::TryFutureExt;
     use workspace::{Item, SplitDirection, ToggleFollow, Workspace, WorkspaceParams};
 
     #[cfg(test)]
@@ -2527,7 +2529,7 @@ mod tests {
             .condition(&cx_b, |editor, _| editor.context_menu_visible())
             .await;
         editor_b.update(cx_b, |editor, cx| {
-            editor.confirm_completion(&ConfirmCompletion(Some(0)), cx);
+            editor.confirm_completion(&ConfirmCompletion { item_ix: Some(0) }, cx);
             assert_eq!(editor.text(cx), "fn main() { a.first_method() }");
         });
 
@@ -3716,7 +3718,12 @@ mod tests {
 
         // Toggle code actions and wait for them to display.
         editor_b.update(cx_b, |editor, cx| {
-            editor.toggle_code_actions(&ToggleCodeActions(false), cx);
+            editor.toggle_code_actions(
+                &ToggleCodeActions {
+                    deployed_from_indicator: false,
+                },
+                cx,
+            );
         });
         editor_b
             .condition(&cx_b, |editor, _| editor.context_menu_visible())
@@ -3727,7 +3734,7 @@ mod tests {
         // Confirming the code action will trigger a resolve request.
         let confirm_action = workspace_b
             .update(cx_b, |workspace, cx| {
-                Editor::confirm_code_action(workspace, &ConfirmCodeAction(Some(0)), cx)
+                Editor::confirm_code_action(workspace, &ConfirmCodeAction { item_ix: Some(0) }, cx)
             })
             .unwrap();
         fake_language_server.handle_request::<lsp::request::CodeActionResolveRequest, _, _>(
@@ -5829,6 +5836,7 @@ mod tests {
                         project: project.clone(),
                         user_store: self.user_store.clone(),
                         languages: self.language_registry.clone(),
+                        themes: ThemeRegistry::new((), cx.font_cache().clone()),
                         channel_list: cx.add_model(|cx| {
                             ChannelList::new(self.user_store.clone(), self.client.clone(), cx)
                         }),
