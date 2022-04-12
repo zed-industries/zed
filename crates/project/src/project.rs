@@ -2278,86 +2278,81 @@ impl Project {
 
     pub fn symbols(&self, query: &str, cx: &mut ModelContext<Self>) -> Task<Result<Vec<Symbol>>> {
         if self.is_local() {
-            let mut language_servers = HashMap::default();
+            let mut requests = Vec::new();
             for ((worktree_id, _), (lsp_adapter, language_server)) in self.language_servers.iter() {
+                let worktree_id = *worktree_id;
                 if let Some(worktree) = self
-                    .worktree_for_id(*worktree_id, cx)
+                    .worktree_for_id(worktree_id, cx)
                     .and_then(|worktree| worktree.read(cx).as_local())
                 {
-                    language_servers
-                        .entry(Arc::as_ptr(language_server))
-                        .or_insert((
-                            lsp_adapter.clone(),
-                            language_server.clone(),
-                            *worktree_id,
-                            worktree.abs_path().clone(),
-                        ));
+                    let lsp_adapter = lsp_adapter.clone();
+                    let worktree_abs_path = worktree.abs_path().clone();
+                    requests.push(
+                        language_server
+                            .request::<lsp::request::WorkspaceSymbol>(lsp::WorkspaceSymbolParams {
+                                query: query.to_string(),
+                                ..Default::default()
+                            })
+                            .log_err()
+                            .map(move |response| {
+                                (
+                                    lsp_adapter,
+                                    worktree_id,
+                                    worktree_abs_path,
+                                    response.unwrap_or_default(),
+                                )
+                            }),
+                    );
                 }
-            }
-
-            let mut requests = Vec::new();
-            for (_, language_server, _, _) in language_servers.values() {
-                requests.push(language_server.request::<lsp::request::WorkspaceSymbol>(
-                    lsp::WorkspaceSymbolParams {
-                        query: query.to_string(),
-                        ..Default::default()
-                    },
-                ));
             }
 
             cx.spawn_weak(|this, cx| async move {
-                let responses = futures::future::try_join_all(requests).await?;
+                let responses = futures::future::join_all(requests).await;
+                let this = if let Some(this) = this.upgrade(&cx) {
+                    this
+                } else {
+                    return Ok(Default::default());
+                };
+                this.read_with(&cx, |this, cx| {
+                    let mut symbols = Vec::new();
+                    for (adapter, source_worktree_id, worktree_abs_path, response) in responses {
+                        symbols.extend(response.into_iter().flatten().filter_map(|lsp_symbol| {
+                            let abs_path = lsp_symbol.location.uri.to_file_path().ok()?;
+                            let mut worktree_id = source_worktree_id;
+                            let path;
+                            if let Some((worktree, rel_path)) =
+                                this.find_local_worktree(&abs_path, cx)
+                            {
+                                worktree_id = worktree.read(cx).id();
+                                path = rel_path;
+                            } else {
+                                path = relativize_path(&worktree_abs_path, &abs_path);
+                            }
 
-                let mut symbols = Vec::new();
-                if let Some(this) = this.upgrade(&cx) {
-                    this.read_with(&cx, |this, cx| {
-                        for ((adapter, _, source_worktree_id, worktree_abs_path), lsp_symbols) in
-                            language_servers.into_values().zip(responses)
-                        {
-                            symbols.extend(lsp_symbols.into_iter().flatten().filter_map(
-                                |lsp_symbol| {
-                                    let abs_path = lsp_symbol.location.uri.to_file_path().ok()?;
-                                    let mut worktree_id = source_worktree_id;
-                                    let path;
-                                    if let Some((worktree, rel_path)) =
-                                        this.find_local_worktree(&abs_path, cx)
-                                    {
-                                        worktree_id = worktree.read(cx).id();
-                                        path = rel_path;
-                                    } else {
-                                        path = relativize_path(&worktree_abs_path, &abs_path);
-                                    }
+                            let label = this
+                                .languages
+                                .select_language(&path)
+                                .and_then(|language| {
+                                    language.label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
+                                })
+                                .unwrap_or_else(|| CodeLabel::plain(lsp_symbol.name.clone(), None));
+                            let signature = this.symbol_signature(worktree_id, &path);
 
-                                    let label = this
-                                        .languages
-                                        .select_language(&path)
-                                        .and_then(|language| {
-                                            language
-                                                .label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
-                                        })
-                                        .unwrap_or_else(|| {
-                                            CodeLabel::plain(lsp_symbol.name.clone(), None)
-                                        });
-                                    let signature = this.symbol_signature(worktree_id, &path);
-
-                                    Some(Symbol {
-                                        source_worktree_id,
-                                        worktree_id,
-                                        language_server_name: adapter.name(),
-                                        name: lsp_symbol.name,
-                                        kind: lsp_symbol.kind,
-                                        label,
-                                        path,
-                                        range: range_from_lsp(lsp_symbol.location.range),
-                                        signature,
-                                    })
-                                },
-                            ));
-                        }
-                    })
-                }
-
-                Ok(symbols)
+                            Some(Symbol {
+                                source_worktree_id,
+                                worktree_id,
+                                language_server_name: adapter.name(),
+                                name: lsp_symbol.name,
+                                kind: lsp_symbol.kind,
+                                label,
+                                path,
+                                range: range_from_lsp(lsp_symbol.location.range),
+                                signature,
+                            })
+                        }));
+                    }
+                    Ok(symbols)
+                })
             })
         } else if let Some(project_id) = self.remote_id() {
             let request = self.client.request(proto::GetProjectSymbols {
