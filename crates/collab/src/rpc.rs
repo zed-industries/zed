@@ -372,9 +372,9 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::ShareProject>,
     ) -> tide::Result<proto::Ack> {
-        self.state_mut()
-            .await
-            .share_project(request.payload.project_id, request.sender_id);
+        let mut state = self.state_mut().await;
+        let project = state.share_project(request.payload.project_id, request.sender_id)?;
+        self.update_contacts_for_users(&mut *state, &project.authorized_user_ids);
         Ok(proto::Ack {})
     }
 
@@ -4465,19 +4465,19 @@ mod tests {
         client_a
             .user_store
             .condition(&cx_a, |user_store, _| {
-                contacts(user_store) == vec![("user_a", vec![("a", vec![])])]
+                contacts(user_store) == vec![("user_a", vec![("a", false, vec![])])]
             })
             .await;
         client_b
             .user_store
             .condition(&cx_b, |user_store, _| {
-                contacts(user_store) == vec![("user_a", vec![("a", vec![])])]
+                contacts(user_store) == vec![("user_a", vec![("a", false, vec![])])]
             })
             .await;
         client_c
             .user_store
             .condition(&cx_c, |user_store, _| {
-                contacts(user_store) == vec![("user_a", vec![("a", vec![])])]
+                contacts(user_store) == vec![("user_a", vec![("a", false, vec![])])]
             })
             .await;
 
@@ -4488,6 +4488,24 @@ mod tests {
             .update(cx_a, |project, cx| project.share(cx))
             .await
             .unwrap();
+        client_a
+            .user_store
+            .condition(&cx_a, |user_store, _| {
+                contacts(user_store) == vec![("user_a", vec![("a", true, vec![])])]
+            })
+            .await;
+        client_b
+            .user_store
+            .condition(&cx_b, |user_store, _| {
+                contacts(user_store) == vec![("user_a", vec![("a", true, vec![])])]
+            })
+            .await;
+        client_c
+            .user_store
+            .condition(&cx_c, |user_store, _| {
+                contacts(user_store) == vec![("user_a", vec![("a", true, vec![])])]
+            })
+            .await;
 
         let _project_b = Project::remote(
             project_id,
@@ -4503,19 +4521,19 @@ mod tests {
         client_a
             .user_store
             .condition(&cx_a, |user_store, _| {
-                contacts(user_store) == vec![("user_a", vec![("a", vec!["user_b"])])]
+                contacts(user_store) == vec![("user_a", vec![("a", true, vec!["user_b"])])]
             })
             .await;
         client_b
             .user_store
             .condition(&cx_b, |user_store, _| {
-                contacts(user_store) == vec![("user_a", vec![("a", vec!["user_b"])])]
+                contacts(user_store) == vec![("user_a", vec![("a", true, vec!["user_b"])])]
             })
             .await;
         client_c
             .user_store
             .condition(&cx_c, |user_store, _| {
-                contacts(user_store) == vec![("user_a", vec![("a", vec!["user_b"])])]
+                contacts(user_store) == vec![("user_a", vec![("a", true, vec!["user_b"])])]
             })
             .await;
 
@@ -4539,7 +4557,7 @@ mod tests {
             .condition(&cx_c, |user_store, _| contacts(user_store) == vec![])
             .await;
 
-        fn contacts(user_store: &UserStore) -> Vec<(&str, Vec<(&str, Vec<&str>)>)> {
+        fn contacts(user_store: &UserStore) -> Vec<(&str, Vec<(&str, bool, Vec<&str>)>)> {
             user_store
                 .contacts()
                 .iter()
@@ -4550,6 +4568,7 @@ mod tests {
                         .map(|p| {
                             (
                                 p.worktree_root_names[0].as_str(),
+                                p.is_shared,
                                 p.guests.iter().map(|p| p.github_login.as_str()).collect(),
                             )
                         })
