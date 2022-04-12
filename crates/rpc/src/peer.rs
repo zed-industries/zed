@@ -126,7 +126,11 @@ impl Peer {
         // can always send messages without yielding. For incoming messages, use a
         // bounded channel so that other peers will receive backpressure if they send
         // messages faster than this peer can process them.
-        let (mut incoming_tx, incoming_rx) = mpsc::channel(64);
+        #[cfg(any(test, feature = "test-support"))]
+        const INCOMING_BUFFER_SIZE: usize = 1;
+        #[cfg(not(any(test, feature = "test-support")))]
+        const INCOMING_BUFFER_SIZE: usize = 64;
+        let (mut incoming_tx, incoming_rx) = mpsc::channel(INCOMING_BUFFER_SIZE);
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded();
 
         let connection_id = ConnectionId(self.next_connection_id.fetch_add(1, SeqCst));

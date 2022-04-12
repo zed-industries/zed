@@ -75,68 +75,65 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     match last_segment.map(|s| s.ident.to_string()).as_deref() {
                         Some("StdRng") => {
                             inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(seed),));
+                            continue;
                         }
                         Some("bool") => {
                             inner_fn_args.extend(quote!(is_last_iteration,));
+                            continue;
                         }
-                        _ => {
-                            return TokenStream::from(
-                                syn::Error::new_spanned(arg, "invalid argument")
-                                    .into_compile_error(),
-                            )
-                        }
-                    }
-                } else if let Type::Reference(ty) = &*arg.ty {
-                    match &*ty.elem {
-                        Type::Path(ty) => {
-                            let last_segment = ty.path.segments.last();
-                            match last_segment.map(|s| s.ident.to_string()).as_deref() {
-                                Some("TestAppContext") => {
-                                    let first_entity_id = ix * 100_000;
-                                    let cx_varname = format_ident!("cx_{}", ix);
-                                    cx_vars.extend(quote!(
-                                        let mut #cx_varname = #namespace::TestAppContext::new(
-                                            foreground_platform.clone(),
-                                            cx.platform().clone(),
-                                            deterministic.build_foreground(#ix),
-                                            deterministic.build_background(),
-                                            cx.font_cache().clone(),
-                                            cx.leak_detector(),
-                                            #first_entity_id,
-                                        );
-                                    ));
-                                    cx_teardowns.extend(quote!(
-                                        #cx_varname.update(|cx| cx.remove_all_windows());
-                                        deterministic.run_until_parked();
-                                        #cx_varname.update(|_| {}); // flush effects
-                                    ));
-                                    inner_fn_args.extend(quote!(&mut #cx_varname,));
-                                }
-                                _ => {
-                                    return TokenStream::from(
-                                        syn::Error::new_spanned(arg, "invalid argument")
-                                            .into_compile_error(),
-                                    )
+                        Some("Arc") => {
+                            if let syn::PathArguments::AngleBracketed(args) =
+                                &last_segment.unwrap().arguments
+                            {
+                                if let Some(syn::GenericArgument::Type(syn::Type::Path(ty))) =
+                                    args.args.last()
+                                {
+                                    let last_segment = ty.path.segments.last();
+                                    if let Some("Deterministic") =
+                                        last_segment.map(|s| s.ident.to_string()).as_deref()
+                                    {
+                                        inner_fn_args.extend(quote!(deterministic.clone(),));
+                                        continue;
+                                    }
                                 }
                             }
                         }
-                        _ => {
-                            return TokenStream::from(
-                                syn::Error::new_spanned(arg, "invalid argument")
-                                    .into_compile_error(),
-                            )
+                        _ => {}
+                    }
+                } else if let Type::Reference(ty) = &*arg.ty {
+                    if let Type::Path(ty) = &*ty.elem {
+                        let last_segment = ty.path.segments.last();
+                        if let Some("TestAppContext") =
+                            last_segment.map(|s| s.ident.to_string()).as_deref()
+                        {
+                            let first_entity_id = ix * 100_000;
+                            let cx_varname = format_ident!("cx_{}", ix);
+                            cx_vars.extend(quote!(
+                                let mut #cx_varname = #namespace::TestAppContext::new(
+                                    foreground_platform.clone(),
+                                    cx.platform().clone(),
+                                    deterministic.build_foreground(#ix),
+                                    deterministic.build_background(),
+                                    cx.font_cache().clone(),
+                                    cx.leak_detector(),
+                                    #first_entity_id,
+                                );
+                            ));
+                            cx_teardowns.extend(quote!(
+                                #cx_varname.update(|cx| cx.remove_all_windows());
+                                deterministic.run_until_parked();
+                                #cx_varname.update(|_| {}); // flush effects
+                            ));
+                            inner_fn_args.extend(quote!(&mut #cx_varname,));
+                            continue;
                         }
                     }
-                } else {
-                    return TokenStream::from(
-                        syn::Error::new_spanned(arg, "invalid argument").into_compile_error(),
-                    );
                 }
-            } else {
-                return TokenStream::from(
-                    syn::Error::new_spanned(arg, "invalid argument").into_compile_error(),
-                );
             }
+
+            return TokenStream::from(
+                syn::Error::new_spanned(arg, "invalid argument").into_compile_error(),
+            );
         }
 
         parse_quote! {
