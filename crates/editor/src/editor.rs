@@ -1008,7 +1008,7 @@ impl Editor {
         if project.read(cx).is_remote() {
             cx.propagate_action();
         } else if let Some(buffer) = project
-            .update(cx, |project, cx| project.create_buffer(cx))
+            .update(cx, |project, cx| project.create_buffer("", None, cx))
             .log_err()
         {
             workspace.add_item(

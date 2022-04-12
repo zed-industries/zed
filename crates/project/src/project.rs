@@ -28,6 +28,7 @@ use parking_lot::Mutex;
 use postage::watch;
 use rand::prelude::*;
 use search::SearchQuery;
+use serde::Serialize;
 use settings::Settings;
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
@@ -132,16 +133,18 @@ pub enum Event {
     CollaboratorLeft(PeerId),
 }
 
+#[derive(Serialize)]
 pub struct LanguageServerStatus {
     pub name: String,
     pub pending_work: BTreeMap<String, LanguageServerProgress>,
-    pending_diagnostic_updates: isize,
+    pub pending_diagnostic_updates: isize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct LanguageServerProgress {
     pub message: Option<String>,
     pub percentage: Option<usize>,
+    #[serde(skip_serializing)]
     pub last_update_at: Instant,
 }
 
@@ -151,7 +154,7 @@ pub struct ProjectPath {
     pub path: Arc<Path>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct DiagnosticSummary {
     pub error_count: usize,
     pub warning_count: usize,
@@ -467,7 +470,6 @@ impl Project {
             .and_then(|buffer| buffer.upgrade(cx))
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn languages(&self) -> &Arc<LanguageRegistry> {
         &self.languages
     }
@@ -813,13 +815,19 @@ impl Project {
         !self.is_local()
     }
 
-    pub fn create_buffer(&mut self, cx: &mut ModelContext<Self>) -> Result<ModelHandle<Buffer>> {
+    pub fn create_buffer(
+        &mut self,
+        text: &str,
+        language: Option<Arc<Language>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<ModelHandle<Buffer>> {
         if self.is_remote() {
             return Err(anyhow!("creating buffers as a guest is not supported yet"));
         }
 
         let buffer = cx.add_model(|cx| {
-            Buffer::new(self.replica_id(), "", cx).with_language(language::PLAIN_TEXT.clone(), cx)
+            Buffer::new(self.replica_id(), text, cx)
+                .with_language(language.unwrap_or(language::PLAIN_TEXT.clone()), cx)
         });
         self.register_buffer(&buffer, cx)?;
         Ok(buffer)
@@ -6581,7 +6589,9 @@ mod tests {
             .unwrap();
         let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
 
-        let buffer = project.update(cx, |project, cx| project.create_buffer(cx).unwrap());
+        let buffer = project.update(cx, |project, cx| {
+            project.create_buffer("", None, cx).unwrap()
+        });
         buffer.update(cx, |buffer, cx| {
             buffer.edit([0..0], "abc", cx);
             assert!(buffer.is_dirty());

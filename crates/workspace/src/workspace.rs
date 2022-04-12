@@ -18,11 +18,11 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     impl_internal_actions,
-    json::{self, to_string_pretty, ToJson},
+    json::{self, ToJson},
     platform::{CursorStyle, WindowOptions},
-    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Border, ClipboardItem, Entity,
-    ImageData, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle,
+    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Border, Entity, ImageData,
+    ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::LanguageRegistry;
 use log::error;
@@ -75,7 +75,6 @@ actions!(
         ToggleShare,
         Unfollow,
         Save,
-        DebugElements,
         ActivatePreviousPane,
         ActivateNextPane,
         FollowNextCollaborator,
@@ -133,7 +132,6 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
             workspace.save_active_item(cx).detach_and_log_err(cx);
         },
     );
-    cx.add_action(Workspace::debug_elements);
     cx.add_action(Workspace::toggle_sidebar_item);
     cx.add_action(Workspace::toggle_sidebar_item_focus);
     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
@@ -1051,22 +1049,6 @@ impl Workspace {
             }
         }
         cx.notify();
-    }
-
-    pub fn debug_elements(&mut self, _: &DebugElements, cx: &mut ViewContext<Self>) {
-        match to_string_pretty(&cx.debug_elements()) {
-            Ok(json) => {
-                let kib = json.len() as f32 / 1024.;
-                cx.as_mut().write_to_clipboard(ClipboardItem::new(json));
-                log::info!(
-                    "copied {:.1} KiB of element debug JSON to the clipboard",
-                    kib
-                );
-            }
-            Err(error) => {
-                log::error!("error debugging elements: {}", error);
-            }
-        };
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {

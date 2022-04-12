@@ -209,15 +209,18 @@ impl Presenter {
     }
 
     pub fn debug_elements(&self, cx: &AppContext) -> Option<json::Value> {
-        cx.root_view_id(self.window_id)
-            .and_then(|root_view_id| self.rendered_views.get(&root_view_id))
-            .map(|root_element| {
-                root_element.debug(&DebugContext {
-                    rendered_views: &self.rendered_views,
-                    font_cache: &self.font_cache,
-                    app: cx,
+        let view = cx.root_view(self.window_id)?;
+        Some(json!({
+            "root_view": view.debug_json(cx),
+            "root_element": self.rendered_views.get(&view.id())
+                .map(|root_element| {
+                    root_element.debug(&DebugContext {
+                        rendered_views: &self.rendered_views,
+                        font_cache: &self.font_cache,
+                        app: cx,
+                    })
                 })
-            })
+        }))
     }
 }
 
@@ -554,6 +557,7 @@ impl Element for ChildView {
             "type": "ChildView",
             "view_id": self.view.id(),
             "bounds": bounds.to_json(),
+            "view": self.view.debug_json(cx.app),
             "child": if let Some(view) = cx.rendered_views.get(&self.view.id()) {
                 view.debug(cx)
             } else {
