@@ -18,7 +18,7 @@
       },
       "highlight_text": {
         "family": "Zed Sans",
-        "color": "#1b1edc",
+        "color": "#484bed",
         "weight": "bold",
         "size": 14
       }
@@ -38,7 +38,7 @@
       },
       "highlight_text": {
         "family": "Zed Sans",
-        "color": "#1b1edc",
+        "color": "#484bed",
         "weight": "bold",
         "size": 14
       },
@@ -413,7 +413,7 @@
       },
       "match_highlight": {
         "family": "Zed Mono",
-        "color": "#1b1edc",
+        "color": "#484bed",
         "size": 14
       },
       "selected_item": {
@@ -674,9 +674,9 @@
         "color": "#1096d3",
         "weight": "bold"
       },
-      "emphasis": "#1b1edc",
+      "emphasis": "#484bed",
       "emphasis_strong": {
-        "color": "#1b1edc",
+        "color": "#484bed",
         "weight": "bold"
       },
       "link_uri": {
@@ -1103,7 +1103,7 @@
     }
   },
   "search": {
-    "match_background": "#eb2d2d33",
+    "match_background": "#fce9b7",
     "tab_icon_spacing": 4,
     "tab_icon_width": 14,
     "active_hovered_option_button": {

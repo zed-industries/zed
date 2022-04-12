@@ -51,7 +51,7 @@ const borderColor = {
   primary: colors.neutral[150],
   secondary: colors.neutral[150],
   muted: colors.neutral[100],
-  focused: colors.neutral[100],
+  focused: colors.indigo[500],
   active: colors.neutral[250],
   ok: colors.green[200],
   error: colors.red[200],
@@ -65,7 +65,7 @@ const textColor = {
   muted: colors.neutral[550],
   placeholder: colors.neutral[450],
   active: colors.neutral[900],
-  feature: colors.indigo[600],
+  feature: colors.indigo[500],
   ok: colors.green[500],
   error: colors.red[500],
   warning: colors.yellow[500],
@@ -112,8 +112,8 @@ const editor = {
     occurrence: withOpacity(colors.neutral[900], 0.06),
     activeOccurrence: withOpacity(colors.neutral[900], 0.16), // TODO: This is not hooked up to occurences on the rust side
     matchingBracket: colors.neutral[0],
-    match: withOpacity(colors.red[500], 0.2),
-    activeMatch: withOpacity(colors.indigo[400], 0.36), // TODO: This is not hooked up to occurences on the rust side
+    match: colors.yellow[100],
+    activeMatch: colors.yellow[200], // TODO: This is not hooked up to occurences on the rust side
     related: colors.neutral[0],
   },
   gutter: {
