@@ -1228,7 +1228,6 @@ mod tests {
         time::Duration,
     };
     use theme::ThemeRegistry;
-    use util::TryFutureExt;
     use workspace::{Item, SplitDirection, ToggleFollow, Workspace, WorkspaceParams};
 
     #[cfg(test)]
