@@ -51,7 +51,7 @@ const borderColor = {
   primary: colors.neutral[875],
   secondary: colors.neutral[775],
   muted: colors.neutral[675],
-  focused: colors.neutral[500],
+  focused: colors.indigo[500],
   active: colors.neutral[900],
   ok: colors.green[500],
   error: colors.red[500],
@@ -66,7 +66,7 @@ const textColor = {
   placeholder: colors.neutral[650],
   active: colors.neutral[0],
   //TODO: (design) define feature and it's correct value
-  feature: colors.sky[500],
+  feature: colors.lime[400],
   ok: colors.green[600],
   error: colors.red[400],
   warning: colors.amber[300],
@@ -114,8 +114,8 @@ const editor = {
     occurrence: withOpacity(colors.neutral[0], 0.12),
     activeOccurrence: withOpacity(colors.neutral[0], 0.16), // TODO: This is not correctly hooked up to occurences on the rust side
     matchingBracket: backgroundColor[500].active,
-    match: withOpacity(colors.sky[500], 0.16),
-    activeMatch: withOpacity(colors.sky[800], 0.32),
+    match: withOpacity(colors.violet[700], 0.5),
+    activeMatch: withOpacity(colors.violet[600], 0.7),
     related: backgroundColor[500].focused,
   },
   gutter: {
