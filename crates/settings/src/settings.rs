@@ -15,7 +15,7 @@ use std::{collections::HashMap, sync::Arc};
 use theme::{Theme, ThemeRegistry};
 use util::ResultExt as _;
 
-pub use keymap_file::KeyMapFile;
+pub use keymap_file::KeymapFile;
 
 #[derive(Clone)]
 pub struct Settings {

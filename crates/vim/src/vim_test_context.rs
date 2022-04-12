@@ -24,7 +24,7 @@ impl<'a> VimTestContext<'a> {
             editor::init(cx);
             crate::init(cx);
 
-            settings::KeyMapFile::load("keymaps/vim.json", cx).unwrap();
+            settings::KeymapFile::load("keymaps/vim.json", cx).unwrap();
         });
 
         let params = cx.update(WorkspaceParams::test);

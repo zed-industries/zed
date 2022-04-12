@@ -10,7 +10,7 @@ use gpui::{App, AssetSource, Task};
 use log::LevelFilter;
 use parking_lot::Mutex;
 use project::Fs;
-use settings::{self, KeyMapFile, Settings, SettingsFileContent};
+use settings::{self, KeymapFile, Settings, SettingsFileContent};
 use smol::process::Command;
 use std::{env, fs, path::PathBuf, sync::Arc};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
@@ -112,7 +112,7 @@ fn main() {
         })
         .detach_and_log_err(cx);
 
-        let (settings_file, bindings_file) = cx.background().block(config_files).unwrap();
+        let (settings_file, keymap_file) = cx.background().block(config_files).unwrap();
         let mut settings_rx = settings_from_files(
             default_settings,
             vec![settings_file],
@@ -120,7 +120,7 @@ fn main() {
             cx.font_cache().clone(),
         );
 
-        cx.spawn(|cx| watch_keymap_file(bindings_file, cx)).detach();
+        cx.spawn(|cx| watch_keymap_file(keymap_file, cx)).detach();
 
         let settings = cx.background().block(settings_rx.next()).unwrap();
         cx.spawn(|mut cx| async move {
@@ -262,7 +262,7 @@ fn load_config_files(
     fs: Arc<dyn Fs>,
 ) -> oneshot::Receiver<(
     WatchedJsonFile<SettingsFileContent>,
-    WatchedJsonFile<KeyMapFile>,
+    WatchedJsonFile<KeymapFile>,
 )> {
     let executor = app.background();
     let (tx, rx) = oneshot::channel();
@@ -271,9 +271,8 @@ fn load_config_files(
         .spawn(async move {
             let settings_file =
                 WatchedJsonFile::new(fs.clone(), &executor, zed::SETTINGS_PATH.clone()).await;
-            let bindings_file =
-                WatchedJsonFile::new(fs, &executor, zed::BINDINGS_PATH.clone()).await;
-            tx.send((settings_file, bindings_file)).ok()
+            let keymap_file = WatchedJsonFile::new(fs, &executor, zed::KEYMAP_PATH.clone()).await;
+            tx.send((settings_file, keymap_file)).ok()
         })
         .detach();
     rx

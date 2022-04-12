@@ -7,14 +7,14 @@ use serde_json::value::RawValue;
 
 #[derive(Deserialize, Default, Clone)]
 #[serde(transparent)]
-pub struct KeyMapFile(BTreeMap<String, ActionsByKeystroke>);
+pub struct KeymapFile(BTreeMap<String, ActionsByKeystroke>);
 
 type ActionsByKeystroke = BTreeMap<String, Box<RawValue>>;
 
 #[derive(Deserialize)]
 struct ActionWithData<'a>(#[serde(borrow)] &'a str, #[serde(borrow)] &'a RawValue);
 
-impl KeyMapFile {
+impl KeymapFile {
     pub fn load_defaults(cx: &mut MutableAppContext) {
         for path in ["keymaps/default.json", "keymaps/vim.json"] {
             Self::load(path, cx).unwrap();
