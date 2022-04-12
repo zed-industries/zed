@@ -11,7 +11,7 @@ metadata:
   name: collab
   annotations:
     service.beta.kubernetes.io/do-loadbalancer-tls-ports: "443"
-    service.beta.kubernetes.io/do-loadbalancer-certificate-id: "2634d353-1ab4-437f-add2-4ffd8f315233"
+    service.beta.kubernetes.io/do-loadbalancer-certificate-id: "40879815-9a6b-4bbb-8207-8f2c7c0218f9"
 spec:
   type: LoadBalancer
   selector:
