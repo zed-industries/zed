@@ -170,11 +170,7 @@ impl View for ProjectSearchView {
                 .insert(self.model.read(cx).project.downgrade(), handle)
         });
 
-        if self.model.read(cx).match_ranges.is_empty() {
-            cx.focus(&self.query_editor);
-        } else {
-            self.focus_results_editor(cx);
-        }
+        self.focus_query_editor(cx);
     }
 }
 
@@ -398,6 +394,7 @@ impl ProjectSearchView {
 
         if let Some(existing) = existing {
             workspace.activate_item(&existing, cx);
+            existing.update(cx, |existing, cx| existing.focus_query_editor(cx));
         } else {
             let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
             workspace.add_item(
