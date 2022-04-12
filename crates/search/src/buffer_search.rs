@@ -41,6 +41,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(BufferSearchBar::select_prev_match);
     cx.add_action(BufferSearchBar::select_next_match_on_pane);
     cx.add_action(BufferSearchBar::select_prev_match_on_pane);
+    cx.add_action(BufferSearchBar::handle_editor_cancel);
 }
 
 pub struct BufferSearchBar {
@@ -327,6 +328,16 @@ impl BufferSearchBar {
     fn deploy(pane: &mut Pane, action: &Deploy, cx: &mut ViewContext<Pane>) {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
             if search_bar.update(cx, |search_bar, cx| search_bar.show(action.focus, cx)) {
+                return;
+            }
+        }
+        cx.propagate_action();
+    }
+
+    fn handle_editor_cancel(pane: &mut Pane, _: &editor::Cancel, cx: &mut ViewContext<Pane>) {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+            if !search_bar.read(cx).dismissed {
+                search_bar.update(cx, |search_bar, cx| search_bar.dismiss(&Dismiss, cx));
                 return;
             }
         }
