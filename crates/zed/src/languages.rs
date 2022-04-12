@@ -43,7 +43,17 @@ pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegi
             Some(Arc::new(typescript::TypeScriptLspAdapter)),
         ),
         (
+            "jsx",
+            tree_sitter_typescript::language_tsx(),
+            Some(Arc::new(typescript::TypeScriptLspAdapter)),
+        ),
+        (
             "typescript",
+            tree_sitter_typescript::language_typescript(),
+            Some(Arc::new(typescript::TypeScriptLspAdapter)),
+        ),
+        (
+            "javascript",
             tree_sitter_typescript::language_typescript(),
             Some(Arc::new(typescript::TypeScriptLspAdapter)),
         ),

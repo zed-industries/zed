@@ -56,6 +56,20 @@ fn main() {
             },
         )
         .with_overrides(
+            "JavaScript",
+            settings::LanguageOverride {
+                tab_size: Some(2),
+                ..Default::default()
+            },
+        )
+        .with_overrides(
+            "JSX",
+            settings::LanguageOverride {
+                tab_size: Some(2),
+                ..Default::default()
+            },
+        )
+        .with_overrides(
             "TypeScript",
             settings::LanguageOverride {
                 tab_size: Some(2),

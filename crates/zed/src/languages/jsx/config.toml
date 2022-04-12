@@ -1,5 +1,5 @@
-name = "TSX"
-path_suffixes = ["tsx"]
+name = "JSX"
+path_suffixes = ["jsx"]
 line_comment = "// "
 autoclose_before = ";:.,=}])>"
 brackets = [
