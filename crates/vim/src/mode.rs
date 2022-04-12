@@ -1,7 +1,8 @@
 use editor::CursorShape;
 use gpui::keymap::Context;
+use serde::Deserialize;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 pub enum Mode {
     Normal(NormalState),
     Insert,
@@ -44,7 +45,7 @@ impl Default for Mode {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 pub enum NormalState {
     None,
     GPrefix,

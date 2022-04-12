@@ -1,18 +1,19 @@
 mod g_prefix;
 
-use crate::{mode::NormalState, Mode, SwitchMode, VimState};
+use crate::VimState;
 use editor::{char_kind, movement, Bias};
-use gpui::{actions, impl_actions, keymap::Binding, MutableAppContext, ViewContext};
+use gpui::{actions, impl_actions, MutableAppContext, ViewContext};
 use language::SelectionGoal;
+use serde::Deserialize;
 use workspace::Workspace;
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 struct MoveToNextWordStart(pub bool);
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 struct MoveToNextWordEnd(pub bool);
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 struct MoveToPreviousWordStart(pub bool);
 
 impl_actions!(
@@ -39,26 +40,7 @@ actions!(
 );
 
 pub fn init(cx: &mut MutableAppContext) {
-    let context = Some("Editor && vim_mode == normal");
-    cx.add_bindings(vec![
-        Binding::new("i", SwitchMode(Mode::Insert), context),
-        Binding::new("g", SwitchMode(Mode::Normal(NormalState::GPrefix)), context),
-        Binding::new("h", MoveLeft, context),
-        Binding::new("j", MoveDown, context),
-        Binding::new("k", MoveUp, context),
-        Binding::new("l", MoveRight, context),
-        Binding::new("0", MoveToStartOfLine, context),
-        Binding::new("shift-$", MoveToEndOfLine, context),
-        Binding::new("shift-G", MoveToEnd, context),
-        Binding::new("w", MoveToNextWordStart(false), context),
-        Binding::new("shift-W", MoveToNextWordStart(true), context),
-        Binding::new("e", MoveToNextWordEnd(false), context),
-        Binding::new("shift-E", MoveToNextWordEnd(true), context),
-        Binding::new("b", MoveToPreviousWordStart(false), context),
-        Binding::new("shift-B", MoveToPreviousWordStart(true), context),
-    ]);
     g_prefix::init(cx);
-
     cx.add_action(move_left);
     cx.add_action(move_down);
     cx.add_action(move_up);

@@ -1,13 +1,13 @@
 use crate::{
-    active_match_index, match_index_for_direction, Direction, SearchOption, SelectMatch,
-    ToggleSearchOption,
+    active_match_index, match_index_for_direction, Direction, SearchOption, SelectNextMatch,
+    SelectPrevMatch, ToggleSearchOption,
 };
 use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll};
 use gpui::{
-    actions, elements::*, keymap::Binding, platform::CursorStyle, AppContext, ElementBox, Entity,
-    ModelContext, ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View,
-    ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    actions, elements::*, platform::CursorStyle, AppContext, ElementBox, Entity, ModelContext,
+    ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
+    ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use project::{search::SearchQuery, Project};
 use settings::Settings;
@@ -28,20 +28,12 @@ struct ActiveSearches(HashMap<WeakModelHandle<Project>, WeakViewHandle<ProjectSe
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.set_global(ActiveSearches::default());
-    cx.add_bindings([
-        Binding::new("cmd-shift-F", ToggleFocus, Some("Pane")),
-        Binding::new("cmd-f", ToggleFocus, Some("Pane")),
-        Binding::new("cmd-shift-F", Deploy, Some("Workspace")),
-        Binding::new("enter", Search, Some("ProjectSearchBar")),
-        Binding::new("cmd-enter", SearchInNew, Some("ProjectSearchBar")),
-        Binding::new("cmd-g", SelectMatch(Direction::Next), Some("Pane")),
-        Binding::new("cmd-shift-G", SelectMatch(Direction::Prev), Some("Pane")),
-    ]);
     cx.add_action(ProjectSearchView::deploy);
     cx.add_action(ProjectSearchBar::search);
     cx.add_action(ProjectSearchBar::search_in_new);
     cx.add_action(ProjectSearchBar::toggle_search_option);
-    cx.add_action(ProjectSearchBar::select_match);
+    cx.add_action(ProjectSearchBar::select_next_match);
+    cx.add_action(ProjectSearchBar::select_prev_match);
     cx.add_action(ProjectSearchBar::toggle_focus);
     cx.capture_action(ProjectSearchBar::tab);
 }
@@ -136,6 +128,7 @@ impl ProjectSearch {
 
 pub enum ViewEvent {
     UpdateTab,
+    EditorEvent(editor::Event),
 }
 
 impl Entity for ProjectSearchView {
@@ -177,11 +170,7 @@ impl View for ProjectSearchView {
                 .insert(self.model.read(cx).project.downgrade(), handle)
         });
 
-        if self.model.read(cx).match_ranges.is_empty() {
-            cx.focus(&self.query_editor);
-        } else {
-            self.focus_results_editor(cx);
-        }
+        self.focus_query_editor(cx);
     }
 }
 
@@ -304,6 +293,14 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.navigate(data, cx))
     }
 
+    fn should_activate_item_on_event(event: &Self::Event) -> bool {
+        if let ViewEvent::EditorEvent(editor_event) = event {
+            Editor::should_activate_item_on_event(editor_event)
+        } else {
+            false
+        }
+    }
+
     fn should_update_tab_on_event(event: &ViewEvent) -> bool {
         matches!(event, ViewEvent::UpdateTab)
     }
@@ -338,6 +335,11 @@ impl ProjectSearchView {
             editor.set_text(query_text, cx);
             editor
         });
+        // Subcribe to query_editor in order to reraise editor events for workspace item activation purposes
+        cx.subscribe(&query_editor, |_, _, event, cx| {
+            cx.emit(ViewEvent::EditorEvent(event.clone()))
+        })
+        .detach();
 
         let results_editor = cx.add_view(|cx| {
             let mut editor = Editor::for_multibuffer(excerpts, Some(project), cx);
@@ -350,6 +352,8 @@ impl ProjectSearchView {
             if matches!(event, editor::Event::SelectionsChanged { .. }) {
                 this.update_match_index(cx);
             }
+            // Reraise editor events for workspace item activation purposes
+            cx.emit(ViewEvent::EditorEvent(event.clone()));
         })
         .detach();
 
@@ -390,6 +394,7 @@ impl ProjectSearchView {
 
         if let Some(existing) = existing {
             workspace.activate_item(&existing, cx);
+            existing.update(cx, |existing, cx| existing.focus_query_editor(cx));
         } else {
             let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
             workspace.add_item(
@@ -545,18 +550,23 @@ impl ProjectSearchBar {
         }
     }
 
-    fn select_match(
-        pane: &mut Pane,
-        &SelectMatch(direction): &SelectMatch,
-        cx: &mut ViewContext<Pane>,
-    ) {
+    fn select_next_match(pane: &mut Pane, _: &SelectNextMatch, cx: &mut ViewContext<Pane>) {
         if let Some(search_view) = pane
             .active_item()
             .and_then(|item| item.downcast::<ProjectSearchView>())
         {
-            search_view.update(cx, |search_view, cx| {
-                search_view.select_match(direction, cx);
-            });
+            search_view.update(cx, |view, cx| view.select_match(Direction::Next, cx));
+        } else {
+            cx.propagate_action();
+        }
+    }
+
+    fn select_prev_match(pane: &mut Pane, _: &SelectPrevMatch, cx: &mut ViewContext<Pane>) {
+        if let Some(search_view) = pane
+            .active_item()
+            .and_then(|item| item.downcast::<ProjectSearchView>())
+        {
+            search_view.update(cx, |view, cx| view.select_match(Direction::Prev, cx));
         } else {
             cx.propagate_action();
         }
@@ -635,7 +645,10 @@ impl ProjectSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |cx| cx.dispatch_action(SelectMatch(direction)))
+        .on_click(move |cx| match direction {
+            Direction::Prev => cx.dispatch_action(SelectPrevMatch),
+            Direction::Next => cx.dispatch_action(SelectNextMatch),
+        })
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
     }

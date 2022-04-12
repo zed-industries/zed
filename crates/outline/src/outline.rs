@@ -4,12 +4,8 @@ use editor::{
 };
 use fuzzy::StringMatch;
 use gpui::{
-    actions,
-    elements::*,
-    geometry::vector::Vector2F,
-    keymap::{self, Binding},
-    AppContext, Axis, Entity, MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    actions, elements::*, geometry::vector::Vector2F, keymap, AppContext, Axis, Entity,
+    MutableAppContext, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::Outline;
 use ordered_float::OrderedFloat;
@@ -23,10 +19,6 @@ use workspace::{
 actions!(outline, [Toggle]);
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_bindings([
-        Binding::new("cmd-shift-O", Toggle, Some("Editor")),
-        Binding::new("escape", Toggle, Some("OutlineView")),
-    ]);
     cx.add_action(OutlineView::toggle);
     cx.add_action(OutlineView::confirm);
     cx.add_action(OutlineView::select_prev);
