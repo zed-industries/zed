@@ -4,6 +4,7 @@ use crate::{
     geometry::vector::{vec2f, Vector2F, Vector2I},
     platform,
 };
+use collections::hash_map::Entry;
 use metal::{MTLPixelFormat, TextureDescriptor};
 use ordered_float::OrderedFloat;
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
@@ -114,7 +115,9 @@ impl SpriteCache {
                     scale_factor,
                 )?;
 
-                let (alloc_id, atlas_bounds) = atlases.upload(glyph_bounds.size(), &mask);
+                let (alloc_id, atlas_bounds) = atlases
+                    .upload(glyph_bounds.size(), &mask)
+                    .expect("could not upload glyph");
                 Some(GlyphSprite {
                     atlas_id: alloc_id.atlas_id,
                     atlas_origin: atlas_bounds.origin(),
@@ -130,15 +133,15 @@ impl SpriteCache {
         size: Vector2I,
         path: Cow<'static, str>,
         svg: usvg::Tree,
-    ) -> IconSprite {
+    ) -> Option<IconSprite> {
         let atlases = &mut self.atlases;
-        self.icons
-            .entry(IconDescriptor {
-                path,
-                width: size.x(),
-                height: size.y(),
-            })
-            .or_insert_with(|| {
+        match self.icons.entry(IconDescriptor {
+            path,
+            width: size.x(),
+            height: size.y(),
+        }) {
+            Entry::Occupied(entry) => Some(entry.get().clone()),
+            Entry::Vacant(entry) => {
                 let mut pixmap = tiny_skia::Pixmap::new(size.x() as u32, size.y() as u32).unwrap();
                 resvg::render(&svg, usvg::FitTo::Width(size.x() as u32), pixmap.as_mut());
                 let mask = pixmap
@@ -146,15 +149,15 @@ impl SpriteCache {
                     .iter()
                     .map(|a| a.alpha())
                     .collect::<Vec<_>>();
-
-                let (alloc_id, atlas_bounds) = atlases.upload(size, &mask);
-                IconSprite {
+                let (alloc_id, atlas_bounds) = atlases.upload(size, &mask)?;
+                let icon_sprite = IconSprite {
                     atlas_id: alloc_id.atlas_id,
                     atlas_origin: atlas_bounds.origin(),
                     size,
-                }
-            })
-            .clone()
+                };
+                Some(entry.insert(icon_sprite).clone())
+            }
+        }
     }
 
     pub fn atlas_texture(&self, atlas_id: usize) -> Option<&metal::TextureRef> {
