@@ -6,7 +6,7 @@ use crate::{
         vector::{vec2f, vec2i, Vector2F},
     },
     platform,
-    scene::{Glyph, Icon, Image, Layer, Quad, Scene, Shadow, Underline},
+    scene::{Glyph, Icon, Image, ImageGlyph, Layer, Quad, Scene, Shadow, Underline},
 };
 use cocoa::foundation::NSUInteger;
 use log::warn;
@@ -67,8 +67,13 @@ impl Renderer {
             MTLResourceOptions::StorageModeManaged,
         );
 
-        let sprite_cache = SpriteCache::new(device.clone(), vec2i(1024, 768), scale_factor, fonts);
-        let image_cache = ImageCache::new(device.clone(), vec2i(1024, 768));
+        let sprite_cache = SpriteCache::new(
+            device.clone(),
+            vec2i(1024, 768),
+            scale_factor,
+            fonts.clone(),
+        );
+        let image_cache = ImageCache::new(device.clone(), vec2i(1024, 768), scale_factor, fonts);
         let path_atlases =
             AtlasAllocator::new(device.clone(), build_path_atlas_texture_descriptor());
         let quad_pipeline_state = build_pipeline_state(
@@ -141,6 +146,9 @@ impl Renderer {
         command_buffer: &metal::CommandBufferRef,
         output: &metal::TextureRef,
     ) {
+        self.sprite_cache.set_scale_factor(scene.scale_factor());
+        self.image_cache.set_scale_factor(scene.scale_factor());
+
         let mut offset = 0;
 
         let path_sprites = self.render_path_atlases(scene, &mut offset, command_buffer);
@@ -359,6 +367,7 @@ impl Renderer {
             );
             self.render_images(
                 layer.images(),
+                layer.image_glyphs(),
                 scale_factor,
                 offset,
                 drawable_size,
@@ -541,8 +550,6 @@ impl Renderer {
             return;
         }
 
-        self.sprite_cache.set_scale_factor(scale_factor);
-
         let mut sprites_by_atlas = HashMap::new();
 
         for glyph in glyphs {
@@ -653,12 +660,13 @@ impl Renderer {
     fn render_images(
         &mut self,
         images: &[Image],
+        image_glyphs: &[ImageGlyph],
         scale_factor: f32,
         offset: &mut usize,
         drawable_size: Vector2F,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) {
-        if images.is_empty() {
+        if images.is_empty() && image_glyphs.is_empty() {
             return;
         }
 
@@ -684,6 +692,31 @@ impl Renderer {
                     border_color: image.border.color.to_uchar4(),
                     corner_radius,
                 });
+        }
+
+        for image_glyph in image_glyphs {
+            let origin = (image_glyph.origin * scale_factor).floor();
+            if let Some((alloc_id, atlas_bounds, glyph_origin)) =
+                self.image_cache.render_glyph(image_glyph)
+            {
+                images_by_atlas
+                    .entry(alloc_id.atlas_id)
+                    .or_insert_with(Vec::new)
+                    .push(shaders::GPUIImage {
+                        origin: (origin + glyph_origin.to_f32()).to_float2(),
+                        target_size: atlas_bounds.size().to_float2(),
+                        source_size: atlas_bounds.size().to_float2(),
+                        atlas_origin: atlas_bounds.origin().to_float2(),
+                        border_top: 0.,
+                        border_right: 0.,
+                        border_bottom: 0.,
+                        border_left: 0.,
+                        border_color: Default::default(),
+                        corner_radius: 0.,
+                    });
+            } else {
+                log::warn!("could not render glyph with id {}", image_glyph.id);
+            }
         }
 
         command_encoder.set_render_pipeline_state(&self.image_pipeline_state);

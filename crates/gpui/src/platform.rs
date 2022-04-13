@@ -129,6 +129,12 @@ pub enum CursorStyle {
     PointingHand,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum RasterizationOptions {
+    Alpha,
+    Bgra,
+}
+
 pub trait FontSystem: Send + Sync {
     fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> anyhow::Result<()>;
     fn load_family(&self, name: &str) -> anyhow::Result<Vec<FontId>>;
@@ -148,6 +154,7 @@ pub trait FontSystem: Send + Sync {
         glyph_id: GlyphId,
         subpixel_shift: Vector2F,
         scale_factor: f32,
+        options: RasterizationOptions,
     ) -> Option<(RectI, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: f32, runs: &[(usize, RunStyle)]) -> LineLayout;
     fn wrap_line(&self, text: &str, font_id: FontId, font_size: f32, width: f32) -> Vec<usize>;
