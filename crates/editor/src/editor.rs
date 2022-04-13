@@ -848,6 +848,8 @@ struct ClipboardSelection {
 }
 
 pub struct NavigationData {
+    // Matching offsets for anchor and scroll_top_anchor allows us to recreate the anchor if the buffer
+    // has since been closed
     anchor: Anchor,
     offset: usize,
     scroll_position: Vector2F,
