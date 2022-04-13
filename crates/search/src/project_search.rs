@@ -473,8 +473,11 @@ impl ProjectSearchView {
                 if reset_selections {
                     editor.select_ranges(match_ranges.first().cloned(), Some(Autoscroll::Fit), cx);
                 }
-                let theme = &cx.global::<Settings>().theme.search;
-                editor.highlight_background::<Self>(match_ranges, theme.match_background, cx);
+                editor.highlight_background::<Self>(
+                    match_ranges,
+                    |theme| theme.search.match_background,
+                    cx,
+                );
             });
             if self.query_editor.is_focused(cx) {
                 self.focus_results_editor(cx);
