@@ -552,6 +552,7 @@ impl BufferSearchBar {
                                     );
                                 });
                             }
+                            cx.notify();
                         });
                     }
                 }));
