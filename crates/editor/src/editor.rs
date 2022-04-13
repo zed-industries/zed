@@ -850,8 +850,8 @@ struct ClipboardSelection {
 pub struct NavigationData {
     // Matching offsets for anchor and scroll_top_anchor allows us to recreate the anchor if the buffer
     // has since been closed
-    anchor: Anchor,
-    offset: usize,
+    cursor_anchor: Anchor,
+    cursor_offset: usize,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
     scroll_top_offset: usize,
@@ -3912,8 +3912,8 @@ impl Editor {
             }
 
             nav_history.push(Some(NavigationData {
-                anchor: position,
-                offset,
+                cursor_anchor: position,
+                cursor_offset: offset,
                 scroll_position: self.scroll_position,
                 scroll_top_anchor: self.scroll_top_anchor.clone(),
                 scroll_top_offset,

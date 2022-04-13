@@ -247,10 +247,10 @@ impl Item for Editor {
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
         if let Some(data) = data.downcast_ref::<NavigationData>() {
             let buffer = self.buffer.read(cx).read(cx);
-            let offset = if buffer.can_resolve(&data.anchor) {
-                data.anchor.to_offset(&buffer)
+            let offset = if buffer.can_resolve(&data.cursor_anchor) {
+                data.cursor_anchor.to_offset(&buffer)
             } else {
-                buffer.clip_offset(data.offset, Bias::Left)
+                buffer.clip_offset(data.cursor_offset, Bias::Left)
             };
             let newest_selection = self.newest_selection_with_snapshot::<usize>(&buffer);
 
