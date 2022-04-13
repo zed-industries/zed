@@ -850,6 +850,9 @@ struct ClipboardSelection {
 pub struct NavigationData {
     anchor: Anchor,
     offset: usize,
+    scroll_position: Vector2F,
+    scroll_top_anchor: Anchor,
+    scroll_top_offset: usize,
 }
 
 pub struct EditorCreated(pub ViewHandle<Editor>);
@@ -3896,6 +3899,7 @@ impl Editor {
             let buffer = self.buffer.read(cx).read(cx);
             let offset = position.to_offset(&buffer);
             let point = position.to_point(&buffer);
+            let scroll_top_offset = self.scroll_top_anchor.to_offset(&buffer);
             drop(buffer);
 
             if let Some(new_position) = new_position {
@@ -3908,6 +3912,9 @@ impl Editor {
             nav_history.push(Some(NavigationData {
                 anchor: position,
                 offset,
+                scroll_position: self.scroll_position,
+                scroll_top_anchor: self.scroll_top_anchor.clone(),
+                scroll_top_offset,
             }));
         }
     }
@@ -6705,7 +6712,7 @@ mod tests {
         cx.set_global(Settings::test(cx));
         use workspace::Item;
         let nav_history = Rc::new(RefCell::new(workspace::NavHistory::default()));
-        let buffer = MultiBuffer::build_simple(&sample_text(30, 5, 'a'), cx);
+        let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
 
         cx.add_window(Default::default(), |cx| {
             let mut editor = build_editor(buffer.clone(), cx);
@@ -6755,6 +6762,22 @@ mod tests {
                 &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
             );
             assert!(nav_history.borrow_mut().pop_backward().is_none());
+
+            // Set scroll position to check later
+            editor.set_scroll_position(Vector2F::new(5.5, 5.5), cx);
+            let original_scroll_position = editor.scroll_position;
+            let original_scroll_top_anchor = editor.scroll_top_anchor.clone();
+
+            // Jump to the end of the document and adjust scroll
+            editor.move_to_end(&MoveToEnd, cx);
+            editor.set_scroll_position(Vector2F::new(-2.5, -0.5), cx);
+            assert_ne!(editor.scroll_position, original_scroll_position);
+            assert_ne!(editor.scroll_top_anchor, original_scroll_top_anchor);
+
+            let nav_entry = nav_history.borrow_mut().pop_backward().unwrap();
+            editor.navigate(nav_entry.data.unwrap(), cx);
+            assert_eq!(editor.scroll_position, original_scroll_position);
+            assert_eq!(editor.scroll_top_anchor, original_scroll_top_anchor);
 
             editor
         });
