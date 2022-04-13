@@ -143,7 +143,7 @@ impl SpriteCache {
         }) {
             Entry::Occupied(entry) => Some(entry.get().clone()),
             Entry::Vacant(entry) => {
-                let mut pixmap = tiny_skia::Pixmap::new(size.x() as u32, size.y() as u32).unwrap();
+                let mut pixmap = tiny_skia::Pixmap::new(size.x() as u32, size.y() as u32)?;
                 resvg::render(&svg, usvg::FitTo::Width(size.x() as u32), pixmap.as_mut());
                 let mask = pixmap
                     .pixels()
