@@ -1,4 +1,11 @@
 gpui::actions!(
     menu,
-    [Confirm, SelectPrev, SelectNext, SelectFirst, SelectLast]
+    [
+        Cancel,
+        Confirm,
+        SelectPrev,
+        SelectNext,
+        SelectFirst,
+        SelectLast
+    ]
 );

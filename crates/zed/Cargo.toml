@@ -33,6 +33,7 @@ assets = { path = "../assets" }
 breadcrumbs = { path = "../breadcrumbs" }
 chat_panel = { path = "../chat_panel" }
 collections = { path = "../collections" }
+command_palette = { path = "../command_palette" }
 client = { path = "../client" }
 clock = { path = "../clock" }
 contacts_panel = { path = "../contacts_panel" }

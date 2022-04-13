@@ -1144,6 +1144,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 
 [[package]]
+name = "command_palette"
+version = "0.1.0"
+dependencies = [
+ "ctor",
+ "editor",
+ "env_logger 0.8.3",
+ "fuzzy",
+ "gpui",
+ "serde_json",
+ "settings",
+ "theme",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "comrak"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6138,6 +6154,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "command_palette",
  "contacts_panel",
  "crossbeam-channel",
  "ctor",

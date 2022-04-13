@@ -1340,6 +1340,17 @@ impl MutableAppContext {
             .collect()
     }
 
+    pub fn dispatch_action_at(&mut self, window_id: usize, view_id: usize, action: &dyn Action) {
+        let presenter = self
+            .presenters_and_platform_windows
+            .get(&window_id)
+            .unwrap()
+            .0
+            .clone();
+        let dispatch_path = presenter.borrow().dispatch_path_from(view_id);
+        self.dispatch_action_any(window_id, &dispatch_path, action);
+    }
+
     pub fn dispatch_action<A: Action>(
         &mut self,
         window_id: usize,

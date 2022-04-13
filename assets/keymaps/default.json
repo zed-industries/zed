@@ -16,7 +16,8 @@
         "ctrl-n": "menu::SelectNext",
         "cmd-up": "menu::SelectFirst",
         "cmd-down": "menu::SelectLast",
-        "enter": "menu::Confirm"
+        "enter": "menu::Confirm",
+        "escape": "menu::Cancel"
     },
     "Pane": {
         "shift-cmd-{": "pane::ActivatePrevItem",
@@ -52,6 +53,7 @@
         "cmd-k t": "theme_selector::Reload",
         "cmd-t": "project_symbols::Toggle",
         "cmd-p": "file_finder::Toggle",
+        "cmd-shift-P": "command_palette::Toggle",
         "alt-shift-D": "diagnostics::Deploy",
         "ctrl-alt-cmd-j": "journal::NewJournalEntry",
         "cmd-1": [

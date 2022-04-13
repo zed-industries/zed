@@ -98,6 +98,7 @@ fn main() {
         project::Project::init(&client);
         client::Channel::init(&client);
         client::init(client.clone(), cx);
+        command_palette::init(cx);
         workspace::init(&client, cx);
         editor::init(cx);
         go_to_line::init(cx);

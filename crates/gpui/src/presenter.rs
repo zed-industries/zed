@@ -51,15 +51,21 @@ impl Presenter {
     }
 
     pub fn dispatch_path(&self, app: &AppContext) -> Vec<usize> {
-        let mut path = Vec::new();
-        if let Some(mut view_id) = app.focused_view_id(self.window_id) {
-            path.push(view_id);
-            while let Some(parent_id) = self.parents.get(&view_id).copied() {
-                path.push(parent_id);
-                view_id = parent_id;
-            }
-            path.reverse();
+        if let Some(view_id) = app.focused_view_id(self.window_id) {
+            self.dispatch_path_from(view_id)
+        } else {
+            Vec::new()
         }
+    }
+
+    pub(crate) fn dispatch_path_from(&self, mut view_id: usize) -> Vec<usize> {
+        let mut path = Vec::new();
+        path.push(view_id);
+        while let Some(parent_id) = self.parents.get(&view_id).copied() {
+            path.push(parent_id);
+            view_id = parent_id;
+        }
+        path.reverse();
         path
     }
 

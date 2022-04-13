@@ -275,9 +275,7 @@ impl FileFinder {
 
     fn project_updated(&mut self, _: ModelHandle<Project>, cx: &mut ViewContext<Self>) {
         let query = self.query_editor.update(cx, |buffer, cx| buffer.text(cx));
-        if let Some(task) = self.spawn_search(query, cx) {
-            task.detach();
-        }
+        self.spawn_search(query, cx).detach();
     }
 
     fn on_query_editor_event(
@@ -294,9 +292,7 @@ impl FileFinder {
                     self.matches.clear();
                     cx.notify();
                 } else {
-                    if let Some(task) = self.spawn_search(query, cx) {
-                        task.detach();
-                    }
+                    self.spawn_search(query, cx).detach();
                 }
             }
             editor::Event::Blurred => cx.emit(Event::Dismissed),
@@ -354,14 +350,13 @@ impl FileFinder {
         cx.emit(Event::Selected(project_path.clone()));
     }
 
-    #[must_use]
-    fn spawn_search(&mut self, query: String, cx: &mut ViewContext<Self>) -> Option<Task<()>> {
+    fn spawn_search(&mut self, query: String, cx: &mut ViewContext<Self>) -> Task<()> {
         let search_id = util::post_inc(&mut self.search_count);
         self.cancel_flag.store(true, atomic::Ordering::Relaxed);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
         let project = self.project.clone();
-        Some(cx.spawn(|this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let matches = project
                 .read_with(&cx, |project, cx| {
                     project.match_paths(&query, false, false, 100, cancel_flag.as_ref(), cx)
@@ -371,7 +366,7 @@ impl FileFinder {
             this.update(&mut cx, |this, cx| {
                 this.update_matches((search_id, did_cancel, query, matches), cx)
             });
-        }))
+        })
     }
 
     fn update_matches(
@@ -514,7 +509,6 @@ mod tests {
         let query = "hi".to_string();
         finder
             .update(cx, |f, cx| f.spawn_search(query.clone(), cx))
-            .unwrap()
             .await;
         finder.read_with(cx, |f, _| assert_eq!(f.matches.len(), 5));
 
@@ -523,7 +517,7 @@ mod tests {
 
             // Simulate a search being cancelled after the time limit,
             // returning only a subset of the matches that would have been found.
-            finder.spawn_search(query.clone(), cx).unwrap().detach();
+            finder.spawn_search(query.clone(), cx).detach();
             finder.update_matches(
                 (
                     finder.latest_search_id,
@@ -535,7 +529,7 @@ mod tests {
             );
 
             // Simulate another cancellation.
-            finder.spawn_search(query.clone(), cx).unwrap().detach();
+            finder.spawn_search(query.clone(), cx).detach();
             finder.update_matches(
                 (
                     finder.latest_search_id,
@@ -576,7 +570,6 @@ mod tests {
         // is included in the matching, because the worktree is a single file.
         finder
             .update(cx, |f, cx| f.spawn_search("thf".into(), cx))
-            .unwrap()
             .await;
         cx.read(|cx| {
             let finder = finder.read(cx);
@@ -594,7 +587,6 @@ mod tests {
         // not match anything.
         finder
             .update(cx, |f, cx| f.spawn_search("thf/".into(), cx))
-            .unwrap()
             .await;
         finder.read_with(cx, |f, _| assert_eq!(f.matches.len(), 0));
     }
@@ -633,7 +625,6 @@ mod tests {
         // Run a search that matches two files with the same relative path.
         finder
             .update(cx, |f, cx| f.spawn_search("a.t".into(), cx))
-            .unwrap()
             .await;
 
         // Can switch between different matches with the same relative path.
