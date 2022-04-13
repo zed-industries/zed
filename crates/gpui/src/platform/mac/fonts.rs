@@ -199,28 +199,23 @@ impl FontSystemState {
 
             // Move the origin to bottom left and account for scaling, this
             // makes drawing text consistent with the font-kit's raster_bounds.
-            cx.translate(0.0, glyph_bounds.height() as CGFloat);
-            let transform = Transform2F::from_translation(-glyph_bounds.origin().to_f32());
-            cx.set_text_matrix(&CGAffineTransform {
-                a: transform.matrix.m11() as CGFloat,
-                b: -transform.matrix.m21() as CGFloat,
-                c: -transform.matrix.m12() as CGFloat,
-                d: transform.matrix.m22() as CGFloat,
-                tx: transform.vector.x() as CGFloat,
-                ty: -transform.vector.y() as CGFloat,
-            });
+            cx.translate(
+                -glyph_bounds.origin_x() as CGFloat,
+                (glyph_bounds.origin_y() + glyph_bounds.height()) as CGFloat,
+            );
+            cx.scale(scale_factor as CGFloat, scale_factor as CGFloat);
 
             cx.set_allows_font_subpixel_positioning(true);
             cx.set_should_subpixel_position_fonts(true);
             cx.set_allows_font_subpixel_quantization(false);
             cx.set_should_subpixel_quantize_fonts(false);
             font.native_font()
-                .clone_with_font_size((font_size * scale_factor) as CGFloat)
+                .clone_with_font_size(font_size as CGFloat)
                 .draw_glyphs(
                     &[glyph_id as CGGlyph],
                     &[CGPoint::new(
-                        subpixel_shift.x() as CGFloat,
-                        subpixel_shift.y() as CGFloat,
+                        (subpixel_shift.x() / scale_factor) as CGFloat,
+                        (subpixel_shift.y() / scale_factor) as CGFloat,
                     )],
                     cx,
                 );
