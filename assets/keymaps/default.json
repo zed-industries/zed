@@ -205,7 +205,8 @@
         "enter": "editor::ConfirmRename"
     },
     "Editor && showing_completions": {
-        "enter": "editor::ConfirmCompletion"
+        "enter": "editor::ConfirmCompletion",
+        "tab": "editor::ConfirmCompletion"
     },
     "Editor && showing_code_actions": {
         "enter": "editor::ConfirmCodeAction"
