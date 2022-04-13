@@ -9,6 +9,7 @@ use crate::{
     text_layout::{Glyph, LineLayout, Run, RunStyle},
 };
 use cocoa::appkit::{CGFloat, CGPoint};
+use collections::HashMap;
 use core_foundation::{
     array::CFIndex,
     attributed_string::{CFAttributedStringRef, CFMutableAttributedString},
@@ -36,19 +37,19 @@ struct FontSystemState {
     memory_source: MemSource,
     system_source: SystemSource,
     fonts: Vec<font_kit::font::Font>,
-    emoji_font_id: FontId,
+    font_ids_by_postscript_name: HashMap<String, FontId>,
+    postscript_names_by_font_id: HashMap<FontId, String>,
 }
 
 impl FontSystem {
     pub fn new() -> Self {
-        let mut state = FontSystemState {
+        Self(RwLock::new(FontSystemState {
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
             fonts: Vec::new(),
-            emoji_font_id: FontId(0), // This will be the first font that we load.
-        };
-        state.load_family("Apple Color Emoji").unwrap();
-        Self(RwLock::new(state))
+            font_ids_by_postscript_name: Default::default(),
+            postscript_names_by_font_id: Default::default(),
+        }))
     }
 }
 
@@ -128,7 +129,13 @@ impl FontSystemState {
             .or_else(|_| self.system_source.select_family_by_name(name))?;
         for font in family.fonts() {
             let font = font.load()?;
-            font_ids.push(FontId(self.fonts.len()));
+            let font_id = FontId(self.fonts.len());
+            font_ids.push(font_id);
+            let postscript_name = font.postscript_name().unwrap();
+            self.font_ids_by_postscript_name
+                .insert(postscript_name.clone(), font_id);
+            self.postscript_names_by_font_id
+                .insert(font_id, postscript_name);
             self.fonts.push(font);
         }
         Ok(font_ids)
@@ -159,17 +166,30 @@ impl FontSystemState {
         self.fonts[font_id.0].glyph_for_char(ch)
     }
 
-    fn id_for_font(&mut self, requested_font: font_kit::font::Font) -> FontId {
-        // TODO: don't allocate the postscript name
-        // Note: Coretext always returns a Some option for postscript_name
-        let requested_font_name = requested_font.postscript_name();
-        for (id, font) in self.fonts.iter().enumerate() {
-            if font.postscript_name() == requested_font_name {
-                return FontId(id);
-            }
+    fn id_for_native_font(&mut self, requested_font: CTFont) -> FontId {
+        let postscript_name = requested_font.postscript_name();
+        if let Some(font_id) = self.font_ids_by_postscript_name.get(&postscript_name) {
+            *font_id
+        } else {
+            let font_id = FontId(self.fonts.len());
+            self.font_ids_by_postscript_name
+                .insert(postscript_name.clone(), font_id);
+            self.postscript_names_by_font_id
+                .insert(font_id, postscript_name);
+            self.fonts
+                .push(font_kit::font::Font::from_core_graphics_font(
+                    requested_font.copy_to_CGFont(),
+                ));
+            font_id
         }
-        self.fonts.push(requested_font);
-        FontId(self.fonts.len() - 1)
+    }
+
+    fn is_emoji(&self, font_id: FontId) -> bool {
+        self.postscript_names_by_font_id
+            .get(&font_id)
+            .map_or(false, |postscript_name| {
+                postscript_name == "AppleColorEmoji"
+            })
     }
 
     fn rasterize_glyph(
@@ -340,13 +360,12 @@ impl FontSystemState {
         for run in line.glyph_runs().into_iter() {
             let attributes = run.attributes().unwrap();
             let font = unsafe {
-                let native_font = attributes
+                attributes
                     .get(kCTFontAttributeName)
                     .downcast::<CTFont>()
-                    .unwrap();
-                font_kit::font::Font::from_native_font(native_font)
+                    .unwrap()
             };
-            let font_id = self.id_for_font(font);
+            let font_id = self.id_for_native_font(font);
 
             let mut ix_converter = StringIndexConverter::new(text);
             let mut glyphs = Vec::new();
@@ -362,7 +381,7 @@ impl FontSystemState {
                     id: *glyph_id as GlyphId,
                     position: vec2f(position.x as f32, position.y as f32),
                     index: ix_converter.utf8_ix,
-                    is_emoji: font_id == self.emoji_font_id,
+                    is_emoji: self.is_emoji(font_id),
                 });
             }
 
