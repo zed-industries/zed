@@ -159,7 +159,7 @@ impl FontSystemState {
     ) -> Option<(RectI, Vec<u8>)> {
         let font = &self.fonts[font_id.0];
         let scale = Transform2F::from_scale(scale_factor);
-        let bounds = font
+        let glyph_bounds = font
             .raster_bounds(
                 glyph_id,
                 font_size,
@@ -169,26 +169,26 @@ impl FontSystemState {
             )
             .ok()?;
 
-        if bounds.width() == 0 || bounds.height() == 0 {
+        if glyph_bounds.width() == 0 || glyph_bounds.height() == 0 {
             None
         } else {
             // Make room for subpixel variants.
-            let bounds = RectI::new(bounds.origin(), bounds.size() + vec2i(1, 1));
-            let mut pixels = vec![0; bounds.width() as usize * bounds.height() as usize];
+            let cx_bounds = RectI::new(glyph_bounds.origin(), glyph_bounds.size() + vec2i(1, 1));
+            let mut bytes = vec![0; cx_bounds.width() as usize * cx_bounds.height() as usize];
             let cx = CGContext::create_bitmap_context(
-                Some(pixels.as_mut_ptr() as *mut _),
-                bounds.width() as usize,
-                bounds.height() as usize,
+                Some(bytes.as_mut_ptr() as *mut _),
+                cx_bounds.width() as usize,
+                cx_bounds.height() as usize,
                 8,
-                bounds.width() as usize,
+                cx_bounds.width() as usize,
                 &CGColorSpace::create_device_gray(),
                 kCGImageAlphaOnly,
             );
 
             // Move the origin to bottom left and account for scaling, this
             // makes drawing text consistent with the font-kit's raster_bounds.
-            cx.translate(0.0, bounds.height() as CGFloat);
-            let transform = scale.translate(-bounds.origin().to_f32());
+            cx.translate(0.0, glyph_bounds.height() as CGFloat);
+            let transform = Transform2F::from_translation(-glyph_bounds.origin().to_f32());
             cx.set_text_matrix(&CGAffineTransform {
                 a: transform.matrix.m11() as CGFloat,
                 b: -transform.matrix.m21() as CGFloat,
@@ -198,20 +198,22 @@ impl FontSystemState {
                 ty: -transform.vector.y() as CGFloat,
             });
 
+            cx.set_allows_font_subpixel_positioning(true);
             cx.set_should_subpixel_position_fonts(true);
+            cx.set_allows_font_subpixel_quantization(false);
             cx.set_should_subpixel_quantize_fonts(false);
             font.native_font()
-                .clone_with_font_size(font_size as CGFloat)
+                .clone_with_font_size((font_size * scale_factor) as CGFloat)
                 .draw_glyphs(
                     &[glyph_id as CGGlyph],
                     &[CGPoint::new(
-                        (subpixel_shift.x() / scale_factor) as CGFloat,
-                        (subpixel_shift.y() / scale_factor) as CGFloat,
+                        subpixel_shift.x() as CGFloat,
+                        subpixel_shift.y() as CGFloat,
                     )],
                     cx,
                 );
 
-            Some((bounds, pixels))
+            Some((cx_bounds, bytes))
         }
     }
 
