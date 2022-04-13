@@ -1,7 +1,6 @@
 use super::Workspace;
-use gpui::{
-    elements::*, impl_internal_actions, platform::CursorStyle, AnyViewHandle, RenderContext,
-};
+use gpui::{elements::*, impl_actions, platform::CursorStyle, AnyViewHandle, RenderContext};
+use serde::Deserialize;
 use std::{cell::RefCell, rc::Rc};
 use theme::Theme;
 
@@ -12,7 +11,7 @@ pub struct Sidebar {
     width: Rc<RefCell<f32>>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Deserialize)]
 pub enum Side {
     Left,
     Right,
@@ -23,15 +22,15 @@ struct Item {
     view: AnyViewHandle,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 pub struct ToggleSidebarItem(pub SidebarItemId);
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 pub struct ToggleSidebarItemFocus(pub SidebarItemId);
 
-impl_internal_actions!(workspace, [ToggleSidebarItem, ToggleSidebarItemFocus]);
+impl_actions!(workspace, [ToggleSidebarItem, ToggleSidebarItemFocus]);
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 pub struct SidebarItemId {
     pub side: Side,
     pub item_index: usize,

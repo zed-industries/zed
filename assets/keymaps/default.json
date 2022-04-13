@@ -53,7 +53,21 @@
         "cmd-t": "project_symbols::Toggle",
         "cmd-p": "file_finder::Toggle",
         "alt-shift-D": "diagnostics::Deploy",
-        "ctrl-alt-cmd-j": "journal::NewJournalEntry"
+        "ctrl-alt-cmd-j": "journal::NewJournalEntry",
+        "cmd-1": [
+            "workspace::ToggleSidebarItemFocus",
+            {
+                "side": "Left",
+                "item_index": 0
+            }
+        ],
+        "cmd-shift-!": [
+            "workspace::ToggleSidebarItem",
+            {
+                "side": "Left",
+                "item_index": 0
+            }
+        ]
     },
     "ProjectSearchBar": {
         "enter": "project_search::Search",
@@ -205,7 +219,8 @@
         "enter": "editor::ConfirmRename"
     },
     "Editor && showing_completions": {
-        "enter": "editor::ConfirmCompletion"
+        "enter": "editor::ConfirmCompletion",
+        "tab": "editor::ConfirmCompletion"
     },
     "Editor && showing_code_actions": {
         "enter": "editor::ConfirmCodeAction"
