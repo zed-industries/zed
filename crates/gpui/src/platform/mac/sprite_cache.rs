@@ -2,7 +2,7 @@ use super::atlas::AtlasAllocator;
 use crate::{
     fonts::{FontId, GlyphId},
     geometry::vector::{vec2f, Vector2F, Vector2I},
-    platform,
+    platform::{self, RasterizationOptions},
 };
 use collections::hash_map::Entry;
 use metal::{MTLPixelFormat, TextureDescriptor};
@@ -113,6 +113,7 @@ impl SpriteCache {
                     glyph_id,
                     subpixel_shift,
                     scale_factor,
+                    RasterizationOptions::Alpha,
                 )?;
 
                 let (alloc_id, atlas_bounds) = atlases

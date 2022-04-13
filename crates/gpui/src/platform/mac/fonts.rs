@@ -3,26 +3,27 @@ use crate::{
     geometry::{
         rect::{RectF, RectI},
         transform2d::Transform2F,
-        vector::{vec2f, vec2i, Vector2F},
+        vector::{vec2f, Vector2F},
     },
-    platform,
+    platform::{self, RasterizationOptions},
     text_layout::{Glyph, LineLayout, Run, RunStyle},
 };
 use cocoa::appkit::{CGFloat, CGPoint};
+use collections::HashMap;
 use core_foundation::{
     array::CFIndex,
     attributed_string::{CFAttributedStringRef, CFMutableAttributedString},
     base::{CFRange, TCFType},
-    number::CFNumber,
     string::CFString,
 };
 use core_graphics::{
-    base::CGGlyph, color_space::CGColorSpace, context::CGContext, geometry::CGAffineTransform,
+    base::{kCGImageAlphaPremultipliedLast, CGGlyph},
+    color_space::CGColorSpace,
+    context::CGContext,
 };
-use core_text::{line::CTLine, string_attributes::kCTFontAttributeName};
+use core_text::{font::CTFont, line::CTLine, string_attributes::kCTFontAttributeName};
 use font_kit::{
-    canvas::RasterizationOptions, handle::Handle, hinting::HintingOptions, source::SystemSource,
-    sources::mem::MemSource,
+    handle::Handle, hinting::HintingOptions, source::SystemSource, sources::mem::MemSource,
 };
 use parking_lot::RwLock;
 use std::{cell::RefCell, char, cmp, convert::TryFrom, ffi::c_void, sync::Arc};
@@ -36,6 +37,8 @@ struct FontSystemState {
     memory_source: MemSource,
     system_source: SystemSource,
     fonts: Vec<font_kit::font::Font>,
+    font_ids_by_postscript_name: HashMap<String, FontId>,
+    postscript_names_by_font_id: HashMap<FontId, String>,
 }
 
 impl FontSystem {
@@ -44,6 +47,8 @@ impl FontSystem {
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
             fonts: Vec::new(),
+            font_ids_by_postscript_name: Default::default(),
+            postscript_names_by_font_id: Default::default(),
         }))
     }
 }
@@ -84,14 +89,20 @@ impl platform::FontSystem for FontSystem {
         glyph_id: GlyphId,
         subpixel_shift: Vector2F,
         scale_factor: f32,
+        options: RasterizationOptions,
     ) -> Option<(RectI, Vec<u8>)> {
-        self.0
-            .read()
-            .rasterize_glyph(font_id, font_size, glyph_id, subpixel_shift, scale_factor)
+        self.0.read().rasterize_glyph(
+            font_id,
+            font_size,
+            glyph_id,
+            subpixel_shift,
+            scale_factor,
+            options,
+        )
     }
 
     fn layout_line(&self, text: &str, font_size: f32, runs: &[(usize, RunStyle)]) -> LineLayout {
-        self.0.read().layout_line(text, font_size, runs)
+        self.0.write().layout_line(text, font_size, runs)
     }
 
     fn wrap_line(&self, text: &str, font_id: FontId, font_size: f32, width: f32) -> Vec<usize> {
@@ -118,7 +129,13 @@ impl FontSystemState {
             .or_else(|_| self.system_source.select_family_by_name(name))?;
         for font in family.fonts() {
             let font = font.load()?;
-            font_ids.push(FontId(self.fonts.len()));
+            let font_id = FontId(self.fonts.len());
+            font_ids.push(font_id);
+            let postscript_name = font.postscript_name().unwrap();
+            self.font_ids_by_postscript_name
+                .insert(postscript_name.clone(), font_id);
+            self.postscript_names_by_font_id
+                .insert(font_id, postscript_name);
             self.fonts.push(font);
         }
         Ok(font_ids)
@@ -149,6 +166,32 @@ impl FontSystemState {
         self.fonts[font_id.0].glyph_for_char(ch)
     }
 
+    fn id_for_native_font(&mut self, requested_font: CTFont) -> FontId {
+        let postscript_name = requested_font.postscript_name();
+        if let Some(font_id) = self.font_ids_by_postscript_name.get(&postscript_name) {
+            *font_id
+        } else {
+            let font_id = FontId(self.fonts.len());
+            self.font_ids_by_postscript_name
+                .insert(postscript_name.clone(), font_id);
+            self.postscript_names_by_font_id
+                .insert(font_id, postscript_name);
+            self.fonts
+                .push(font_kit::font::Font::from_core_graphics_font(
+                    requested_font.copy_to_CGFont(),
+                ));
+            font_id
+        }
+    }
+
+    fn is_emoji(&self, font_id: FontId) -> bool {
+        self.postscript_names_by_font_id
+            .get(&font_id)
+            .map_or(false, |postscript_name| {
+                postscript_name == "AppleColorEmoji"
+            })
+    }
+
     fn rasterize_glyph(
         &self,
         font_id: FontId,
@@ -156,65 +199,103 @@ impl FontSystemState {
         glyph_id: GlyphId,
         subpixel_shift: Vector2F,
         scale_factor: f32,
+        options: RasterizationOptions,
     ) -> Option<(RectI, Vec<u8>)> {
         let font = &self.fonts[font_id.0];
         let scale = Transform2F::from_scale(scale_factor);
-        let bounds = font
+        let glyph_bounds = font
             .raster_bounds(
                 glyph_id,
                 font_size,
                 scale,
                 HintingOptions::None,
-                RasterizationOptions::GrayscaleAa,
+                font_kit::canvas::RasterizationOptions::GrayscaleAa,
             )
             .ok()?;
 
-        if bounds.width() == 0 || bounds.height() == 0 {
+        if glyph_bounds.width() == 0 || glyph_bounds.height() == 0 {
             None
         } else {
             // Make room for subpixel variants.
-            let bounds = RectI::new(bounds.origin(), bounds.size() + vec2i(1, 1));
-            let mut pixels = vec![0; bounds.width() as usize * bounds.height() as usize];
-            let cx = CGContext::create_bitmap_context(
-                Some(pixels.as_mut_ptr() as *mut _),
-                bounds.width() as usize,
-                bounds.height() as usize,
-                8,
-                bounds.width() as usize,
-                &CGColorSpace::create_device_gray(),
-                kCGImageAlphaOnly,
+            let subpixel_padding = subpixel_shift.ceil().to_i32();
+            let cx_bounds = RectI::new(
+                glyph_bounds.origin(),
+                glyph_bounds.size() + subpixel_padding,
             );
+
+            let mut bytes;
+            let cx;
+            match options {
+                RasterizationOptions::Alpha => {
+                    bytes = vec![0; cx_bounds.width() as usize * cx_bounds.height() as usize];
+                    cx = CGContext::create_bitmap_context(
+                        Some(bytes.as_mut_ptr() as *mut _),
+                        cx_bounds.width() as usize,
+                        cx_bounds.height() as usize,
+                        8,
+                        cx_bounds.width() as usize,
+                        &CGColorSpace::create_device_gray(),
+                        kCGImageAlphaOnly,
+                    );
+                }
+                RasterizationOptions::Bgra => {
+                    bytes = vec![0; cx_bounds.width() as usize * 4 * cx_bounds.height() as usize];
+                    cx = CGContext::create_bitmap_context(
+                        Some(bytes.as_mut_ptr() as *mut _),
+                        cx_bounds.width() as usize,
+                        cx_bounds.height() as usize,
+                        8,
+                        cx_bounds.width() as usize * 4,
+                        &CGColorSpace::create_device_rgb(),
+                        kCGImageAlphaPremultipliedLast,
+                    );
+                }
+            }
 
             // Move the origin to bottom left and account for scaling, this
             // makes drawing text consistent with the font-kit's raster_bounds.
-            cx.translate(0.0, bounds.height() as CGFloat);
-            let transform = scale.translate(-bounds.origin().to_f32());
-            cx.set_text_matrix(&CGAffineTransform {
-                a: transform.matrix.m11() as CGFloat,
-                b: -transform.matrix.m21() as CGFloat,
-                c: -transform.matrix.m12() as CGFloat,
-                d: transform.matrix.m22() as CGFloat,
-                tx: transform.vector.x() as CGFloat,
-                ty: -transform.vector.y() as CGFloat,
-            });
-
-            cx.set_font(&font.native_font().copy_to_CGFont());
-            cx.set_font_size(font_size as CGFloat);
-            cx.show_glyphs_at_positions(
-                &[glyph_id as CGGlyph],
-                &[CGPoint::new(
-                    (subpixel_shift.x() / scale_factor) as CGFloat,
-                    (subpixel_shift.y() / scale_factor) as CGFloat,
-                )],
+            cx.translate(
+                -glyph_bounds.origin_x() as CGFloat,
+                (glyph_bounds.origin_y() + glyph_bounds.height()) as CGFloat,
             );
+            cx.scale(scale_factor as CGFloat, scale_factor as CGFloat);
 
-            Some((bounds, pixels))
+            cx.set_allows_font_subpixel_positioning(true);
+            cx.set_should_subpixel_position_fonts(true);
+            cx.set_allows_font_subpixel_quantization(false);
+            cx.set_should_subpixel_quantize_fonts(false);
+            font.native_font()
+                .clone_with_font_size(font_size as CGFloat)
+                .draw_glyphs(
+                    &[glyph_id as CGGlyph],
+                    &[CGPoint::new(
+                        (subpixel_shift.x() / scale_factor) as CGFloat,
+                        (subpixel_shift.y() / scale_factor) as CGFloat,
+                    )],
+                    cx,
+                );
+
+            if let RasterizationOptions::Bgra = options {
+                // Convert from RGBA with premultiplied alpha to BGRA with straight alpha.
+                for pixel in bytes.chunks_exact_mut(4) {
+                    pixel.swap(0, 2);
+                    let a = pixel[3] as f32 / 255.;
+                    pixel[0] = (pixel[0] as f32 / a) as u8;
+                    pixel[1] = (pixel[1] as f32 / a) as u8;
+                    pixel[2] = (pixel[2] as f32 / a) as u8;
+                }
+            }
+
+            Some((cx_bounds, bytes))
         }
     }
 
-    fn layout_line(&self, text: &str, font_size: f32, runs: &[(usize, RunStyle)]) -> LineLayout {
-        let font_id_attr_name = CFString::from_static_string("zed_font_id");
-
+    fn layout_line(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        runs: &[(usize, RunStyle)],
+    ) -> LineLayout {
         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
         let mut string = CFMutableAttributedString::new();
         {
@@ -264,11 +345,6 @@ impl FontSystemState {
                         kCTFontAttributeName,
                         &font.native_font().clone_with_font_size(font_size as f64),
                     );
-                    string.set_attribute(
-                        cf_range,
-                        font_id_attr_name.as_concrete_TypeRef(),
-                        &CFNumber::from(font_id.0 as i64),
-                    );
                 }
 
                 if utf16_end == utf16_line_len {
@@ -282,15 +358,14 @@ impl FontSystemState {
 
         let mut runs = Vec::new();
         for run in line.glyph_runs().into_iter() {
-            let font_id = FontId(
-                run.attributes()
+            let attributes = run.attributes().unwrap();
+            let font = unsafe {
+                attributes
+                    .get(kCTFontAttributeName)
+                    .downcast::<CTFont>()
                     .unwrap()
-                    .get(&font_id_attr_name)
-                    .downcast::<CFNumber>()
-                    .unwrap()
-                    .to_i64()
-                    .unwrap() as usize,
-            );
+            };
+            let font_id = self.id_for_native_font(font);
 
             let mut ix_converter = StringIndexConverter::new(text);
             let mut glyphs = Vec::new();
@@ -306,6 +381,7 @@ impl FontSystemState {
                     id: *glyph_id as GlyphId,
                     position: vec2f(position.x as f32, position.y as f32),
                     index: ix_converter.utf8_ix,
+                    is_emoji: self.is_emoji(font_id),
                 });
             }
 
@@ -510,7 +586,14 @@ mod tests {
         for i in 0..VARIANTS {
             let variant = i as f32 / VARIANTS as f32;
             let (bounds, bytes) = fonts
-                .rasterize_glyph(font_id, 16.0, glyph_id, vec2f(variant, variant), 2.)
+                .rasterize_glyph(
+                    font_id,
+                    16.0,
+                    glyph_id,
+                    vec2f(variant, variant),
+                    2.,
+                    RasterizationOptions::Alpha,
+                )
                 .unwrap();
 
             let name = format!("/Users/as-cii/Desktop/twog-{}.png", i);
