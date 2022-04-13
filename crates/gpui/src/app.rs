@@ -726,7 +726,7 @@ pub struct MutableAppContext {
     foreground_platform: Rc<dyn platform::ForegroundPlatform>,
     assets: Arc<AssetCache>,
     cx: AppContext,
-    action_deserializers: HashMap<&'static str, DeserializeActionCallback>,
+    action_deserializers: HashMap<&'static str, (TypeId, DeserializeActionCallback)>,
     capture_actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     global_actions: HashMap<TypeId, Box<GlobalActionCallback>>,
@@ -877,7 +877,8 @@ impl MutableAppContext {
         let callback = self
             .action_deserializers
             .get(name)
-            .ok_or_else(|| anyhow!("unknown action {}", name))?;
+            .ok_or_else(|| anyhow!("unknown action {}", name))?
+            .1;
         callback(argument.unwrap_or("{}"))
             .with_context(|| format!("invalid data for action {}", name))
     }
@@ -926,7 +927,7 @@ impl MutableAppContext {
 
         self.action_deserializers
             .entry(A::qualified_name())
-            .or_insert(A::from_json_str);
+            .or_insert((TypeId::of::<A>(), A::from_json_str));
 
         let actions = if capture {
             &mut self.capture_actions
@@ -965,7 +966,7 @@ impl MutableAppContext {
 
         self.action_deserializers
             .entry(A::qualified_name())
-            .or_insert(A::from_json_str);
+            .or_insert((TypeId::of::<A>(), A::from_json_str));
 
         if self
             .global_actions
@@ -1302,6 +1303,41 @@ impl MutableAppContext {
             self.pending_effects
                 .push_back(Effect::GlobalNotification { type_id });
         }
+    }
+
+    pub fn available_actions(
+        &self,
+        window_id: usize,
+        view_id: usize,
+    ) -> Vec<(&'static str, Box<dyn Action>)> {
+        let mut action_types: HashSet<_> = self.global_actions.keys().copied().collect();
+
+        let presenter = self
+            .presenters_and_platform_windows
+            .get(&window_id)
+            .unwrap()
+            .0
+            .clone();
+        let dispatch_path = presenter.borrow().dispatch_path_from(view_id);
+        for view_id in dispatch_path {
+            if let Some(view) = self.views.get(&(window_id, view_id)) {
+                let view_type = view.as_any().type_id();
+                if let Some(actions) = self.actions.get(&view_type) {
+                    action_types.extend(actions.keys().copied());
+                }
+            }
+        }
+
+        self.action_deserializers
+            .iter()
+            .filter_map(|(name, (type_id, deserialize))| {
+                if action_types.contains(type_id) {
+                    Some((*name, deserialize("{}").ok()?))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     pub fn dispatch_action<A: Action>(
