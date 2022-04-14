@@ -55,6 +55,7 @@ pub struct ProjectSearchView {
     regex: bool,
     query_contains_error: bool,
     active_match_index: Option<usize>,
+    results_editor_was_focused: bool,
 }
 
 pub struct ProjectSearchBar {
@@ -170,10 +171,10 @@ impl View for ProjectSearchView {
                 .insert(self.model.read(cx).project.downgrade(), handle)
         });
 
-        if self.model.read(cx).match_ranges.is_empty() {
-            cx.focus(&self.query_editor);
-        } else {
+        if self.results_editor_was_focused && !self.model.read(cx).match_ranges.is_empty() {
             self.focus_results_editor(cx);
+        } else {
+            cx.focus(&self.query_editor);
         }
     }
 }
@@ -344,6 +345,10 @@ impl ProjectSearchView {
             cx.emit(ViewEvent::EditorEvent(event.clone()))
         })
         .detach();
+        cx.observe_focus(&query_editor, |this, _, _| {
+            this.results_editor_was_focused = false;
+        })
+        .detach();
 
         let results_editor = cx.add_view(|cx| {
             let mut editor = Editor::for_multibuffer(excerpts, Some(project), cx);
@@ -352,6 +357,10 @@ impl ProjectSearchView {
         });
         cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab))
             .detach();
+        cx.observe_focus(&results_editor, |this, _, _| {
+            this.results_editor_was_focused = true;
+        })
+        .detach();
         cx.subscribe(&results_editor, |this, _, event, cx| {
             if matches!(event, editor::Event::SelectionsChanged { .. }) {
                 this.update_match_index(cx);
@@ -370,6 +379,7 @@ impl ProjectSearchView {
             regex,
             query_contains_error: false,
             active_match_index: None,
+            results_editor_was_focused: false,
         };
         this.model_changed(false, cx);
         this
