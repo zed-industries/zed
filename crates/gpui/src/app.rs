@@ -716,6 +716,7 @@ type GlobalActionCallback = dyn FnMut(&dyn Action, &mut MutableAppContext);
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
 type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
+type FocusObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type GlobalObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
@@ -738,6 +739,8 @@ pub struct MutableAppContext {
     global_subscriptions:
         Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalSubscriptionCallback>>>>>,
     observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>,
+    focus_observations:
+        Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<FocusObservationCallback>>>>>,
     global_observations:
         Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalObservationCallback>>>>>,
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
@@ -791,6 +794,7 @@ impl MutableAppContext {
             subscriptions: Default::default(),
             global_subscriptions: Default::default(),
             observations: Default::default(),
+            focus_observations: Default::default(),
             release_observations: Default::default(),
             global_observations: Default::default(),
             presenters_and_platform_windows: HashMap::new(),
@@ -1182,6 +1186,32 @@ impl MutableAppContext {
             id: subscription_id,
             entity_id,
             observations: Some(Arc::downgrade(&self.observations)),
+        }
+    }
+
+    fn observe_focus<F, V>(&mut self, handle: &ViewHandle<V>, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(ViewHandle<V>, &mut MutableAppContext) -> bool,
+        V: View,
+    {
+        let subscription_id = post_inc(&mut self.next_subscription_id);
+        let observed = handle.downgrade();
+        let view_id = handle.id();
+        self.pending_effects.push_back(Effect::FocusObservation {
+            view_id,
+            subscription_id,
+            callback: Box::new(move |cx| {
+                if let Some(observed) = observed.upgrade(cx) {
+                    callback(observed, cx)
+                } else {
+                    false
+                }
+            }),
+        });
+        Subscription::FocusObservation {
+            id: subscription_id,
+            view_id,
+            observations: Some(Arc::downgrade(&self.focus_observations)),
         }
     }
 
@@ -1748,6 +1778,13 @@ impl MutableAppContext {
                         Effect::Focus { window_id, view_id } => {
                             self.handle_focus_effect(window_id, view_id);
                         }
+                        Effect::FocusObservation {
+                            view_id,
+                            subscription_id,
+                            callback,
+                        } => {
+                            self.handle_focus_observation_effect(view_id, subscription_id, callback)
+                        }
                         Effect::ResizeWindow { window_id } => {
                             if let Some(window) = self.cx.windows.get_mut(&window_id) {
                                 window
@@ -1978,6 +2015,30 @@ impl MutableAppContext {
         }
     }
 
+    fn handle_focus_observation_effect(
+        &mut self,
+        view_id: usize,
+        subscription_id: usize,
+        callback: FocusObservationCallback,
+    ) {
+        match self
+            .focus_observations
+            .lock()
+            .entry(view_id)
+            .or_default()
+            .entry(subscription_id)
+        {
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(Some(callback));
+            }
+            // Observation was dropped before effect was processed
+            btree_map::Entry::Occupied(entry) => {
+                debug_assert!(entry.get().is_none());
+                entry.remove();
+            }
+        }
+    }
+
     fn handle_model_notification_effect(&mut self, observed_id: usize) {
         let callbacks = self.observations.lock().remove(&observed_id);
         if let Some(callbacks) = callbacks {
@@ -2102,8 +2163,6 @@ impl MutableAppContext {
             return;
         }
 
-        log::info!("process focus effect {:?}", focused_id);
-
         self.update(|this| {
             let blurred_id = this.cx.windows.get_mut(&window_id).and_then(|window| {
                 let blurred_id = window.focused_view_id;
@@ -2122,6 +2181,31 @@ impl MutableAppContext {
                 if let Some(mut focused_view) = this.cx.views.remove(&(window_id, focused_id)) {
                     focused_view.on_focus(this, window_id, focused_id);
                     this.cx.views.insert((window_id, focused_id), focused_view);
+
+                    let callbacks = this.focus_observations.lock().remove(&focused_id);
+                    if let Some(callbacks) = callbacks {
+                        for (id, callback) in callbacks {
+                            if let Some(mut callback) = callback {
+                                let alive = callback(this);
+                                if alive {
+                                    match this
+                                        .focus_observations
+                                        .lock()
+                                        .entry(focused_id)
+                                        .or_default()
+                                        .entry(id)
+                                    {
+                                        btree_map::Entry::Vacant(entry) => {
+                                            entry.insert(Some(callback));
+                                        }
+                                        btree_map::Entry::Occupied(entry) => {
+                                            entry.remove();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         })
@@ -2487,6 +2571,11 @@ pub enum Effect {
         window_id: usize,
         view_id: Option<usize>,
     },
+    FocusObservation {
+        view_id: usize,
+        subscription_id: usize,
+        callback: FocusObservationCallback,
+    },
     ResizeWindow {
         window_id: usize,
     },
@@ -2557,6 +2646,15 @@ impl Debug for Effect {
                 .debug_struct("Effect::Focus")
                 .field("window_id", window_id)
                 .field("view_id", view_id)
+                .finish(),
+            Effect::FocusObservation {
+                view_id,
+                subscription_id,
+                ..
+            } => f
+                .debug_struct("Effect::FocusObservation")
+                .field("view_id", view_id)
+                .field("subscription_id", subscription_id)
                 .finish(),
             Effect::ResizeWindow { window_id } => f
                 .debug_struct("Effect::RefreshWindow")
@@ -3034,6 +3132,24 @@ impl<'a, T: View> ViewContext<'a, T> {
     {
         let observer = self.weak_handle();
         self.app.observe_internal(handle, move |observed, cx| {
+            if let Some(observer) = observer.upgrade(cx) {
+                observer.update(cx, |observer, cx| {
+                    callback(observer, observed, cx);
+                });
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    pub fn observe_focus<F, V>(&mut self, handle: &ViewHandle<V>, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut T, ViewHandle<V>, &mut ViewContext<T>),
+        V: View,
+    {
+        let observer = self.weak_handle();
+        self.app.observe_focus(handle, move |observed, cx| {
             if let Some(observer) = observer.upgrade(cx) {
                 observer.update(cx, |observer, cx| {
                     callback(observer, observed, cx);
@@ -4309,6 +4425,12 @@ pub enum Subscription {
             Weak<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalObservationCallback>>>>>,
         >,
     },
+    FocusObservation {
+        id: usize,
+        view_id: usize,
+        observations:
+            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<FocusObservationCallback>>>>>>,
+    },
     ReleaseObservation {
         id: usize,
         entity_id: usize,
@@ -4333,6 +4455,9 @@ impl Subscription {
                 observations.take();
             }
             Subscription::ReleaseObservation { observations, .. } => {
+                observations.take();
+            }
+            Subscription::FocusObservation { observations, .. } => {
                 observations.take();
             }
         }
@@ -4424,6 +4549,22 @@ impl Drop for Subscription {
                 if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
                     if let Some(observations) = observations.lock().get_mut(entity_id) {
                         observations.remove(id);
+                    }
+                }
+            }
+            Subscription::FocusObservation {
+                id,
+                view_id,
+                observations,
+            } => {
+                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
+                    match observations.lock().entry(*view_id).or_default().entry(*id) {
+                        btree_map::Entry::Vacant(entry) => {
+                            entry.insert(None);
+                        }
+                        btree_map::Entry::Occupied(entry) => {
+                            entry.remove();
+                        }
                     }
                 }
             }
@@ -5715,23 +5856,56 @@ mod tests {
             }
         }
 
-        let events: Arc<Mutex<Vec<String>>> = Default::default();
+        let view_events: Arc<Mutex<Vec<String>>> = Default::default();
         let (window_id, view_1) = cx.add_window(Default::default(), |_| View {
-            events: events.clone(),
+            events: view_events.clone(),
             name: "view 1".to_string(),
         });
         let view_2 = cx.add_view(window_id, |_| View {
-            events: events.clone(),
+            events: view_events.clone(),
             name: "view 2".to_string(),
         });
 
-        view_1.update(cx, |_, cx| cx.focus(&view_2));
+        let observed_events: Arc<Mutex<Vec<String>>> = Default::default();
+        view_1.update(cx, |_, cx| {
+            cx.observe_focus(&view_2, {
+                let observed_events = observed_events.clone();
+                move |this, view, cx| {
+                    observed_events.lock().push(format!(
+                        "{} observed {} focus",
+                        this.name,
+                        view.read(cx).name
+                    ))
+                }
+            })
+            .detach();
+        });
+        view_2.update(cx, |_, cx| {
+            cx.observe_focus(&view_1, {
+                let observed_events = observed_events.clone();
+                move |this, view, cx| {
+                    observed_events.lock().push(format!(
+                        "{} observed {}'s focus",
+                        this.name,
+                        view.read(cx).name
+                    ))
+                }
+            })
+            .detach();
+        });
+
+        view_1.update(cx, |_, cx| {
+            // Ensure only the latest focus is honored.
+            cx.focus(&view_2);
+            cx.focus(&view_1);
+            cx.focus(&view_2);
+        });
         view_1.update(cx, |_, cx| cx.focus(&view_1));
         view_1.update(cx, |_, cx| cx.focus(&view_2));
         view_1.update(cx, |_, _| drop(view_2));
 
         assert_eq!(
-            *events.lock(),
+            *view_events.lock(),
             [
                 "view 1 focused".to_string(),
                 "view 1 blurred".to_string(),
@@ -5742,6 +5916,14 @@ mod tests {
                 "view 2 focused".to_string(),
                 "view 1 focused".to_string(),
             ],
+        );
+        assert_eq!(
+            *observed_events.lock(),
+            [
+                "view 1 observed view 2's focus".to_string(),
+                "view 2 observed view 1's focus".to_string(),
+                "view 1 observed view 2's focus".to_string(),
+            ]
         );
     }
 
