@@ -745,6 +745,7 @@ pub struct MutableAppContext {
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
     foreground: Rc<executor::Foreground>,
     pending_effects: VecDeque<Effect>,
+    pending_focus_index: Option<usize>,
     pending_notifications: HashSet<usize>,
     pending_global_notifications: HashSet<TypeId>,
     pending_flushes: usize,
@@ -795,6 +796,7 @@ impl MutableAppContext {
             presenters_and_platform_windows: HashMap::new(),
             foreground,
             pending_effects: VecDeque::new(),
+            pending_focus_index: None,
             pending_notifications: HashSet::new(),
             pending_global_notifications: HashSet::new(),
             pending_flushes: 0,
@@ -1670,7 +1672,7 @@ impl MutableAppContext {
                 });
 
                 if let Some(view_id) = change_focus_to {
-                    self.focus(window_id, Some(view_id));
+                    self.handle_focus_effect(window_id, Some(view_id));
                 }
 
                 self.pending_effects
@@ -1693,6 +1695,9 @@ impl MutableAppContext {
             let mut refreshing = false;
             loop {
                 if let Some(effect) = self.pending_effects.pop_front() {
+                    if let Some(pending_focus_index) = self.pending_focus_index.as_mut() {
+                        *pending_focus_index = pending_focus_index.saturating_sub(1);
+                    }
                     match effect {
                         Effect::Subscription {
                             entity_id,
@@ -1716,13 +1721,13 @@ impl MutableAppContext {
                             callback,
                         } => self.handle_observation_effect(entity_id, subscription_id, callback),
                         Effect::ModelNotification { model_id } => {
-                            self.notify_model_observers(model_id)
+                            self.handle_model_notification_effect(model_id)
                         }
                         Effect::ViewNotification { window_id, view_id } => {
-                            self.notify_view_observers(window_id, view_id)
+                            self.handle_view_notification_effect(window_id, view_id)
                         }
                         Effect::GlobalNotification { type_id } => {
-                            self.notify_global_observers(type_id)
+                            self.handle_global_notification_effect(type_id)
                         }
                         Effect::Deferred {
                             callback,
@@ -1735,13 +1740,13 @@ impl MutableAppContext {
                             }
                         }
                         Effect::ModelRelease { model_id, model } => {
-                            self.notify_release_observers(model_id, model.as_any())
+                            self.handle_entity_release_effect(model_id, model.as_any())
                         }
                         Effect::ViewRelease { view_id, view } => {
-                            self.notify_release_observers(view_id, view.as_any())
+                            self.handle_entity_release_effect(view_id, view.as_any())
                         }
                         Effect::Focus { window_id, view_id } => {
-                            self.focus(window_id, view_id);
+                            self.handle_focus_effect(window_id, view_id);
                         }
                         Effect::ResizeWindow { window_id } => {
                             if let Some(window) = self.cx.windows.get_mut(&window_id) {
@@ -1973,7 +1978,7 @@ impl MutableAppContext {
         }
     }
 
-    fn notify_model_observers(&mut self, observed_id: usize) {
+    fn handle_model_notification_effect(&mut self, observed_id: usize) {
         let callbacks = self.observations.lock().remove(&observed_id);
         if let Some(callbacks) = callbacks {
             if self.cx.models.contains_key(&observed_id) {
@@ -2002,7 +2007,11 @@ impl MutableAppContext {
         }
     }
 
-    fn notify_view_observers(&mut self, observed_window_id: usize, observed_view_id: usize) {
+    fn handle_view_notification_effect(
+        &mut self,
+        observed_window_id: usize,
+        observed_view_id: usize,
+    ) {
         if let Some(window) = self.cx.windows.get_mut(&observed_window_id) {
             window
                 .invalidation
@@ -2043,7 +2052,7 @@ impl MutableAppContext {
         }
     }
 
-    fn notify_global_observers(&mut self, observed_type_id: TypeId) {
+    fn handle_global_notification_effect(&mut self, observed_type_id: TypeId) {
         let callbacks = self.global_observations.lock().remove(&observed_type_id);
         if let Some(callbacks) = callbacks {
             if let Some(global) = self.cx.globals.remove(&observed_type_id) {
@@ -2071,7 +2080,7 @@ impl MutableAppContext {
         }
     }
 
-    fn notify_release_observers(&mut self, entity_id: usize, entity: &dyn Any) {
+    fn handle_entity_release_effect(&mut self, entity_id: usize, entity: &dyn Any) {
         let callbacks = self.release_observations.lock().remove(&entity_id);
         if let Some(callbacks) = callbacks {
             for (_, mut callback) in callbacks {
@@ -2080,7 +2089,9 @@ impl MutableAppContext {
         }
     }
 
-    fn focus(&mut self, window_id: usize, focused_id: Option<usize>) {
+    fn handle_focus_effect(&mut self, window_id: usize, focused_id: Option<usize>) {
+        self.pending_focus_index.take();
+
         if self
             .cx
             .windows
@@ -2090,6 +2101,8 @@ impl MutableAppContext {
         {
             return;
         }
+
+        log::info!("process focus effect {:?}", focused_id);
 
         self.update(|this| {
             let blurred_id = this.cx.windows.get_mut(&window_id).and_then(|window| {
@@ -2112,6 +2125,15 @@ impl MutableAppContext {
                 }
             }
         })
+    }
+
+    fn focus(&mut self, window_id: usize, view_id: Option<usize>) {
+        if let Some(pending_focus_index) = self.pending_focus_index {
+            self.pending_effects.remove(pending_focus_index);
+        }
+        self.pending_focus_index = Some(self.pending_effects.len());
+        self.pending_effects
+            .push_back(Effect::Focus { window_id, view_id });
     }
 
     pub fn spawn<F, Fut, T>(&self, f: F) -> Task<T>
@@ -2948,24 +2970,15 @@ impl<'a, T: View> ViewContext<'a, T> {
         S: Into<AnyViewHandle>,
     {
         let handle = handle.into();
-        self.app.pending_effects.push_back(Effect::Focus {
-            window_id: handle.window_id,
-            view_id: Some(handle.view_id),
-        });
+        self.app.focus(handle.window_id, Some(handle.view_id));
     }
 
     pub fn focus_self(&mut self) {
-        self.app.pending_effects.push_back(Effect::Focus {
-            window_id: self.window_id,
-            view_id: Some(self.view_id),
-        });
+        self.app.focus(self.window_id, Some(self.view_id));
     }
 
     pub fn blur(&mut self) {
-        self.app.pending_effects.push_back(Effect::Focus {
-            window_id: self.window_id,
-            view_id: None,
-        });
+        self.app.focus(self.window_id, None);
     }
 
     pub fn add_model<S, F>(&mut self, build_model: F) -> ModelHandle<S>

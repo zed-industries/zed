@@ -398,6 +398,9 @@ impl ProjectSearchView {
 
         if let Some(existing) = existing {
             workspace.activate_item(&existing, cx);
+            existing.update(cx, |existing, cx| {
+                existing.focus_query_editor(cx);
+            });
         } else {
             let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
             workspace.add_item(
