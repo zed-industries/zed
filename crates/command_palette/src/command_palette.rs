@@ -18,7 +18,7 @@ pub fn init(cx: &mut MutableAppContext) {
 actions!(command_palette, [Toggle]);
 
 pub struct CommandPalette {
-    selector: ViewHandle<Picker<Self>>,
+    picker: ViewHandle<Picker<Self>>,
     actions: Vec<Command>,
     matches: Vec<StringMatch>,
     selected_ix: usize,
@@ -48,9 +48,9 @@ impl CommandPalette {
                     .map_or(Vec::new(), |binding| binding.keystrokes().to_vec()),
             })
             .collect();
-        let selector = cx.add_view(|cx| Picker::new(this, cx));
+        let picker = cx.add_view(|cx| Picker::new(this, cx));
         Self {
-            selector,
+            picker,
             actions,
             matches: vec![],
             selected_ix: 0,
@@ -98,11 +98,11 @@ impl View for CommandPalette {
     }
 
     fn render(&mut self, _: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
-        ChildView::new(self.selector.clone()).boxed()
+        ChildView::new(self.picker.clone()).boxed()
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.selector);
+        cx.focus(&self.picker);
     }
 }
 
@@ -115,7 +115,7 @@ impl PickerDelegate for CommandPalette {
         self.selected_ix
     }
 
-    fn set_selected_index(&mut self, ix: usize) {
+    fn set_selected_index(&mut self, ix: usize, _: &mut ViewContext<Self>) {
         self.selected_ix = ix;
     }
 

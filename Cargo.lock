@@ -5310,6 +5310,7 @@ dependencies = [
  "gpui",
  "log",
  "parking_lot",
+ "picker",
  "postage",
  "settings",
  "smol",

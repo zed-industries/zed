@@ -20,7 +20,7 @@ pub struct Picker<D: PickerDelegate> {
 pub trait PickerDelegate: View {
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
-    fn set_selected_index(&mut self, ix: usize);
+    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Self>);
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) -> Task<()>;
     fn confirm(&mut self, cx: &mut ViewContext<Self>);
     fn dismiss(&mut self, cx: &mut ViewContext<Self>);
@@ -159,7 +159,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
             let index = 0;
-            delegate.update(cx, |delegate, _| delegate.set_selected_index(0));
+            delegate.update(cx, |delegate, cx| delegate.set_selected_index(0, cx));
             self.list_state.scroll_to(ScrollTarget::Show(index));
             cx.notify();
         }
@@ -167,10 +167,10 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
-            let index = delegate.update(cx, |delegate, _| {
+            let index = delegate.update(cx, |delegate, cx| {
                 let match_count = delegate.match_count();
                 let index = if match_count > 0 { match_count - 1 } else { 0 };
-                delegate.set_selected_index(index);
+                delegate.set_selected_index(index, cx);
                 index
             });
             self.list_state.scroll_to(ScrollTarget::Show(index));
@@ -180,11 +180,11 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
-            let index = delegate.update(cx, |delegate, _| {
+            let index = delegate.update(cx, |delegate, cx| {
                 let mut selected_index = delegate.selected_index();
                 if selected_index + 1 < delegate.match_count() {
                     selected_index += 1;
-                    delegate.set_selected_index(selected_index);
+                    delegate.set_selected_index(selected_index, cx);
                 }
                 selected_index
             });
@@ -195,11 +195,11 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
-            let index = delegate.update(cx, |delegate, _| {
+            let index = delegate.update(cx, |delegate, cx| {
                 let mut selected_index = delegate.selected_index();
                 if selected_index > 0 {
                     selected_index -= 1;
-                    delegate.set_selected_index(selected_index);
+                    delegate.set_selected_index(selected_index, cx);
                 }
                 selected_index
             });
