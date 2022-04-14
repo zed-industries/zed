@@ -1,13 +1,13 @@
-use std::cmp;
-
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
-    elements::{ChildView, Label},
+    elements::{ChildView, Flex, Label, ParentElement},
+    keymap::Keystroke,
     Action, Element, Entity, MutableAppContext, View, ViewContext, ViewHandle,
 };
 use selector::{SelectorModal, SelectorModalDelegate};
 use settings::Settings;
+use std::cmp;
 use workspace::Workspace;
 
 mod selector;
@@ -21,7 +21,7 @@ actions!(command_palette, [Toggle]);
 
 pub struct CommandPalette {
     selector: ViewHandle<SelectorModal<Self>>,
-    actions: Vec<(&'static str, Box<dyn Action>)>,
+    actions: Vec<Command>,
     matches: Vec<StringMatch>,
     selected_ix: usize,
     focused_view_id: usize,
@@ -31,13 +31,27 @@ pub enum Event {
     Dismissed,
 }
 
+struct Command {
+    name: &'static str,
+    action: Box<dyn Action>,
+    keystrokes: Vec<Keystroke>,
+    has_multiple_bindings: bool,
+}
+
 impl CommandPalette {
-    pub fn new(
-        focused_view_id: usize,
-        actions: Vec<(&'static str, Box<dyn Action>)>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    pub fn new(focused_view_id: usize, cx: &mut ViewContext<Self>) -> Self {
         let this = cx.weak_handle();
+        let actions = cx
+            .available_actions(cx.window_id(), focused_view_id)
+            .map(|(name, action, bindings)| Command {
+                name,
+                action,
+                keystrokes: bindings
+                    .last()
+                    .map_or(Vec::new(), |binding| binding.keystrokes().to_vec()),
+                has_multiple_bindings: bindings.len() > 1,
+            })
+            .collect();
         let selector = cx.add_view(|cx| SelectorModal::new(this, cx));
         Self {
             selector,
@@ -54,12 +68,11 @@ impl CommandPalette {
         let focused_view_id = cx.focused_view_id(window_id).unwrap_or(workspace.id());
 
         cx.as_mut().defer(move |cx| {
-            let actions = cx.available_actions(window_id, focused_view_id);
+            let this = cx.add_view(window_id, |cx| Self::new(focused_view_id, cx));
             workspace.update(cx, |workspace, cx| {
                 workspace.toggle_modal(cx, |cx, _| {
-                    let selector = cx.add_view(|cx| Self::new(focused_view_id, actions, cx));
-                    cx.subscribe(&selector, Self::on_event).detach();
-                    selector
+                    cx.subscribe(&this, Self::on_event).detach();
+                    this
                 });
             });
         });
@@ -119,10 +132,10 @@ impl SelectorModalDelegate for CommandPalette {
             .actions
             .iter()
             .enumerate()
-            .map(|(ix, (name, _))| StringMatchCandidate {
+            .map(|(ix, command)| StringMatchCandidate {
                 id: ix,
-                string: name.to_string(),
-                char_bag: name.chars().collect(),
+                string: command.name.to_string(),
+                char_bag: command.name.chars().collect(),
             })
             .collect::<Vec<_>>();
         cx.spawn(move |this, mut cx| async move {
@@ -157,13 +170,15 @@ impl SelectorModalDelegate for CommandPalette {
             cx.dispatch_action_at(
                 window_id,
                 self.focused_view_id,
-                self.actions[action_ix].1.as_ref(),
+                self.actions[action_ix].action.as_ref(),
             )
         }
         cx.emit(Event::Dismissed);
     }
 
     fn render_match(&self, ix: usize, selected: bool, cx: &gpui::AppContext) -> gpui::ElementBox {
+        let mat = &self.matches[ix];
+        let command = &self.actions[mat.candidate_id];
         let settings = cx.global::<Settings>();
         let theme = &settings.theme.selector;
         let style = if selected {
@@ -171,9 +186,49 @@ impl SelectorModalDelegate for CommandPalette {
         } else {
             &theme.item
         };
-        Label::new(self.matches[ix].string.clone(), style.label.clone())
+
+        Flex::row()
+            .with_child(Label::new(mat.string.clone(), style.label.clone()).boxed())
+            .with_children(command.keystrokes.iter().map(|keystroke| {
+                Flex::row()
+                    .with_children(
+                        [
+                            (keystroke.ctrl, "^"),
+                            (keystroke.alt, "⎇"),
+                            (keystroke.cmd, "⌘"),
+                            (keystroke.shift, "⇧"),
+                        ]
+                        .into_iter()
+                        .filter_map(|(modifier, label)| {
+                            if modifier {
+                                Some(Label::new(label.into(), style.label.clone()).boxed())
+                            } else {
+                                None
+                            }
+                        }),
+                    )
+                    .with_child(Label::new(keystroke.key.clone(), style.label.clone()).boxed())
+                    .contained()
+                    .with_margin_left(5.0)
+                    .flex_float()
+                    .boxed()
+            }))
+            .with_children(if command.has_multiple_bindings {
+                Some(Label::new("+".into(), style.label.clone()).boxed())
+            } else {
+                None
+            })
             .contained()
             .with_style(style.container)
             .boxed()
+    }
+}
+
+impl std::fmt::Debug for Command {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Command")
+            .field("name", &self.name)
+            .field("keystrokes", &self.keystrokes)
+            .finish()
     }
 }

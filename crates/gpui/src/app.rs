@@ -3,7 +3,7 @@ pub mod action;
 use crate::{
     elements::ElementBox,
     executor::{self, Task},
-    keymap::{self, Keystroke},
+    keymap::{self, Binding, Keystroke},
     platform::{self, CursorStyle, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::post_inc,
@@ -17,6 +17,7 @@ use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use platform::Event;
 use postage::oneshot;
+use smallvec::SmallVec;
 use smol::prelude::*;
 use std::{
     any::{type_name, Any, TypeId},
@@ -1309,7 +1310,7 @@ impl MutableAppContext {
         &self,
         window_id: usize,
         view_id: usize,
-    ) -> Vec<(&'static str, Box<dyn Action>)> {
+    ) -> impl Iterator<Item = (&'static str, Box<dyn Action>, SmallVec<[&Binding; 1]>)> {
         let mut action_types: HashSet<_> = self.global_actions.keys().copied().collect();
 
         let presenter = self
@@ -1330,14 +1331,19 @@ impl MutableAppContext {
 
         self.action_deserializers
             .iter()
-            .filter_map(|(name, (type_id, deserialize))| {
+            .filter_map(move |(name, (type_id, deserialize))| {
                 if action_types.contains(type_id) {
-                    Some((*name, deserialize("{}").ok()?))
+                    Some((
+                        *name,
+                        deserialize("{}").ok()?,
+                        self.keystroke_matcher
+                            .bindings_for_action_type(*type_id)
+                            .collect(),
+                    ))
                 } else {
                     None
                 }
             })
-            .collect()
     }
 
     pub fn dispatch_action_at(&mut self, window_id: usize, view_id: usize, action: &dyn Action) {
