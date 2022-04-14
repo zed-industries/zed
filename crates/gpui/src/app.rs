@@ -716,6 +716,7 @@ type GlobalActionCallback = dyn FnMut(&dyn Action, &mut MutableAppContext);
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
 type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
+type FocusObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type GlobalObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
@@ -738,6 +739,8 @@ pub struct MutableAppContext {
     global_subscriptions:
         Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalSubscriptionCallback>>>>>,
     observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>,
+    focus_observations:
+        Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<FocusObservationCallback>>>>>,
     global_observations:
         Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalObservationCallback>>>>>,
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
@@ -745,6 +748,7 @@ pub struct MutableAppContext {
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
     foreground: Rc<executor::Foreground>,
     pending_effects: VecDeque<Effect>,
+    pending_focus_index: Option<usize>,
     pending_notifications: HashSet<usize>,
     pending_global_notifications: HashSet<TypeId>,
     pending_flushes: usize,
@@ -790,11 +794,13 @@ impl MutableAppContext {
             subscriptions: Default::default(),
             global_subscriptions: Default::default(),
             observations: Default::default(),
+            focus_observations: Default::default(),
             release_observations: Default::default(),
             global_observations: Default::default(),
             presenters_and_platform_windows: HashMap::new(),
             foreground,
             pending_effects: VecDeque::new(),
+            pending_focus_index: None,
             pending_notifications: HashSet::new(),
             pending_global_notifications: HashSet::new(),
             pending_flushes: 0,
@@ -1180,6 +1186,32 @@ impl MutableAppContext {
             id: subscription_id,
             entity_id,
             observations: Some(Arc::downgrade(&self.observations)),
+        }
+    }
+
+    fn observe_focus<F, V>(&mut self, handle: &ViewHandle<V>, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(ViewHandle<V>, &mut MutableAppContext) -> bool,
+        V: View,
+    {
+        let subscription_id = post_inc(&mut self.next_subscription_id);
+        let observed = handle.downgrade();
+        let view_id = handle.id();
+        self.pending_effects.push_back(Effect::FocusObservation {
+            view_id,
+            subscription_id,
+            callback: Box::new(move |cx| {
+                if let Some(observed) = observed.upgrade(cx) {
+                    callback(observed, cx)
+                } else {
+                    false
+                }
+            }),
+        });
+        Subscription::FocusObservation {
+            id: subscription_id,
+            view_id,
+            observations: Some(Arc::downgrade(&self.focus_observations)),
         }
     }
 
@@ -1670,7 +1702,7 @@ impl MutableAppContext {
                 });
 
                 if let Some(view_id) = change_focus_to {
-                    self.focus(window_id, Some(view_id));
+                    self.handle_focus_effect(window_id, Some(view_id));
                 }
 
                 self.pending_effects
@@ -1693,6 +1725,9 @@ impl MutableAppContext {
             let mut refreshing = false;
             loop {
                 if let Some(effect) = self.pending_effects.pop_front() {
+                    if let Some(pending_focus_index) = self.pending_focus_index.as_mut() {
+                        *pending_focus_index = pending_focus_index.saturating_sub(1);
+                    }
                     match effect {
                         Effect::Subscription {
                             entity_id,
@@ -1716,13 +1751,13 @@ impl MutableAppContext {
                             callback,
                         } => self.handle_observation_effect(entity_id, subscription_id, callback),
                         Effect::ModelNotification { model_id } => {
-                            self.notify_model_observers(model_id)
+                            self.handle_model_notification_effect(model_id)
                         }
                         Effect::ViewNotification { window_id, view_id } => {
-                            self.notify_view_observers(window_id, view_id)
+                            self.handle_view_notification_effect(window_id, view_id)
                         }
                         Effect::GlobalNotification { type_id } => {
-                            self.notify_global_observers(type_id)
+                            self.handle_global_notification_effect(type_id)
                         }
                         Effect::Deferred {
                             callback,
@@ -1735,13 +1770,20 @@ impl MutableAppContext {
                             }
                         }
                         Effect::ModelRelease { model_id, model } => {
-                            self.notify_release_observers(model_id, model.as_any())
+                            self.handle_entity_release_effect(model_id, model.as_any())
                         }
                         Effect::ViewRelease { view_id, view } => {
-                            self.notify_release_observers(view_id, view.as_any())
+                            self.handle_entity_release_effect(view_id, view.as_any())
                         }
                         Effect::Focus { window_id, view_id } => {
-                            self.focus(window_id, view_id);
+                            self.handle_focus_effect(window_id, view_id);
+                        }
+                        Effect::FocusObservation {
+                            view_id,
+                            subscription_id,
+                            callback,
+                        } => {
+                            self.handle_focus_observation_effect(view_id, subscription_id, callback)
                         }
                         Effect::ResizeWindow { window_id } => {
                             if let Some(window) = self.cx.windows.get_mut(&window_id) {
@@ -1973,7 +2015,31 @@ impl MutableAppContext {
         }
     }
 
-    fn notify_model_observers(&mut self, observed_id: usize) {
+    fn handle_focus_observation_effect(
+        &mut self,
+        view_id: usize,
+        subscription_id: usize,
+        callback: FocusObservationCallback,
+    ) {
+        match self
+            .focus_observations
+            .lock()
+            .entry(view_id)
+            .or_default()
+            .entry(subscription_id)
+        {
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(Some(callback));
+            }
+            // Observation was dropped before effect was processed
+            btree_map::Entry::Occupied(entry) => {
+                debug_assert!(entry.get().is_none());
+                entry.remove();
+            }
+        }
+    }
+
+    fn handle_model_notification_effect(&mut self, observed_id: usize) {
         let callbacks = self.observations.lock().remove(&observed_id);
         if let Some(callbacks) = callbacks {
             if self.cx.models.contains_key(&observed_id) {
@@ -2002,7 +2068,11 @@ impl MutableAppContext {
         }
     }
 
-    fn notify_view_observers(&mut self, observed_window_id: usize, observed_view_id: usize) {
+    fn handle_view_notification_effect(
+        &mut self,
+        observed_window_id: usize,
+        observed_view_id: usize,
+    ) {
         if let Some(window) = self.cx.windows.get_mut(&observed_window_id) {
             window
                 .invalidation
@@ -2043,7 +2113,7 @@ impl MutableAppContext {
         }
     }
 
-    fn notify_global_observers(&mut self, observed_type_id: TypeId) {
+    fn handle_global_notification_effect(&mut self, observed_type_id: TypeId) {
         let callbacks = self.global_observations.lock().remove(&observed_type_id);
         if let Some(callbacks) = callbacks {
             if let Some(global) = self.cx.globals.remove(&observed_type_id) {
@@ -2071,7 +2141,7 @@ impl MutableAppContext {
         }
     }
 
-    fn notify_release_observers(&mut self, entity_id: usize, entity: &dyn Any) {
+    fn handle_entity_release_effect(&mut self, entity_id: usize, entity: &dyn Any) {
         let callbacks = self.release_observations.lock().remove(&entity_id);
         if let Some(callbacks) = callbacks {
             for (_, mut callback) in callbacks {
@@ -2080,7 +2150,9 @@ impl MutableAppContext {
         }
     }
 
-    fn focus(&mut self, window_id: usize, focused_id: Option<usize>) {
+    fn handle_focus_effect(&mut self, window_id: usize, focused_id: Option<usize>) {
+        self.pending_focus_index.take();
+
         if self
             .cx
             .windows
@@ -2109,9 +2181,43 @@ impl MutableAppContext {
                 if let Some(mut focused_view) = this.cx.views.remove(&(window_id, focused_id)) {
                     focused_view.on_focus(this, window_id, focused_id);
                     this.cx.views.insert((window_id, focused_id), focused_view);
+
+                    let callbacks = this.focus_observations.lock().remove(&focused_id);
+                    if let Some(callbacks) = callbacks {
+                        for (id, callback) in callbacks {
+                            if let Some(mut callback) = callback {
+                                let alive = callback(this);
+                                if alive {
+                                    match this
+                                        .focus_observations
+                                        .lock()
+                                        .entry(focused_id)
+                                        .or_default()
+                                        .entry(id)
+                                    {
+                                        btree_map::Entry::Vacant(entry) => {
+                                            entry.insert(Some(callback));
+                                        }
+                                        btree_map::Entry::Occupied(entry) => {
+                                            entry.remove();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         })
+    }
+
+    fn focus(&mut self, window_id: usize, view_id: Option<usize>) {
+        if let Some(pending_focus_index) = self.pending_focus_index {
+            self.pending_effects.remove(pending_focus_index);
+        }
+        self.pending_focus_index = Some(self.pending_effects.len());
+        self.pending_effects
+            .push_back(Effect::Focus { window_id, view_id });
     }
 
     pub fn spawn<F, Fut, T>(&self, f: F) -> Task<T>
@@ -2465,6 +2571,11 @@ pub enum Effect {
         window_id: usize,
         view_id: Option<usize>,
     },
+    FocusObservation {
+        view_id: usize,
+        subscription_id: usize,
+        callback: FocusObservationCallback,
+    },
     ResizeWindow {
         window_id: usize,
     },
@@ -2535,6 +2646,15 @@ impl Debug for Effect {
                 .debug_struct("Effect::Focus")
                 .field("window_id", window_id)
                 .field("view_id", view_id)
+                .finish(),
+            Effect::FocusObservation {
+                view_id,
+                subscription_id,
+                ..
+            } => f
+                .debug_struct("Effect::FocusObservation")
+                .field("view_id", view_id)
+                .field("subscription_id", subscription_id)
                 .finish(),
             Effect::ResizeWindow { window_id } => f
                 .debug_struct("Effect::RefreshWindow")
@@ -2948,24 +3068,15 @@ impl<'a, T: View> ViewContext<'a, T> {
         S: Into<AnyViewHandle>,
     {
         let handle = handle.into();
-        self.app.pending_effects.push_back(Effect::Focus {
-            window_id: handle.window_id,
-            view_id: Some(handle.view_id),
-        });
+        self.app.focus(handle.window_id, Some(handle.view_id));
     }
 
     pub fn focus_self(&mut self) {
-        self.app.pending_effects.push_back(Effect::Focus {
-            window_id: self.window_id,
-            view_id: Some(self.view_id),
-        });
+        self.app.focus(self.window_id, Some(self.view_id));
     }
 
     pub fn blur(&mut self) {
-        self.app.pending_effects.push_back(Effect::Focus {
-            window_id: self.window_id,
-            view_id: None,
-        });
+        self.app.focus(self.window_id, None);
     }
 
     pub fn add_model<S, F>(&mut self, build_model: F) -> ModelHandle<S>
@@ -3021,6 +3132,24 @@ impl<'a, T: View> ViewContext<'a, T> {
     {
         let observer = self.weak_handle();
         self.app.observe_internal(handle, move |observed, cx| {
+            if let Some(observer) = observer.upgrade(cx) {
+                observer.update(cx, |observer, cx| {
+                    callback(observer, observed, cx);
+                });
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    pub fn observe_focus<F, V>(&mut self, handle: &ViewHandle<V>, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut T, ViewHandle<V>, &mut ViewContext<T>),
+        V: View,
+    {
+        let observer = self.weak_handle();
+        self.app.observe_focus(handle, move |observed, cx| {
             if let Some(observer) = observer.upgrade(cx) {
                 observer.update(cx, |observer, cx| {
                     callback(observer, observed, cx);
@@ -4296,6 +4425,12 @@ pub enum Subscription {
             Weak<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalObservationCallback>>>>>,
         >,
     },
+    FocusObservation {
+        id: usize,
+        view_id: usize,
+        observations:
+            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<FocusObservationCallback>>>>>>,
+    },
     ReleaseObservation {
         id: usize,
         entity_id: usize,
@@ -4320,6 +4455,9 @@ impl Subscription {
                 observations.take();
             }
             Subscription::ReleaseObservation { observations, .. } => {
+                observations.take();
+            }
+            Subscription::FocusObservation { observations, .. } => {
                 observations.take();
             }
         }
@@ -4411,6 +4549,22 @@ impl Drop for Subscription {
                 if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
                     if let Some(observations) = observations.lock().get_mut(entity_id) {
                         observations.remove(id);
+                    }
+                }
+            }
+            Subscription::FocusObservation {
+                id,
+                view_id,
+                observations,
+            } => {
+                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
+                    match observations.lock().entry(*view_id).or_default().entry(*id) {
+                        btree_map::Entry::Vacant(entry) => {
+                            entry.insert(None);
+                        }
+                        btree_map::Entry::Occupied(entry) => {
+                            entry.remove();
+                        }
                     }
                 }
             }
@@ -5702,23 +5856,56 @@ mod tests {
             }
         }
 
-        let events: Arc<Mutex<Vec<String>>> = Default::default();
+        let view_events: Arc<Mutex<Vec<String>>> = Default::default();
         let (window_id, view_1) = cx.add_window(Default::default(), |_| View {
-            events: events.clone(),
+            events: view_events.clone(),
             name: "view 1".to_string(),
         });
         let view_2 = cx.add_view(window_id, |_| View {
-            events: events.clone(),
+            events: view_events.clone(),
             name: "view 2".to_string(),
         });
 
-        view_1.update(cx, |_, cx| cx.focus(&view_2));
+        let observed_events: Arc<Mutex<Vec<String>>> = Default::default();
+        view_1.update(cx, |_, cx| {
+            cx.observe_focus(&view_2, {
+                let observed_events = observed_events.clone();
+                move |this, view, cx| {
+                    observed_events.lock().push(format!(
+                        "{} observed {}'s focus",
+                        this.name,
+                        view.read(cx).name
+                    ))
+                }
+            })
+            .detach();
+        });
+        view_2.update(cx, |_, cx| {
+            cx.observe_focus(&view_1, {
+                let observed_events = observed_events.clone();
+                move |this, view, cx| {
+                    observed_events.lock().push(format!(
+                        "{} observed {}'s focus",
+                        this.name,
+                        view.read(cx).name
+                    ))
+                }
+            })
+            .detach();
+        });
+
+        view_1.update(cx, |_, cx| {
+            // Ensure only the latest focus is honored.
+            cx.focus(&view_2);
+            cx.focus(&view_1);
+            cx.focus(&view_2);
+        });
         view_1.update(cx, |_, cx| cx.focus(&view_1));
         view_1.update(cx, |_, cx| cx.focus(&view_2));
         view_1.update(cx, |_, _| drop(view_2));
 
         assert_eq!(
-            *events.lock(),
+            *view_events.lock(),
             [
                 "view 1 focused".to_string(),
                 "view 1 blurred".to_string(),
@@ -5729,6 +5916,14 @@ mod tests {
                 "view 2 focused".to_string(),
                 "view 1 focused".to_string(),
             ],
+        );
+        assert_eq!(
+            *observed_events.lock(),
+            [
+                "view 1 observed view 2's focus".to_string(),
+                "view 2 observed view 1's focus".to_string(),
+                "view 1 observed view 2's focus".to_string(),
+            ]
         );
     }
 
