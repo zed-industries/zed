@@ -5872,7 +5872,7 @@ mod tests {
                 let observed_events = observed_events.clone();
                 move |this, view, cx| {
                     observed_events.lock().push(format!(
-                        "{} observed {} focus",
+                        "{} observed {}'s focus",
                         this.name,
                         view.read(cx).name
                     ))
