@@ -56,7 +56,7 @@ use std::{
 };
 pub use sum_tree::Bias;
 use text::rope::TextDimension;
-use theme::DiagnosticStyle;
+use theme::{DiagnosticStyle, Theme};
 use util::{post_inc, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, Workspace};
 
@@ -401,7 +401,7 @@ pub struct Editor {
     vertical_scroll_margin: f32,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
-    background_highlights: BTreeMap<TypeId, (Color, Vec<Range<Anchor>>)>,
+    background_highlights: BTreeMap<TypeId, (fn(&Theme) -> Color, Vec<Range<Anchor>>)>,
     nav_history: Option<ItemNavHistory>,
     context_menu: Option<ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
@@ -2553,8 +2553,11 @@ impl Editor {
                 cx.add_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
             workspace.add_item(Box::new(editor.clone()), cx);
             editor.update(cx, |editor, cx| {
-                let color = editor.style(cx).highlighted_line_background;
-                editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
+                editor.highlight_background::<Self>(
+                    ranges_to_highlight,
+                    |theme| theme.editor.highlighted_line_background,
+                    cx,
+                );
             });
         });
 
@@ -2621,9 +2624,6 @@ impl Editor {
                     }
 
                     let buffer_id = cursor_position.buffer_id;
-                    let style = this.style(cx);
-                    let read_background = style.document_highlight_read_background;
-                    let write_background = style.document_highlight_write_background;
                     let buffer = this.buffer.read(cx);
                     if !buffer
                         .text_anchor_for_position(cursor_position, cx)
@@ -2670,12 +2670,12 @@ impl Editor {
 
                     this.highlight_background::<DocumentHighlightRead>(
                         read_ranges,
-                        read_background,
+                        |theme| theme.editor.document_highlight_read_background,
                         cx,
                     );
                     this.highlight_background::<DocumentHighlightWrite>(
                         write_ranges,
-                        write_background,
+                        |theme| theme.editor.document_highlight_write_background,
                         cx,
                     );
                     cx.notify();
@@ -4591,8 +4591,11 @@ impl Editor {
                 let editor =
                     cx.add_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
                 editor.update(cx, |editor, cx| {
-                    let color = editor.style(cx).highlighted_line_background;
-                    editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
+                    editor.highlight_background::<Self>(
+                        ranges_to_highlight,
+                        |theme| theme.editor.highlighted_line_background,
+                        cx,
+                    );
                 });
                 workspace.add_item(Box::new(editor), cx);
             });
@@ -5660,18 +5663,18 @@ impl Editor {
     pub fn highlight_background<T: 'static>(
         &mut self,
         ranges: Vec<Range<Anchor>>,
-        color: Color,
+        color_fetcher: fn(&Theme) -> Color,
         cx: &mut ViewContext<Self>,
     ) {
         self.background_highlights
-            .insert(TypeId::of::<T>(), (color, ranges));
+            .insert(TypeId::of::<T>(), (color_fetcher, ranges));
         cx.notify();
     }
 
     pub fn clear_background_highlights<T: 'static>(
         &mut self,
         cx: &mut ViewContext<Self>,
-    ) -> Option<(Color, Vec<Range<Anchor>>)> {
+    ) -> Option<(fn(&Theme) -> Color, Vec<Range<Anchor>>)> {
         cx.notify();
         self.background_highlights.remove(&TypeId::of::<T>())
     }
@@ -5685,23 +5688,20 @@ impl Editor {
         let buffer = &snapshot.buffer_snapshot;
         let start = buffer.anchor_before(0);
         let end = buffer.anchor_after(buffer.len());
-        self.background_highlights_in_range(start..end, &snapshot)
-    }
-
-    pub fn background_highlights_for_type<T: 'static>(&self) -> Option<(Color, &[Range<Anchor>])> {
-        self.background_highlights
-            .get(&TypeId::of::<T>())
-            .map(|(color, ranges)| (*color, ranges.as_slice()))
+        let theme = cx.global::<Settings>().theme.as_ref();
+        self.background_highlights_in_range(start..end, &snapshot, theme)
     }
 
     pub fn background_highlights_in_range(
         &self,
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,
+        theme: &Theme,
     ) -> Vec<(Range<DisplayPoint>, Color)> {
         let mut results = Vec::new();
         let buffer = &display_snapshot.buffer_snapshot;
-        for (color, ranges) in self.background_highlights.values() {
+        for (color_fetcher, ranges) in self.background_highlights.values() {
+            let color = color_fetcher(theme);
             let start_ix = match ranges.binary_search_by(|probe| {
                 let cmp = probe.end.cmp(&search_range.start, &buffer);
                 if cmp.is_gt() {
@@ -5724,7 +5724,7 @@ impl Editor {
                     .end
                     .to_point(buffer)
                     .to_display_point(display_snapshot);
-                results.push((start..end, *color))
+                results.push((start..end, color))
             }
         }
         results
@@ -9821,7 +9821,7 @@ mod tests {
                     anchor_range(Point::new(6, 3)..Point::new(6, 5)),
                     anchor_range(Point::new(8, 4)..Point::new(8, 6)),
                 ],
-                Color::red(),
+                |_| Color::red(),
                 cx,
             );
             editor.highlight_background::<Type2>(
@@ -9831,7 +9831,7 @@ mod tests {
                     anchor_range(Point::new(7, 4)..Point::new(7, 7)),
                     anchor_range(Point::new(9, 5)..Point::new(9, 8)),
                 ],
-                Color::green(),
+                |_| Color::green(),
                 cx,
             );
 
@@ -9839,6 +9839,7 @@ mod tests {
             let mut highlighted_ranges = editor.background_highlights_in_range(
                 anchor_range(Point::new(3, 4)..Point::new(7, 4)),
                 &snapshot,
+                cx.global::<Settings>().theme.as_ref(),
             );
             // Enforce a consistent ordering based on color without relying on the ordering of the
             // highlight's `TypeId` which is non-deterministic.
@@ -9868,6 +9869,7 @@ mod tests {
                 editor.background_highlights_in_range(
                     anchor_range(Point::new(5, 6)..Point::new(6, 4)),
                     &snapshot,
+                    cx.global::<Settings>().theme.as_ref(),
                 ),
                 &[(
                     DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),

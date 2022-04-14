@@ -544,10 +544,9 @@ impl BufferSearchBar {
                                         }
                                     }
 
-                                    let theme = &cx.global::<Settings>().theme.search;
                                     editor.highlight_background::<Self>(
                                         ranges,
-                                        theme.match_background,
+                                        |theme| theme.search.match_background,
                                         cx,
                                     );
                                 });
