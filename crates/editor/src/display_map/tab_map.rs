@@ -96,6 +96,22 @@ impl TabSnapshot {
         self.fold_snapshot.buffer_snapshot()
     }
 
+    pub fn line_len(&self, row: u32) -> u32 {
+        let max_point = self.max_point();
+        if row < max_point.row() {
+            self.chunks(
+                TabPoint::new(row, 0)..TabPoint::new(row + 1, 0),
+                false,
+                None,
+            )
+            .map(|chunk| chunk.text.len() as u32)
+            .sum::<u32>()
+                - 1
+        } else {
+            max_point.column()
+        }
+    }
+
     pub fn text_summary(&self) -> TextSummary {
         self.text_summary_for_range(TabPoint::zero()..self.max_point())
     }
@@ -517,8 +533,11 @@ mod tests {
                 actual_summary.longest_row = expected_summary.longest_row;
                 actual_summary.longest_row_chars = expected_summary.longest_row_chars;
             }
+            assert_eq!(actual_summary, expected_summary);
+        }
 
-            assert_eq!(actual_summary, expected_summary,);
+        for row in 0..=text.max_point().row {
+            assert_eq!(tabs_snapshot.line_len(row), text.line_len(row));
         }
     }
 }
