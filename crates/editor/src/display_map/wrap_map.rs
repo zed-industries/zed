@@ -559,11 +559,6 @@ impl WrapSnapshot {
         Patch::new(wrap_edits)
     }
 
-    pub fn text_chunks(&self, wrap_row: u32) -> impl Iterator<Item = &str> {
-        self.chunks(wrap_row..self.max_point().row() + 1, false, None)
-            .map(|h| h.text)
-    }
-
     pub fn chunks<'a>(
         &'a self,
         rows: Range<u32>,
@@ -1284,6 +1279,11 @@ mod tests {
     impl WrapSnapshot {
         pub fn text(&self) -> String {
             self.text_chunks(0).collect()
+        }
+
+        pub fn text_chunks(&self, wrap_row: u32) -> impl Iterator<Item = &str> {
+            self.chunks(wrap_row..self.max_point().row() + 1, false, None)
+                .map(|h| h.text)
         }
 
         fn verify_chunks(&mut self, rng: &mut impl Rng) {
