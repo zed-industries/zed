@@ -35,7 +35,6 @@ struct Command {
     name: &'static str,
     action: Box<dyn Action>,
     keystrokes: Vec<Keystroke>,
-    has_multiple_bindings: bool,
 }
 
 impl CommandPalette {
@@ -49,7 +48,6 @@ impl CommandPalette {
                 keystrokes: bindings
                     .last()
                     .map_or(Vec::new(), |binding| binding.keystrokes().to_vec()),
-                has_multiple_bindings: bindings.len() > 1,
             })
             .collect();
         let selector = cx.add_view(|cx| SelectorModal::new(this, cx));
@@ -180,12 +178,14 @@ impl SelectorModalDelegate for CommandPalette {
         let mat = &self.matches[ix];
         let command = &self.actions[mat.candidate_id];
         let settings = cx.global::<Settings>();
-        let theme = &settings.theme.selector;
+        let theme = &settings.theme;
         let style = if selected {
-            &theme.active_item
+            &theme.selector.active_item
         } else {
-            &theme.item
+            &theme.selector.item
         };
+        let key_style = &theme.command_palette.key;
+        let keystroke_spacing = theme.command_palette.keystroke_spacing;
 
         Flex::row()
             .with_child(Label::new(mat.string.clone(), style.label.clone()).boxed())
@@ -201,23 +201,28 @@ impl SelectorModalDelegate for CommandPalette {
                         .into_iter()
                         .filter_map(|(modifier, label)| {
                             if modifier {
-                                Some(Label::new(label.into(), style.label.clone()).boxed())
+                                Some(
+                                    Label::new(label.into(), key_style.label.clone())
+                                        .contained()
+                                        .with_style(key_style.container)
+                                        .boxed(),
+                                )
                             } else {
                                 None
                             }
                         }),
                     )
-                    .with_child(Label::new(keystroke.key.clone(), style.label.clone()).boxed())
+                    .with_child(
+                        Label::new(keystroke.key.clone(), key_style.label.clone())
+                            .contained()
+                            .with_style(key_style.container)
+                            .boxed(),
+                    )
                     .contained()
-                    .with_margin_left(5.0)
+                    .with_margin_left(keystroke_spacing)
                     .flex_float()
                     .boxed()
             }))
-            .with_children(if command.has_multiple_bindings {
-                Some(Label::new("+".into(), style.label.clone()).boxed())
-            } else {
-                None
-            })
             .contained()
             .with_style(style.container)
             .boxed()

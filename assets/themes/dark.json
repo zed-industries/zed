@@ -708,6 +708,29 @@
       }
     }
   },
+  "command_palette": {
+    "keystroke_spacing": 8,
+    "key": {
+      "text": {
+        "family": "Zed Mono",
+        "color": "#9c9c9c",
+        "size": 12
+      },
+      "corner_radius": 3,
+      "background": "#2472f2",
+      "border": {
+        "color": "#2472f2",
+        "width": 1
+      },
+      "padding": {
+        "left": 3,
+        "right": 3
+      },
+      "margin": {
+        "left": 3
+      }
+    }
+  },
   "project_panel": {
     "padding": {
       "top": 6,

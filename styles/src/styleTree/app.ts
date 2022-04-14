@@ -2,6 +2,7 @@ import Theme from "../themes/theme";
 import chatPanel from "./chatPanel";
 import { text } from "./components";
 import contactsPanel from "./contactsPanel";
+import commandPalette from "./commandPalette";
 import editor from "./editor";
 import projectPanel from "./projectPanel";
 import search from "./search";
@@ -29,6 +30,7 @@ export default function app(theme: Theme): Object {
         },
       },
     },
+    commandPalette: commandPalette(theme),
     projectPanel: projectPanel(theme),
     chatPanel: chatPanel(theme),
     contactsPanel: contactsPanel(theme),
