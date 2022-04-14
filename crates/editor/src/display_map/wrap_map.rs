@@ -599,16 +599,23 @@ impl WrapSnapshot {
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
-        let mut len = 0;
-        for chunk in self.text_chunks(row) {
-            if let Some(newline_ix) = chunk.find('\n') {
-                len += newline_ix;
-                break;
+        let mut cursor = self.transforms.cursor::<(WrapPoint, TabPoint)>();
+        cursor.seek(&WrapPoint::new(row + 1, 0), Bias::Left, &());
+        if cursor
+            .item()
+            .map_or(false, |transform| transform.is_isomorphic())
+        {
+            let overshoot = row - cursor.start().0.row();
+            let tab_row = cursor.start().1.row() + overshoot;
+            let tab_line_len = self.tab_snapshot.line_len(tab_row);
+            if overshoot == 0 {
+                cursor.start().0.column() + (tab_line_len - cursor.start().1.column())
             } else {
-                len += chunk.len();
+                tab_line_len
             }
+        } else {
+            cursor.start().0.column()
         }
-        len as u32
     }
 
     pub fn soft_wrap_indent(&self, row: u32) -> Option<u32> {
@@ -741,6 +748,7 @@ impl WrapSnapshot {
                 }
             }
 
+            let text = language::Rope::from(self.text().as_str());
             let input_buffer_rows = self.buffer_snapshot().buffer_rows(0).collect::<Vec<_>>();
             let mut expected_buffer_rows = Vec::new();
             let mut prev_tab_row = 0;
@@ -754,6 +762,8 @@ impl WrapSnapshot {
                     expected_buffer_rows.push(input_buffer_rows[buffer_point.row as usize]);
                     prev_tab_row = tab_point.row();
                 }
+
+                assert_eq!(self.line_len(display_row), text.line_len(display_row));
             }
 
             for start_display_row in 0..expected_buffer_rows.len() {
@@ -955,6 +965,10 @@ impl WrapPoint {
 
     pub fn row_mut(&mut self) -> &mut u32 {
         &mut self.0.row
+    }
+
+    pub fn column(self) -> u32 {
+        self.0.column
     }
 
     pub fn column_mut(&mut self) -> &mut u32 {
