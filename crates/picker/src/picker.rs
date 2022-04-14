@@ -11,22 +11,13 @@ use settings::Settings;
 use std::cmp;
 use workspace::menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 
-pub fn init<D: SelectorModalDelegate>(cx: &mut MutableAppContext) {
-    cx.add_action(SelectorModal::<D>::select_first);
-    cx.add_action(SelectorModal::<D>::select_last);
-    cx.add_action(SelectorModal::<D>::select_next);
-    cx.add_action(SelectorModal::<D>::select_prev);
-    cx.add_action(SelectorModal::<D>::confirm);
-    cx.add_action(SelectorModal::<D>::cancel);
-}
-
-pub struct SelectorModal<D: SelectorModalDelegate> {
+pub struct Picker<D: PickerDelegate> {
     delegate: WeakViewHandle<D>,
     query_editor: ViewHandle<Editor>,
     list_state: UniformListState,
 }
 
-pub trait SelectorModalDelegate: View {
+pub trait PickerDelegate: View {
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
     fn set_selected_index(&mut self, ix: usize);
@@ -36,13 +27,13 @@ pub trait SelectorModalDelegate: View {
     fn render_match(&self, ix: usize, selected: bool, cx: &AppContext) -> ElementBox;
 }
 
-impl<D: SelectorModalDelegate> Entity for SelectorModal<D> {
+impl<D: PickerDelegate> Entity for Picker<D> {
     type Event = ();
 }
 
-impl<D: SelectorModalDelegate> View for SelectorModal<D> {
+impl<D: PickerDelegate> View for Picker<D> {
     fn ui_name() -> &'static str {
-        "SelectorModal"
+        "Picker"
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> gpui::ElementBox {
@@ -66,7 +57,7 @@ impl<D: SelectorModalDelegate> View for SelectorModal<D> {
             .with_max_height(420.0)
             .aligned()
             .top()
-            .named("selector")
+            .named("picker")
     }
 
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {
@@ -80,7 +71,16 @@ impl<D: SelectorModalDelegate> View for SelectorModal<D> {
     }
 }
 
-impl<D: SelectorModalDelegate> SelectorModal<D> {
+impl<D: PickerDelegate> Picker<D> {
+    pub fn init(cx: &mut MutableAppContext) {
+        cx.add_action(Self::select_first);
+        cx.add_action(Self::select_last);
+        cx.add_action(Self::select_next);
+        cx.add_action(Self::select_prev);
+        cx.add_action(Self::confirm);
+        cx.add_action(Self::cancel);
+    }
+
     pub fn new(delegate: WeakViewHandle<D>, cx: &mut ViewContext<Self>) -> Self {
         let query_editor = cx.add_view(|cx| {
             Editor::single_line(Some(|theme| theme.selector.input_editor.clone()), cx)

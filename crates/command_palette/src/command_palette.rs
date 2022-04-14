@@ -5,22 +5,20 @@ use gpui::{
     keymap::Keystroke,
     Action, Element, Entity, MutableAppContext, View, ViewContext, ViewHandle,
 };
-use selector::{SelectorModal, SelectorModalDelegate};
+use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use std::cmp;
 use workspace::Workspace;
 
-mod selector;
-
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(CommandPalette::toggle);
-    selector::init::<CommandPalette>(cx);
+    Picker::<CommandPalette>::init(cx);
 }
 
 actions!(command_palette, [Toggle]);
 
 pub struct CommandPalette {
-    selector: ViewHandle<SelectorModal<Self>>,
+    selector: ViewHandle<Picker<Self>>,
     actions: Vec<Command>,
     matches: Vec<StringMatch>,
     selected_ix: usize,
@@ -50,7 +48,7 @@ impl CommandPalette {
                     .map_or(Vec::new(), |binding| binding.keystrokes().to_vec()),
             })
             .collect();
-        let selector = cx.add_view(|cx| SelectorModal::new(this, cx));
+        let selector = cx.add_view(|cx| Picker::new(this, cx));
         Self {
             selector,
             actions,
@@ -108,7 +106,7 @@ impl View for CommandPalette {
     }
 }
 
-impl SelectorModalDelegate for CommandPalette {
+impl PickerDelegate for CommandPalette {
     fn match_count(&self) -> usize {
         self.matches.len()
     }

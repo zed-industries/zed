@@ -1,17 +1,15 @@
 [package]
-name = "command_palette"
+name = "picker"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-path = "src/command_palette.rs"
+path = "src/picker.rs"
 doctest = false
 
 [dependencies]
 editor = { path = "../editor" }
-fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
-picker = { path = "../picker" }
 settings = { path = "../settings" }
 util = { path = "../util" }
 theme = { path = "../theme" }
