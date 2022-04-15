@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
+use futures::channel::mpsc;
 use smol::{channel, prelude::*, Executor};
 use std::{
     any::Any,
@@ -8,7 +9,7 @@ use std::{
     mem,
     pin::Pin,
     rc::Rc,
-    sync::{mpsc, Arc},
+    sync::Arc,
     task::{Context, Poll},
     thread,
     time::Duration,
@@ -621,11 +622,11 @@ impl Background {
         Err(async { *future.await.downcast().unwrap() })
     }
 
-    pub async fn scoped<'scope, F>(&self, scheduler: F)
+    pub async fn scoped<'scope, F>(self: &Arc<Self>, scheduler: F)
     where
         F: FnOnce(&mut Scope<'scope>),
     {
-        let mut scope = Scope::new();
+        let mut scope = Scope::new(self.clone());
         (scheduler)(&mut scope);
         let spawned = mem::take(&mut scope.futures)
             .into_iter()
@@ -664,6 +665,7 @@ impl Background {
 }
 
 pub struct Scope<'a> {
+    executor: Arc<Background>,
     futures: Vec<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
     tx: Option<mpsc::Sender<()>>,
     rx: mpsc::Receiver<()>,
@@ -671,9 +673,10 @@ pub struct Scope<'a> {
 }
 
 impl<'a> Scope<'a> {
-    fn new() -> Self {
-        let (tx, rx) = mpsc::channel();
+    fn new(executor: Arc<Background>) -> Self {
+        let (tx, rx) = mpsc::channel(1);
         Self {
+            executor,
             tx: Some(tx),
             rx,
             futures: Default::default(),
@@ -708,7 +711,7 @@ impl<'a> Drop for Scope<'a> {
 
         // Wait until the channel is closed, which means that all of the spawned
         // futures have resolved.
-        self.rx.recv().ok();
+        self.executor.block(self.rx.next());
     }
 }
 
