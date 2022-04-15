@@ -1,7 +1,7 @@
 use fuzzy::PathMatch;
 use gpui::{
-    actions, elements::*, impl_internal_actions, AppContext, Entity, ModelHandle,
-    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
+    actions, elements::*, AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Task,
+    View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath, WorktreeId};
@@ -28,11 +28,7 @@ pub struct FileFinder {
     cancel_flag: Arc<AtomicBool>,
 }
 
-#[derive(Clone)]
-pub struct Select(pub ProjectPath);
-
 actions!(file_finder, [Toggle]);
-impl_internal_actions!(file_finder, [Select]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(FileFinder::toggle);
@@ -240,33 +236,21 @@ impl PickerDelegate for FileFinder {
         };
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match);
-        let action = Select(ProjectPath {
-            worktree_id: WorktreeId::from_usize(path_match.worktree_id),
-            path: path_match.path.clone(),
-        });
-
-        EventHandler::new(
-            Flex::column()
-                .with_child(
-                    Label::new(file_name.to_string(), style.label.clone())
-                        .with_highlights(file_name_positions)
-                        .boxed(),
-                )
-                .with_child(
-                    Label::new(full_path, style.label.clone())
-                        .with_highlights(full_path_positions)
-                        .boxed(),
-                )
-                .flex(1., false)
-                .contained()
-                .with_style(style.container)
-                .boxed(),
-        )
-        .on_mouse_down(move |cx| {
-            cx.dispatch_action(action.clone());
-            true
-        })
-        .named("match")
+        Flex::column()
+            .with_child(
+                Label::new(file_name.to_string(), style.label.clone())
+                    .with_highlights(file_name_positions)
+                    .boxed(),
+            )
+            .with_child(
+                Label::new(full_path, style.label.clone())
+                    .with_highlights(full_path_positions)
+                    .boxed(),
+            )
+            .flex(1., false)
+            .contained()
+            .with_style(style.container)
+            .named("match")
     }
 }
 

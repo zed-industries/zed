@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
     elements::{
-        ChildView, Flex, FlexItem, Label, ParentElement, ScrollTarget, UniformList,
+        ChildView, EventHandler, Flex, FlexItem, Label, ParentElement, ScrollTarget, UniformList,
         UniformListState,
     },
     keymap, AppContext, Axis, Element, ElementBox, Entity, MutableAppContext, RenderContext, Task,
@@ -9,7 +9,9 @@ use gpui::{
 };
 use settings::Settings;
 use std::cmp;
-use workspace::menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
+use workspace::menu::{
+    Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrev,
+};
 
 pub struct Picker<D: PickerDelegate> {
     delegate: WeakViewHandle<D>,
@@ -78,6 +80,7 @@ impl<D: PickerDelegate> Picker<D> {
         cx.add_action(Self::select_last);
         cx.add_action(Self::select_next);
         cx.add_action(Self::select_prev);
+        cx.add_action(Self::select_index);
         cx.add_action(Self::confirm);
         cx.add_action(Self::cancel);
     }
@@ -126,7 +129,14 @@ impl<D: PickerDelegate> Picker<D> {
                 let delegate = delegate.read(cx);
                 let selected_ix = delegate.selected_index();
                 range.end = cmp::min(range.end, delegate.match_count());
-                items.extend(range.map(move |ix| delegate.render_match(ix, ix == selected_ix, cx)));
+                items.extend(range.map(move |ix| {
+                    EventHandler::new(delegate.render_match(ix, ix == selected_ix, cx))
+                        .on_mouse_down(move |cx| {
+                            cx.dispatch_action(SelectIndex(ix));
+                            true
+                        })
+                        .boxed()
+                }));
             },
         )
         .contained()
@@ -178,6 +188,16 @@ impl<D: PickerDelegate> Picker<D> {
             delegate.update(cx, |delegate, cx| delegate.set_selected_index(0, cx));
             self.list_state.scroll_to(ScrollTarget::Show(index));
             cx.notify();
+        }
+    }
+
+    pub fn select_index(&mut self, action: &SelectIndex, cx: &mut ViewContext<Self>) {
+        if let Some(delegate) = self.delegate.upgrade(cx) {
+            let index = action.0;
+            delegate.update(cx, |delegate, cx| {
+                delegate.set_selected_index(index, cx);
+                delegate.confirm(cx);
+            });
         }
     }
 
