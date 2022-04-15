@@ -15,6 +15,7 @@ pub struct Picker<D: PickerDelegate> {
     delegate: WeakViewHandle<D>,
     query_editor: ViewHandle<Editor>,
     list_state: UniformListState,
+    update_task: Option<Task<()>>,
 }
 
 pub trait PickerDelegate: View {
@@ -87,12 +88,14 @@ impl<D: PickerDelegate> Picker<D> {
         });
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
-
-        Self {
-            delegate,
+        let mut this = Self {
             query_editor,
             list_state: Default::default(),
-        }
+            update_task: None,
+            delegate,
+        };
+        this.update_matches(cx);
+        this
     }
 
     fn render_matches(&self, cx: &AppContext) -> ElementBox {
@@ -137,22 +140,31 @@ impl<D: PickerDelegate> Picker<D> {
         event: &editor::Event,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(delegate) = self.delegate.upgrade(cx) {
-            match event {
-                editor::Event::BufferEdited { .. } => {
-                    let query = self.query_editor.read(cx).text(cx);
-                    let update = delegate.update(cx, |d, cx| d.update_matches(query, cx));
-                    cx.spawn(|this, mut cx| async move {
-                        update.await;
-                        this.update(&mut cx, |_, cx| cx.notify());
+        match event {
+            editor::Event::BufferEdited { .. } => self.update_matches(cx),
+            editor::Event::Blurred => {
+                if let Some(delegate) = self.delegate.upgrade(cx) {
+                    delegate.update(cx, |delegate, cx| {
+                        delegate.dismiss(cx);
                     })
-                    .detach();
                 }
-                editor::Event::Blurred => delegate.update(cx, |delegate, cx| {
-                    delegate.dismiss(cx);
-                }),
-                _ => {}
             }
+            _ => {}
+        }
+    }
+
+    fn update_matches(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(delegate) = self.delegate.upgrade(cx) {
+            let query = self.query_editor.read(cx).text(cx);
+            let update = delegate.update(cx, |d, cx| d.update_matches(query, cx));
+            cx.notify();
+            self.update_task = Some(cx.spawn(|this, mut cx| async move {
+                update.await;
+                this.update(&mut cx, |this, cx| {
+                    cx.notify();
+                    this.update_task.take();
+                });
+            }));
         }
     }
 

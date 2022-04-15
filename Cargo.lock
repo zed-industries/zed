@@ -3794,6 +3794,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "ordered-float",
+ "picker",
  "postage",
  "project",
  "settings",
