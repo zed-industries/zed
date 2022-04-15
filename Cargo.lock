@@ -1907,6 +1907,7 @@ dependencies = [
  "env_logger 0.8.3",
  "fuzzy",
  "gpui",
+ "picker",
  "postage",
  "project",
  "serde_json",

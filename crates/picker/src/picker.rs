@@ -161,14 +161,18 @@ impl<D: PickerDelegate> Picker<D> {
             self.update_task = Some(cx.spawn(|this, mut cx| async move {
                 update.await;
                 this.update(&mut cx, |this, cx| {
-                    cx.notify();
-                    this.update_task.take();
+                    if let Some(delegate) = this.delegate.upgrade(cx) {
+                        let index = delegate.read(cx).selected_index();
+                        this.list_state.scroll_to(ScrollTarget::Show(index));
+                        cx.notify();
+                        this.update_task.take();
+                    }
                 });
             }));
         }
     }
 
-    fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
+    pub fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
             let index = 0;
             delegate.update(cx, |delegate, cx| delegate.set_selected_index(0, cx));
@@ -177,7 +181,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
+    pub fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
             let index = delegate.update(cx, |delegate, cx| {
                 let match_count = delegate.match_count();
@@ -190,7 +194,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
+    pub fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
             let index = delegate.update(cx, |delegate, cx| {
                 let mut selected_index = delegate.selected_index();
@@ -205,7 +209,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
+    pub fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
             let index = delegate.update(cx, |delegate, cx| {
                 let mut selected_index = delegate.selected_index();

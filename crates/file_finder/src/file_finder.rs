@@ -1,13 +1,12 @@
-use editor::Editor;
 use fuzzy::PathMatch;
 use gpui::{
-    actions, elements::*, impl_internal_actions, keymap, AppContext, Axis, Entity, ModelHandle,
-    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    actions, elements::*, impl_internal_actions, AppContext, Entity, ModelHandle,
+    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
 };
+use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath, WorktreeId};
 use settings::Settings;
 use std::{
-    cmp,
     path::Path,
     sync::{
         atomic::{self, AtomicBool},
@@ -15,15 +14,11 @@ use std::{
     },
 };
 use util::post_inc;
-use workspace::{
-    menu::{Confirm, SelectNext, SelectPrev},
-    Workspace,
-};
+use workspace::Workspace;
 
 pub struct FileFinder {
-    handle: WeakViewHandle<Self>,
     project: ModelHandle<Project>,
-    query_editor: ViewHandle<Editor>,
+    picker: ViewHandle<Picker<Self>>,
     search_count: usize,
     latest_search_id: usize,
     latest_search_did_cancel: bool,
@@ -31,7 +26,6 @@ pub struct FileFinder {
     matches: Vec<PathMatch>,
     selected: Option<(usize, Arc<Path>)>,
     cancel_flag: Arc<AtomicBool>,
-    list_state: UniformListState,
 }
 
 #[derive(Clone)]
@@ -42,10 +36,7 @@ impl_internal_actions!(file_finder, [Select]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(FileFinder::toggle);
-    cx.add_action(FileFinder::confirm);
-    cx.add_action(FileFinder::select);
-    cx.add_action(FileFinder::select_prev);
-    cx.add_action(FileFinder::select_next);
+    Picker::<FileFinder>::init(cx);
 }
 
 pub enum Event {
@@ -62,140 +53,16 @@ impl View for FileFinder {
         "FileFinder"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let settings = cx.global::<Settings>();
-        Align::new(
-            ConstrainedBox::new(
-                Container::new(
-                    Flex::new(Axis::Vertical)
-                        .with_child(
-                            ChildView::new(&self.query_editor)
-                                .contained()
-                                .with_style(settings.theme.selector.input_editor.container)
-                                .boxed(),
-                        )
-                        .with_child(
-                            FlexItem::new(self.render_matches(cx))
-                                .flex(1., false)
-                                .boxed(),
-                        )
-                        .boxed(),
-                )
-                .with_style(settings.theme.selector.container)
-                .boxed(),
-            )
-            .with_max_width(500.0)
-            .with_max_height(420.0)
-            .boxed(),
-        )
-        .top()
-        .named("file finder")
+    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+        ChildView::new(self.picker.clone()).boxed()
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.query_editor);
-    }
-
-    fn keymap_context(&self, _: &AppContext) -> keymap::Context {
-        let mut cx = Self::default_keymap_context();
-        cx.set.insert("menu".into());
-        cx
+        cx.focus(&self.picker);
     }
 }
 
 impl FileFinder {
-    fn render_matches(&self, cx: &AppContext) -> ElementBox {
-        if self.matches.is_empty() {
-            let settings = cx.global::<Settings>();
-            return Container::new(
-                Label::new(
-                    "No matches".into(),
-                    settings.theme.selector.empty.label.clone(),
-                )
-                .boxed(),
-            )
-            .with_style(settings.theme.selector.empty.container)
-            .named("empty matches");
-        }
-
-        let handle = self.handle.clone();
-        let list =
-            UniformList::new(
-                self.list_state.clone(),
-                self.matches.len(),
-                move |mut range, items, cx| {
-                    let cx = cx.as_ref();
-                    let finder = handle.upgrade(cx).unwrap();
-                    let finder = finder.read(cx);
-                    let start = range.start;
-                    range.end = cmp::min(range.end, finder.matches.len());
-                    items.extend(finder.matches[range].iter().enumerate().map(
-                        move |(i, path_match)| finder.render_match(path_match, start + i, cx),
-                    ));
-                },
-            );
-
-        Container::new(list.boxed())
-            .with_margin_top(6.0)
-            .named("matches")
-    }
-
-    fn render_match(&self, path_match: &PathMatch, index: usize, cx: &AppContext) -> ElementBox {
-        let selected_index = self.selected_index();
-        let settings = cx.global::<Settings>();
-        let style = if index == selected_index {
-            &settings.theme.selector.active_item
-        } else {
-            &settings.theme.selector.item
-        };
-        let (file_name, file_name_positions, full_path, full_path_positions) =
-            self.labels_for_match(path_match);
-        let container = Container::new(
-            Flex::row()
-                // .with_child(
-                //     Container::new(
-                //         LineBox::new(
-                //             Svg::new("icons/file-16.svg")
-                //                 .with_color(style.label.text.color)
-                //                 .boxed(),
-                //             style.label.text.clone(),
-                //         )
-                //         .boxed(),
-                //     )
-                //     .with_padding_right(6.0)
-                //     .boxed(),
-                // )
-                .with_child(
-                    Flex::column()
-                        .with_child(
-                            Label::new(file_name.to_string(), style.label.clone())
-                                .with_highlights(file_name_positions)
-                                .boxed(),
-                        )
-                        .with_child(
-                            Label::new(full_path, style.label.clone())
-                                .with_highlights(full_path_positions)
-                                .boxed(),
-                        )
-                        .flex(1., false)
-                        .boxed(),
-                )
-                .boxed(),
-        )
-        .with_style(style.container);
-
-        let action = Select(ProjectPath {
-            worktree_id: WorktreeId::from_usize(path_match.worktree_id),
-            path: path_match.path.clone(),
-        });
-        EventHandler::new(container.boxed())
-            .on_mouse_down(move |cx| {
-                cx.dispatch_action(action.clone());
-                true
-            })
-            .named("match")
-    }
-
     fn labels_for_match(&self, path_match: &PathMatch) -> (String, Vec<usize>, String, Vec<usize>) {
         let path_string = path_match.path.to_string_lossy();
         let full_path = [path_match.path_prefix.as_ref(), path_string.as_ref()].join("");
@@ -252,16 +119,12 @@ impl FileFinder {
     pub fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
         cx.observe(&project, Self::project_updated).detach();
 
-        let query_editor = cx.add_view(|cx| {
-            Editor::single_line(Some(|theme| theme.selector.input_editor.clone()), cx)
-        });
-        cx.subscribe(&query_editor, Self::on_query_editor_event)
-            .detach();
+        let handle = cx.weak_handle();
+        let picker = cx.add_view(|cx| Picker::new(handle, cx));
 
         Self {
-            handle: cx.weak_handle(),
             project,
-            query_editor,
+            picker,
             search_count: 0,
             latest_search_id: 0,
             latest_search_did_cancel: false,
@@ -269,85 +132,12 @@ impl FileFinder {
             matches: Vec::new(),
             selected: None,
             cancel_flag: Arc::new(AtomicBool::new(false)),
-            list_state: Default::default(),
         }
     }
 
     fn project_updated(&mut self, _: ModelHandle<Project>, cx: &mut ViewContext<Self>) {
-        let query = self.query_editor.update(cx, |buffer, cx| buffer.text(cx));
-        self.spawn_search(query, cx).detach();
-    }
-
-    fn on_query_editor_event(
-        &mut self,
-        _: ViewHandle<Editor>,
-        event: &editor::Event,
-        cx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            editor::Event::BufferEdited { .. } => {
-                let query = self.query_editor.update(cx, |buffer, cx| buffer.text(cx));
-                if query.is_empty() {
-                    self.latest_search_id = post_inc(&mut self.search_count);
-                    self.matches.clear();
-                    cx.notify();
-                } else {
-                    self.spawn_search(query, cx).detach();
-                }
-            }
-            editor::Event::Blurred => cx.emit(Event::Dismissed),
-            _ => {}
-        }
-    }
-
-    fn selected_index(&self) -> usize {
-        if let Some(selected) = self.selected.as_ref() {
-            for (ix, path_match) in self.matches.iter().enumerate() {
-                if (path_match.worktree_id, path_match.path.as_ref())
-                    == (selected.0, selected.1.as_ref())
-                {
-                    return ix;
-                }
-            }
-        }
-        0
-    }
-
-    fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
-        let mut selected_index = self.selected_index();
-        if selected_index > 0 {
-            selected_index -= 1;
-            let mat = &self.matches[selected_index];
-            self.selected = Some((mat.worktree_id, mat.path.clone()));
-        }
-        self.list_state
-            .scroll_to(ScrollTarget::Show(selected_index));
-        cx.notify();
-    }
-
-    fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
-        let mut selected_index = self.selected_index();
-        if selected_index + 1 < self.matches.len() {
-            selected_index += 1;
-            let mat = &self.matches[selected_index];
-            self.selected = Some((mat.worktree_id, mat.path.clone()));
-        }
-        self.list_state
-            .scroll_to(ScrollTarget::Show(selected_index));
-        cx.notify();
-    }
-
-    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
-        if let Some(m) = self.matches.get(self.selected_index()) {
-            cx.emit(Event::Selected(ProjectPath {
-                worktree_id: WorktreeId::from_usize(m.worktree_id),
-                path: m.path.clone(),
-            }));
-        }
-    }
-
-    fn select(&mut self, Select(project_path): &Select, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Selected(project_path.clone()));
+        self.spawn_search(self.latest_search_query.clone(), cx)
+            .detach();
     }
 
     fn spawn_search(&mut self, query: String, cx: &mut ViewContext<Self>) -> Task<()> {
@@ -364,14 +154,17 @@ impl FileFinder {
                 .await;
             let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
             this.update(&mut cx, |this, cx| {
-                this.update_matches((search_id, did_cancel, query, matches), cx)
+                this.set_matches(search_id, did_cancel, query, matches, cx)
             });
         })
     }
 
-    fn update_matches(
+    fn set_matches(
         &mut self,
-        (search_id, did_cancel, query, matches): (usize, bool, String, Vec<PathMatch>),
+        search_id: usize,
+        did_cancel: bool,
+        query: String,
+        matches: Vec<PathMatch>,
         cx: &mut ViewContext<Self>,
     ) {
         if search_id >= self.latest_search_id {
@@ -383,19 +176,107 @@ impl FileFinder {
             }
             self.latest_search_query = query;
             self.latest_search_did_cancel = did_cancel;
-            self.list_state
-                .scroll_to(ScrollTarget::Show(self.selected_index()));
             cx.notify();
+            self.picker.update(cx, |_, cx| cx.notify());
         }
+    }
+}
+
+impl PickerDelegate for FileFinder {
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        if let Some(selected) = self.selected.as_ref() {
+            for (ix, path_match) in self.matches.iter().enumerate() {
+                if (path_match.worktree_id, path_match.path.as_ref())
+                    == (selected.0, selected.1.as_ref())
+                {
+                    return ix;
+                }
+            }
+        }
+        0
+    }
+
+    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Self>) {
+        let mat = &self.matches[ix];
+        self.selected = Some((mat.worktree_id, mat.path.clone()));
+        cx.notify();
+    }
+
+    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) -> Task<()> {
+        if query.is_empty() {
+            self.latest_search_id = post_inc(&mut self.search_count);
+            self.matches.clear();
+            cx.notify();
+            Task::ready(())
+        } else {
+            self.spawn_search(query, cx)
+        }
+    }
+
+    fn confirm(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(m) = self.matches.get(self.selected_index()) {
+            cx.emit(Event::Selected(ProjectPath {
+                worktree_id: WorktreeId::from_usize(m.worktree_id),
+                path: m.path.clone(),
+            }));
+        }
+    }
+
+    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Dismissed);
+    }
+
+    fn render_match(&self, ix: usize, selected: bool, cx: &AppContext) -> ElementBox {
+        let path_match = &self.matches[ix];
+        let settings = cx.global::<Settings>();
+        let style = if selected {
+            &settings.theme.selector.active_item
+        } else {
+            &settings.theme.selector.item
+        };
+        let (file_name, file_name_positions, full_path, full_path_positions) =
+            self.labels_for_match(path_match);
+        let action = Select(ProjectPath {
+            worktree_id: WorktreeId::from_usize(path_match.worktree_id),
+            path: path_match.path.clone(),
+        });
+
+        EventHandler::new(
+            Flex::column()
+                .with_child(
+                    Label::new(file_name.to_string(), style.label.clone())
+                        .with_highlights(file_name_positions)
+                        .boxed(),
+                )
+                .with_child(
+                    Label::new(full_path, style.label.clone())
+                        .with_highlights(full_path_positions)
+                        .boxed(),
+                )
+                .flex(1., false)
+                .contained()
+                .with_style(style.container)
+                .boxed(),
+        )
+        .on_mouse_down(move |cx| {
+            cx.dispatch_action(action.clone());
+            true
+        })
+        .named("match")
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::Input;
+    use editor::{Editor, Input};
     use serde_json::json;
     use std::path::PathBuf;
+    use workspace::menu::{Confirm, SelectNext};
     use workspace::{Workspace, WorkspaceParams};
 
     #[ctor::ctor]
@@ -518,25 +399,21 @@ mod tests {
             // Simulate a search being cancelled after the time limit,
             // returning only a subset of the matches that would have been found.
             finder.spawn_search(query.clone(), cx).detach();
-            finder.update_matches(
-                (
-                    finder.latest_search_id,
-                    true, // did-cancel
-                    query.clone(),
-                    vec![matches[1].clone(), matches[3].clone()],
-                ),
+            finder.set_matches(
+                finder.latest_search_id,
+                true, // did-cancel
+                query.clone(),
+                vec![matches[1].clone(), matches[3].clone()],
                 cx,
             );
 
             // Simulate another cancellation.
             finder.spawn_search(query.clone(), cx).detach();
-            finder.update_matches(
-                (
-                    finder.latest_search_id,
-                    true, // did-cancel
-                    query.clone(),
-                    vec![matches[0].clone(), matches[2].clone(), matches[3].clone()],
-                ),
+            finder.set_matches(
+                finder.latest_search_id,
+                true, // did-cancel
+                query.clone(),
+                vec![matches[0].clone(), matches[2].clone(), matches[3].clone()],
                 cx,
             );
 
@@ -631,9 +508,9 @@ mod tests {
         finder.update(cx, |f, cx| {
             assert_eq!(f.matches.len(), 2);
             assert_eq!(f.selected_index(), 0);
-            f.select_next(&SelectNext, cx);
+            f.set_selected_index(1, cx);
             assert_eq!(f.selected_index(), 1);
-            f.select_prev(&SelectPrev, cx);
+            f.set_selected_index(0, cx);
             assert_eq!(f.selected_index(), 0);
         });
     }
