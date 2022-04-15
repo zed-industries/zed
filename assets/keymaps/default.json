@@ -250,21 +250,9 @@
             "\n"
         ]
     },
-    "OutlineView": {
-        "escape": "outline::Toggle"
-    },
-    "ProjectSymbolsView": {
-        "escape": "project_symbols::Toggle"
-    },
-    "ThemeSelector": {
-        "escape": "theme_selector::Toggle"
-    },
     "GoToLine": {
         "escape": "go_to_line::Toggle",
         "enter": "go_to_line::Confirm"
-    },
-    "FileFinder": {
-        "escape": "file_finder::Toggle"
     },
     "ChatPanel": {
         "enter": "chat_panel::Send"

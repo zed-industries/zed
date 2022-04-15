@@ -3374,6 +3374,7 @@ dependencies = [
  "gpui",
  "language",
  "ordered-float",
+ "picker",
  "postage",
  "settings",
  "smol",

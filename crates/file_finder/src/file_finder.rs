@@ -113,14 +113,11 @@ impl FileFinder {
     }
 
     pub fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
-        cx.observe(&project, Self::project_updated).detach();
-
         let handle = cx.weak_handle();
-        let picker = cx.add_view(|cx| Picker::new(handle, cx));
-
+        cx.observe(&project, Self::project_updated).detach();
         Self {
             project,
-            picker,
+            picker: cx.add_view(|cx| Picker::new(handle, cx)),
             search_count: 0,
             latest_search_id: 0,
             latest_search_did_cancel: false,

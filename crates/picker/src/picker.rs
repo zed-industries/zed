@@ -1,9 +1,10 @@
 use editor::Editor;
 use gpui::{
     elements::{
-        ChildView, EventHandler, Flex, FlexItem, Label, ParentElement, ScrollTarget, UniformList,
+        ChildView, EventHandler, Flex, Label, ParentElement, ScrollTarget, UniformList,
         UniformListState,
     },
+    geometry::vector::{vec2f, Vector2F},
     keymap, AppContext, Axis, Element, ElementBox, Entity, MutableAppContext, RenderContext, Task,
     View, ViewContext, ViewHandle, WeakViewHandle,
 };
@@ -18,6 +19,7 @@ pub struct Picker<D: PickerDelegate> {
     query_editor: ViewHandle<Editor>,
     list_state: UniformListState,
     update_task: Option<Task<()>>,
+    max_size: Vector2F,
 }
 
 pub trait PickerDelegate: View {
@@ -28,6 +30,9 @@ pub trait PickerDelegate: View {
     fn confirm(&mut self, cx: &mut ViewContext<Self>);
     fn dismiss(&mut self, cx: &mut ViewContext<Self>);
     fn render_match(&self, ix: usize, selected: bool, cx: &AppContext) -> ElementBox;
+    fn center_selection_after_match_updates(&self) -> bool {
+        false
+    }
 }
 
 impl<D: PickerDelegate> Entity for Picker<D> {
@@ -41,6 +46,13 @@ impl<D: PickerDelegate> View for Picker<D> {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> gpui::ElementBox {
         let settings = cx.global::<Settings>();
+        let delegate = self.delegate.clone();
+        let match_count = if let Some(delegate) = delegate.upgrade(cx.app) {
+            delegate.read(cx).match_count()
+        } else {
+            0
+        };
+
         Flex::new(Axis::Vertical)
             .with_child(
                 ChildView::new(&self.query_editor)
@@ -49,15 +61,44 @@ impl<D: PickerDelegate> View for Picker<D> {
                     .boxed(),
             )
             .with_child(
-                FlexItem::new(self.render_matches(cx))
-                    .flex(1., false)
-                    .boxed(),
+                if match_count == 0 {
+                    Label::new(
+                        "No matches".into(),
+                        settings.theme.selector.empty.label.clone(),
+                    )
+                    .contained()
+                    .with_style(settings.theme.selector.empty.container)
+                } else {
+                    UniformList::new(
+                        self.list_state.clone(),
+                        match_count,
+                        move |mut range, items, cx| {
+                            let cx = cx.as_ref();
+                            let delegate = delegate.upgrade(cx).unwrap();
+                            let delegate = delegate.read(cx);
+                            let selected_ix = delegate.selected_index();
+                            range.end = cmp::min(range.end, delegate.match_count());
+                            items.extend(range.map(move |ix| {
+                                EventHandler::new(delegate.render_match(ix, ix == selected_ix, cx))
+                                    .on_mouse_down(move |cx| {
+                                        cx.dispatch_action(SelectIndex(ix));
+                                        true
+                                    })
+                                    .boxed()
+                            }));
+                        },
+                    )
+                    .contained()
+                    .with_margin_top(6.0)
+                }
+                .flex(1., false)
+                .boxed(),
             )
             .contained()
             .with_style(settings.theme.selector.container)
             .constrained()
-            .with_max_width(500.0)
-            .with_max_height(420.0)
+            .with_max_width(self.max_size.x())
+            .with_max_height(self.max_size.y())
             .aligned()
             .top()
             .named("picker")
@@ -91,57 +132,20 @@ impl<D: PickerDelegate> Picker<D> {
         });
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
-        let mut this = Self {
+        let this = Self {
             query_editor,
             list_state: Default::default(),
             update_task: None,
             delegate,
+            max_size: vec2f(500., 420.),
         };
-        this.update_matches(cx);
+        cx.defer(|this, cx| this.update_matches(cx));
         this
     }
 
-    fn render_matches(&self, cx: &AppContext) -> ElementBox {
-        let delegate = self.delegate.clone();
-        let match_count = if let Some(delegate) = delegate.upgrade(cx) {
-            delegate.read(cx).match_count()
-        } else {
-            0
-        };
-
-        if match_count == 0 {
-            let settings = cx.global::<Settings>();
-            return Label::new(
-                "No matches".into(),
-                settings.theme.selector.empty.label.clone(),
-            )
-            .contained()
-            .with_style(settings.theme.selector.empty.container)
-            .named("empty matches");
-        }
-
-        UniformList::new(
-            self.list_state.clone(),
-            match_count,
-            move |mut range, items, cx| {
-                let cx = cx.as_ref();
-                let delegate = delegate.upgrade(cx).unwrap();
-                let delegate = delegate.read(cx);
-                let selected_ix = delegate.selected_index();
-                range.end = cmp::min(range.end, delegate.match_count());
-                items.extend(range.map(move |ix| {
-                    EventHandler::new(delegate.render_match(ix, ix == selected_ix, cx))
-                        .on_mouse_down(move |cx| {
-                            cx.dispatch_action(SelectIndex(ix));
-                            true
-                        })
-                        .boxed()
-                }));
-            },
-        )
-        .contained()
-        .with_margin_top(6.0)
-        .named("matches")
+    pub fn with_max_size(mut self, width: f32, height: f32) -> Self {
+        self.max_size = vec2f(width, height);
+        self
     }
 
     fn on_query_editor_event(
@@ -172,8 +176,14 @@ impl<D: PickerDelegate> Picker<D> {
                 update.await;
                 this.update(&mut cx, |this, cx| {
                     if let Some(delegate) = this.delegate.upgrade(cx) {
-                        let index = delegate.read(cx).selected_index();
-                        this.list_state.scroll_to(ScrollTarget::Show(index));
+                        let delegate = delegate.read(cx);
+                        let index = delegate.selected_index();
+                        let target = if delegate.center_selection_after_match_updates() {
+                            ScrollTarget::Center(index)
+                        } else {
+                            ScrollTarget::Show(index)
+                        };
+                        this.list_state.scroll_to(target);
                         cx.notify();
                         this.update_task.take();
                     }

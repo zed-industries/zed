@@ -57,18 +57,15 @@ impl View for ProjectSymbolsView {
 impl ProjectSymbolsView {
     fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
         let handle = cx.weak_handle();
-        let picker = cx.add_view(|cx| Picker::new(handle, cx));
-        let mut this = Self {
-            picker,
+        Self {
             project,
+            picker: cx.add_view(|cx| Picker::new(handle, cx)),
             selected_match_index: 0,
             symbols: Default::default(),
             match_candidates: Default::default(),
             matches: Default::default(),
             show_worktree_root_name: false,
-        };
-        this.update_matches(String::new(), cx).detach();
-        this
+        }
     }
 
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
