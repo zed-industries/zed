@@ -68,6 +68,8 @@ impl super::ForegroundPlatform for ForegroundPlatform {
 
     fn on_open_files(&self, _: Box<dyn FnMut(Vec<std::path::PathBuf>)>) {}
 
+    fn on_open_urls(&self, _: Box<dyn FnMut(Vec<String>)>) {}
+
     fn run(&self, _on_finish_launching: Box<dyn FnOnce() -> ()>) {
         unimplemented!()
     }

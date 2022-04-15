@@ -3,6 +3,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use assets::Assets;
+use cli::{ipc, CliRequest, CliResponse, IpcHandshake};
 use client::{self, http, ChannelList, UserStore};
 use fs::OpenOptions;
 use futures::{channel::oneshot, StreamExt};
@@ -26,7 +27,7 @@ use zed::{
 fn main() {
     init_logger();
 
-    let app = gpui::App::new(Assets).unwrap();
+    let mut app = gpui::App::new(Assets).unwrap();
     load_embedded_fonts(&app);
 
     let fs = Arc::new(RealFs);
@@ -86,6 +87,12 @@ fn main() {
             load_login_shell_environment().await.log_err();
         })
     };
+
+    app.on_open_urls(|urls, _| {
+        if let Some(server_name) = urls.first().and_then(|url| url.strip_prefix("zed-cli://")) {
+            connect_to_cli(server_name).log_err();
+        }
+    });
 
     app.run(move |cx| {
         let http = http::client();
@@ -291,4 +298,30 @@ fn load_config_files(
         })
         .detach();
     rx
+}
+
+fn connect_to_cli(server_name: &str) -> Result<()> {
+    let handshake_tx = cli::ipc::IpcSender::<IpcHandshake>::connect(server_name.to_string())
+        .context("error connecting to cli")?;
+    let (request_tx, request_rx) = ipc::channel::<CliRequest>()?;
+    let (response_tx, response_rx) = ipc::channel::<CliResponse>()?;
+
+    handshake_tx
+        .send(IpcHandshake {
+            requests: request_tx,
+            responses: response_rx,
+        })
+        .context("error sending ipc handshake")?;
+
+    std::thread::spawn(move || {
+        while let Ok(cli_request) = request_rx.recv() {
+            log::info!("{cli_request:?}");
+            response_tx.send(CliResponse::Stdout {
+                message: "Hi, CLI!".into(),
+            })?;
+            response_tx.send(CliResponse::Exit { status: 0 })?;
+        }
+        Ok::<_, anyhow::Error>(())
+    });
+    Ok(())
 }

@@ -113,6 +113,7 @@ pub struct MacForegroundPlatformState {
     event: Option<Box<dyn FnMut(crate::Event) -> bool>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     open_files: Option<Box<dyn FnMut(Vec<PathBuf>)>>,
+    open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce() -> ()>>,
     menu_actions: Vec<Box<dyn Action>>,
 }
@@ -216,6 +217,10 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
 
     fn on_open_files(&self, callback: Box<dyn FnMut(Vec<PathBuf>)>) {
         self.0.borrow_mut().open_files = Some(callback);
+    }
+
+    fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
+        self.0.borrow_mut().open_urls = Some(callback);
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>) {
@@ -706,16 +711,16 @@ extern "C" fn open_files(this: &mut Object, _: Sel, _: id, paths: id) {
     }
 }
 
-extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, paths: id) {
-    let paths = unsafe {
-        (0..paths.count())
+extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
+    let urls = unsafe {
+        (0..urls.count())
             .into_iter()
             .filter_map(|i| {
-                let path = paths.objectAtIndex(i);
+                let path = urls.objectAtIndex(i);
                 match dbg!(
                     CStr::from_ptr(path.absoluteString().UTF8String() as *mut c_char).to_str()
                 ) {
-                    Ok(string) => Some(PathBuf::from(string)),
+                    Ok(string) => Some(string.to_string()),
                     Err(err) => {
                         log::error!("error converting path to string: {}", err);
                         None
@@ -724,10 +729,10 @@ extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, paths: id) {
             })
             .collect::<Vec<_>>()
     };
-    // let platform = unsafe { get_foreground_platform(this) };
-    // if let Some(callback) = platform.0.borrow_mut().open_files.as_mut() {
-    //     callback(paths);
-    // }
+    let platform = unsafe { get_foreground_platform(this) };
+    if let Some(callback) = platform.0.borrow_mut().open_urls.as_mut() {
+        callback(urls);
+    }
 }
 
 extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {

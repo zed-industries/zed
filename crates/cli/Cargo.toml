@@ -3,6 +3,14 @@ name = "cli"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+path = "src/cli.rs"
+doctest = false
+
+[[bin]]
+name = "cli"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1.0"
 core-foundation = "0.9"

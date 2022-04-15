@@ -248,7 +248,7 @@ impl App {
         self
     }
 
-    pub fn on_quit<F>(self, mut callback: F) -> Self
+    pub fn on_quit<F>(&mut self, mut callback: F) -> &mut Self
     where
         F: 'static + FnMut(&mut MutableAppContext),
     {
@@ -260,7 +260,7 @@ impl App {
         self
     }
 
-    pub fn on_event<F>(self, mut callback: F) -> Self
+    pub fn on_event<F>(&mut self, mut callback: F) -> &mut Self
     where
         F: 'static + FnMut(Event, &mut MutableAppContext) -> bool,
     {
@@ -274,7 +274,7 @@ impl App {
         self
     }
 
-    pub fn on_open_files<F>(self, mut callback: F) -> Self
+    pub fn on_open_files<F>(&mut self, mut callback: F) -> &mut Self
     where
         F: 'static + FnMut(Vec<PathBuf>, &mut MutableAppContext),
     {
@@ -283,6 +283,20 @@ impl App {
             .borrow_mut()
             .foreground_platform
             .on_open_files(Box::new(move |paths| {
+                callback(paths, &mut *cx.borrow_mut())
+            }));
+        self
+    }
+
+    pub fn on_open_urls<F>(&mut self, mut callback: F) -> &mut Self
+    where
+        F: 'static + FnMut(Vec<String>, &mut MutableAppContext),
+    {
+        let cx = self.0.clone();
+        self.0
+            .borrow_mut()
+            .foreground_platform
+            .on_open_urls(Box::new(move |paths| {
                 callback(paths, &mut *cx.borrow_mut())
             }));
         self

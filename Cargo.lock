@@ -6344,6 +6344,7 @@ dependencies = [
  "async-trait",
  "breadcrumbs",
  "chat_panel",
+ "cli",
  "client",
  "clock",
  "collections",
