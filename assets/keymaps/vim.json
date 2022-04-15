@@ -1,58 +1,93 @@
 {
-    "Editor && vim_mode == insert": {
-        "escape": "vim::NormalBefore",
-        "ctrl-c": "vim::NormalBefore"
-    },
-    "Editor && vim_mode == normal && vim_submode == g": {
-        "g": "vim::MoveToStart",
-        "escape": [
-            "vim::SwitchMode",
-            {
-                "Normal": "None"
-            }
-        ]
-    },
-    "Editor && vim_mode == normal": {
+    "Editor && VimControl": {
         "i": [
             "vim::SwitchMode",
             "Insert"
         ],
         "g": [
-            "vim::SwitchMode",
+            "vim::PushOperator",
             {
-                "Normal": "GPrefix"
+                "Namespace": "G"
             }
         ],
-        "h": "vim::MoveLeft",
-        "j": "vim::MoveDown",
-        "k": "vim::MoveUp",
-        "l": "vim::MoveRight",
-        "0": "vim::MoveToStartOfLine",
-        "shift-$": "vim::MoveToEndOfLine",
-        "shift-G": "vim::MoveToEnd",
+        "h": "vim::Left",
+        "j": "vim::Down",
+        "k": "vim::Up",
+        "l": "vim::Right",
+        "0": "vim::StartOfLine",
+        "shift-$": "vim::EndOfLine",
+        "shift-G": "vim::EndOfDocument",
+        "w": "vim::NextWordStart",
+        "shift-W": [
+            "vim::NextWordStart",
+            {
+                "ignorePunctuation": true
+            }
+        ],
+        "e": "vim::NextWordEnd",
+        "shift-E": [
+            "vim::NextWordEnd",
+            {
+                "ignorePunctuation": true
+            }
+        ],
+        "b": "vim::PreviousWordStart",
+        "shift-B": [
+            "vim::PreviousWordStart",
+            {
+                "ignorePunctuation": true
+            }
+        ],
+        "escape": [
+            "vim::SwitchMode",
+            "Normal"
+        ]
+    },
+    "Editor && vim_operator == g": {
+        "g": "vim::StartOfDocument"
+    },
+    "Editor && vim_mode == insert": {
+        "escape": "vim::NormalBefore",
+        "ctrl-c": "vim::NormalBefore"
+    },
+    "Editor && vim_mode == normal": {
+        "c": [
+            "vim::PushOperator",
+            "Change"
+        ],
+        "d": [
+            "vim::PushOperator",
+            "Delete"
+        ]
+    },
+    "Editor && vim_operator == c": {
         "w": [
-            "vim::MoveToNextWordStart",
-            false
+            "vim::NextWordEnd",
+            {
+                "ignorePunctuation": false
+            }
         ],
         "shift-W": [
-            "vim::MoveToNextWordStart",
-            true
+            "vim::NextWordEnd",
+            {
+                "ignorePunctuation": true
+            }
+        ]
+    },
+    "Editor && vim_operator == d": {
+        "w": [
+            "vim::NextWordStart",
+            {
+                "ignorePunctuation": false,
+                "stopAtNewline": true
+            }
         ],
-        "e": [
-            "vim::MoveToNextWordEnd",
-            false
-        ],
-        "shift-E": [
-            "vim::MoveToNextWordEnd",
-            true
-        ],
-        "b": [
-            "vim::MoveToPreviousWordStart",
-            false
-        ],
-        "shift-B": [
-            "vim::MoveToPreviousWordStart",
-            true
+        "shift-W": [
+            "vim::NextWordStart",
+            {
+                "ignorePunctuation": true,
+                "stopAtNewline": true
+            }
         ]
     }
 }
