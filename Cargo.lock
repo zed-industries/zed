@@ -6175,7 +6175,6 @@ dependencies = [
  "collections",
  "command_palette",
  "contacts_panel",
- "crossbeam-channel",
  "ctor",
  "diagnostics",
  "dirs 3.0.1",

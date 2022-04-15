@@ -65,7 +65,6 @@ anyhow = "1.0.38"
 async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
 async-recursion = "0.3"
 async-trait = "0.1"
-crossbeam-channel = "0.5.0"
 ctor = "0.1.20"
 dirs = "3.0"
 easy-parallel = "3.1.0"
