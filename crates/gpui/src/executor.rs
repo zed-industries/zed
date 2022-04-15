@@ -8,7 +8,7 @@ use std::{
     mem,
     pin::Pin,
     rc::Rc,
-    sync::Arc,
+    sync::{mpsc, Arc},
     task::{Context, Poll},
     thread,
     time::Duration,
@@ -625,13 +625,9 @@ impl Background {
     where
         F: FnOnce(&mut Scope<'scope>),
     {
-        let mut scope = Scope {
-            futures: Default::default(),
-            _phantom: PhantomData,
-        };
+        let mut scope = Scope::new();
         (scheduler)(&mut scope);
-        let spawned = scope
-            .futures
+        let spawned = mem::take(&mut scope.futures)
             .into_iter()
             .map(|f| self.spawn(f))
             .collect::<Vec<_>>();
@@ -669,21 +665,50 @@ impl Background {
 
 pub struct Scope<'a> {
     futures: Vec<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+    tx: Option<mpsc::Sender<()>>,
+    rx: mpsc::Receiver<()>,
     _phantom: PhantomData<&'a ()>,
 }
 
 impl<'a> Scope<'a> {
+    fn new() -> Self {
+        let (tx, rx) = mpsc::channel();
+        Self {
+            tx: Some(tx),
+            rx,
+            futures: Default::default(),
+            _phantom: PhantomData,
+        }
+    }
+
     pub fn spawn<F>(&mut self, f: F)
     where
         F: Future<Output = ()> + Send + 'a,
     {
+        let tx = self.tx.clone().unwrap();
+
+        // Safety: The 'a lifetime is guaranteed to outlive any of these futures because
+        // dropping this `Scope` blocks until all of the futures have resolved.
         let f = unsafe {
             mem::transmute::<
                 Pin<Box<dyn Future<Output = ()> + Send + 'a>>,
                 Pin<Box<dyn Future<Output = ()> + Send + 'static>>,
-            >(Box::pin(f))
+            >(Box::pin(async move {
+                f.await;
+                drop(tx);
+            }))
         };
         self.futures.push(f);
+    }
+}
+
+impl<'a> Drop for Scope<'a> {
+    fn drop(&mut self) {
+        self.tx.take().unwrap();
+
+        // Wait until the channel is closed, which means that all of the spawned
+        // futures have resolved.
+        self.rx.recv().ok();
     }
 }
 
