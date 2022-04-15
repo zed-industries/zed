@@ -4808,25 +4808,6 @@ impl Editor {
         Some(rename)
     }
 
-    fn invalidate_rename_range(
-        &mut self,
-        buffer: &MultiBufferSnapshot,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if let Some(rename) = self.pending_rename.as_ref() {
-            if self.selections.len() == 1 {
-                let head = self.selections[0].head().to_offset(buffer);
-                let range = rename.range.to_offset(buffer).to_inclusive();
-                if range.contains(&head) {
-                    return;
-                }
-            }
-            let rename = self.pending_rename.take().unwrap();
-            self.remove_blocks([rename.block_id].into_iter().collect(), cx);
-            self.clear_background_highlights::<Rename>(cx);
-        }
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub fn pending_rename(&self) -> Option<&RenameState> {
         self.pending_rename.as_ref()
@@ -5332,7 +5313,7 @@ impl Editor {
         self.select_larger_syntax_node_stack.clear();
         self.autoclose_stack.invalidate(&self.selections, &buffer);
         self.snippet_stack.invalidate(&self.selections, &buffer);
-        self.invalidate_rename_range(&buffer, cx);
+        self.take_rename(false, cx);
 
         let new_cursor_position = self.newest_anchor_selection().head();
 
