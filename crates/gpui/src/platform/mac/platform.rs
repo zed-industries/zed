@@ -94,6 +94,10 @@ unsafe fn build_classes() {
             sel!(application:openFiles:),
             open_files as extern "C" fn(&mut Object, Sel, id, id),
         );
+        decl.add_method(
+            sel!(application:openURLs:),
+            open_urls as extern "C" fn(&mut Object, Sel, id, id),
+        );
         decl.register()
     }
 }
@@ -700,6 +704,30 @@ extern "C" fn open_files(this: &mut Object, _: Sel, _: id, paths: id) {
     if let Some(callback) = platform.0.borrow_mut().open_files.as_mut() {
         callback(paths);
     }
+}
+
+extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, paths: id) {
+    let paths = unsafe {
+        (0..paths.count())
+            .into_iter()
+            .filter_map(|i| {
+                let path = paths.objectAtIndex(i);
+                match dbg!(
+                    CStr::from_ptr(path.absoluteString().UTF8String() as *mut c_char).to_str()
+                ) {
+                    Ok(string) => Some(PathBuf::from(string)),
+                    Err(err) => {
+                        log::error!("error converting path to string: {}", err);
+                        None
+                    }
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+    // let platform = unsafe { get_foreground_platform(this) };
+    // if let Some(callback) = platform.0.borrow_mut().open_files.as_mut() {
+    //     callback(paths);
+    // }
 }
 
 extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {

@@ -1,0 +1,12 @@
+[package]
+name = "cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+core-foundation = "0.9"
+core-services = "0.2"
+clap = { version = "3.1", features = ["derive"] }
+ipc-channel = "0.16"
+serde = { version = "1.0", features = ["derive"] }
