@@ -3,17 +3,23 @@
 
 use anyhow::{anyhow, Context, Result};
 use assets::Assets;
-use cli::{ipc, CliRequest, CliResponse, IpcHandshake};
+use cli::{
+    ipc::{self, IpcSender},
+    CliRequest, CliResponse, IpcHandshake,
+};
 use client::{self, http, ChannelList, UserStore};
 use fs::OpenOptions;
-use futures::{channel::oneshot, StreamExt};
+use futures::{
+    channel::{mpsc, oneshot},
+    SinkExt, StreamExt,
+};
 use gpui::{App, AssetSource, Task};
 use log::LevelFilter;
 use parking_lot::Mutex;
 use project::Fs;
 use settings::{self, KeymapFile, Settings, SettingsFileContent};
 use smol::process::Command;
-use std::{env, fs, path::PathBuf, sync::Arc};
+use std::{env, fs, path::PathBuf, sync::Arc, thread};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
 use util::ResultExt;
 use workspace::{self, AppState, OpenNew, OpenPaths};
@@ -88,9 +94,33 @@ fn main() {
         })
     };
 
-    app.on_open_urls(|urls, _| {
+    app.on_open_urls(|urls, cx| {
         if let Some(server_name) = urls.first().and_then(|url| url.strip_prefix("zed-cli://")) {
-            connect_to_cli(server_name).log_err();
+            if let Some((mut requests, responses)) = connect_to_cli(server_name).log_err() {
+                cx.spawn(|_| async move {
+                    for request in requests.next().await {
+                        match request {
+                            CliRequest::Open { paths, wait } => {
+                                if wait {
+                                    todo!();
+                                }
+
+                                log::info!("open paths {:?}", paths);
+                                responses
+                                    .send(CliResponse::Stdout {
+                                        message: "Hello CLI!".to_string(),
+                                    })
+                                    .log_err();
+                                responses.send(CliResponse::Exit { status: 0 }).log_err();
+
+                                // TODO... get rid of AppState so we can do this here?
+                                // cx.update(|cx| open_paths(&paths, app_state, cx));
+                            }
+                        }
+                    }
+                })
+                .detach();
+            };
         }
     });
 
@@ -300,7 +330,9 @@ fn load_config_files(
     rx
 }
 
-fn connect_to_cli(server_name: &str) -> Result<()> {
+fn connect_to_cli(
+    server_name: &str,
+) -> Result<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)> {
     let handshake_tx = cli::ipc::IpcSender::<IpcHandshake>::connect(server_name.to_string())
         .context("error connecting to cli")?;
     let (request_tx, request_rx) = ipc::channel::<CliRequest>()?;
@@ -313,15 +345,16 @@ fn connect_to_cli(server_name: &str) -> Result<()> {
         })
         .context("error sending ipc handshake")?;
 
-    std::thread::spawn(move || {
+    let (mut async_request_tx, async_request_rx) =
+        futures::channel::mpsc::channel::<CliRequest>(16);
+    thread::spawn(move || {
         while let Ok(cli_request) = request_rx.recv() {
-            log::info!("{cli_request:?}");
-            response_tx.send(CliResponse::Stdout {
-                message: "Hi, CLI!".into(),
-            })?;
-            response_tx.send(CliResponse::Exit { status: 0 })?;
+            if smol::block_on(async_request_tx.send(cli_request)).is_err() {
+                break;
+            }
         }
         Ok::<_, anyhow::Error>(())
     });
-    Ok(())
+
+    Ok((async_request_rx, response_tx))
 }
