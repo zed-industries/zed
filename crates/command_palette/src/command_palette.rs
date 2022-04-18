@@ -135,15 +135,28 @@ impl PickerDelegate for CommandPalette {
             })
             .collect::<Vec<_>>();
         cx.spawn(move |this, mut cx| async move {
-            let matches = fuzzy::match_strings(
-                &candidates,
-                &query,
-                true,
-                10000,
-                &Default::default(),
-                cx.background(),
-            )
-            .await;
+            let matches = if query.is_empty() {
+                candidates
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, candidate)| StringMatch {
+                        candidate_id: index,
+                        string: candidate.string,
+                        positions: Vec::new(),
+                        score: 0.0,
+                    })
+                    .collect()
+            } else {
+                fuzzy::match_strings(
+                    &candidates,
+                    &query,
+                    true,
+                    10000,
+                    &Default::default(),
+                    cx.background(),
+                )
+                .await
+            };
             this.update(&mut cx, |this, _| {
                 this.matches = matches;
                 if this.matches.is_empty() {
@@ -186,7 +199,11 @@ impl PickerDelegate for CommandPalette {
         let keystroke_spacing = theme.command_palette.keystroke_spacing;
 
         Flex::row()
-            .with_child(Label::new(mat.string.clone(), style.label.clone()).boxed())
+            .with_child(
+                Label::new(mat.string.clone(), style.label.clone())
+                    .with_highlights(mat.positions.clone())
+                    .boxed(),
+            )
             .with_children(command.keystrokes.iter().map(|keystroke| {
                 Flex::row()
                     .with_children(
