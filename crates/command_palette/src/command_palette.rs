@@ -27,6 +27,11 @@ pub struct CommandPalette {
 
 pub enum Event {
     Dismissed,
+    Confirmed {
+        window_id: usize,
+        focused_view_id: usize,
+        action: Box<dyn Action>,
+    },
 }
 
 struct Command {
@@ -81,8 +86,18 @@ impl CommandPalette {
         cx: &mut ViewContext<Workspace>,
     ) {
         match event {
-            Event::Dismissed => {
+            Event::Dismissed => workspace.dismiss_modal(cx),
+            Event::Confirmed {
+                window_id,
+                focused_view_id,
+                action,
+            } => {
+                let window_id = *window_id;
+                let focused_view_id = *focused_view_id;
+                let action = (*action).boxed_clone();
                 workspace.dismiss_modal(cx);
+                cx.as_mut()
+                    .defer(move |cx| cx.dispatch_action_at(window_id, focused_view_id, &*action))
             }
         }
     }
@@ -174,15 +189,15 @@ impl PickerDelegate for CommandPalette {
 
     fn confirm(&mut self, cx: &mut ViewContext<Self>) {
         if !self.matches.is_empty() {
-            let window_id = cx.window_id();
             let action_ix = self.matches[self.selected_ix].candidate_id;
-            cx.dispatch_action_at(
-                window_id,
-                self.focused_view_id,
-                self.actions[action_ix].action.as_ref(),
-            )
+            cx.emit(Event::Confirmed {
+                window_id: cx.window_id(),
+                focused_view_id: self.focused_view_id,
+                action: self.actions.remove(action_ix).action,
+            });
+        } else {
+            cx.emit(Event::Dismissed);
         }
-        cx.emit(Event::Dismissed);
     }
 
     fn render_match(&self, ix: usize, selected: bool, cx: &gpui::AppContext) -> gpui::ElementBox {

@@ -20,6 +20,7 @@ pub struct Picker<D: PickerDelegate> {
     list_state: UniformListState,
     update_task: Option<Task<()>>,
     max_size: Vector2F,
+    confirmed: bool,
 }
 
 pub trait PickerDelegate: View {
@@ -138,6 +139,7 @@ impl<D: PickerDelegate> Picker<D> {
             update_task: None,
             delegate,
             max_size: vec2f(500., 420.),
+            confirmed: false,
         };
         cx.defer(|this, cx| this.update_matches(cx));
         this
@@ -156,7 +158,7 @@ impl<D: PickerDelegate> Picker<D> {
     ) {
         match event {
             editor::Event::BufferEdited { .. } => self.update_matches(cx),
-            editor::Event::Blurred => {
+            editor::Event::Blurred if !self.confirmed => {
                 if let Some(delegate) = self.delegate.upgrade(cx) {
                     delegate.update(cx, |delegate, cx| {
                         delegate.dismiss(cx);
@@ -204,6 +206,7 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn select_index(&mut self, action: &SelectIndex, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
             let index = action.0;
+            self.confirmed = true;
             delegate.update(cx, |delegate, cx| {
                 delegate.set_selected_index(index, cx);
                 delegate.confirm(cx);
@@ -256,6 +259,7 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
+            self.confirmed = true;
             delegate.update(cx, |delegate, cx| delegate.confirm(cx));
         }
     }
