@@ -18,7 +18,7 @@
       },
       "highlight_text": {
         "family": "Zed Sans",
-        "color": "#96e818",
+        "color": "#4f8ff7",
         "weight": "bold",
         "size": 14
       }
@@ -38,7 +38,7 @@
       },
       "highlight_text": {
         "family": "Zed Sans",
-        "color": "#96e818",
+        "color": "#4f8ff7",
         "weight": "bold",
         "size": 14
       },
@@ -413,7 +413,7 @@
       },
       "match_highlight": {
         "family": "Zed Mono",
-        "color": "#96e818",
+        "color": "#4f8ff7",
         "size": 14
       },
       "selected_item": {
@@ -674,9 +674,9 @@
         "color": "#de900c",
         "weight": "bold"
       },
-      "emphasis": "#96e818",
+      "emphasis": "#4f8ff7",
       "emphasis_strong": {
-        "color": "#96e818",
+        "color": "#4f8ff7",
         "weight": "bold"
       },
       "link_uri": {
