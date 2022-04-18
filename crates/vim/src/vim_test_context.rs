@@ -6,7 +6,7 @@ use language::{Point, Selection};
 use util::test::marked_text;
 use workspace::{WorkspaceHandle, WorkspaceParams};
 
-use crate::*;
+use crate::{state::Operator, *};
 
 pub struct VimTestContext<'a> {
     cx: &'a mut gpui::TestAppContext,
@@ -100,7 +100,12 @@ impl<'a> VimTestContext<'a> {
     }
 
     pub fn mode(&mut self) -> Mode {
-        self.cx.update(|cx| cx.global::<VimState>().mode)
+        self.cx.read(|cx| cx.global::<Vim>().state.mode)
+    }
+
+    pub fn active_operator(&mut self) -> Option<Operator> {
+        self.cx
+            .read(|cx| cx.global::<Vim>().state.operator_stack.last().copied())
     }
 
     pub fn editor_text(&mut self) -> String {
@@ -119,10 +124,21 @@ impl<'a> VimTestContext<'a> {
             .dispatch_keystroke(self.window_id, keystroke, input, false);
     }
 
-    pub fn simulate_keystrokes(&mut self, keystroke_texts: &[&str]) {
+    pub fn simulate_keystrokes<const COUNT: usize>(&mut self, keystroke_texts: [&str; COUNT]) {
         for keystroke_text in keystroke_texts.into_iter() {
             self.simulate_keystroke(keystroke_text);
         }
+    }
+
+    pub fn set_state(&mut self, text: &str, mode: Mode) {
+        self.cx
+            .update(|cx| Vim::update(cx, |vim, cx| vim.switch_mode(mode, cx)));
+        self.editor.update(self.cx, |editor, cx| {
+            let (unmarked_text, markers) = marked_text(&text);
+            editor.set_text(unmarked_text, cx);
+            let cursor_offset = markers[0];
+            editor.replace_selections_with(cx, |map| cursor_offset.to_display_point(map));
+        })
     }
 
     pub fn assert_newest_selection_head_offset(&mut self, expected_offset: usize) {
@@ -170,6 +186,21 @@ impl<'a> VimTestContext<'a> {
             "\nActual Position: {}\nExpected Position: {}",
             actual_position_text, expected_position_text
         )
+    }
+
+    pub fn assert_binding<const COUNT: usize>(
+        &mut self,
+        keystrokes: [&str; COUNT],
+        initial_state: &str,
+        initial_mode: Mode,
+        state_after: &str,
+        mode_after: Mode,
+    ) {
+        self.set_state(initial_state, initial_mode);
+        self.simulate_keystrokes(keystrokes);
+        self.assert_editor_state(state_after);
+        assert_eq!(self.mode(), mode_after);
+        assert_eq!(self.active_operator(), None);
     }
 }
 
