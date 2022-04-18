@@ -66,7 +66,7 @@ const textColor = {
   placeholder: colors.neutral[650],
   active: colors.neutral[0],
   //TODO: (design) define feature and it's correct value
-  feature: colors.lime[400],
+  feature: colors.blue[400],
   ok: colors.green[600],
   error: colors.red[400],
   warning: colors.amber[300],

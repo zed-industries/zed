@@ -29,8 +29,8 @@
       "type": "color"
     },
     "feature": {
-      "value": "#1096d3",
-      "step": 500,
+      "value": "#4f8ff7",
+      "step": 400,
       "type": "color"
     },
     "ok": {
@@ -279,7 +279,7 @@
       "type": "color"
     },
     "focused": {
-      "value": "#717171",
+      "value": "#484bed",
       "step": 500,
       "type": "color"
     },
@@ -374,13 +374,13 @@
         "type": "color"
       },
       "match": {
-        "value": "#1096d329",
-        "step": 500,
+        "value": "#3f15a380",
+        "step": 700,
         "type": "color"
       },
       "activeMatch": {
-        "value": "#0e415852",
-        "step": 800,
+        "value": "#5316e0b3",
+        "step": 600,
         "type": "color"
       },
       "related": {
