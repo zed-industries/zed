@@ -33,18 +33,7 @@ fn change_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
             editor.set_clip_at_line_ends(false, cx);
             editor.move_selections(cx, |map, selection| motion.expand_selection(map, selection));
             editor.set_clip_at_line_ends(true, cx);
-            match motion {
-                Motion::Up => editor.insert(&"\n", cx),
-                Motion::Down => editor.insert(&"\n", cx),
-                _ => editor.insert(&"", cx),
-            }
-
-            if let Motion::Up = motion {
-                // Position cursor on previous line after change
-                editor.move_cursors(cx, |map, cursor, goal| {
-                    Motion::Up.move_point(map, cursor, goal)
-                });
-            }
+            editor.insert(&"", cx);
         });
     });
     vim.switch_mode(Mode::Insert, cx)
@@ -56,18 +45,8 @@ fn delete_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
             // Don't clip at line ends during delete operation
             editor.set_clip_at_line_ends(false, cx);
             editor.move_selections(cx, |map, selection| motion.expand_selection(map, selection));
-            match motion {
-                Motion::Up => editor.insert(&"\n", cx),
-                Motion::Down => editor.insert(&"\n", cx),
-                _ => editor.insert(&"", cx),
-            }
+            editor.insert(&"", cx);
 
-            if let Motion::Up = motion {
-                // Position cursor on previous line after change
-                editor.move_cursors(cx, |map, cursor, goal| {
-                    Motion::Up.move_point(map, cursor, goal)
-                });
-            }
             // Fixup cursor position after the deletion
             editor.set_clip_at_line_ends(true, cx);
             editor.move_selection_heads(cx, |map, head, _| {
@@ -410,8 +389,7 @@ mod test {
             The quick
             brown |fox"},
             indoc! {"
-            |
-            "},
+            |"},
             cx,
         );
         assert(
@@ -420,7 +398,6 @@ mod test {
             The q|uick
             brown fox"},
             indoc! {"
-            
             |"},
             cx,
         );
@@ -498,8 +475,7 @@ mod test {
             The quick
             brown |fox"},
             indoc! {"
-            |
-            "},
+            |"},
             cx,
         );
         assert(
@@ -508,7 +484,6 @@ mod test {
             The q|uick
             brown fox"},
             indoc! {"
-            
             |"},
             cx,
         );
