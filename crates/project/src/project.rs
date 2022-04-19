@@ -1961,19 +1961,10 @@ impl Project {
             worktree_id: worktree.read(cx).id(),
             path: relative_path.into(),
         };
-
-        for buffer in self.opened_buffers.values() {
-            if let Some(buffer) = buffer.upgrade(cx) {
-                if buffer
-                    .read(cx)
-                    .file()
-                    .map_or(false, |file| *file.path() == project_path.path)
-                {
-                    self.update_buffer_diagnostics(&buffer, diagnostics.clone(), version, cx)?;
-                    break;
-                }
-            }
+        if let Some(buffer) = self.get_open_buffer(&project_path, cx) {
+            self.update_buffer_diagnostics(&buffer, diagnostics.clone(), version, cx)?;
         }
+
         worktree.update(cx, |worktree, cx| {
             worktree
                 .as_local_mut()
@@ -5345,6 +5336,122 @@ mod tests {
                 .await,
             close_message,
         );
+    }
+
+    #[gpui::test]
+    async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a.rs": "let a = 1;",
+                "b.rs": "let b = 2;"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, cx);
+        let worktree_a_id = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/dir/a.rs", true, cx)
+            })
+            .await
+            .unwrap()
+            .0
+            .read_with(cx, |tree, _| tree.id());
+        let worktree_b_id = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/dir/b.rs", true, cx)
+            })
+            .await
+            .unwrap()
+            .0
+            .read_with(cx, |tree, _| tree.id());
+
+        let buffer_a = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_a_id, ""), cx)
+            })
+            .await
+            .unwrap();
+        let buffer_b = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_b_id, ""), cx)
+            })
+            .await
+            .unwrap();
+
+        project.update(cx, |project, cx| {
+            project
+                .update_diagnostics(
+                    lsp::PublishDiagnosticsParams {
+                        uri: Url::from_file_path("/dir/a.rs").unwrap(),
+                        version: None,
+                        diagnostics: vec![lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 4),
+                                lsp::Position::new(0, 5),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::ERROR),
+                            message: "error 1".to_string(),
+                            ..Default::default()
+                        }],
+                    },
+                    &[],
+                    cx,
+                )
+                .unwrap();
+            project
+                .update_diagnostics(
+                    lsp::PublishDiagnosticsParams {
+                        uri: Url::from_file_path("/dir/b.rs").unwrap(),
+                        version: None,
+                        diagnostics: vec![lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 4),
+                                lsp::Position::new(0, 5),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::WARNING),
+                            message: "error 2".to_string(),
+                            ..Default::default()
+                        }],
+                    },
+                    &[],
+                    cx,
+                )
+                .unwrap();
+        });
+
+        buffer_a.read_with(cx, |buffer, _| {
+            let chunks = chunks_with_diagnostics(&buffer, 0..buffer.len());
+            assert_eq!(
+                chunks
+                    .iter()
+                    .map(|(s, d)| (s.as_str(), *d))
+                    .collect::<Vec<_>>(),
+                &[
+                    ("let ", None),
+                    ("a", Some(DiagnosticSeverity::ERROR)),
+                    (" = 1;", None),
+                ]
+            );
+        });
+        buffer_b.read_with(cx, |buffer, _| {
+            let chunks = chunks_with_diagnostics(&buffer, 0..buffer.len());
+            assert_eq!(
+                chunks
+                    .iter()
+                    .map(|(s, d)| (s.as_str(), *d))
+                    .collect::<Vec<_>>(),
+                &[
+                    ("let ", None),
+                    ("b", Some(DiagnosticSeverity::WARNING)),
+                    (" = 2;", None),
+                ]
+            );
+        });
     }
 
     #[gpui::test]
