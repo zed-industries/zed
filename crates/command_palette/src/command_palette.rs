@@ -35,7 +35,7 @@ pub enum Event {
 }
 
 struct Command {
-    name: &'static str,
+    name: String,
     action: Box<dyn Action>,
     keystrokes: Vec<Keystroke>,
 }
@@ -46,7 +46,7 @@ impl CommandPalette {
         let actions = cx
             .available_actions(cx.window_id(), focused_view_id)
             .map(|(name, action, bindings)| Command {
-                name,
+                name: humanize(name),
                 action,
                 keystrokes: bindings
                     .last()
@@ -259,6 +259,30 @@ impl PickerDelegate for CommandPalette {
     }
 }
 
+fn humanize(name: &str) -> String {
+    let capacity = name.len() + name.chars().filter(|c| c.is_uppercase()).count();
+    let mut result = String::with_capacity(capacity);
+    let mut prev_char = '\0';
+    for char in name.chars() {
+        if char == ':' {
+            if prev_char == ':' {
+                result.push(' ');
+            } else {
+                result.push(':');
+            }
+        } else if char.is_uppercase() {
+            if prev_char.is_lowercase() {
+                result.push(' ');
+            }
+            result.push(char);
+        } else {
+            result.push(char);
+        }
+        prev_char = char;
+    }
+    result
+}
+
 impl std::fmt::Debug for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Command")
@@ -267,3 +291,5 @@ impl std::fmt::Debug for Command {
             .finish()
     }
 }
+
+// #[cfg(test)]
