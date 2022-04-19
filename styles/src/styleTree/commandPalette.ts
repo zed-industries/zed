@@ -1,6 +1,5 @@
 import Theme from "../themes/theme";
-import { colors } from "../tokens";
-import { text, backgroundColor, border, borderColor } from "./components";
+import { text, backgroundColor, border } from "./components";
 
 export default function commandPalette(theme: Theme) {
   return {
@@ -11,8 +10,8 @@ export default function commandPalette(theme: Theme) {
       background: backgroundColor(theme, "on300"),
       border: border(theme, "secondary"),
       padding: {
-        top: 3,
-        bottom: 3,
+        top: 2,
+        bottom: 2,
         left: 8,
         right: 8,
       },
