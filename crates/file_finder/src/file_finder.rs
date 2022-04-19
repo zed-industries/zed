@@ -129,7 +129,7 @@ impl FileFinder {
     }
 
     fn project_updated(&mut self, _: ModelHandle<Project>, cx: &mut ViewContext<Self>) {
-        self.spawn_search(self.latest_search_query.clone(), cx)
+        self.spawn_search(self.picker.read(cx).query(cx), cx)
             .detach();
     }
 
@@ -379,7 +379,7 @@ mod tests {
 
             // Simulate a search being cancelled after the time limit,
             // returning only a subset of the matches that would have been found.
-            finder.spawn_search(query.clone(), cx).detach();
+            drop(finder.spawn_search(query.clone(), cx));
             finder.set_matches(
                 finder.latest_search_id,
                 true, // did-cancel
@@ -389,7 +389,7 @@ mod tests {
             );
 
             // Simulate another cancellation.
-            finder.spawn_search(query.clone(), cx).detach();
+            drop(finder.spawn_search(query.clone(), cx));
             finder.set_matches(
                 finder.latest_search_id,
                 true, // did-cancel

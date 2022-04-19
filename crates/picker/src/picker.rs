@@ -150,6 +150,10 @@ impl<D: PickerDelegate> Picker<D> {
         self
     }
 
+    pub fn query(&self, cx: &AppContext) -> String {
+        self.query_editor.read(cx).text(cx)
+    }
+
     fn on_query_editor_event(
         &mut self,
         _: ViewHandle<Editor>,
@@ -171,7 +175,7 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn update_matches(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
-            let query = self.query_editor.read(cx).text(cx);
+            let query = self.query(cx);
             let update = delegate.update(cx, |d, cx| d.update_matches(query, cx));
             cx.notify();
             self.update_task = Some(cx.spawn(|this, mut cx| async move {
