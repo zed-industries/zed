@@ -46,7 +46,7 @@ impl CommandPalette {
         let actions = cx
             .available_actions(cx.window_id(), focused_view_id)
             .map(|(name, action, bindings)| Command {
-                name: humanize(name),
+                name: humanize_action_name(name),
                 action,
                 keystrokes: bindings
                     .last()
@@ -259,26 +259,24 @@ impl PickerDelegate for CommandPalette {
     }
 }
 
-fn humanize(name: &str) -> String {
+fn humanize_action_name(name: &str) -> String {
     let capacity = name.len() + name.chars().filter(|c| c.is_uppercase()).count();
     let mut result = String::with_capacity(capacity);
-    let mut prev_char = '\0';
     for char in name.chars() {
         if char == ':' {
-            if prev_char == ':' {
+            if result.ends_with(':') {
                 result.push(' ');
             } else {
                 result.push(':');
             }
         } else if char.is_uppercase() {
-            if prev_char.is_lowercase() {
+            if !result.ends_with(' ') {
                 result.push(' ');
             }
-            result.push(char);
+            result.extend(char.to_lowercase());
         } else {
             result.push(char);
         }
-        prev_char = char;
     }
     result
 }
@@ -292,4 +290,73 @@ impl std::fmt::Debug for Command {
     }
 }
 
-// #[cfg(test)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use editor::Editor;
+    use gpui::TestAppContext;
+    use workspace::{Workspace, WorkspaceParams};
+
+    #[test]
+    fn test_humanize_action_name() {
+        assert_eq!(
+            &humanize_action_name("editor::GoToDefinition"),
+            "editor: go to definition"
+        );
+        assert_eq!(
+            &humanize_action_name("editor::Backspace"),
+            "editor: backspace"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_command_palette(cx: &mut TestAppContext) {
+        let params = cx.update(WorkspaceParams::test);
+
+        cx.update(|cx| {
+            editor::init(cx);
+            workspace::init(&params.client, cx);
+            init(cx);
+        });
+
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
+        let editor = cx.add_view(window_id, |cx| {
+            let mut editor = Editor::single_line(None, cx);
+            editor.set_text("abc", cx);
+            editor
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            cx.focus(editor.clone());
+            workspace.add_item(Box::new(editor.clone()), cx)
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            CommandPalette::toggle(workspace, &Toggle, cx)
+        });
+
+        let palette = workspace.read_with(cx, |workspace, _| {
+            workspace
+                .modal()
+                .unwrap()
+                .clone()
+                .downcast::<CommandPalette>()
+                .unwrap()
+        });
+
+        palette
+            .update(cx, |palette, cx| {
+                palette.update_matches("bcksp".to_string(), cx)
+            })
+            .await;
+
+        palette.update(cx, |palette, cx| {
+            assert_eq!(palette.matches[0].string, "editor: backspace");
+            palette.confirm(cx);
+        });
+
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "ab");
+        });
+    }
+}
