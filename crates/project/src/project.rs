@@ -158,8 +158,6 @@ pub struct ProjectPath {
 pub struct DiagnosticSummary {
     pub error_count: usize,
     pub warning_count: usize,
-    pub info_count: usize,
-    pub hint_count: usize,
 }
 
 #[derive(Debug)]
@@ -195,8 +193,6 @@ impl DiagnosticSummary {
         let mut this = Self {
             error_count: 0,
             warning_count: 0,
-            info_count: 0,
-            hint_count: 0,
         };
 
         for entry in diagnostics {
@@ -204,8 +200,6 @@ impl DiagnosticSummary {
                 match entry.diagnostic.severity {
                     DiagnosticSeverity::ERROR => this.error_count += 1,
                     DiagnosticSeverity::WARNING => this.warning_count += 1,
-                    DiagnosticSeverity::INFORMATION => this.info_count += 1,
-                    DiagnosticSeverity::HINT => this.hint_count += 1,
                     _ => {}
                 }
             }
@@ -214,13 +208,15 @@ impl DiagnosticSummary {
         this
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.error_count == 0 && self.warning_count == 0
+    }
+
     pub fn to_proto(&self, path: &Path) -> proto::DiagnosticSummary {
         proto::DiagnosticSummary {
             path: path.to_string_lossy().to_string(),
             error_count: self.error_count as u32,
             warning_count: self.warning_count as u32,
-            info_count: self.info_count as u32,
-            hint_count: self.hint_count as u32,
         }
     }
 }
@@ -3497,8 +3493,6 @@ impl Project {
         for (_, path_summary) in self.diagnostic_summaries(cx) {
             summary.error_count += path_summary.error_count;
             summary.warning_count += path_summary.warning_count;
-            summary.info_count += path_summary.info_count;
-            summary.hint_count += path_summary.hint_count;
         }
         summary
     }

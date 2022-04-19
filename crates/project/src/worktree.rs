@@ -233,8 +233,6 @@ impl Worktree {
                             DiagnosticSummary {
                                 error_count: summary.error_count as usize,
                                 warning_count: summary.warning_count as usize,
-                                info_count: summary.info_count as usize,
-                                hint_count: summary.hint_count as usize,
                             },
                         )
                     }),
@@ -568,9 +566,15 @@ impl LocalWorktree {
         _: &mut ModelContext<Worktree>,
     ) -> Result<()> {
         let summary = DiagnosticSummary::new(&diagnostics);
-        self.diagnostic_summaries
-            .insert(PathKey(worktree_path.clone()), summary.clone());
-        self.diagnostics.insert(worktree_path.clone(), diagnostics);
+        if summary.is_empty() {
+            self.diagnostic_summaries
+                .remove(&PathKey(worktree_path.clone()));
+            self.diagnostics.remove(&worktree_path);
+        } else {
+            self.diagnostic_summaries
+                .insert(PathKey(worktree_path.clone()), summary.clone());
+            self.diagnostics.insert(worktree_path.clone(), diagnostics);
+        }
 
         if let Some(share) = self.share.as_ref() {
             self.client
@@ -581,8 +585,6 @@ impl LocalWorktree {
                         path: worktree_path.to_string_lossy().to_string(),
                         error_count: summary.error_count as u32,
                         warning_count: summary.warning_count as u32,
-                        info_count: summary.info_count as u32,
-                        hint_count: summary.hint_count as u32,
                     }),
                 })
                 .log_err();
@@ -846,15 +848,16 @@ impl RemoteWorktree {
         path: Arc<Path>,
         summary: &proto::DiagnosticSummary,
     ) {
-        self.diagnostic_summaries.insert(
-            PathKey(path.clone()),
-            DiagnosticSummary {
-                error_count: summary.error_count as usize,
-                warning_count: summary.warning_count as usize,
-                info_count: summary.info_count as usize,
-                hint_count: summary.hint_count as usize,
-            },
-        );
+        let summary = DiagnosticSummary {
+            error_count: summary.error_count as usize,
+            warning_count: summary.warning_count as usize,
+        };
+        if summary.is_empty() {
+            self.diagnostic_summaries.remove(&PathKey(path.clone()));
+        } else {
+            self.diagnostic_summaries
+                .insert(PathKey(path.clone()), summary);
+        }
     }
 }
 

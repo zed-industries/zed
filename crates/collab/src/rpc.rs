@@ -2363,6 +2363,25 @@ mod tests {
                 ]
             );
         });
+
+        // Simulate a language server reporting no errors for a file.
+        fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
+            lsp::PublishDiagnosticsParams {
+                uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+                version: None,
+                diagnostics: vec![],
+            },
+        );
+        project_a
+            .condition(cx_a, |project, cx| {
+                project.diagnostic_summaries(cx).collect::<Vec<_>>() == &[]
+            })
+            .await;
+        project_b
+            .condition(cx_b, |project, cx| {
+                project.diagnostic_summaries(cx).collect::<Vec<_>>() == &[]
+            })
+            .await;
     }
 
     #[gpui::test(iterations = 10)]
