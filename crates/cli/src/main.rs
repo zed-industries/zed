@@ -8,7 +8,8 @@ use core_foundation::{
 };
 use core_services::{kLSLaunchDefaults, LSLaunchURLSpec, LSOpenFromURLSpec, TCFType};
 use ipc_channel::ipc::{IpcOneShotServer, IpcReceiver, IpcSender};
-use std::{fs, path::PathBuf, ptr};
+use objc::{class, msg_send, sel, sel_impl};
+use std::{ffi::CStr, fs, path::PathBuf, ptr};
 
 #[derive(Parser)]
 #[clap(name = "zed")]
@@ -48,20 +49,46 @@ fn main() -> Result<()> {
 }
 
 fn locate_app() -> Result<PathBuf> {
-    Ok(std::env::current_exe()?
-        .parent()
-        .unwrap()
-        .join("bundle/osx/Zed.app"))
+    if cfg!(debug_assertions) {
+        Ok(std::env::current_exe()?
+            .parent()
+            .unwrap()
+            .join("bundle/osx/Zed.app"))
+    } else {
+        Ok(path_to_app_with_bundle_identifier("dev.zed.Zed")
+            .unwrap_or_else(|| "/Applications/Zed.dev".into()))
+    }
+}
+
+fn path_to_app_with_bundle_identifier(bundle_id: &str) -> Option<PathBuf> {
+    use cocoa::{
+        base::{id, nil},
+        foundation::{NSString, NSURL as _},
+    };
+
+    unsafe {
+        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let bundle_id = NSString::alloc(nil).init_str(bundle_id);
+        let app_url: id = msg_send![workspace, URLForApplicationWithBundleIdentifier: bundle_id];
+        if !app_url.is_null() {
+            Some(PathBuf::from(
+                CStr::from_ptr(app_url.path().UTF8String())
+                    .to_string_lossy()
+                    .to_string(),
+            ))
+        } else {
+            None
+        }
+    }
 }
 
 fn launch_app(app_path: PathBuf) -> Result<(IpcSender<CliRequest>, IpcReceiver<CliResponse>)> {
     let (server, server_name) = IpcOneShotServer::<IpcHandshake>::new()?;
+    let url = format!("zed-cli://{server_name}");
 
     let status = unsafe {
         let app_url =
             CFURL::from_path(&app_path, true).ok_or_else(|| anyhow!("invalid app path"))?;
-
-        let url = format!("zed-cli://{server_name}");
         let url_to_open = CFURL::wrap_under_create_rule(CFURLCreateWithBytes(
             ptr::null(),
             url.as_ptr(),
@@ -69,9 +96,7 @@ fn launch_app(app_path: PathBuf) -> Result<(IpcSender<CliRequest>, IpcReceiver<C
             kCFStringEncodingUTF8,
             ptr::null(),
         ));
-
         let urls_to_open = CFArray::from_copyable(&[url_to_open.as_concrete_TypeRef()]);
-
         LSOpenFromURLSpec(
             &LSLaunchURLSpec {
                 appURL: app_url.as_concrete_TypeRef(),
