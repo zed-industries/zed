@@ -18,7 +18,6 @@ pub struct Picker<D: PickerDelegate> {
     delegate: WeakViewHandle<D>,
     query_editor: ViewHandle<Editor>,
     list_state: UniformListState,
-    update_task: Option<Task<()>>,
     max_size: Vector2F,
     confirmed: bool,
 }
@@ -136,7 +135,6 @@ impl<D: PickerDelegate> Picker<D> {
         let this = Self {
             query_editor,
             list_state: Default::default(),
-            update_task: None,
             delegate,
             max_size: vec2f(500., 420.),
             confirmed: false,
@@ -148,6 +146,10 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn with_max_size(mut self, width: f32, height: f32) -> Self {
         self.max_size = vec2f(width, height);
         self
+    }
+
+    pub fn query(&self, cx: &AppContext) -> String {
+        self.query_editor.read(cx).text(cx)
     }
 
     fn on_query_editor_event(
@@ -171,10 +173,10 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn update_matches(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
-            let query = self.query_editor.read(cx).text(cx);
+            let query = self.query(cx);
             let update = delegate.update(cx, |d, cx| d.update_matches(query, cx));
             cx.notify();
-            self.update_task = Some(cx.spawn(|this, mut cx| async move {
+            cx.spawn(|this, mut cx| async move {
                 update.await;
                 this.update(&mut cx, |this, cx| {
                     if let Some(delegate) = this.delegate.upgrade(cx) {
@@ -187,10 +189,10 @@ impl<D: PickerDelegate> Picker<D> {
                         };
                         this.list_state.scroll_to(target);
                         cx.notify();
-                        this.update_task.take();
                     }
                 });
-            }));
+            })
+            .detach()
         }
     }
 
