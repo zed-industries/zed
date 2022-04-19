@@ -38,7 +38,7 @@ export default function selectorModal(theme: Theme): Object {
     },
     inputEditor: {
       background: backgroundColor(theme, 500),
-      corner_radius: 6,
+      cornerRadius: 6,
       placeholderText: text(theme, "sans", "placeholder"),
       selection: player(theme, 1).selection,
       text: text(theme, "mono", "primary"),

@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
+use futures::channel::mpsc;
 use smol::{channel, prelude::*, Executor};
 use std::{
     any::Any,
@@ -621,17 +622,13 @@ impl Background {
         Err(async { *future.await.downcast().unwrap() })
     }
 
-    pub async fn scoped<'scope, F>(&self, scheduler: F)
+    pub async fn scoped<'scope, F>(self: &Arc<Self>, scheduler: F)
     where
         F: FnOnce(&mut Scope<'scope>),
     {
-        let mut scope = Scope {
-            futures: Default::default(),
-            _phantom: PhantomData,
-        };
+        let mut scope = Scope::new(self.clone());
         (scheduler)(&mut scope);
-        let spawned = scope
-            .futures
+        let spawned = mem::take(&mut scope.futures)
             .into_iter()
             .map(|f| self.spawn(f))
             .collect::<Vec<_>>();
@@ -668,22 +665,53 @@ impl Background {
 }
 
 pub struct Scope<'a> {
+    executor: Arc<Background>,
     futures: Vec<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+    tx: Option<mpsc::Sender<()>>,
+    rx: mpsc::Receiver<()>,
     _phantom: PhantomData<&'a ()>,
 }
 
 impl<'a> Scope<'a> {
+    fn new(executor: Arc<Background>) -> Self {
+        let (tx, rx) = mpsc::channel(1);
+        Self {
+            executor,
+            tx: Some(tx),
+            rx,
+            futures: Default::default(),
+            _phantom: PhantomData,
+        }
+    }
+
     pub fn spawn<F>(&mut self, f: F)
     where
         F: Future<Output = ()> + Send + 'a,
     {
+        let tx = self.tx.clone().unwrap();
+
+        // Safety: The 'a lifetime is guaranteed to outlive any of these futures because
+        // dropping this `Scope` blocks until all of the futures have resolved.
         let f = unsafe {
             mem::transmute::<
                 Pin<Box<dyn Future<Output = ()> + Send + 'a>>,
                 Pin<Box<dyn Future<Output = ()> + Send + 'static>>,
-            >(Box::pin(f))
+            >(Box::pin(async move {
+                f.await;
+                drop(tx);
+            }))
         };
         self.futures.push(f);
+    }
+}
+
+impl<'a> Drop for Scope<'a> {
+    fn drop(&mut self) {
+        self.tx.take().unwrap();
+
+        // Wait until the channel is closed, which means that all of the spawned
+        // futures have resolved.
+        self.executor.block(self.rx.next());
     }
 }
 

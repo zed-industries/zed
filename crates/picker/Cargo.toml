@@ -1,23 +1,19 @@
 [package]
-name = "file_finder"
+name = "picker"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-path = "src/file_finder.rs"
+path = "src/picker.rs"
 doctest = false
 
 [dependencies]
 editor = { path = "../editor" }
-fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
-picker = { path = "../picker" }
-project = { path = "../project" }
 settings = { path = "../settings" }
 util = { path = "../util" }
 theme = { path = "../theme" }
 workspace = { path = "../workspace" }
-postage = { version = "0.4.1", features = ["futures-traits"] }
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }

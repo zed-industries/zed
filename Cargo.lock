@@ -1144,6 +1144,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 
 [[package]]
+name = "command_palette"
+version = "0.1.0"
+dependencies = [
+ "ctor",
+ "editor",
+ "env_logger 0.8.3",
+ "fuzzy",
+ "gpui",
+ "picker",
+ "serde_json",
+ "settings",
+ "theme",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "comrak"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1890,6 +1907,7 @@ dependencies = [
  "env_logger 0.8.3",
  "fuzzy",
  "gpui",
+ "picker",
  "postage",
  "project",
  "serde_json",
@@ -3356,6 +3374,7 @@ dependencies = [
  "gpui",
  "language",
  "ordered-float",
+ "picker",
  "postage",
  "settings",
  "smol",
@@ -3527,6 +3546,21 @@ checksum = "467d164a6de56270bd7c4d070df81d07beace25012d5103ced4e9ff08d6afdb7"
 dependencies = [
  "fixedbitset",
  "indexmap",
+]
+
+[[package]]
+name = "picker"
+version = "0.1.0"
+dependencies = [
+ "ctor",
+ "editor",
+ "env_logger 0.8.3",
+ "gpui",
+ "serde_json",
+ "settings",
+ "theme",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -3762,6 +3796,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "ordered-float",
+ "picker",
  "postage",
  "project",
  "settings",
@@ -5278,6 +5313,7 @@ dependencies = [
  "gpui",
  "log",
  "parking_lot",
+ "picker",
  "postage",
  "settings",
  "smol",
@@ -6138,8 +6174,8 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "command_palette",
  "contacts_panel",
- "crossbeam-channel",
  "ctor",
  "diagnostics",
  "dirs 3.0.1",

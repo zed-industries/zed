@@ -21,6 +21,7 @@ pub struct Theme {
     pub chat_panel: ChatPanel,
     pub contacts_panel: ContactsPanel,
     pub project_panel: ProjectPanel,
+    pub command_palette: CommandPalette,
     pub selector: Selector,
     pub editor: Editor,
     pub search: Search,
@@ -187,6 +188,12 @@ pub struct ProjectPanelEntry {
     pub icon_spacing: f32,
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub struct CommandPalette {
+    pub key: ContainedLabel,
+    pub keystroke_spacing: f32,
+}
+
 #[derive(Deserialize, Default)]
 pub struct ContactsPanel {
     #[serde(flatten)]
@@ -259,7 +266,7 @@ pub struct ContainedText {
     pub text: TextStyle,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default)]
 pub struct ContainedLabel {
     #[serde(flatten)]
     pub container: ContainerStyle,

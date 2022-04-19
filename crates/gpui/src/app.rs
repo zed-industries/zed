@@ -3,7 +3,7 @@ pub mod action;
 use crate::{
     elements::ElementBox,
     executor::{self, Task},
-    keymap::{self, Keystroke},
+    keymap::{self, Binding, Keystroke},
     platform::{self, CursorStyle, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::post_inc,
@@ -17,6 +17,7 @@ use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use platform::Event;
 use postage::oneshot;
+use smallvec::SmallVec;
 use smol::prelude::*;
 use std::{
     any::{type_name, Any, TypeId},
@@ -726,7 +727,7 @@ pub struct MutableAppContext {
     foreground_platform: Rc<dyn platform::ForegroundPlatform>,
     assets: Arc<AssetCache>,
     cx: AppContext,
-    action_deserializers: HashMap<&'static str, DeserializeActionCallback>,
+    action_deserializers: HashMap<&'static str, (TypeId, DeserializeActionCallback)>,
     capture_actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     global_actions: HashMap<TypeId, Box<GlobalActionCallback>>,
@@ -877,7 +878,8 @@ impl MutableAppContext {
         let callback = self
             .action_deserializers
             .get(name)
-            .ok_or_else(|| anyhow!("unknown action {}", name))?;
+            .ok_or_else(|| anyhow!("unknown action {}", name))?
+            .1;
         callback(argument.unwrap_or("{}"))
             .with_context(|| format!("invalid data for action {}", name))
     }
@@ -926,7 +928,7 @@ impl MutableAppContext {
 
         self.action_deserializers
             .entry(A::qualified_name())
-            .or_insert(A::from_json_str);
+            .or_insert((TypeId::of::<A>(), A::from_json_str));
 
         let actions = if capture {
             &mut self.capture_actions
@@ -965,7 +967,7 @@ impl MutableAppContext {
 
         self.action_deserializers
             .entry(A::qualified_name())
-            .or_insert(A::from_json_str);
+            .or_insert((TypeId::of::<A>(), A::from_json_str));
 
         if self
             .global_actions
@@ -1302,6 +1304,57 @@ impl MutableAppContext {
             self.pending_effects
                 .push_back(Effect::GlobalNotification { type_id });
         }
+    }
+
+    pub fn available_actions(
+        &self,
+        window_id: usize,
+        view_id: usize,
+    ) -> impl Iterator<Item = (&'static str, Box<dyn Action>, SmallVec<[&Binding; 1]>)> {
+        let mut action_types: HashSet<_> = self.global_actions.keys().copied().collect();
+
+        let presenter = self
+            .presenters_and_platform_windows
+            .get(&window_id)
+            .unwrap()
+            .0
+            .clone();
+        let dispatch_path = presenter.borrow().dispatch_path_from(view_id);
+        for view_id in dispatch_path {
+            if let Some(view) = self.views.get(&(window_id, view_id)) {
+                let view_type = view.as_any().type_id();
+                if let Some(actions) = self.actions.get(&view_type) {
+                    action_types.extend(actions.keys().copied());
+                }
+            }
+        }
+
+        self.action_deserializers
+            .iter()
+            .filter_map(move |(name, (type_id, deserialize))| {
+                if action_types.contains(type_id) {
+                    Some((
+                        *name,
+                        deserialize("{}").ok()?,
+                        self.keystroke_matcher
+                            .bindings_for_action_type(*type_id)
+                            .collect(),
+                    ))
+                } else {
+                    None
+                }
+            })
+    }
+
+    pub fn dispatch_action_at(&mut self, window_id: usize, view_id: usize, action: &dyn Action) {
+        let presenter = self
+            .presenters_and_platform_windows
+            .get(&window_id)
+            .unwrap()
+            .0
+            .clone();
+        let dispatch_path = presenter.borrow().dispatch_path_from(view_id);
+        self.dispatch_action_any(window_id, &dispatch_path, action);
     }
 
     pub fn dispatch_action<A: Action>(

@@ -33,6 +33,7 @@ assets = { path = "../assets" }
 breadcrumbs = { path = "../breadcrumbs" }
 chat_panel = { path = "../chat_panel" }
 collections = { path = "../collections" }
+command_palette = { path = "../command_palette" }
 client = { path = "../client" }
 clock = { path = "../clock" }
 contacts_panel = { path = "../contacts_panel" }
@@ -64,7 +65,6 @@ anyhow = "1.0.38"
 async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
 async-recursion = "0.3"
 async-trait = "0.1"
-crossbeam-channel = "0.5.0"
 ctor = "0.1.20"
 dirs = "3.0"
 easy-parallel = "3.1.0"

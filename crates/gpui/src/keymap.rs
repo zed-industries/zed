@@ -1,7 +1,8 @@
 use crate::Action;
 use anyhow::{anyhow, Result};
+use smallvec::SmallVec;
 use std::{
-    any::Any,
+    any::{Any, TypeId},
     collections::{HashMap, HashSet},
     fmt::Debug,
 };
@@ -23,7 +24,10 @@ struct Pending {
 }
 
 #[derive(Default)]
-pub struct Keymap(Vec<Binding>);
+pub struct Keymap {
+    bindings: Vec<Binding>,
+    binding_indices_by_action_type: HashMap<TypeId, SmallVec<[usize; 3]>>,
+}
 
 pub struct Binding {
     keystrokes: Vec<Keystroke>,
@@ -111,6 +115,10 @@ impl Matcher {
         self.keymap.clear();
     }
 
+    pub fn bindings_for_action_type(&self, action_type: TypeId) -> impl Iterator<Item = &Binding> {
+        self.keymap.bindings_for_action_type(action_type)
+    }
+
     pub fn clear_pending(&mut self) {
         self.pending.clear();
     }
@@ -132,7 +140,7 @@ impl Matcher {
         pending.keystrokes.push(keystroke);
 
         let mut retain_pending = false;
-        for binding in self.keymap.0.iter().rev() {
+        for binding in self.keymap.bindings.iter().rev() {
             if binding.keystrokes.starts_with(&pending.keystrokes)
                 && binding.context.as_ref().map(|c| c.eval(cx)).unwrap_or(true)
             {
@@ -163,15 +171,44 @@ impl Default for Matcher {
 
 impl Keymap {
     pub fn new(bindings: Vec<Binding>) -> Self {
-        Self(bindings)
+        let mut binding_indices_by_action_type = HashMap::new();
+        for (ix, binding) in bindings.iter().enumerate() {
+            binding_indices_by_action_type
+                .entry(binding.action.as_any().type_id())
+                .or_insert_with(|| SmallVec::new())
+                .push(ix);
+        }
+        Self {
+            binding_indices_by_action_type,
+            bindings,
+        }
+    }
+
+    fn bindings_for_action_type<'a>(
+        &'a self,
+        action_type: TypeId,
+    ) -> impl Iterator<Item = &'a Binding> {
+        self.binding_indices_by_action_type
+            .get(&action_type)
+            .map(SmallVec::as_slice)
+            .unwrap_or(&[])
+            .iter()
+            .map(|ix| &self.bindings[*ix])
     }
 
     fn add_bindings<T: IntoIterator<Item = Binding>>(&mut self, bindings: T) {
-        self.0.extend(bindings.into_iter());
+        for binding in bindings {
+            self.binding_indices_by_action_type
+                .entry(binding.action.as_any().type_id())
+                .or_default()
+                .push(self.bindings.len());
+            self.bindings.push(binding);
+        }
     }
 
     fn clear(&mut self) {
-        self.0.clear();
+        self.bindings.clear();
+        self.binding_indices_by_action_type.clear();
     }
 }
 
@@ -197,6 +234,10 @@ impl Binding {
             action,
             context,
         })
+    }
+
+    pub fn keystrokes(&self) -> &[Keystroke] {
+        &self.keystrokes
     }
 }
 
@@ -446,7 +487,7 @@ mod tests {
             a: &'static str,
         }
 
-        let keymap = Keymap(vec![
+        let keymap = Keymap::new(vec![
             Binding::new("a", A("x".to_string()), Some("a")),
             Binding::new("b", B, Some("a")),
             Binding::new("a b", Ab, Some("a || b")),
