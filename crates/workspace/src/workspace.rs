@@ -97,7 +97,10 @@ pub struct OpenPaths {
 pub struct ToggleFollow(pub PeerId);
 
 #[derive(Clone)]
-pub struct JoinProject(pub JoinProjectParams);
+pub struct JoinProject {
+    pub project_id: u64,
+    pub app_state: Arc<AppState>,
+}
 
 impl_internal_actions!(
     workspace,
@@ -115,7 +118,7 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
         open_new(&action.0, cx)
     });
     cx.add_global_action(move |action: &JoinProject, cx: &mut MutableAppContext| {
-        join_project(action.0.project_id, &action.0.app_state, cx).detach();
+        join_project(action.project_id, &action.app_state, cx).detach();
     });
 
     cx.add_action(Workspace::toggle_share);
@@ -185,12 +188,6 @@ pub struct AppState {
         &Arc<AppState>,
         &mut ViewContext<Workspace>,
     ) -> Workspace,
-}
-
-#[derive(Clone)]
-pub struct JoinProjectParams {
-    pub project_id: u64,
-    pub app_state: Arc<AppState>,
 }
 
 pub trait Item: View {
