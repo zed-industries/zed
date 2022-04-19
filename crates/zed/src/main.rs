@@ -13,7 +13,7 @@ use futures::{
     channel::{mpsc, oneshot},
     SinkExt, StreamExt,
 };
-use gpui::{App, AssetSource, Task};
+use gpui::{App, AssetSource, AsyncAppContext, Task};
 use log::LevelFilter;
 use parking_lot::Mutex;
 use project::Fs;
@@ -94,32 +94,14 @@ fn main() {
         })
     };
 
-    app.on_open_urls(|urls, cx| {
+    let (cli_connections_tx, mut cli_connections_rx) = mpsc::unbounded();
+    app.on_open_urls(move |urls, _| {
         if let Some(server_name) = urls.first().and_then(|url| url.strip_prefix("zed-cli://")) {
-            if let Some((mut requests, responses)) = connect_to_cli(server_name).log_err() {
-                cx.spawn(|_| async move {
-                    for request in requests.next().await {
-                        match request {
-                            CliRequest::Open { paths, wait } => {
-                                if wait {
-                                    todo!();
-                                }
-
-                                log::info!("open paths {:?}", paths);
-                                responses
-                                    .send(CliResponse::Stdout {
-                                        message: "Hello CLI!".to_string(),
-                                    })
-                                    .log_err();
-                                responses.send(CliResponse::Exit { status: 0 }).log_err();
-
-                                // TODO... get rid of AppState so we can do this here?
-                                // cx.update(|cx| open_paths(&paths, app_state, cx));
-                            }
-                        }
-                    }
-                })
-                .detach();
+            if let Some(cli_connection) = connect_to_cli(server_name).log_err() {
+                cli_connections_tx
+                    .unbounded_send(cli_connection)
+                    .map_err(|_| anyhow!("no listener for cli connections"))
+                    .log_err();
             };
         }
     });
@@ -207,13 +189,25 @@ fn main() {
 
         if stdout_is_a_pty() {
             cx.platform().activate(true);
-        }
-
-        let paths = collect_path_args();
-        if paths.is_empty() {
-            cx.dispatch_global_action(OpenNew(app_state.clone()));
+            let paths = collect_path_args();
+            if paths.is_empty() {
+                cx.dispatch_global_action(OpenNew(app_state.clone()));
+            } else {
+                cx.dispatch_global_action(OpenPaths { paths, app_state });
+            }
         } else {
-            cx.dispatch_global_action(OpenPaths { paths, app_state });
+            if let Ok(Some(connection)) = cli_connections_rx.try_next() {
+                cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
+                    .detach();
+            } else {
+                cx.dispatch_global_action(OpenNew(app_state.clone()));
+            }
+            cx.spawn(|cx| async move {
+                while let Some(connection) = cli_connections_rx.next().await {
+                    handle_cli_connection(connection, app_state.clone(), cx.clone()).await;
+                }
+            })
+            .detach();
         }
     });
 }
@@ -357,4 +351,19 @@ fn connect_to_cli(
     });
 
     Ok((async_request_rx, response_tx))
+}
+
+async fn handle_cli_connection(
+    (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
+    app_state: Arc<AppState>,
+    mut cx: AsyncAppContext,
+) {
+    if let Some(request) = requests.next().await {
+        match request {
+            CliRequest::Open { paths, .. } => {
+                cx.update(|cx| cx.dispatch_global_action(OpenPaths { paths, app_state }));
+                responses.send(CliResponse::Exit { status: 0 }).log_err();
+            }
+        }
+    }
 }

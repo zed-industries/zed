@@ -48,8 +48,10 @@ fn main() -> Result<()> {
 }
 
 fn locate_app() -> Result<PathBuf> {
-    Ok("/Users/nathan/src/zed/target/debug/bundle/osx/Zed.app".into())
-    // Ok("/Applications/Zed.app".into())
+    Ok(std::env::current_exe()?
+        .parent()
+        .unwrap()
+        .join("bundle/osx/Zed.app"))
 }
 
 fn launch_app(app_path: PathBuf) -> Result<(IpcSender<CliRequest>, IpcReceiver<CliResponse>)> {

@@ -1000,6 +1000,7 @@ dependencies = [
  "clap 3.1.8",
  "core-foundation",
  "core-services",
+ "dirs 3.0.1",
  "ipc-channel",
  "serde",
 ]
