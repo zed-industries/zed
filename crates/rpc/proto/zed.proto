@@ -453,8 +453,6 @@ message DiagnosticSummary {
     string path = 1;
     uint32 error_count = 2;
     uint32 warning_count = 3;
-    uint32 info_count = 4;
-    uint32 hint_count = 5;
 }
 
 message UpdateLanguageServer {
