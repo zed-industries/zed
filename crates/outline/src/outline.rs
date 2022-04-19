@@ -207,7 +207,7 @@ impl PickerDelegate for OutlineView {
                 .unwrap_or(0);
         }
         self.last_query = query;
-        self.set_selected_index(selected_index, false, cx);
+        self.set_selected_index(selected_index, !self.last_query.is_empty(), cx);
         Task::ready(())
     }
 
