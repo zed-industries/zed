@@ -14,9 +14,7 @@ use cocoa::{
         NSPasteboardTypeString, NSSavePanel, NSWindow,
     },
     base::{id, nil, selector, YES},
-    foundation::{
-        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSString, NSUInteger, NSURL,
-    },
+    foundation::{NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSString, NSURL},
 };
 use core_foundation::{
     base::{CFType, CFTypeRef, OSStatus, TCFType as _},
@@ -38,8 +36,8 @@ use ptr::null_mut;
 use std::{
     cell::{Cell, RefCell},
     convert::TryInto,
-    ffi::{c_void, CStr},
-    os::raw::c_char,
+    ffi::{c_void, CStr, OsStr},
+    os::{raw::c_char, unix::ffi::OsStrExt},
     path::{Path, PathBuf},
     ptr,
     rc::Rc,
@@ -47,9 +45,6 @@ use std::{
     sync::Arc,
 };
 use time::UtcOffset;
-
-#[allow(non_upper_case_globals)]
-const NSUTF8StringEncoding: NSUInteger = 4;
 
 const MAC_PLATFORM_IVAR: &'static str = "platform";
 static mut APP_CLASS: *const Class = ptr::null();
@@ -274,10 +269,9 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
                     for i in 0..urls.count() {
                         let url = urls.objectAtIndex(i);
                         if url.isFileURL() == YES {
-                            let path = std::ffi::CStr::from_ptr(url.path().UTF8String())
-                                .to_string_lossy()
-                                .to_string();
-                            result.push(PathBuf::from(path));
+                            if let Ok(path) = ns_url_to_path(url) {
+                                result.push(path)
+                            }
                         }
                     }
                     Some(result)
@@ -305,19 +299,13 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
             let (done_tx, done_rx) = oneshot::channel();
             let done_tx = Cell::new(Some(done_tx));
             let block = ConcreteBlock::new(move |response: NSModalResponse| {
-                let result = if response == NSModalResponse::NSModalResponseOk {
+                let mut result = None;
+                if response == NSModalResponse::NSModalResponseOk {
                     let url = panel.URL();
                     if url.isFileURL() == YES {
-                        let path = std::ffi::CStr::from_ptr(url.path().UTF8String())
-                            .to_string_lossy()
-                            .to_string();
-                        Some(PathBuf::from(path))
-                    } else {
-                        None
+                        result = ns_url_to_path(panel.URL()).ok()
                     }
-                } else {
-                    None
-                };
+                }
 
                 if let Some(mut done_tx) = done_tx.take() {
                     let _ = postage::sink::Sink::try_send(&mut done_tx, result);
@@ -612,22 +600,18 @@ impl platform::Platform for MacPlatform {
         }
     }
 
-    fn path_for_resource(&self, name: Option<&str>, extension: Option<&str>) -> Result<PathBuf> {
+    fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         unsafe {
             let bundle: id = NSBundle::mainBundle();
             if bundle.is_null() {
                 Err(anyhow!("app is not running inside a bundle"))
             } else {
-                let name = name.map_or(nil, |name| ns_string(name));
-                let extension = extension.map_or(nil, |extension| ns_string(extension));
-                let path: id = msg_send![bundle, pathForResource: name ofType: extension];
-                if path.is_null() {
-                    Err(anyhow!("resource could not be found"))
+                let name = ns_string(name);
+                let url: id = msg_send![bundle, URLForAuxiliaryExecutable: name];
+                if url.is_null() {
+                    Err(anyhow!("resource not found"))
                 } else {
-                    let len = msg_send![path, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
-                    let bytes = path.UTF8String() as *const u8;
-                    let path = str::from_utf8(slice::from_raw_parts(bytes, len)).unwrap();
-                    Ok(PathBuf::from(path))
+                    ns_url_to_path(url)
                 }
             }
         }
@@ -717,9 +701,7 @@ extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
             .into_iter()
             .filter_map(|i| {
                 let path = urls.objectAtIndex(i);
-                match dbg!(
-                    CStr::from_ptr(path.absoluteString().UTF8String() as *mut c_char).to_str()
-                ) {
+                match CStr::from_ptr(path.absoluteString().UTF8String() as *mut c_char).to_str() {
                     Ok(string) => Some(string.to_string()),
                     Err(err) => {
                         log::error!("error converting path to string: {}", err);
@@ -752,6 +734,20 @@ extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
 
 unsafe fn ns_string(string: &str) -> id {
     NSString::alloc(nil).init_str(string).autorelease()
+}
+
+unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
+    let path: *mut c_char = msg_send![url, fileSystemRepresentation];
+    if path.is_null() {
+        Err(anyhow!(
+            "url is not a file path: {}",
+            CStr::from_ptr(url.absoluteString().UTF8String()).to_string_lossy()
+        ))
+    } else {
+        Ok(PathBuf::from(OsStr::from_bytes(
+            CStr::from_ptr(path).to_bytes(),
+        )))
+    }
 }
 
 mod security {

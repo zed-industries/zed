@@ -163,7 +163,7 @@ impl super::Platform for Platform {
         UtcOffset::UTC
     }
 
-    fn path_for_resource(&self, _name: Option<&str>, _extension: Option<&str>) -> Result<PathBuf> {
+    fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {
         Err(anyhow!("app not running inside a bundle"))
     }
 }

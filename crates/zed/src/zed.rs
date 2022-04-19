@@ -38,7 +38,8 @@ actions!(
         DebugElements,
         OpenSettings,
         IncreaseBufferFontSize,
-        DecreaseBufferFontSize
+        DecreaseBufferFontSize,
+        InstallCommandLineTool,
     ]
 );
 
@@ -65,6 +66,20 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             settings.buffer_font_size = (settings.buffer_font_size - 1.0).max(MIN_FONT_SIZE);
             cx.refresh_windows();
         });
+    });
+    cx.add_global_action(move |_: &InstallCommandLineTool, cx| {
+        cx.spawn(|cx| async move {
+            let path = cx.platform().path_for_auxiliary_executable("cli")?;
+            let link_path = "/usr/local/bin/zed";
+            smol::fs::unix::symlink(link_path, path.as_path()).await?;
+            log::info!(
+                "created symlink {} -> {}",
+                link_path,
+                path.to_string_lossy()
+            );
+            Ok::<_, anyhow::Error>(())
+        })
+        .detach();
     });
     cx.add_action({
         let app_state = app_state.clone();
