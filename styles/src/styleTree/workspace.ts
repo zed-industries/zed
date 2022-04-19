@@ -4,9 +4,15 @@ import { backgroundColor, border, iconColor, text } from "./components";
 export default function workspace(theme: Theme) {
   const signInPrompt = {
     ...text(theme, "sans", "secondary", { size: "xs" }),
-    underline: true,
+    border: border(theme, "primary"),
+    cornerRadius: 6,
+    margin: {
+      top: 1,
+      right: 6,
+    },
     padding: {
-      right: 8,
+      left: 6,
+      right: 6,
     },
   };
 
@@ -18,23 +24,23 @@ export default function workspace(theme: Theme) {
     iconConflict: iconColor(theme, "warning"),
     iconDirty: iconColor(theme, "info"),
     iconWidth: 8,
-    spacing: 10,
-    text: text(theme, "mono", "secondary", { size: "sm" }),
+    spacing: 8,
+    text: text(theme, "sans", "secondary", { size: "sm" }),
     border: border(theme, "primary", {
       left: true,
       bottom: true,
       overlay: true,
     }),
     padding: {
-      left: 12,
-      right: 12,
+      left: 8,
+      right: 8,
     },
   };
 
   const activeTab = {
     ...tab,
     background: backgroundColor(theme, 500),
-    text: text(theme, "mono", "active", { size: "sm" }),
+    text: text(theme, "sans", "active", { size: "sm" }),
     border: {
       ...tab.border,
       bottom: false,

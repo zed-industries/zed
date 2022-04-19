@@ -5,11 +5,11 @@ export default function selectorModal(theme: Theme): Object {
   const item = {
     padding: {
       bottom: 4,
-      left: 16,
-      right: 16,
+      left: 12,
+      right: 12,
       top: 4,
     },
-    cornerRadius: 6,
+    cornerRadius: 8,
     text: text(theme, "sans", "secondary"),
     highlightText: text(theme, "sans", "feature", { weight: "bold" }),
   };
@@ -22,7 +22,7 @@ export default function selectorModal(theme: Theme): Object {
 
   return {
     background: backgroundColor(theme, 300),
-    cornerRadius: 6,
+    cornerRadius: 8,
     padding: 8,
     item,
     activeItem,
@@ -31,14 +31,14 @@ export default function selectorModal(theme: Theme): Object {
       text: text(theme, "sans", "placeholder"),
       padding: {
         bottom: 4,
-        left: 16,
-        right: 16,
+        left: 12,
+        right: 12,
         top: 8,
       },
     },
     inputEditor: {
       background: backgroundColor(theme, 500),
-      cornerRadius: 6,
+      cornerRadius: 8,
       placeholderText: text(theme, "sans", "placeholder"),
       selection: player(theme, 1).selection,
       text: text(theme, "mono", "primary"),

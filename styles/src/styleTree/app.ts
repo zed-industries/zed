@@ -36,7 +36,7 @@ export default function app(theme: Theme): Object {
     contactsPanel: contactsPanel(theme),
     search: search(theme),
     breadcrumbs: {
-      ...text(theme, "sans", "primary"),
+      ...text(theme, "sans", "secondary"),
       padding: {
         left: 6,
       },

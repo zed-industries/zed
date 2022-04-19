@@ -1,20 +1,23 @@
 import Theme from "../themes/theme";
-import { text, backgroundColor, border } from "./components";
+import { colors } from "../tokens";
+import { text, backgroundColor, border, borderColor } from "./components";
 
 export default function commandPalette(theme: Theme) {
   return {
     keystrokeSpacing: 8,
     key: {
-      text: text(theme, "mono", "primary", { size: "xs" }),
-      cornerRadius: 3,
-      background: backgroundColor(theme, "info", "base"),
-      border: border(theme, "info"),
+      text: text(theme, "mono", "active", { size: "xs" }),
+      cornerRadius: 4,
+      background: backgroundColor(theme, "on300"),
+      border: border(theme, "secondary"),
       padding: {
-        left: 3,
-        right: 3,
+        top: 3,
+        bottom: 3,
+        left: 8,
+        right: 8,
       },
       margin: {
-        left: 3
+        left: 2
       },
     }
   }
