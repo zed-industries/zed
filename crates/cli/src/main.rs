@@ -34,11 +34,12 @@ fn main() -> Result<()> {
             .into_iter()
             .map(|path| fs::canonicalize(path).map_err(|error| anyhow!(error)))
             .collect::<Result<Vec<PathBuf>>>()?,
-        wait: false,
+        wait: args.wait,
     })?;
 
     while let Ok(response) = rx.recv() {
         match response {
+            CliResponse::Ping => {}
             CliResponse::Stdout { message } => println!("{message}"),
             CliResponse::Stderr { message } => eprintln!("{message}"),
             CliResponse::Exit { status } => std::process::exit(status),

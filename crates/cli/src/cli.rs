@@ -15,6 +15,7 @@ pub enum CliRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum CliResponse {
+    Ping,
     Stdout { message: String },
     Stderr { message: String },
     Exit { status: i32 },

@@ -733,7 +733,7 @@ type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type FocusObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type GlobalObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
-type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
+type ReleaseObservationCallback = Box<dyn FnOnce(&dyn Any, &mut MutableAppContext)>;
 type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
 
 pub struct MutableAppContext {
@@ -1259,12 +1259,12 @@ impl MutableAppContext {
         }
     }
 
-    pub fn observe_release<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
+    pub fn observe_release<E, H, F>(&mut self, handle: &H, callback: F) -> Subscription
     where
         E: Entity,
         E::Event: 'static,
         H: Handle<E>,
-        F: 'static + FnMut(&E, &mut Self),
+        F: 'static + FnOnce(&E, &mut Self),
     {
         let id = post_inc(&mut self.next_subscription_id);
         self.release_observations
@@ -2211,7 +2211,7 @@ impl MutableAppContext {
     fn handle_entity_release_effect(&mut self, entity_id: usize, entity: &dyn Any) {
         let callbacks = self.release_observations.lock().remove(&entity_id);
         if let Some(callbacks) = callbacks {
-            for (_, mut callback) in callbacks {
+            for (_, callback) in callbacks {
                 callback(entity, self);
             }
         }

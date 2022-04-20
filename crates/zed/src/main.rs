@@ -11,7 +11,7 @@ use client::{self, http, ChannelList, UserStore};
 use fs::OpenOptions;
 use futures::{
     channel::{mpsc, oneshot},
-    SinkExt, StreamExt,
+    FutureExt, SinkExt, StreamExt,
 };
 use gpui::{App, AssetSource, AsyncAppContext, Task};
 use log::LevelFilter;
@@ -19,7 +19,7 @@ use parking_lot::Mutex;
 use project::Fs;
 use settings::{self, KeymapFile, Settings, SettingsFileContent};
 use smol::process::Command;
-use std::{env, fs, path::PathBuf, sync::Arc, thread};
+use std::{env, fs, path::PathBuf, sync::Arc, thread, time::Duration};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
 use util::ResultExt;
 use workspace::{self, AppState, OpenNew, OpenPaths};
@@ -360,9 +360,79 @@ async fn handle_cli_connection(
 ) {
     if let Some(request) = requests.next().await {
         match request {
-            CliRequest::Open { paths, .. } => {
-                cx.update(|cx| cx.dispatch_global_action(OpenPaths { paths, app_state }));
-                responses.send(CliResponse::Exit { status: 0 }).log_err();
+            CliRequest::Open { paths, wait } => {
+                let (workspace, items) = cx
+                    .update(|cx| workspace::open_paths(&paths, &app_state, cx))
+                    .await;
+
+                let mut errored = false;
+                let mut futures = Vec::new();
+                cx.update(|cx| {
+                    for (item, path) in items.into_iter().zip(&paths) {
+                        match item {
+                            Some(Ok(item)) => {
+                                let released = oneshot::channel();
+                                item.on_release(
+                                    cx,
+                                    Box::new(move |_| {
+                                        let _ = released.0.send(());
+                                    }),
+                                )
+                                .detach();
+                                futures.push(released.1);
+                            }
+                            Some(Err(err)) => {
+                                responses
+                                    .send(CliResponse::Stderr {
+                                        message: format!("error opening {:?}: {}", path, err),
+                                    })
+                                    .log_err();
+                                errored = true;
+                            }
+                            None => {}
+                        }
+                    }
+                });
+
+                if wait {
+                    let background = cx.background();
+                    let wait = async move {
+                        if paths.is_empty() {
+                            let (done_tx, done_rx) = oneshot::channel();
+                            let _subscription = cx.update(|cx| {
+                                cx.observe_release(&workspace, move |_, _| {
+                                    let _ = done_tx.send(());
+                                })
+                            });
+                            drop(workspace);
+                            let _ = done_rx.await;
+                        } else {
+                            let _ = futures::future::try_join_all(futures).await;
+                        };
+                    }
+                    .fuse();
+                    futures::pin_mut!(wait);
+
+                    loop {
+                        // Repeatedly check if CLI is still open to avoid wasting resources
+                        // waiting for files or workspaces to close.
+                        let mut timer = background.timer(Duration::from_secs(1)).fuse();
+                        futures::select_biased! {
+                            _ = wait => break,
+                            _ = timer => {
+                                if responses.send(CliResponse::Ping).is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                responses
+                    .send(CliResponse::Exit {
+                        status: if errored { 1 } else { 0 },
+                    })
+                    .log_err();
             }
         }
     }
