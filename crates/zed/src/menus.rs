@@ -15,6 +15,12 @@ pub fn menus(state: &Arc<AppState>) -> Vec<Menu<'static>> {
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
+                    name: "Install CLI",
+                    keystroke: None,
+                    action: Box::new(super::InstallCommandLineInterface),
+                },
+                MenuItem::Separator,
+                MenuItem::Action {
                     name: "Quit",
                     keystroke: Some("cmd-q"),
                     action: Box::new(super::Quit),

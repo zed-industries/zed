@@ -5337,7 +5337,6 @@ mod tests {
     #[gpui::test]
     async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
-        language::init_test(cx);
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(

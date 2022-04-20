@@ -43,7 +43,7 @@ actions!(
         OpenSettings,
         IncreaseBufferFontSize,
         DecreaseBufferFontSize,
-        InstallCommandLineTool,
+        InstallCommandLineInterface,
     ]
 );
 
@@ -71,7 +71,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             cx.refresh_windows();
         });
     });
-    cx.add_global_action(move |_: &InstallCommandLineTool, cx| {
+    cx.add_global_action(move |_: &InstallCommandLineInterface, cx| {
         cx.spawn(|cx| async move { install_cli(&cx).await.context("error creating CLI symlink") })
             .detach_and_log_err(cx);
     });
