@@ -3975,8 +3975,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "editor",
+ "futures",
  "fuzzy",
  "gpui",
+ "language",
+ "lsp",
  "ordered-float",
  "picker",
  "postage",

@@ -28,6 +28,7 @@ pub struct ProjectSymbolsView {
     symbols: Vec<Symbol>,
     match_candidates: Vec<StringMatchCandidate>,
     show_worktree_root_name: bool,
+    pending_update: Task<()>,
     matches: Vec<StringMatch>,
 }
 
@@ -65,6 +66,7 @@ impl ProjectSymbolsView {
             match_candidates: Default::default(),
             matches: Default::default(),
             show_worktree_root_name: false,
+            pending_update: Task::ready(()),
         }
     }
 
@@ -90,7 +92,7 @@ impl ProjectSymbolsView {
                 })
                 .collect()
         } else {
-            smol::block_on(fuzzy::match_strings(
+            cx.background_executor().block(fuzzy::match_strings(
                 &self.match_candidates,
                 query,
                 false,
@@ -193,7 +195,7 @@ impl PickerDelegate for ProjectSymbolsView {
         let symbols = self
             .project
             .update(cx, |project, cx| project.symbols(&query, cx));
-        cx.spawn_weak(|this, mut cx| async move {
+        self.pending_update = cx.spawn_weak(|this, mut cx| async move {
             let symbols = symbols.await.log_err();
             if let Some(this) = this.upgrade(&cx) {
                 if let Some(symbols) = symbols {
@@ -214,7 +216,8 @@ impl PickerDelegate for ProjectSymbolsView {
                     });
                 }
             }
-        })
+        });
+        Task::ready(())
     }
 
     fn render_match(&self, ix: usize, selected: bool, cx: &AppContext) -> ElementBox {
@@ -261,5 +264,140 @@ impl PickerDelegate for ProjectSymbolsView {
             .contained()
             .with_style(style.container)
             .boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt;
+    use gpui::{serde_json::json, TestAppContext};
+    use language::{FakeLspAdapter, Language, LanguageConfig};
+    use project::FakeFs;
+    use std::sync::Arc;
+
+    #[gpui::test]
+    async fn test_project_symbols(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
+
+        let mut language = Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            None,
+        );
+        let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter::default());
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree("/dir", json!({ "test.rs": "" })).await;
+
+        let project = Project::test(fs.clone(), cx);
+        project.update(cx, |project, _| {
+            project.languages().add(Arc::new(language));
+        });
+
+        let worktree_id = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/dir", true, cx)
+            })
+            .await
+            .unwrap()
+            .0
+            .read_with(cx, |tree, _| tree.id());
+
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, "test.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        // Set up fake langauge server to return fuzzy matches against
+        // a fixed set of symbol names.
+        let fake_symbol_names = ["one", "ton", "uno"];
+        let fake_server = fake_servers.next().await.unwrap();
+        fake_server.handle_request::<lsp::request::WorkspaceSymbol, _, _>(
+            move |params: lsp::WorkspaceSymbolParams, cx| {
+                let executor = cx.background();
+                async move {
+                    let candidates = fake_symbol_names
+                        .into_iter()
+                        .map(|name| StringMatchCandidate::new(0, name.into()))
+                        .collect::<Vec<_>>();
+                    let matches = fuzzy::match_strings(
+                        &candidates,
+                        &params.query,
+                        true,
+                        100,
+                        &Default::default(),
+                        executor.clone(),
+                    )
+                    .await;
+                    Ok(Some(
+                        matches.into_iter().map(|mat| symbol(&mat.string)).collect(),
+                    ))
+                }
+            },
+        );
+
+        // Create the project symbols view.
+        let (_, symbols_view) = cx.add_window(|cx| ProjectSymbolsView::new(project.clone(), cx));
+        let picker = symbols_view.read_with(cx, |symbols_view, _| symbols_view.picker.clone());
+
+        // Spawn multiples updates before the first update completes,
+        // such that in the end, there are no matches. Testing for regression:
+        // https://github.com/zed-industries/zed/issues/861
+        picker.update(cx, |p, cx| {
+            p.update_matches("o".to_string(), cx);
+            p.update_matches("on".to_string(), cx);
+            p.update_matches("onex".to_string(), cx);
+        });
+
+        cx.foreground().run_until_parked();
+        symbols_view.read_with(cx, |symbols_view, _| {
+            assert_eq!(symbols_view.matches.len(), 0);
+        });
+
+        // Spawn more updates such that in the end, there are matches.
+        picker.update(cx, |p, cx| {
+            p.update_matches("one".to_string(), cx);
+            p.update_matches("on".to_string(), cx);
+        });
+
+        cx.foreground().run_until_parked();
+        symbols_view.read_with(cx, |symbols_view, _| {
+            assert_eq!(symbols_view.matches.len(), 2);
+            assert_eq!(symbols_view.matches[0].string, "one");
+            assert_eq!(symbols_view.matches[1].string, "ton");
+        });
+
+        // Spawn more updates such that in the end, there are again no matches.
+        picker.update(cx, |p, cx| {
+            p.update_matches("o".to_string(), cx);
+            p.update_matches("".to_string(), cx);
+        });
+
+        cx.foreground().run_until_parked();
+        symbols_view.read_with(cx, |symbols_view, _| {
+            assert_eq!(symbols_view.matches.len(), 0);
+        });
+    }
+
+    fn symbol(name: &str) -> lsp::SymbolInformation {
+        #[allow(deprecated)]
+        lsp::SymbolInformation {
+            name: name.to_string(),
+            kind: lsp::SymbolKind::FUNCTION,
+            tags: None,
+            deprecated: None,
+            container_name: None,
+            location: lsp::Location::new(
+                lsp::Url::from_file_path("/a/b").unwrap(),
+                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+            ),
+        }
     }
 }
