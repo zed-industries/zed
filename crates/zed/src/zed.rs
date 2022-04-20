@@ -265,7 +265,7 @@ async fn install_cli(cx: &AsyncAppContext) -> Result<()> {
     let status = smol::process::Command::new("osascript")
         .args([
             "-e",
-            &dbg!(format!(
+            &format!(
                 "do shell script \" \
                     mkdir -p \'{}\' && \
                     ln -sf \'{}\' \'{}\' \
@@ -273,7 +273,7 @@ async fn install_cli(cx: &AsyncAppContext) -> Result<()> {
                 bin_dir_path.to_string_lossy(),
                 cli_path.to_string_lossy(),
                 link_path.to_string_lossy(),
-            )),
+            ),
         ])
         .stdout(smol::process::Stdio::inherit())
         .stderr(smol::process::Stdio::inherit())
