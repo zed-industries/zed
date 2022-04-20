@@ -274,20 +274,6 @@ impl App {
         self
     }
 
-    pub fn on_open_files<F>(&mut self, mut callback: F) -> &mut Self
-    where
-        F: 'static + FnMut(Vec<PathBuf>, &mut MutableAppContext),
-    {
-        let cx = self.0.clone();
-        self.0
-            .borrow_mut()
-            .foreground_platform
-            .on_open_files(Box::new(move |paths| {
-                callback(paths, &mut *cx.borrow_mut())
-            }));
-        self
-    }
-
     pub fn on_open_urls<F>(&mut self, mut callback: F) -> &mut Self
     where
         F: 'static + FnMut(Vec<String>, &mut MutableAppContext),
