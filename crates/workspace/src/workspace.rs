@@ -97,7 +97,10 @@ pub struct OpenPaths {
 pub struct ToggleFollow(pub PeerId);
 
 #[derive(Clone)]
-pub struct JoinProject(pub JoinProjectParams);
+pub struct JoinProject {
+    pub project_id: u64,
+    pub app_state: Arc<AppState>,
+}
 
 impl_internal_actions!(
     workspace,
@@ -115,7 +118,7 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
         open_new(&action.0, cx)
     });
     cx.add_global_action(move |action: &JoinProject, cx: &mut MutableAppContext| {
-        join_project(action.0.project_id, &action.0.app_state, cx).detach();
+        join_project(action.project_id, &action.app_state, cx).detach();
     });
 
     cx.add_action(Workspace::toggle_share);
@@ -185,12 +188,6 @@ pub struct AppState {
         &Arc<AppState>,
         &mut ViewContext<Workspace>,
     ) -> Workspace,
-}
-
-#[derive(Clone)]
-pub struct JoinProjectParams {
-    pub project_id: u64,
-    pub app_state: Arc<AppState>,
 }
 
 pub trait Item: View {
@@ -379,6 +376,11 @@ pub trait ItemHandle: 'static + fmt::Debug {
         -> Task<Result<()>>;
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle>;
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
+    fn on_release(
+        &self,
+        cx: &mut MutableAppContext,
+        callback: Box<dyn FnOnce(&mut MutableAppContext)>,
+    ) -> gpui::Subscription;
 }
 
 pub trait WeakItemHandle {
@@ -414,17 +416,17 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         Box::new(self.clone())
     }
 
+    fn set_nav_history(&self, nav_history: Rc<RefCell<NavHistory>>, cx: &mut MutableAppContext) {
+        self.update(cx, |item, cx| {
+            item.set_nav_history(ItemNavHistory::new(nav_history, &cx.handle()), cx);
+        })
+    }
+
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemHandle>> {
         self.update(cx, |item, cx| {
             cx.add_option_view(|cx| item.clone_on_split(cx))
         })
         .map(|handle| Box::new(handle) as Box<dyn ItemHandle>)
-    }
-
-    fn set_nav_history(&self, nav_history: Rc<RefCell<NavHistory>>, cx: &mut MutableAppContext) {
-        self.update(cx, |item, cx| {
-            item.set_nav_history(ItemNavHistory::new(nav_history, &cx.handle()), cx);
-        })
     }
 
     fn added_to_pane(
@@ -515,6 +517,30 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.update(cx, |this, cx| this.navigate(data, cx))
     }
 
+    fn id(&self) -> usize {
+        self.id()
+    }
+
+    fn to_any(&self) -> AnyViewHandle {
+        self.into()
+    }
+
+    fn is_dirty(&self, cx: &AppContext) -> bool {
+        self.read(cx).is_dirty(cx)
+    }
+
+    fn has_conflict(&self, cx: &AppContext) -> bool {
+        self.read(cx).has_conflict(cx)
+    }
+
+    fn can_save(&self, cx: &AppContext) -> bool {
+        self.read(cx).can_save(cx)
+    }
+
+    fn can_save_as(&self, cx: &AppContext) -> bool {
+        self.read(cx).can_save_as(cx)
+    }
+
     fn save(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.save(project, cx))
     }
@@ -536,30 +562,6 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.update(cx, |item, cx| item.reload(project, cx))
     }
 
-    fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.read(cx).is_dirty(cx)
-    }
-
-    fn has_conflict(&self, cx: &AppContext) -> bool {
-        self.read(cx).has_conflict(cx)
-    }
-
-    fn id(&self) -> usize {
-        self.id()
-    }
-
-    fn to_any(&self) -> AnyViewHandle {
-        self.into()
-    }
-
-    fn can_save(&self, cx: &AppContext) -> bool {
-        self.read(cx).can_save(cx)
-    }
-
-    fn can_save_as(&self, cx: &AppContext) -> bool {
-        self.read(cx).can_save_as(cx)
-    }
-
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle> {
         self.read(cx).act_as_type(type_id, self, cx)
     }
@@ -572,6 +574,14 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         } else {
             None
         }
+    }
+
+    fn on_release(
+        &self,
+        cx: &mut MutableAppContext,
+        callback: Box<dyn FnOnce(&mut MutableAppContext)>,
+    ) -> gpui::Subscription {
+        cx.observe_release(self, move |_, cx| callback(cx))
     }
 }
 
@@ -2105,7 +2115,10 @@ pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: &Arc<AppState>,
     cx: &mut MutableAppContext,
-) -> Task<ViewHandle<Workspace>> {
+) -> Task<(
+    ViewHandle<Workspace>,
+    Vec<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>,
+)> {
     log::info!("open paths {:?}", abs_paths);
 
     // Open paths in existing workspace if possible
@@ -2142,8 +2155,8 @@ pub fn open_paths(
 
     let task = workspace.update(cx, |workspace, cx| workspace.open_paths(abs_paths, cx));
     cx.spawn(|_| async move {
-        task.await;
-        workspace
+        let items = task.await;
+        (workspace, items)
     })
 }
 

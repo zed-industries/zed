@@ -1,0 +1,24 @@
+[package]
+name = "cli"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/cli.rs"
+doctest = false
+
+[[bin]]
+name = "cli"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "3.1", features = ["derive"] }
+dirs = "3.0"
+ipc-channel = "0.16"
+serde = { version = "1.0", features = ["derive"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.9"
+core-services = "0.2"
+plist = "1.3"

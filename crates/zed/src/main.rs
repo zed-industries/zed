@@ -3,16 +3,23 @@
 
 use anyhow::{anyhow, Context, Result};
 use assets::Assets;
+use cli::{
+    ipc::{self, IpcSender},
+    CliRequest, CliResponse, IpcHandshake,
+};
 use client::{self, http, ChannelList, UserStore};
 use fs::OpenOptions;
-use futures::{channel::oneshot, StreamExt};
-use gpui::{App, AssetSource, Task};
+use futures::{
+    channel::{mpsc, oneshot},
+    FutureExt, SinkExt, StreamExt,
+};
+use gpui::{App, AssetSource, AsyncAppContext, Task};
 use log::LevelFilter;
 use parking_lot::Mutex;
 use project::Fs;
 use settings::{self, KeymapFile, Settings, SettingsFileContent};
 use smol::process::Command;
-use std::{env, fs, path::PathBuf, sync::Arc};
+use std::{env, fs, path::PathBuf, sync::Arc, thread, time::Duration};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
 use util::ResultExt;
 use workspace::{self, AppState, OpenNew, OpenPaths};
@@ -26,7 +33,7 @@ use zed::{
 fn main() {
     init_logger();
 
-    let app = gpui::App::new(Assets).unwrap();
+    let mut app = gpui::App::new(Assets).unwrap();
     load_embedded_fonts(&app);
 
     let fs = Arc::new(RealFs);
@@ -86,6 +93,18 @@ fn main() {
             load_login_shell_environment().await.log_err();
         })
     };
+
+    let (cli_connections_tx, mut cli_connections_rx) = mpsc::unbounded();
+    app.on_open_urls(move |urls, _| {
+        if let Some(server_name) = urls.first().and_then(|url| url.strip_prefix("zed-cli://")) {
+            if let Some(cli_connection) = connect_to_cli(server_name).log_err() {
+                cli_connections_tx
+                    .unbounded_send(cli_connection)
+                    .map_err(|_| anyhow!("no listener for cli connections"))
+                    .log_err();
+            };
+        }
+    });
 
     app.run(move |cx| {
         let http = http::client();
@@ -170,13 +189,25 @@ fn main() {
 
         if stdout_is_a_pty() {
             cx.platform().activate(true);
-        }
-
-        let paths = collect_path_args();
-        if paths.is_empty() {
-            cx.dispatch_global_action(OpenNew(app_state.clone()));
+            let paths = collect_path_args();
+            if paths.is_empty() {
+                cx.dispatch_global_action(OpenNew(app_state.clone()));
+            } else {
+                cx.dispatch_global_action(OpenPaths { paths, app_state });
+            }
         } else {
-            cx.dispatch_global_action(OpenPaths { paths, app_state });
+            if let Ok(Some(connection)) = cli_connections_rx.try_next() {
+                cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
+                    .detach();
+            } else {
+                cx.dispatch_global_action(OpenNew(app_state.clone()));
+            }
+            cx.spawn(|cx| async move {
+                while let Some(connection) = cli_connections_rx.next().await {
+                    handle_cli_connection(connection, app_state.clone(), cx.clone()).await;
+                }
+            })
+            .detach();
         }
     });
 }
@@ -291,4 +322,118 @@ fn load_config_files(
         })
         .detach();
     rx
+}
+
+fn connect_to_cli(
+    server_name: &str,
+) -> Result<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)> {
+    let handshake_tx = cli::ipc::IpcSender::<IpcHandshake>::connect(server_name.to_string())
+        .context("error connecting to cli")?;
+    let (request_tx, request_rx) = ipc::channel::<CliRequest>()?;
+    let (response_tx, response_rx) = ipc::channel::<CliResponse>()?;
+
+    handshake_tx
+        .send(IpcHandshake {
+            requests: request_tx,
+            responses: response_rx,
+        })
+        .context("error sending ipc handshake")?;
+
+    let (mut async_request_tx, async_request_rx) =
+        futures::channel::mpsc::channel::<CliRequest>(16);
+    thread::spawn(move || {
+        while let Ok(cli_request) = request_rx.recv() {
+            if smol::block_on(async_request_tx.send(cli_request)).is_err() {
+                break;
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    });
+
+    Ok((async_request_rx, response_tx))
+}
+
+async fn handle_cli_connection(
+    (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
+    app_state: Arc<AppState>,
+    mut cx: AsyncAppContext,
+) {
+    if let Some(request) = requests.next().await {
+        match request {
+            CliRequest::Open { paths, wait } => {
+                let (workspace, items) = cx
+                    .update(|cx| workspace::open_paths(&paths, &app_state, cx))
+                    .await;
+
+                let mut errored = false;
+                let mut futures = Vec::new();
+                cx.update(|cx| {
+                    for (item, path) in items.into_iter().zip(&paths) {
+                        match item {
+                            Some(Ok(item)) => {
+                                let released = oneshot::channel();
+                                item.on_release(
+                                    cx,
+                                    Box::new(move |_| {
+                                        let _ = released.0.send(());
+                                    }),
+                                )
+                                .detach();
+                                futures.push(released.1);
+                            }
+                            Some(Err(err)) => {
+                                responses
+                                    .send(CliResponse::Stderr {
+                                        message: format!("error opening {:?}: {}", path, err),
+                                    })
+                                    .log_err();
+                                errored = true;
+                            }
+                            None => {}
+                        }
+                    }
+                });
+
+                if wait {
+                    let background = cx.background();
+                    let wait = async move {
+                        if paths.is_empty() {
+                            let (done_tx, done_rx) = oneshot::channel();
+                            let _subscription = cx.update(|cx| {
+                                cx.observe_release(&workspace, move |_, _| {
+                                    let _ = done_tx.send(());
+                                })
+                            });
+                            drop(workspace);
+                            let _ = done_rx.await;
+                        } else {
+                            let _ = futures::future::try_join_all(futures).await;
+                        };
+                    }
+                    .fuse();
+                    futures::pin_mut!(wait);
+
+                    loop {
+                        // Repeatedly check if CLI is still open to avoid wasting resources
+                        // waiting for files or workspaces to close.
+                        let mut timer = background.timer(Duration::from_secs(1)).fuse();
+                        futures::select_biased! {
+                            _ = wait => break,
+                            _ = timer => {
+                                if responses.send(CliResponse::Ping).is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                responses
+                    .send(CliResponse::Exit {
+                        status: if errored { 1 } else { 0 },
+                    })
+                    .log_err();
+            }
+        }
+    }
 }

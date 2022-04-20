@@ -43,7 +43,7 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.spawn(|mut cx| {
         async move {
             let (journal_dir, entry_path) = create_entry.await?;
-            let workspace = cx
+            let (workspace, _) = cx
                 .update(|cx| workspace::open_paths(&[journal_dir], &app_state, cx))
                 .await;
 

@@ -248,7 +248,7 @@ impl App {
         self
     }
 
-    pub fn on_quit<F>(self, mut callback: F) -> Self
+    pub fn on_quit<F>(&mut self, mut callback: F) -> &mut Self
     where
         F: 'static + FnMut(&mut MutableAppContext),
     {
@@ -260,7 +260,7 @@ impl App {
         self
     }
 
-    pub fn on_event<F>(self, mut callback: F) -> Self
+    pub fn on_event<F>(&mut self, mut callback: F) -> &mut Self
     where
         F: 'static + FnMut(Event, &mut MutableAppContext) -> bool,
     {
@@ -274,15 +274,15 @@ impl App {
         self
     }
 
-    pub fn on_open_files<F>(self, mut callback: F) -> Self
+    pub fn on_open_urls<F>(&mut self, mut callback: F) -> &mut Self
     where
-        F: 'static + FnMut(Vec<PathBuf>, &mut MutableAppContext),
+        F: 'static + FnMut(Vec<String>, &mut MutableAppContext),
     {
         let cx = self.0.clone();
         self.0
             .borrow_mut()
             .foreground_platform
-            .on_open_files(Box::new(move |paths| {
+            .on_open_urls(Box::new(move |paths| {
                 callback(paths, &mut *cx.borrow_mut())
             }));
         self
@@ -719,7 +719,7 @@ type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type FocusObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type GlobalObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
-type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
+type ReleaseObservationCallback = Box<dyn FnOnce(&dyn Any, &mut MutableAppContext)>;
 type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
 
 pub struct MutableAppContext {
@@ -1245,12 +1245,12 @@ impl MutableAppContext {
         }
     }
 
-    pub fn observe_release<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
+    pub fn observe_release<E, H, F>(&mut self, handle: &H, callback: F) -> Subscription
     where
         E: Entity,
         E::Event: 'static,
         H: Handle<E>,
-        F: 'static + FnMut(&E, &mut Self),
+        F: 'static + FnOnce(&E, &mut Self),
     {
         let id = post_inc(&mut self.next_subscription_id);
         self.release_observations
@@ -2197,7 +2197,7 @@ impl MutableAppContext {
     fn handle_entity_release_effect(&mut self, entity_id: usize, entity: &dyn Any) {
         let callbacks = self.release_observations.lock().remove(&entity_id);
         if let Some(callbacks) = callbacks {
-            for (_, mut callback) in callbacks {
+            for (_, callback) in callbacks {
                 callback(entity, self);
             }
         }

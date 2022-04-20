@@ -32,6 +32,7 @@ test-support = [
 assets = { path = "../assets" }
 breadcrumbs = { path = "../breadcrumbs" }
 chat_panel = { path = "../chat_panel" }
+cli = { path = "../cli" }
 collections = { path = "../collections" }
 command_palette = { path = "../command_palette" }
 client = { path = "../client" }

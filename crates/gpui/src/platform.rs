@@ -54,8 +54,7 @@ pub trait Platform: Send + Sync {
     fn set_cursor_style(&self, style: CursorStyle);
 
     fn local_timezone(&self) -> UtcOffset;
-
-    fn path_for_resource(&self, name: Option<&str>, extension: Option<&str>) -> Result<PathBuf>;
+    fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
 }
 
 pub(crate) trait ForegroundPlatform {
@@ -63,7 +62,7 @@ pub(crate) trait ForegroundPlatform {
     fn on_resign_active(&self, callback: Box<dyn FnMut()>);
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>);
-    fn on_open_files(&self, callback: Box<dyn FnMut(Vec<PathBuf>)>);
+    fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
     fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>);
 
     fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>);
