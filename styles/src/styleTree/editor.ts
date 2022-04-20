@@ -67,8 +67,8 @@ export default function editor(theme: Theme) {
     ],
     autocomplete: {
       background: backgroundColor(theme, 500),
-      cornerRadius: 6,
-      padding: 6,
+      cornerRadius: 8,
+      padding: 4,
       border: border(theme, "secondary"),
       item: autocompleteItem,
       hoveredItem: {

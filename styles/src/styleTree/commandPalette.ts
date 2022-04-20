@@ -5,16 +5,18 @@ export default function commandPalette(theme: Theme) {
   return {
     keystrokeSpacing: 8,
     key: {
-      text: text(theme, "mono", "primary", { size: "xs" }),
-      cornerRadius: 3,
-      background: backgroundColor(theme, "info", "base"),
-      border: border(theme, "info"),
+      text: text(theme, "mono", "secondary", { size: "xs" }),
+      cornerRadius: 4,
+      background: backgroundColor(theme, "on300"),
+      border: border(theme, "secondary"),
       padding: {
-        left: 3,
-        right: 3,
+        top: 2,
+        bottom: 2,
+        left: 8,
+        right: 8,
       },
       margin: {
-        left: 3
+        left: 2
       },
     }
   }

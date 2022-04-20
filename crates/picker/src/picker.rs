@@ -136,7 +136,7 @@ impl<D: PickerDelegate> Picker<D> {
             query_editor,
             list_state: Default::default(),
             delegate,
-            max_size: vec2f(500., 420.),
+            max_size: vec2f(540., 420.),
             confirmed: false,
         };
         cx.defer(|this, cx| this.update_matches(cx));

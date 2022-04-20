@@ -4,57 +4,62 @@ import { backgroundColor, border, player, text } from "./components";
 export default function search(theme: Theme) {
   const optionButton = {
     ...text(theme, "mono", "secondary"),
-    background: backgroundColor(theme, 300),
-    cornerRadius: 6,
-    border: border(theme, "primary"),
+    background: backgroundColor(theme, "on500"),
+    cornerRadius: 4,
+    border: border(theme, "secondary"),
     margin: {
-      left: 1,
-      right: 1,
+      left: 2,
+      right: 2,
     },
     padding: {
-      bottom: 1,
-      left: 6,
-      right: 6,
-      top: 1,
+      bottom: 3,
+      left: 8,
+      right: 8,
+      top: 3,
     },
   };
 
   const editor = {
     background: backgroundColor(theme, 500),
-    cornerRadius: 6,
+    cornerRadius: 8,
     minWidth: 200,
     maxWidth: 500,
     placeholderText: text(theme, "mono", "placeholder"),
     selection: player(theme, 1).selection,
-    text: text(theme, "mono", "primary"),
+    text: text(theme, "mono", "active"),
     border: border(theme, "secondary"),
     margin: {
-      right: 5,
+      right: 6,
     },
     padding: {
       top: 3,
       bottom: 3,
-      left: 14,
-      right: 14,
+      left: 12,
+      right: 8,
     },
   };
 
   return {
     matchBackground: theme.editor.highlight.match.value,
-    tabIconSpacing: 4,
+    tabIconSpacing: 8,
     tabIconWidth: 14,
     activeHoveredOptionButton: {
       ...optionButton,
-      background: backgroundColor(theme, 100),
+      ...text(theme, "mono", "active"),
+      background: backgroundColor(theme, "on500", "active"),
+      border: border(theme, "muted"),
     },
     activeOptionButton: {
       ...optionButton,
-      background: backgroundColor(theme, 100),
+      ...text(theme, "mono", "active"),
+      background: backgroundColor(theme, "on500", "active"),
+      border: border(theme, "muted"),
     },
     editor,
     hoveredOptionButton: {
       ...optionButton,
-      background: backgroundColor(theme, 100),
+      ...text(theme, "mono", "active"),
+      border: border(theme, "muted"),
     },
     invalidEditor: {
       ...editor,
@@ -67,8 +72,8 @@ export default function search(theme: Theme) {
     optionButton,
     optionButtonGroup: {
       padding: {
-        left: 2,
-        right: 2,
+        left: 4,
+        right: 4,
       },
     },
     resultsStatus: {

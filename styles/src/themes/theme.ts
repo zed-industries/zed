@@ -63,6 +63,8 @@ export default interface Theme {
     100: BackgroundColorSet;
     300: BackgroundColorSet;
     500: BackgroundColorSet;
+    on300: BackgroundColorSet;
+    on500: BackgroundColorSet;
     ok: BackgroundColorSet;
     error: BackgroundColorSet;
     warning: BackgroundColorSet;
