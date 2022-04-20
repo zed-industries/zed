@@ -4,7 +4,7 @@ use editor::{
     movement, Bias, DisplayPoint,
 };
 use gpui::{actions, impl_actions, MutableAppContext};
-use language::{Selection, SelectionGoal};
+use language::SelectionGoal;
 use serde::Deserialize;
 use workspace::Workspace;
 
@@ -122,7 +122,9 @@ fn motion(motion: Motion, cx: &mut MutableAppContext) {
     });
     match Vim::read(cx).state.mode {
         Mode::Normal => normal_motion(motion, cx),
-        Mode::Insert => panic!("motion bindings in insert mode interfere with normal typing"),
+        Mode::Insert => {
+            // Shouldn't execute a motion in insert mode. Ignoring
+        }
     }
 }
 
@@ -132,6 +134,7 @@ impl Motion {
         map: &DisplaySnapshot,
         point: DisplayPoint,
         goal: SelectionGoal,
+        block_cursor_positioning: bool,
     ) -> (DisplayPoint, SelectionGoal) {
         use Motion::*;
         match self {
@@ -147,65 +150,25 @@ impl Motion {
                 SelectionGoal::None,
             ),
             NextWordEnd { ignore_punctuation } => (
-                next_word_end(map, point, ignore_punctuation, true),
+                next_word_end(map, point, ignore_punctuation, block_cursor_positioning),
                 SelectionGoal::None,
             ),
             PreviousWordStart { ignore_punctuation } => (
                 previous_word_start(map, point, ignore_punctuation),
                 SelectionGoal::None,
             ),
-            StartOfLine => (
-                movement::line_beginning(map, point, false),
-                SelectionGoal::None,
-            ),
-            EndOfLine => (
-                map.clip_point(movement::line_end(map, point, false), Bias::Left),
-                SelectionGoal::None,
-            ),
-            StartOfDocument => (start_of_document(map), SelectionGoal::None),
-            EndOfDocument => (end_of_document(map), SelectionGoal::None),
+            StartOfLine => (start_of_line(map, point), SelectionGoal::None),
+            EndOfLine => (end_of_line(map, point), SelectionGoal::None),
+            StartOfDocument => (start_of_document(map, point), SelectionGoal::None),
+            EndOfDocument => (end_of_document(map, point), SelectionGoal::None),
         }
     }
 
-    pub fn expand_selection(self, map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) {
+    pub fn line_wise(self) -> bool {
         use Motion::*;
         match self {
-            Up => {
-                let (start, _) = Up.move_point(map, selection.start, SelectionGoal::None);
-                // Cursor at top of file. Return early rather
-                if start == selection.start {
-                    return;
-                }
-                let (start, _) = StartOfLine.move_point(map, start, SelectionGoal::None);
-                let (end, _) = EndOfLine.move_point(map, selection.end, SelectionGoal::None);
-                selection.start = start;
-                selection.end = end;
-                // TODO: Make sure selection goal is correct here
-                selection.goal = SelectionGoal::None;
-            }
-            Down => {
-                let (end, _) = Down.move_point(map, selection.end, SelectionGoal::None);
-                // Cursor at top of file. Return early rather
-                if end == selection.start {
-                    return;
-                }
-                let (start, _) = StartOfLine.move_point(map, selection.start, SelectionGoal::None);
-                let (end, _) = EndOfLine.move_point(map, end, SelectionGoal::None);
-                selection.start = start;
-                selection.end = end;
-                // TODO: Make sure selection goal is correct here
-                selection.goal = SelectionGoal::None;
-            }
-            NextWordEnd { ignore_punctuation } => {
-                selection.set_head(
-                    next_word_end(map, selection.head(), ignore_punctuation, false),
-                    SelectionGoal::None,
-                );
-            }
-            _ => {
-                let (head, goal) = self.move_point(map, selection.head(), selection.goal);
-                selection.set_head(head, goal);
-            }
+            Down | Up | StartOfDocument | EndOfDocument => true,
+            _ => false,
         }
     }
 }
@@ -287,10 +250,22 @@ fn previous_word_start(
     point
 }
 
-fn start_of_document(map: &DisplaySnapshot) -> DisplayPoint {
-    0usize.to_display_point(map)
+fn start_of_line(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    map.prev_line_boundary(point.to_point(map)).1
 }
 
-fn end_of_document(map: &DisplaySnapshot) -> DisplayPoint {
-    map.clip_point(map.max_point(), Bias::Left)
+fn end_of_line(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    map.clip_point(map.next_line_boundary(point.to_point(map)).1, Bias::Left)
+}
+
+fn start_of_document(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let mut new_point = 0usize.to_display_point(map);
+    *new_point.column_mut() = point.column();
+    map.clip_point(new_point, Bias::Left)
+}
+
+fn end_of_document(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let mut new_point = map.max_point();
+    *new_point.column_mut() = point.column();
+    map.clip_point(new_point, Bias::Left)
 }
