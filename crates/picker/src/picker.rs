@@ -139,7 +139,7 @@ impl<D: PickerDelegate> Picker<D> {
             max_size: vec2f(540., 420.),
             confirmed: false,
         };
-        cx.defer(|this, cx| this.update_matches(cx));
+        cx.defer(|this, cx| this.update_matches(String::new(), cx));
         this
     }
 
@@ -159,7 +159,7 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            editor::Event::BufferEdited { .. } => self.update_matches(cx),
+            editor::Event::BufferEdited { .. } => self.update_matches(self.query(cx), cx),
             editor::Event::Blurred if !self.confirmed => {
                 if let Some(delegate) = self.delegate.upgrade(cx) {
                     delegate.update(cx, |delegate, cx| {
@@ -171,9 +171,8 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn update_matches(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
-            let query = self.query(cx);
             let update = delegate.update(cx, |d, cx| d.update_matches(query, cx));
             cx.notify();
             cx.spawn(|this, mut cx| async move {
