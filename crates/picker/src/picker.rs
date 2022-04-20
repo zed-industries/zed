@@ -139,7 +139,12 @@ impl<D: PickerDelegate> Picker<D> {
             max_size: vec2f(540., 420.),
             confirmed: false,
         };
-        cx.defer(|this, cx| this.update_matches(String::new(), cx));
+        cx.defer(|this, cx| {
+            if let Some(delegate) = this.delegate.upgrade(cx) {
+                cx.observe(&delegate, |_, _, cx| cx.notify()).detach();
+                this.update_matches(String::new(), cx)
+            }
+        });
         this
     }
 
@@ -174,7 +179,6 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
             let update = delegate.update(cx, |d, cx| d.update_matches(query, cx));
-            cx.notify();
             cx.spawn(|this, mut cx| async move {
                 update.await;
                 this.update(&mut cx, |this, cx| {

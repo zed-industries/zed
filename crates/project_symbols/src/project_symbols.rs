@@ -28,6 +28,7 @@ pub struct ProjectSymbolsView {
     symbols: Vec<Symbol>,
     match_candidates: Vec<StringMatchCandidate>,
     show_worktree_root_name: bool,
+    pending_update: Task<()>,
     matches: Vec<StringMatch>,
 }
 
@@ -65,6 +66,7 @@ impl ProjectSymbolsView {
             match_candidates: Default::default(),
             matches: Default::default(),
             show_worktree_root_name: false,
+            pending_update: Task::ready(()),
         }
     }
 
@@ -193,7 +195,7 @@ impl PickerDelegate for ProjectSymbolsView {
         let symbols = self
             .project
             .update(cx, |project, cx| project.symbols(&query, cx));
-        cx.spawn_weak(|this, mut cx| async move {
+        self.pending_update = cx.spawn_weak(|this, mut cx| async move {
             let symbols = symbols.await.log_err();
             if let Some(this) = this.upgrade(&cx) {
                 if let Some(symbols) = symbols {
@@ -214,7 +216,8 @@ impl PickerDelegate for ProjectSymbolsView {
                     });
                 }
             }
-        })
+        });
+        Task::ready(())
     }
 
     fn render_match(&self, ix: usize, selected: bool, cx: &AppContext) -> ElementBox {
