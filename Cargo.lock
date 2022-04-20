@@ -998,12 +998,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap 3.1.8",
- "cocoa",
  "core-foundation",
  "core-services",
  "dirs 3.0.1",
  "ipc-channel",
- "objc",
  "plist",
  "serde",
 ]

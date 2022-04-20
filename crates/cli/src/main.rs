@@ -8,9 +8,8 @@ use core_foundation::{
 };
 use core_services::{kLSLaunchDefaults, LSLaunchURLSpec, LSOpenFromURLSpec, TCFType};
 use ipc_channel::ipc::{IpcOneShotServer, IpcReceiver, IpcSender};
-use objc::{class, msg_send, sel, sel_impl};
 use serde::Deserialize;
-use std::{ffi::CStr, fs, path::PathBuf, ptr};
+use std::{ffi::OsStr, fs, path::PathBuf, ptr};
 
 #[derive(Parser)]
 #[clap(name = "zed", global_setting(clap::AppSettings::NoAutoVersion))]
@@ -24,6 +23,9 @@ struct Args {
     /// Print Zed's version and the app path.
     #[clap(short, long)]
     version: bool,
+    /// Custom Zed.app path
+    #[clap(short, long)]
+    bundle_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,19 +37,24 @@ struct InfoPlist {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    let app_path = locate_app()?;
+    let bundle_path = if let Some(bundle_path) = args.bundle_path {
+        bundle_path.canonicalize()?
+    } else {
+        locate_bundle()?
+    };
+
     if args.version {
-        let plist_path = app_path.join("Contents/Info.plist");
+        let plist_path = bundle_path.join("Contents/Info.plist");
         let plist = plist::from_file::<_, InfoPlist>(plist_path)?;
         println!(
             "Zed {} – {}",
             plist.bundle_short_version_string,
-            app_path.to_string_lossy()
+            bundle_path.to_string_lossy()
         );
         return Ok(());
     }
 
-    let (tx, rx) = launch_app(app_path)?;
+    let (tx, rx) = launch_app(bundle_path)?;
 
     tx.send(CliRequest::Open {
         paths: args
@@ -70,38 +77,15 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn locate_app() -> Result<PathBuf> {
-    if cfg!(debug_assertions) {
-        Ok(std::env::current_exe()?
-            .parent()
-            .unwrap()
-            .join("bundle/osx/Zed.app"))
-    } else {
-        Ok(path_to_app_with_bundle_identifier("dev.zed.Zed")
-            .unwrap_or_else(|| "/Applications/Zed.dev".into()))
-    }
-}
-
-fn path_to_app_with_bundle_identifier(bundle_id: &str) -> Option<PathBuf> {
-    use cocoa::{
-        base::{id, nil},
-        foundation::{NSString, NSURL as _},
-    };
-
-    unsafe {
-        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-        let bundle_id = NSString::alloc(nil).init_str(bundle_id);
-        let app_url: id = msg_send![workspace, URLForApplicationWithBundleIdentifier: bundle_id];
-        if !app_url.is_null() {
-            Some(PathBuf::from(
-                CStr::from_ptr(app_url.path().UTF8String())
-                    .to_string_lossy()
-                    .to_string(),
-            ))
-        } else {
-            None
+fn locate_bundle() -> Result<PathBuf> {
+    let cli_path = std::env::current_exe()?.canonicalize()?;
+    let mut app_path = cli_path.clone();
+    while app_path.extension() != Some(OsStr::new("app")) {
+        if !app_path.pop() {
+            return Err(anyhow!("cannot find app bundle containing {:?}", cli_path));
         }
     }
+    Ok(app_path)
 }
 
 fn launch_app(app_path: PathBuf) -> Result<(IpcSender<CliRequest>, IpcReceiver<CliResponse>)> {
