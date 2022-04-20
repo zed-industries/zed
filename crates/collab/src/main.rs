@@ -1,18 +1,12 @@
-mod admin;
 mod api;
 mod assets;
 mod auth;
-mod careers;
-mod community;
 mod db;
 mod env;
 mod errors;
 mod expiring;
 mod github;
-mod home;
-mod releases;
 mod rpc;
-mod team;
 
 use self::errors::TideResultExt as _;
 use ::rpc::Peer;
@@ -181,12 +175,6 @@ pub async fn run_server(
     );
     web.with(errors::Middleware);
     api::add_routes(&mut web);
-    home::add_routes(&mut web);
-    team::add_routes(&mut web);
-    careers::add_routes(&mut web);
-    releases::add_routes(&mut web);
-    community::add_routes(&mut web);
-    admin::add_routes(&mut web);
     auth::add_routes(&mut web);
 
     let mut assets = tide::new();
