@@ -4,6 +4,7 @@ pub mod settings_file;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+use anyhow::Context;
 use breadcrumbs::Breadcrumbs;
 use chat_panel::ChatPanel;
 pub use client;
@@ -69,15 +70,22 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     });
     cx.add_global_action(move |_: &InstallCommandLineTool, cx| {
         cx.spawn(|cx| async move {
-            let path = cx.platform().path_for_auxiliary_executable("cli")?;
-            let link_path = "/usr/local/bin/zed";
-            smol::fs::unix::symlink(link_path, path.as_path()).await?;
+            log::info!("installing command line launcher");
+            let cli_path = cx
+                .platform()
+                .path_for_auxiliary_executable("cli")
+                .log_err()?;
+            let link_path = "/opt/homebrew/bin/zed";
+            smol::fs::unix::symlink(cli_path.as_path(), link_path)
+                .await
+                .context("failed to install cli symlink")
+                .log_err()?;
             log::info!(
                 "created symlink {} -> {}",
                 link_path,
-                path.to_string_lossy()
+                cli_path.to_string_lossy()
             );
-            Ok::<_, anyhow::Error>(())
+            Some(())
         })
         .detach();
     });
