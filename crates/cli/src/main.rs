@@ -9,10 +9,11 @@ use core_foundation::{
 use core_services::{kLSLaunchDefaults, LSLaunchURLSpec, LSOpenFromURLSpec, TCFType};
 use ipc_channel::ipc::{IpcOneShotServer, IpcReceiver, IpcSender};
 use objc::{class, msg_send, sel, sel_impl};
+use serde::Deserialize;
 use std::{ffi::CStr, fs, path::PathBuf, ptr};
 
 #[derive(Parser)]
-#[clap(name = "zed")]
+#[clap(name = "zed", global_setting(clap::AppSettings::NoAutoVersion))]
 struct Args {
     /// Wait for all of the given paths to be closed before exiting.
     #[clap(short, long)]
@@ -20,12 +21,32 @@ struct Args {
     /// A sequence of space-separated paths that you want to open.
     #[clap()]
     paths: Vec<PathBuf>,
+    /// Print Zed's version and the app path.
+    #[clap(short, long)]
+    version: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct InfoPlist {
+    #[serde(rename = "CFBundleShortVersionString")]
+    bundle_short_version_string: String,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
 
     let app_path = locate_app()?;
+    if args.version {
+        let plist_path = app_path.join("Contents/Info.plist");
+        let plist = plist::from_file::<_, InfoPlist>(plist_path)?;
+        println!(
+            "Zed {} – {}",
+            plist.bundle_short_version_string,
+            app_path.to_string_lossy()
+        );
+        return Ok(());
+    }
+
     let (tx, rx) = launch_app(app_path)?;
 
     tx.send(CliRequest::Open {
