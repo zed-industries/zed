@@ -22,7 +22,7 @@ const backgroundColor = {
     focused: colors.neutral[825],
   },
   on300: {
-    base: colors.neutral[850],
+    base: withOpacity(colors.neutral[850], 0.5),
     hovered: colors.neutral[875],
     active: colors.neutral[900],
     focused: colors.neutral[875],

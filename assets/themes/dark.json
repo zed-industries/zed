@@ -731,11 +731,11 @@
     "key": {
       "text": {
         "family": "Zed Mono",
-        "color": "#ffffff",
+        "color": "#9c9c9c",
         "size": 12
       },
       "corner_radius": 4,
-      "background": "#0e0e0e",
+      "background": "#0e0e0e80",
       "border": {
         "color": "#232323",
         "width": 1
