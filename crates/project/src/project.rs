@@ -154,7 +154,7 @@ pub struct ProjectPath {
     pub path: Arc<Path>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Serialize)]
 pub struct DiagnosticSummary {
     pub error_count: usize,
     pub warning_count: usize,
@@ -1961,13 +1961,15 @@ impl Project {
             self.update_buffer_diagnostics(&buffer, diagnostics.clone(), version, cx)?;
         }
 
-        worktree.update(cx, |worktree, cx| {
+        let updated = worktree.update(cx, |worktree, cx| {
             worktree
                 .as_local_mut()
                 .ok_or_else(|| anyhow!("not a local worktree"))?
                 .update_diagnostics(project_path.path.clone(), diagnostics, cx)
         })?;
-        cx.emit(Event::DiagnosticsUpdated(project_path));
+        if updated {
+            cx.emit(Event::DiagnosticsUpdated(project_path));
+        }
         Ok(())
     }
 
@@ -4879,7 +4881,7 @@ mod tests {
     };
     use lsp::Url;
     use serde_json::json;
-    use std::{cell::RefCell, os::unix, path::PathBuf, rc::Rc};
+    use std::{cell::RefCell, os::unix, path::PathBuf, rc::Rc, task::Poll};
     use unindent::Unindent as _;
     use util::{assert_set_eq, test::temp_tree};
     use worktree::WorktreeHandle as _;
@@ -5564,6 +5566,29 @@ mod tests {
                 }]
             )
         });
+
+        // Ensure publishing empty diagnostics twice only results in one update event.
+        fake_server.notify::<lsp::notification::PublishDiagnostics>(
+            lsp::PublishDiagnosticsParams {
+                uri: Url::from_file_path("/dir/a.rs").unwrap(),
+                version: None,
+                diagnostics: Default::default(),
+            },
+        );
+        assert_eq!(
+            events.next().await.unwrap(),
+            Event::DiagnosticsUpdated((worktree_id, Path::new("a.rs")).into())
+        );
+
+        fake_server.notify::<lsp::notification::PublishDiagnostics>(
+            lsp::PublishDiagnosticsParams {
+                uri: Url::from_file_path("/dir/a.rs").unwrap(),
+                version: None,
+                diagnostics: Default::default(),
+            },
+        );
+        cx.foreground().run_until_parked();
+        assert_eq!(futures::poll!(events.next()), Poll::Pending);
     }
 
     #[gpui::test]

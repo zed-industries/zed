@@ -564,33 +564,37 @@ impl LocalWorktree {
         worktree_path: Arc<Path>,
         diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
         _: &mut ModelContext<Worktree>,
-    ) -> Result<()> {
-        let summary = DiagnosticSummary::new(&diagnostics);
-        if summary.is_empty() {
+    ) -> Result<bool> {
+        self.diagnostics.remove(&worktree_path);
+        let old_summary = self
+            .diagnostic_summaries
+            .remove(&PathKey(worktree_path.clone()))
+            .unwrap_or_default();
+        let new_summary = DiagnosticSummary::new(&diagnostics);
+        if !new_summary.is_empty() {
             self.diagnostic_summaries
-                .remove(&PathKey(worktree_path.clone()));
-            self.diagnostics.remove(&worktree_path);
-        } else {
-            self.diagnostic_summaries
-                .insert(PathKey(worktree_path.clone()), summary.clone());
+                .insert(PathKey(worktree_path.clone()), new_summary);
             self.diagnostics.insert(worktree_path.clone(), diagnostics);
         }
 
-        if let Some(share) = self.share.as_ref() {
-            self.client
-                .send(proto::UpdateDiagnosticSummary {
-                    project_id: share.project_id,
-                    worktree_id: self.id().to_proto(),
-                    summary: Some(proto::DiagnosticSummary {
-                        path: worktree_path.to_string_lossy().to_string(),
-                        error_count: summary.error_count as u32,
-                        warning_count: summary.warning_count as u32,
-                    }),
-                })
-                .log_err();
+        let updated = !old_summary.is_empty() || !new_summary.is_empty();
+        if updated {
+            if let Some(share) = self.share.as_ref() {
+                self.client
+                    .send(proto::UpdateDiagnosticSummary {
+                        project_id: share.project_id,
+                        worktree_id: self.id().to_proto(),
+                        summary: Some(proto::DiagnosticSummary {
+                            path: worktree_path.to_string_lossy().to_string(),
+                            error_count: new_summary.error_count as u32,
+                            warning_count: new_summary.warning_count as u32,
+                        }),
+                    })
+                    .log_err();
+            }
         }
 
-        Ok(())
+        Ok(updated)
     }
 
     pub fn scan_complete(&self) -> impl Future<Output = ()> {
