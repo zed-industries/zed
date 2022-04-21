@@ -1,3 +1,5 @@
+(comment) @comment
+
 (string) @string
 
 (pair

@@ -17,6 +17,7 @@ gpui = { path = "../gpui" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 anyhow = "1.0.38"
+json_comments = "0.2"
 schemars = "0.8"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1.0.64", features = ["preserve_order"] }

@@ -9,13 +9,13 @@ use schemars::{
     },
     JsonSchema,
 };
-use serde::Deserialize;
+use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 use theme::{Theme, ThemeRegistry};
 use util::ResultExt as _;
 
-pub use keymap_file::KeymapFile;
+pub use keymap_file::KeymapFileContent;
 
 #[derive(Clone)]
 pub struct Settings {
@@ -259,4 +259,10 @@ fn merge_option<T: Copy>(target: &mut Option<T>, value: Option<T>) {
     if value.is_some() {
         *target = value;
     }
+}
+
+pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T> {
+    Ok(serde_json::from_reader(
+        json_comments::CommentSettings::c_style().strip_comments(content.as_bytes()),
+    )?)
 }

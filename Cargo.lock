@@ -2573,6 +2573,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "json_comments"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41ee439ee368ba4a77ac70d04f14015415af8600d6c894dc1f11bd79758c57d5"
+
+[[package]]
 name = "json_env_logger"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2643,7 +2649,7 @@ dependencies = [
  "text",
  "theme",
  "tree-sitter",
- "tree-sitter-json",
+ "tree-sitter-json 0.19.0",
  "tree-sitter-rust",
  "unindent",
  "util",
@@ -4304,6 +4310,7 @@ dependencies = [
  "assets",
  "collections",
  "gpui",
+ "json_comments",
  "schemars",
  "serde",
  "serde_json",
@@ -5194,6 +5201,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-json"
+version = "0.20.0"
+source = "git+https://github.com/tree-sitter/tree-sitter-json?rev=137e1ce6a02698fc246cdb9c6b886ed1de9a1ed8#137e1ce6a02698fc246cdb9c6b886ed1de9a1ed8"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-markdown"
 version = "0.0.1"
 source = "git+https://github.com/MDeiml/tree-sitter-markdown?rev=330ecab87a3e3a7211ac69bbadc19eabecdb1cca#330ecab87a3e3a7211ac69bbadc19eabecdb1cca"
@@ -5837,7 +5853,7 @@ dependencies = [
  "toml",
  "tree-sitter",
  "tree-sitter-c",
- "tree-sitter-json",
+ "tree-sitter-json 0.20.0",
  "tree-sitter-markdown",
  "tree-sitter-rust",
  "tree-sitter-typescript",

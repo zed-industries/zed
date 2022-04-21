@@ -138,7 +138,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
 
     workspace::lsp_status::init(cx);
 
-    settings::KeymapFile::load_defaults(cx);
+    settings::KeymapFileContent::load_defaults(cx);
 }
 
 pub fn build_workspace(

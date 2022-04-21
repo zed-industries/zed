@@ -1,3 +1,4 @@
+use crate::parse_json_with_comments;
 use anyhow::{Context, Result};
 use assets::Assets;
 use collections::BTreeMap;
@@ -7,14 +8,14 @@ use serde_json::value::RawValue;
 
 #[derive(Deserialize, Default, Clone)]
 #[serde(transparent)]
-pub struct KeymapFile(BTreeMap<String, ActionsByKeystroke>);
+pub struct KeymapFileContent(BTreeMap<String, ActionsByKeystroke>);
 
 type ActionsByKeystroke = BTreeMap<String, Box<RawValue>>;
 
 #[derive(Deserialize)]
-struct ActionWithData<'a>(#[serde(borrow)] &'a str, #[serde(borrow)] &'a RawValue);
+struct ActionWithData(Box<str>, Box<RawValue>);
 
-impl KeymapFile {
+impl KeymapFileContent {
     pub fn load_defaults(cx: &mut MutableAppContext) {
         for path in ["keymaps/default.json", "keymaps/vim.json"] {
             Self::load(path, cx).unwrap();
@@ -24,7 +25,7 @@ impl KeymapFile {
     pub fn load(asset_path: &str, cx: &mut MutableAppContext) -> Result<()> {
         let content = Assets::get(asset_path).unwrap().data;
         let content_str = std::str::from_utf8(content.as_ref()).unwrap();
-        Ok(serde_json::from_str::<Self>(content_str)?.add(cx)?)
+        Ok(parse_json_with_comments::<Self>(content_str)?.add(cx)?)
     }
 
     pub fn add(self, cx: &mut MutableAppContext) -> Result<()> {
@@ -42,7 +43,7 @@ impl KeymapFile {
                         // string. But `RawValue` currently does not work inside of an untagged enum.
                         let action = if action.starts_with('[') {
                             let ActionWithData(name, data) = serde_json::from_str(action)?;
-                            cx.deserialize_action(name, Some(data.get()))
+                            cx.deserialize_action(&name, Some(data.get()))
                         } else {
                             let name = serde_json::from_str(action)?;
                             cx.deserialize_action(name, None)
