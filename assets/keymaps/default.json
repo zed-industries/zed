@@ -1,7 +1,6 @@
 [
     // Standard macOS bindings
     {
-        "context": "menu",
         "bindings": {
             "up": "menu::SelectPrev",
             "ctrl-p": "menu::SelectPrev",
@@ -11,11 +10,7 @@
             "cmd-down": "menu::SelectLast",
             "enter": "menu::Confirm",
             "escape": "menu::Cancel",
-            "ctrl-c": "menu::Cancel"
-        }
-    },
-    {
-        "bindings": {
+            "ctrl-c": "menu::Cancel",
             "shift-cmd-{": "pane::ActivatePrevItem",
             "shift-cmd-}": "pane::ActivateNextItem",
             "cmd-w": "pane::CloseActiveItem",
@@ -288,6 +283,12 @@
         }
     },
     {
+        "context": "ProjectSearchBar",
+        "bindings": {
+            "cmd-enter": "project_search::SearchInNew"
+        }
+    },
+    {
         "context": "Workspace",
         "bindings": {
             "alt-shift-D": "diagnostics::Deploy",
@@ -318,13 +319,6 @@
     // Bindings that should be unified with other bindings
     // for more general actions
     {
-        "context": "ProjectSearchBar",
-        "bindings": {
-            "enter": "project_search::Search",
-            "cmd-enter": "project_search::SearchInNew"
-        }
-    },
-    {
         "context": "Editor && renaming",
         "bindings": {
             "enter": "editor::ConfirmRename"
@@ -341,19 +335,6 @@
         "context": "Editor && showing_code_actions",
         "bindings": {
             "enter": "editor::ConfirmCodeAction"
-        }
-    },
-    {
-        "context": "GoToLine",
-        "bindings": {
-            "escape": "go_to_line::Toggle",
-            "enter": "go_to_line::Confirm"
-        }
-    },
-    {
-        "context": "ChatPanel",
-        "bindings": {
-            "enter": "chat_panel::Send"
         }
     }
 ]

@@ -16,6 +16,7 @@ use settings::{Settings, SoftWrap};
 use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
 use util::{ResultExt, TryFutureExt};
+use workspace::menu::Confirm;
 
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
 
@@ -32,7 +33,7 @@ pub struct ChatPanel {
 
 pub enum Event {}
 
-actions!(chat_panel, [Send, LoadMoreMessages]);
+actions!(chat_panel, [LoadMoreMessages]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ChatPanel::send);
@@ -345,7 +346,7 @@ impl ChatPanel {
         .boxed()
     }
 
-    fn send(&mut self, _: &Send, cx: &mut ViewContext<Self>) {
+    fn send(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some((channel, _)) = self.active_channel.as_ref() {
             let body = self.input_editor.update(cx, |editor, cx| {
                 let body = editor.text(cx);
