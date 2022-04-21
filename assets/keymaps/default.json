@@ -174,7 +174,6 @@
             "cmd-/": "editor::ToggleComments",
             "alt-up": "editor::SelectLargerSyntaxNode",
             "alt-down": "editor::SelectSmallerSyntaxNode",
-            "ctrl-shift-W": "editor::SelectSmallerSyntaxNode",
             "cmd-u": "editor::UndoSelection",
             "cmd-shift-U": "editor::RedoSelection",
             "f8": "editor::GoToNextDiagnostic",
@@ -265,6 +264,26 @@
             ]
         }
     },
+    // Bindings that should be unified with bindings for more general actions
+    {
+        "context": "Editor && renaming",
+        "bindings": {
+            "enter": "editor::ConfirmRename"
+        }
+    },
+    {
+        "context": "Editor && showing_completions",
+        "bindings": {
+            "enter": "editor::ConfirmCompletion",
+            "tab": "editor::ConfirmCompletion"
+        }
+    },
+    {
+        "context": "Editor && showing_code_actions",
+        "bindings": {
+            "enter": "editor::ConfirmCodeAction"
+        }
+    },
     // Custom bindings
     {
         "bindings": {
@@ -277,6 +296,7 @@
         "context": "Editor",
         "bindings": {
             "ctrl-w": "editor::SelectLargerSyntaxNode",
+            "ctrl-shift-W": "editor::SelectSmallerSyntaxNode",
             "alt-cmd-f": "editor::FoldSelectedRanges",
             "alt-enter": "editor::OpenExcerpts",
             "cmd-f10": "editor::RestartLanguageServer"
@@ -314,27 +334,6 @@
         "bindings": {
             "left": "project_panel::CollapseSelectedEntry",
             "right": "project_panel::ExpandSelectedEntry"
-        }
-    },
-    // Bindings that should be unified with other bindings
-    // for more general actions
-    {
-        "context": "Editor && renaming",
-        "bindings": {
-            "enter": "editor::ConfirmRename"
-        }
-    },
-    {
-        "context": "Editor && showing_completions",
-        "bindings": {
-            "enter": "editor::ConfirmCompletion",
-            "tab": "editor::ConfirmCompletion"
-        }
-    },
-    {
-        "context": "Editor && showing_code_actions",
-        "bindings": {
-            "enter": "editor::ConfirmCodeAction"
         }
     }
 ]
