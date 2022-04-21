@@ -851,7 +851,7 @@ impl Element for EditorElement {
         let overscroll = vec2f(em_width, 0.);
         let snapshot = self.update_view(cx.app, |view, cx| {
             let wrap_width = match view.soft_wrap_mode(cx) {
-                SoftWrap::None => None,
+                SoftWrap::None => Some((MAX_LINE_LEN / 2) as f32 * em_advance),
                 SoftWrap::EditorWidth => {
                     Some(text_width - gutter_margin - overscroll.x() - em_width)
                 }
