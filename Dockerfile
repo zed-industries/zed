@@ -2,17 +2,7 @@
 
 FROM rust:1.58-bullseye as builder
 WORKDIR app
-RUN curl -fsSL https://deb.nodesource.com/setup_16.x | bash -
-RUN apt-get install -y nodejs
 COPY . .
-
-# Install script dependencies
-RUN --mount=type=cache,target=./script/node_modules \
-    cd ./script && npm install --quiet
-
-# Build CSS
-RUN --mount=type=cache,target=./script/node_modules \
-    script/build-css --release
 
 # Compile collab server
 RUN --mount=type=cache,target=./script/node_modules \
