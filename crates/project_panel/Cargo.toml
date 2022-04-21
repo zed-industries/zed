@@ -14,7 +14,7 @@ settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
-postage = { version = "0.4.1", features = ["futures-traits"] }
+unicase = "2.6"
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }

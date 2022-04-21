@@ -3979,11 +3979,11 @@ name = "project_panel"
 version = "0.1.0"
 dependencies = [
  "gpui",
- "postage",
  "project",
  "serde_json",
  "settings",
  "theme",
+ "unicase",
  "util",
  "workspace",
 ]

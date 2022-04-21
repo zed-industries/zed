@@ -9,13 +9,15 @@ use gpui::{
     AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
-use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
+use project::{Entry, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use settings::Settings;
 use std::{
+    cmp::Ordering,
     collections::{hash_map, HashMap},
     ffi::OsStr,
     ops::Range,
 };
+use unicase::UniCase;
 use workspace::{
     menu::{SelectNext, SelectPrev},
     Workspace,
@@ -24,7 +26,7 @@ use workspace::{
 pub struct ProjectPanel {
     project: ModelHandle<Project>,
     list: UniformListState,
-    visible_entries: Vec<(WorktreeId, Vec<ProjectEntryId>)>,
+    visible_entries: Vec<(WorktreeId, Vec<Entry>)>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     selection: Option<Selection>,
     handle: WeakViewHandle<Self>,
@@ -219,7 +221,7 @@ impl ProjectPanel {
             let (worktree_id, worktree_entries) = &self.visible_entries[worktree_ix];
             self.selection = Some(Selection {
                 worktree_id: *worktree_id,
-                entry_id: worktree_entries[entry_ix],
+                entry_id: worktree_entries[entry_ix].id,
             });
             self.autoscroll();
             cx.notify();
@@ -246,10 +248,10 @@ impl ProjectPanel {
             }
 
             if let Some((worktree_id, worktree_entries)) = self.visible_entries.get(worktree_ix) {
-                if let Some(entry_id) = worktree_entries.get(entry_ix) {
+                if let Some(entry) = worktree_entries.get(entry_ix) {
                     self.selection = Some(Selection {
                         worktree_id: *worktree_id,
-                        entry_id: *entry_id,
+                        entry_id: entry.id,
                     });
                     self.autoscroll();
                     cx.notify();
@@ -291,8 +293,8 @@ impl ProjectPanel {
         let mut visible_entries_index = 0;
         for (worktree_id, worktree_entries) in &self.visible_entries {
             if *worktree_id == selection.worktree_id {
-                for entry_id in worktree_entries {
-                    if *entry_id == selection.entry_id {
+                for entry in worktree_entries {
+                    if entry.id == selection.entry_id {
                         return Some((worktree_index, entry_index, visible_entries_index));
                     } else {
                         visible_entries_index += 1;
@@ -347,7 +349,7 @@ impl ProjectPanel {
             let mut visible_worktree_entries = Vec::new();
             let mut entry_iter = snapshot.entries(false);
             while let Some(item) = entry_iter.entry() {
-                visible_worktree_entries.push(item.id);
+                visible_worktree_entries.push(item.clone());
                 if expanded_dir_ids.binary_search(&item.id).is_err() {
                     if entry_iter.advance_to_sibling() {
                         continue;
@@ -355,6 +357,31 @@ impl ProjectPanel {
                 }
                 entry_iter.advance();
             }
+            visible_worktree_entries.sort_by(|entry_a, entry_b| {
+                let mut components_a = entry_a.path.components().peekable();
+                let mut components_b = entry_b.path.components().peekable();
+                loop {
+                    match (components_a.next(), components_b.next()) {
+                        (Some(component_a), Some(component_b)) => {
+                            let a_is_file = components_a.peek().is_none() && entry_a.is_file();
+                            let b_is_file = components_b.peek().is_none() && entry_b.is_file();
+                            let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
+                                let name_a =
+                                    UniCase::new(component_a.as_os_str().to_string_lossy());
+                                let name_b =
+                                    UniCase::new(component_b.as_os_str().to_string_lossy());
+                                name_a.cmp(&name_b)
+                            });
+                            if !ordering.is_eq() {
+                                return ordering;
+                            }
+                        }
+                        (Some(_), None) => break Ordering::Greater,
+                        (None, Some(_)) => break Ordering::Less,
+                        (None, None) => break Ordering::Equal,
+                    }
+                }
+            });
             self.visible_entries
                 .push((worktree_id, visible_worktree_entries));
         }
@@ -423,24 +450,19 @@ impl ProjectPanel {
                     .map(Vec::as_slice)
                     .unwrap_or(&[]);
                 let root_name = OsStr::new(snapshot.root_name());
-                for entry_id in visible_worktree_entries
-                    [range.start.saturating_sub(ix)..end_ix - ix]
-                    .iter()
-                    .copied()
+                for entry in &visible_worktree_entries[range.start.saturating_sub(ix)..end_ix - ix]
                 {
-                    if let Some(entry) = snapshot.entry_for_id(entry_id) {
-                        let filename = entry.path.file_name().unwrap_or(root_name);
-                        let details = EntryDetails {
-                            filename: filename.to_string_lossy().to_string(),
-                            depth: entry.path.components().count(),
-                            is_dir: entry.is_dir(),
-                            is_expanded: expanded_entry_ids.binary_search(&entry.id).is_ok(),
-                            is_selected: self.selection.map_or(false, |e| {
-                                e.worktree_id == snapshot.id() && e.entry_id == entry.id
-                            }),
-                        };
-                        callback(entry.id, details, cx);
-                    }
+                    let filename = entry.path.file_name().unwrap_or(root_name);
+                    let details = EntryDetails {
+                        filename: filename.to_string_lossy().to_string(),
+                        depth: entry.path.components().count(),
+                        is_dir: entry.is_dir(),
+                        is_expanded: expanded_entry_ids.binary_search(&entry.id).is_ok(),
+                        is_selected: self.selection.map_or(false, |e| {
+                            e.worktree_id == snapshot.id() && e.entry_id == entry.id
+                        }),
+                    };
+                    callback(entry.id, details, cx);
                 }
             }
             ix = end_ix;
@@ -588,7 +610,7 @@ mod tests {
                     "3": { "Q": "" },
                     "4": { "R": "", "S": "", "T": "", "U": "" },
                 },
-                "c": {
+                "C": {
                     "5": {},
                     "6": { "V": "", "W": "" },
                     "7": { "X": "" },
@@ -649,13 +671,6 @@ mod tests {
                     is_selected: false,
                 },
                 EntryDetails {
-                    filename: ".dockerignore".to_string(),
-                    depth: 1,
-                    is_dir: false,
-                    is_expanded: false,
-                    is_selected: false,
-                },
-                EntryDetails {
                     filename: "a".to_string(),
                     depth: 1,
                     is_dir: true,
@@ -670,9 +685,16 @@ mod tests {
                     is_selected: false,
                 },
                 EntryDetails {
-                    filename: "c".to_string(),
+                    filename: "C".to_string(),
                     depth: 1,
                     is_dir: true,
+                    is_expanded: false,
+                    is_selected: false,
+                },
+                EntryDetails {
+                    filename: ".dockerignore".to_string(),
+                    depth: 1,
+                    is_dir: false,
                     is_expanded: false,
                     is_selected: false,
                 },
@@ -712,13 +734,6 @@ mod tests {
                     is_selected: false,
                 },
                 EntryDetails {
-                    filename: ".dockerignore".to_string(),
-                    depth: 1,
-                    is_dir: false,
-                    is_expanded: false,
-                    is_selected: false,
-                },
-                EntryDetails {
                     filename: "a".to_string(),
                     depth: 1,
                     is_dir: true,
@@ -747,9 +762,16 @@ mod tests {
                     is_selected: false,
                 },
                 EntryDetails {
-                    filename: "c".to_string(),
+                    filename: "C".to_string(),
                     depth: 1,
                     is_dir: true,
+                    is_expanded: false,
+                    is_selected: false,
+                },
+                EntryDetails {
+                    filename: ".dockerignore".to_string(),
+                    depth: 1,
+                    is_dir: false,
                     is_expanded: false,
                     is_selected: false,
                 },
@@ -781,16 +803,16 @@ mod tests {
             visible_entry_details(&panel, 5..8, cx),
             [
                 EntryDetails {
-                    filename: "4".to_string(),
-                    depth: 2,
+                    filename: "C".to_string(),
+                    depth: 1,
                     is_dir: true,
                     is_expanded: false,
                     is_selected: false
                 },
                 EntryDetails {
-                    filename: "c".to_string(),
+                    filename: ".dockerignore".to_string(),
                     depth: 1,
-                    is_dir: true,
+                    is_dir: false,
                     is_expanded: false,
                     is_selected: false
                 },
