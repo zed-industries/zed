@@ -16,7 +16,7 @@ if [[ $# < 1 ]]; then
 fi
 
 export ZED_KUBE_NAMESPACE=$1
-ENV_FILE="server/k8s/environments/${ZED_KUBE_NAMESPACE}.sh"
+ENV_FILE="crates/collab/k8s/environments/${ZED_KUBE_NAMESPACE}.sh"
 if [[ ! -f $ENV_FILE ]]; then
   echo "Invalid environment name '${ZED_KUBE_NAMESPACE}'"
   exit 1
@@ -36,7 +36,7 @@ docker build . \
   --tag $ZED_IMAGE_ID
 docker push $ZED_IMAGE_ID
 
-envsubst < server/k8s/migrate.template.yml | kubectl apply -f -
+envsubst < crates/collab/k8s/migrate.template.yml | kubectl apply -f -
 
 pod=$(kubectl --namespace=${ZED_KUBE_NAMESPACE} get pods --selector=job-name=${ZED_MIGRATE_JOB_NAME} --output=jsonpath='{.items[*].metadata.name}')
 echo "pod:" $pod
