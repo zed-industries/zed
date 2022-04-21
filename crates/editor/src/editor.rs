@@ -3791,6 +3791,10 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
+            this.move_selections(cx, |_, selection| {
+                selection.reversed = true;
+            });
+
             this.select_to_beginning_of_line(
                 &SelectToBeginningOfLine {
                     stop_at_soft_wraps: false,
@@ -7427,6 +7431,21 @@ mod tests {
                 view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
             );
+        });
+    }
+
+    #[gpui::test]
+    fn test_delete_to_beginning_of_line(cx: &mut gpui::MutableAppContext) {
+        cx.set_global(Settings::test(cx));
+        let (text, ranges) = marked_text_ranges("one [two three] four");
+        let buffer = MultiBuffer::build_simple(&text, cx);
+
+        let (_, editor) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
+
+        editor.update(cx, |editor, cx| {
+            editor.select_ranges(ranges, None, cx);
+            editor.delete_to_beginning_of_line(&DeleteToBeginningOfLine, cx);
+            assert_eq!(editor.text(cx), " four");
         });
     }
 
