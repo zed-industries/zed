@@ -22,19 +22,11 @@ async-std = { version = "1.8.0", features = ["attributes"] }
 async-trait = "0.1.50"
 async-tungstenite = "0.16"
 base64 = "0.13"
-clap = "3.1"
-comrak = "0.10"
-either = "1.6"
 envy = "0.4.2"
 futures = "0.3"
-handlebars = "3.5"
-http-auth-basic = "0.1.3"
 json_env_logger = "0.1"
-jwt-simple = "0.10.0"
 lipsum = { version = "0.8", optional = true }
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
-oauth2 = { version = "4.0.0", default_features = false }
-oauth2-surf = "0.1.1"
 parking_lot = "0.11.1"
 rand = "0.8"
 scrypt = "0.7"

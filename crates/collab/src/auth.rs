@@ -2,30 +2,17 @@ use super::{
     db::{self, UserId},
     errors::TideResultExt,
 };
-use crate::{github, Request, RequestExt as _};
+use crate::Request;
 use anyhow::{anyhow, Context};
-use async_trait::async_trait;
-pub use oauth2::basic::BasicClient as Client;
 use rand::thread_rng;
 use rpc::auth as zed_auth;
 use scrypt::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Scrypt,
 };
-use serde::Serialize;
 use std::convert::TryFrom;
 use surf::StatusCode;
 use tide::Error;
-
-static CURRENT_GITHUB_USER: &'static str = "current_github_user";
-
-#[derive(Serialize)]
-pub struct User {
-    pub github_login: String,
-    pub avatar_url: String,
-    pub is_insider: bool,
-    pub is_admin: bool,
-}
 
 pub async fn process_auth_header(request: &Request) -> tide::Result<UserId> {
     let mut auth_header = request
@@ -69,28 +56,6 @@ pub async fn process_auth_header(request: &Request) -> tide::Result<UserId> {
     }
 
     Ok(user_id)
-}
-
-#[async_trait]
-pub trait RequestExt {
-    async fn current_user(&self) -> tide::Result<Option<User>>;
-}
-
-#[async_trait]
-impl RequestExt for Request {
-    async fn current_user(&self) -> tide::Result<Option<User>> {
-        if let Some(details) = self.session().get::<github::User>(CURRENT_GITHUB_USER) {
-            let user = self.db().get_user_by_github_login(&details.login).await?;
-            Ok(Some(User {
-                github_login: details.login,
-                avatar_url: details.avatar_url,
-                is_insider: user.is_some(),
-                is_admin: user.map_or(false, |user| user.admin),
-            }))
-        } else {
-            Ok(None)
-        }
-    }
 }
 
 const MAX_ACCESS_TOKENS_TO_STORE: usize = 8;

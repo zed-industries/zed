@@ -3,7 +3,6 @@ mod auth;
 mod db;
 mod env;
 mod errors;
-mod github;
 mod rpc;
 
 use ::rpc::Peer;
@@ -84,12 +83,12 @@ pub async fn run_server(
     rpc: Arc<Peer>,
     listener: TcpListener,
 ) -> tide::Result<()> {
+    let mut app = tide::with_state(state.clone());
+    rpc::add_routes(&mut app, &rpc);
+
     let mut web = tide::with_state(state.clone());
     web.with(CompressMiddleware::new());
     api::add_routes(&mut web);
-
-    let mut app = tide::with_state(state.clone());
-    rpc::add_routes(&mut app, &rpc);
 
     app.at("/").nest(web);
 
