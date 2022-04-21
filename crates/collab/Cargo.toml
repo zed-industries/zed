@@ -37,7 +37,6 @@ oauth2 = { version = "4.0.0", default_features = false }
 oauth2-surf = "0.1.1"
 parking_lot = "0.11.1"
 rand = "0.8"
-rust-embed = { version = "6.3", features = ["include-exclude"] }
 scrypt = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -47,11 +46,6 @@ tide = "0.16.0"
 tide-compress = "0.9.0"
 time = "0.2"
 toml = "0.5.8"
-
-[dependencies.async-sqlx-session]
-version = "0.3.0"
-features = ["pg", "rustls"]
-default-features = false
 
 [dependencies.sqlx]
 version = "0.5.2"

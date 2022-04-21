@@ -1,6 +1,5 @@
 use anyhow::Context;
 use anyhow::Result;
-pub use async_sqlx_session::PostgresSessionStore as SessionStore;
 use async_std::task::{block_on, yield_now};
 use async_trait::async_trait;
 use serde::Serialize;

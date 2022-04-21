@@ -5728,11 +5728,9 @@ mod tests {
 
         async fn build_app_state(test_db: &TestDb) -> Arc<AppState> {
             let mut config = Config::default();
-            config.session_secret = "a".repeat(32);
             config.database_url = test_db.url.clone();
             Arc::new(AppState {
                 db: test_db.db().clone(),
-                handlebars: Default::default(),
                 config,
             })
         }
