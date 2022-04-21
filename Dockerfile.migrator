@@ -11,5 +11,5 @@ RUN apt-get update; \
     apt-get install -y --no-install-recommends libssl1.1
 WORKDIR app
 COPY --from=builder /app/bin/sqlx /app
-COPY ./collab/migrations /app/migrations
+COPY ./crates/collab/migrations /app/migrations
 ENTRYPOINT ["/app/sqlx", "migrate", "run"]
