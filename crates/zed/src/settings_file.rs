@@ -4,7 +4,7 @@ use postage::sink::Sink as _;
 use postage::{prelude::Stream, watch};
 use project::Fs;
 use serde::Deserialize;
-use settings::{KeymapFile, Settings, SettingsFileContent};
+use settings::{parse_json_with_comments, KeymapFileContent, Settings, SettingsFileContent};
 use std::{path::Path, sync::Arc, time::Duration};
 use theme::ThemeRegistry;
 use util::ResultExt;
@@ -44,7 +44,7 @@ where
             fs.load(&path)
                 .await
                 .log_err()
-                .and_then(|data| serde_json::from_str(&data).log_err())
+                .and_then(|data| parse_json_with_comments(&data).log_err())
         } else {
             Some(T::default())
         }
@@ -76,11 +76,14 @@ pub fn settings_from_files(
     })
 }
 
-pub async fn watch_keymap_file(mut file: WatchedJsonFile<KeymapFile>, mut cx: AsyncAppContext) {
+pub async fn watch_keymap_file(
+    mut file: WatchedJsonFile<KeymapFileContent>,
+    mut cx: AsyncAppContext,
+) {
     while let Some(content) = file.0.recv().await {
         cx.update(|cx| {
             cx.clear_bindings();
-            settings::KeymapFile::load_defaults(cx);
+            settings::KeymapFileContent::load_defaults(cx);
             content.add(cx).log_err();
         });
     }

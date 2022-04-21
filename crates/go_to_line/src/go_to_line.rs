@@ -5,13 +5,17 @@ use gpui::{
 };
 use settings::Settings;
 use text::{Bias, Point};
-use workspace::Workspace;
+use workspace::{
+    menu::{Cancel, Confirm},
+    Workspace,
+};
 
-actions!(go_to_line, [Toggle, Confirm]);
+actions!(go_to_line, [Toggle]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(GoToLine::toggle);
     cx.add_action(GoToLine::confirm);
+    cx.add_action(GoToLine::cancel);
 }
 
 pub struct GoToLine {
@@ -64,6 +68,10 @@ impl GoToLine {
                 view
             });
         }
+    }
+
+    fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Dismissed);
     }
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {

@@ -17,9 +17,11 @@ use std::{
     path::PathBuf,
 };
 use util::ResultExt as _;
-use workspace::{Item, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace};
+use workspace::{
+    menu::Confirm, Item, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace,
+};
 
-actions!(project_search, [Deploy, Search, SearchInNew, ToggleFocus]);
+actions!(project_search, [Deploy, SearchInNew, ToggleFocus]);
 
 const MAX_TAB_TITLE_LEN: usize = 24;
 
@@ -530,7 +532,7 @@ impl ProjectSearchBar {
         }
     }
 
-    fn search(&mut self, _: &Search, cx: &mut ViewContext<Self>) {
+    fn search(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| search_view.search(cx));
         }

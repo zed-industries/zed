@@ -102,6 +102,10 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn disk_based_diagnostics_progress_token(&self) -> Option<&'static str> {
         None
     }
+
+    fn id_for_language(&self, _name: &str) -> Option<String> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

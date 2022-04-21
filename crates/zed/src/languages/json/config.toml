@@ -1,5 +1,6 @@
 name = "JSON"
 path_suffixes = ["json"]
+line_comment = "// "
 autoclose_before = ",]}"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },

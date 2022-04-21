@@ -17,7 +17,7 @@ use gpui::{App, AssetSource, AsyncAppContext, Task};
 use log::LevelFilter;
 use parking_lot::Mutex;
 use project::Fs;
-use settings::{self, KeymapFile, Settings, SettingsFileContent};
+use settings::{self, KeymapFileContent, Settings, SettingsFileContent};
 use smol::process::Command;
 use std::{env, fs, path::PathBuf, sync::Arc, thread, time::Duration};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
@@ -309,7 +309,7 @@ fn load_config_files(
     fs: Arc<dyn Fs>,
 ) -> oneshot::Receiver<(
     WatchedJsonFile<SettingsFileContent>,
-    WatchedJsonFile<KeymapFile>,
+    WatchedJsonFile<KeymapFileContent>,
 )> {
     let executor = app.background();
     let (tx, rx) = oneshot::channel();

@@ -1306,6 +1306,10 @@ impl MutableAppContext {
         }
     }
 
+    pub fn all_action_names<'a>(&'a self) -> impl Iterator<Item = &'static str> + 'a {
+        self.action_deserializers.keys().copied()
+    }
+
     pub fn available_actions(
         &self,
         window_id: usize,
