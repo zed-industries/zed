@@ -26,6 +26,7 @@
         "bindings": {
             "escape": "editor::Cancel",
             "backspace": "editor::Backspace",
+            "shift-backspace": "editor::Backspace",
             "ctrl-h": "editor::Backspace",
             "delete": "editor::Delete",
             "ctrl-d": "editor::Delete",
