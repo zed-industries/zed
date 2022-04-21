@@ -28,7 +28,7 @@ mod test {
 
     #[gpui::test]
     async fn test_enter_and_exit_insert_mode(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true, "").await;
+        let mut cx = VimTestContext::new(cx, true).await;
         cx.simulate_keystroke("i");
         assert_eq!(cx.mode(), Mode::Insert);
         cx.simulate_keystrokes(["T", "e", "s", "t"]);
