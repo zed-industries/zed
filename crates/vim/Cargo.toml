@@ -8,18 +8,22 @@ path = "src/vim.rs"
 doctest = false
 
 [dependencies]
+assets = { path = "../assets" }
 collections = { path = "../collections" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
+serde = { version = "1", features = ["derive"] }
+settings = { path = "../settings" }
 workspace = { path = "../workspace" }
-log = "0.4"
+log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 
 [dev-dependencies]
 indoc = "1.0.4"
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
-project = { path = "../project", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
+project = { path = "../project", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
+settings = { path = "../settings" }
 workspace = { path = "../workspace", features = ["test-support"] }

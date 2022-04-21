@@ -1,15 +1,16 @@
 use gpui::{
-    action,
+    actions,
     elements::{
         Align, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement, ScrollTarget,
         Svg, UniformList, UniformListState,
     },
-    keymap::{self, Binding},
+    impl_internal_actions, keymap,
     platform::CursorStyle,
     AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
+use settings::Settings;
 use std::{
     collections::{hash_map, HashMap},
     ffi::OsStr,
@@ -17,7 +18,7 @@ use std::{
 };
 use workspace::{
     menu::{SelectNext, SelectPrev},
-    Settings, Workspace,
+    Workspace,
 };
 
 pub struct ProjectPanel {
@@ -45,10 +46,14 @@ struct EntryDetails {
     is_selected: bool,
 }
 
-action!(ExpandSelectedEntry);
-action!(CollapseSelectedEntry);
-action!(ToggleExpanded, ProjectEntryId);
-action!(Open, ProjectEntryId);
+#[derive(Clone)]
+pub struct ToggleExpanded(pub ProjectEntryId);
+
+#[derive(Clone)]
+pub struct Open(pub ProjectEntryId);
+
+actions!(project_panel, [ExpandSelectedEntry, CollapseSelectedEntry]);
+impl_internal_actions!(project_panel, [Open, ToggleExpanded]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::expand_selected_entry);
@@ -57,10 +62,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::select_prev);
     cx.add_action(ProjectPanel::select_next);
     cx.add_action(ProjectPanel::open_entry);
-    cx.add_bindings([
-        Binding::new("right", ExpandSelectedEntry, Some("ProjectPanel")),
-        Binding::new("left", CollapseSelectedEntry, Some("ProjectPanel")),
-    ]);
 }
 
 pub enum Event {

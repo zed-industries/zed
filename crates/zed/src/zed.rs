@@ -1,21 +1,22 @@
-pub mod assets;
 pub mod languages;
 pub mod menus;
+pub mod settings_file;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+use anyhow::{anyhow, Context, Result};
 use breadcrumbs::Breadcrumbs;
 use chat_panel::ChatPanel;
 pub use client;
 pub use contacts_panel;
 use contacts_panel::ContactsPanel;
 pub use editor;
+use editor::Editor;
 use gpui::{
-    action,
+    actions,
     geometry::vector::vec2f,
-    keymap::Binding,
     platform::{WindowBounds, WindowOptions},
-    ModelHandle, ViewContext,
+    AsyncAppContext, ModelHandle, ViewContext,
 };
 use lazy_static::lazy_static;
 pub use lsp;
@@ -23,15 +24,28 @@ use project::Project;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
-use std::{path::PathBuf, sync::Arc};
+use serde_json::to_string_pretty;
+use settings::Settings;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use util::ResultExt;
 pub use workspace;
-use workspace::{AppState, Settings, Workspace, WorkspaceParams};
+use workspace::{AppState, Workspace, WorkspaceParams};
 
-action!(About);
-action!(Quit);
-action!(OpenSettings);
-action!(AdjustBufferFontSize, f32);
-action!(CheckForUpdates);
+actions!(
+    zed,
+    [
+        About,
+        Quit,
+        DebugElements,
+        OpenSettings,
+        IncreaseBufferFontSize,
+        DecreaseBufferFontSize,
+        InstallCommandLineInterface,
+    ]
+);
 
 const MIN_FONT_SIZE: f32 = 6.0;
 
@@ -40,21 +54,27 @@ lazy_static! {
         .expect("failed to determine home directory")
         .join(".zed");
     pub static ref SETTINGS_PATH: PathBuf = ROOT_PATH.join("settings.json");
+    pub static ref KEYMAP_PATH: PathBuf = ROOT_PATH.join("keymap.json");
 }
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_global_action(quit);
-    cx.add_global_action(|_: &CheckForUpdates, cx| auto_update::check(cx));
-    cx.add_global_action({
-        move |action: &AdjustBufferFontSize, cx| {
-            cx.update_global::<Settings, _, _>(|settings, cx| {
-                settings.buffer_font_size =
-                    (settings.buffer_font_size + action.0).max(MIN_FONT_SIZE);
-                cx.refresh_windows();
-            });
-        }
+    cx.add_global_action(move |_: &IncreaseBufferFontSize, cx| {
+        cx.update_global::<Settings, _, _>(|settings, cx| {
+            settings.buffer_font_size = (settings.buffer_font_size + 1.0).max(MIN_FONT_SIZE);
+            cx.refresh_windows();
+        });
     });
-
+    cx.add_global_action(move |_: &DecreaseBufferFontSize, cx| {
+        cx.update_global::<Settings, _, _>(|settings, cx| {
+            settings.buffer_font_size = (settings.buffer_font_size - 1.0).max(MIN_FONT_SIZE);
+            cx.refresh_windows();
+        });
+    });
+    cx.add_global_action(move |_: &InstallCommandLineInterface, cx| {
+        cx.spawn(|cx| async move { install_cli(&cx).await.context("error creating CLI symlink") })
+            .detach_and_log_err(cx);
+    });
     cx.add_action({
         let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
@@ -93,14 +113,32 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             .detach_and_log_err(cx);
         }
     });
+    cx.add_action(
+        |workspace: &mut Workspace, _: &DebugElements, cx: &mut ViewContext<Workspace>| {
+            let content = to_string_pretty(&cx.debug_elements()).unwrap();
+            let project = workspace.project().clone();
+            let json_language = project.read(cx).languages().get_language("JSON").unwrap();
+            if project.read(cx).is_remote() {
+                cx.propagate_action();
+            } else if let Some(buffer) = project
+                .update(cx, |project, cx| {
+                    project.create_buffer(&content, Some(json_language), cx)
+                })
+                .log_err()
+            {
+                workspace.add_item(
+                    Box::new(
+                        cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
+                    ),
+                    cx,
+                );
+            }
+        },
+    );
 
     workspace::lsp_status::init(cx);
 
-    cx.add_bindings(vec![
-        Binding::new("cmd-=", AdjustBufferFontSize(1.), None),
-        Binding::new("cmd--", AdjustBufferFontSize(-1.), None),
-        Binding::new("cmd-,", OpenSettings, None),
-    ])
+    settings::KeymapFile::load_defaults(cx);
 }
 
 pub fn build_workspace(
@@ -131,11 +169,15 @@ pub fn build_workspace(
         client: app_state.client.clone(),
         fs: app_state.fs.clone(),
         languages: app_state.languages.clone(),
+        themes: app_state.themes.clone(),
         user_store: app_state.user_store.clone(),
         channel_list: app_state.channel_list.clone(),
     };
     let mut workspace = Workspace::new(&workspace_params, cx);
     let project = workspace.project().clone();
+
+    let theme_names = app_state.themes.list().collect();
+    let language_names = app_state.languages.language_names();
 
     project.update(cx, |project, _| {
         project.set_language_server_settings(serde_json::json!({
@@ -143,7 +185,7 @@ pub fn build_workspace(
                 "schemas": [
                     {
                         "fileMatch": "**/.zed/settings.json",
-                        "schema": Settings::file_json_schema(),
+                        "schema": Settings::file_json_schema(theme_names, language_names),
                     }
                 ]
             }
@@ -199,11 +241,58 @@ fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
     cx.platform().quit();
 }
 
+async fn install_cli(cx: &AsyncAppContext) -> Result<()> {
+    let cli_path = cx.platform().path_for_auxiliary_executable("cli")?;
+    let link_path = Path::new("/usr/local/bin/zed");
+    let bin_dir_path = link_path.parent().unwrap();
+
+    // Don't re-create symlink if it points to the same CLI binary.
+    if smol::fs::read_link(link_path).await.ok().as_ref() == Some(&cli_path) {
+        return Ok(());
+    }
+
+    // If the symlink is not there or is outdated, first try replacing it
+    // without escalating.
+    smol::fs::remove_file(link_path).await.log_err();
+    if smol::fs::unix::symlink(&cli_path, link_path)
+        .await
+        .log_err()
+        .is_some()
+    {
+        return Ok(());
+    }
+
+    // The symlink could not be created, so use osascript with admin privileges
+    // to create it.
+    let status = smol::process::Command::new("osascript")
+        .args([
+            "-e",
+            &format!(
+                "do shell script \" \
+                    mkdir -p \'{}\' && \
+                    ln -sf \'{}\' \'{}\' \
+                \" with administrator privileges",
+                bin_dir_path.to_string_lossy(),
+                cli_path.to_string_lossy(),
+                link_path.to_string_lossy(),
+            ),
+        ])
+        .stdout(smol::process::Stdio::inherit())
+        .stderr(smol::process::Stdio::inherit())
+        .output()
+        .await?
+        .status;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow!("error running osascript"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::assets::Assets;
-
     use super::*;
+    use assets::Assets;
     use editor::{DisplayPoint, Editor};
     use gpui::{AssetSource, MutableAppContext, TestAppContext, ViewHandle};
     use project::{Fs, ProjectPath};
@@ -567,7 +656,7 @@ mod tests {
         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
+        cx.dispatch_action(window_id, OpenNew(app_state.clone()));
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -580,7 +669,7 @@ mod tests {
             assert!(!editor.is_dirty(cx));
             assert_eq!(editor.title(cx), "untitled");
             assert!(Arc::ptr_eq(
-                editor.language(cx).unwrap(),
+                editor.language_at(0, cx).unwrap(),
                 &languages::PLAIN_TEXT
             ));
             editor.handle_input(&editor::Input("hi".into()), cx);
@@ -604,7 +693,7 @@ mod tests {
         editor.read_with(cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
             assert_eq!(editor.title(cx), "the-new-name.rs");
-            assert_eq!(editor.language(cx).unwrap().name().as_ref(), "Rust");
+            assert_eq!(editor.language_at(0, cx).unwrap().name().as_ref(), "Rust");
         });
 
         // Edit the file and save it again. This time, there is no filename prompt.
@@ -622,7 +711,7 @@ mod tests {
 
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
-        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
+        cx.dispatch_action(window_id, OpenNew(app_state.clone()));
         workspace
             .update(cx, |workspace, cx| {
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
@@ -659,7 +748,7 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
+        cx.dispatch_action(window_id, OpenNew(app_state.clone()));
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -670,7 +759,7 @@ mod tests {
 
         editor.update(cx, |editor, cx| {
             assert!(Arc::ptr_eq(
-                editor.language(cx).unwrap(),
+                editor.language_at(0, cx).unwrap(),
                 &languages::PLAIN_TEXT
             ));
             editor.handle_input(&editor::Input("hi".into()), cx);
@@ -684,7 +773,7 @@ mod tests {
         // The buffer is not dirty anymore and the language is assigned based on the path.
         editor.read_with(cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
-            assert_eq!(editor.language(cx).unwrap().name().as_ref(), "Rust")
+            assert_eq!(editor.language_at(0, cx).unwrap().name().as_ref(), "Rust")
         });
     }
 
@@ -729,32 +818,47 @@ mod tests {
             .update(cx, |w, cx| w.open_path(file1.clone(), cx))
             .await
             .unwrap();
-        cx.read(|cx| {
-            assert_eq!(
-                pane_1.read(cx).active_item().unwrap().project_path(cx),
-                Some(file1.clone())
-            );
+
+        let (editor_1, buffer) = pane_1.update(cx, |pane_1, cx| {
+            let editor = pane_1.active_item().unwrap().downcast::<Editor>().unwrap();
+            assert_eq!(editor.project_path(cx), Some(file1.clone()));
+            let buffer = editor.update(cx, |editor, cx| {
+                editor.insert("dirt", cx);
+                editor.buffer().downgrade()
+            });
+            (editor.downgrade(), buffer)
         });
 
-        cx.dispatch_action(
-            window_id,
-            vec![pane_1.id()],
-            pane::Split(SplitDirection::Right),
-        );
-        cx.update(|cx| {
+        cx.dispatch_action(window_id, pane::Split(SplitDirection::Right));
+        let editor_2 = cx.update(|cx| {
             let pane_2 = workspace.read(cx).active_pane().clone();
             assert_ne!(pane_1, pane_2);
 
             let pane2_item = pane_2.read(cx).active_item().unwrap();
             assert_eq!(pane2_item.project_path(cx.as_ref()), Some(file1.clone()));
 
-            cx.dispatch_action(window_id, vec![pane_2.id()], &workspace::CloseActiveItem);
+            pane2_item.downcast::<Editor>().unwrap().downgrade()
         });
+        cx.dispatch_action(window_id, workspace::CloseActiveItem);
+
         cx.foreground().run_until_parked();
         workspace.read_with(cx, |workspace, _| {
             assert_eq!(workspace.panes().len(), 1);
             assert_eq!(workspace.active_pane(), &pane_1);
         });
+
+        cx.dispatch_action(window_id, workspace::CloseActiveItem);
+        cx.foreground().run_until_parked();
+        cx.simulate_prompt_answer(window_id, 1);
+        cx.foreground().run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(workspace.active_item(cx).is_none());
+        });
+
+        cx.assert_dropped(editor_1);
+        cx.assert_dropped(editor_2);
+        cx.assert_dropped(buffer);
     }
 
     #[gpui::test]
@@ -882,11 +986,10 @@ mod tests {
             .update(cx, |workspace, cx| {
                 let editor3_id = editor3.id();
                 drop(editor3);
-                workspace
-                    .active_pane()
-                    .update(cx, |pane, cx| pane.close_item(editor3_id, cx))
+                Pane::close_item(workspace, workspace.active_pane().clone(), editor3_id, cx)
             })
-            .await;
+            .await
+            .unwrap();
         workspace
             .update(cx, |w, cx| Pane::go_forward(w, None, cx))
             .await;
@@ -900,11 +1003,10 @@ mod tests {
             .update(cx, |workspace, cx| {
                 let editor2_id = editor2.id();
                 drop(editor2);
-                workspace
-                    .active_pane()
-                    .update(cx, |pane, cx| pane.close_item(editor2_id, cx))
+                Pane::close_item(workspace, workspace.active_pane().clone(), editor2_id, cx)
             })
-            .await;
+            .await
+            .unwrap();
         app_state
             .fs
             .as_fake()
@@ -992,7 +1094,8 @@ mod tests {
         lazy_static::lazy_static! {
             static ref DEFAULT_THEME: parking_lot::Mutex<Option<Arc<Theme>>> = Default::default();
             static ref FONTS: Vec<Arc<Vec<u8>>> = vec![
-                Assets.load("fonts/zed-sans/zed-sans-extended.ttf").unwrap().to_vec().into()
+                Assets.load("fonts/zed-sans/zed-sans-extended.ttf").unwrap().to_vec().into(),
+                Assets.load("fonts/zed-mono/zed-mono-extended.ttf").unwrap().to_vec().into(),
             ];
         }
 

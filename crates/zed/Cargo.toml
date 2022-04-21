@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathansobo@gmail.com>"]
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.24.0"
+version = "0.29.0"
 
 [lib]
 name = "zed"
@@ -15,10 +15,13 @@ name = "Zed"
 path = "src/main.rs"
 
 [dependencies]
+assets = { path = "../assets" }
 auto_update = { path = "../auto_update" }
 breadcrumbs = { path = "../breadcrumbs" }
 chat_panel = { path = "../chat_panel" }
+cli = { path = "../cli" }
 collections = { path = "../collections" }
+command_palette = { path = "../command_palette" }
 client = { path = "../client" }
 clock = { path = "../clock" }
 contacts_panel = { path = "../contacts_panel" }
@@ -38,6 +41,7 @@ project = { path = "../project" }
 project_panel = { path = "../project_panel" }
 project_symbols = { path = "../project_symbols" }
 rpc = { path = "../rpc" }
+settings = { path = "../settings" }
 sum_tree = { path = "../sum_tree" }
 text = { path = "../text" }
 theme = { path = "../theme" }
@@ -49,7 +53,6 @@ anyhow = "1.0.38"
 async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
 async-recursion = "0.3"
 async-trait = "0.1"
-crossbeam-channel = "0.5.0"
 ctor = "0.1.20"
 dirs = "3.0"
 easy-parallel = "3.1.0"
@@ -61,7 +64,7 @@ image = "0.23"
 indexmap = "1.6.2"
 lazy_static = "1.4.0"
 libc = "0.2"
-log = "0.4"
+log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 log-panics = { version = "2.0", features = ["with-backtrace"] }
 num_cpus = "1.13.0"
 parking_lot = "0.11.1"
@@ -98,6 +101,7 @@ lsp = { path = "../lsp", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 client = { path = "../client", features = ["test-support"] }
+settings = { path = "../settings", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
 env_logger = "0.8"

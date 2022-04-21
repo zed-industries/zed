@@ -253,6 +253,7 @@ impl Element for List {
         &mut self,
         event: &Event,
         bounds: RectF,
+        _: RectF,
         scroll_top: &mut ListOffset,
         _: &mut (),
         cx: &mut EventContext,
@@ -871,6 +872,7 @@ mod tests {
         fn dispatch_event(
             &mut self,
             _: &Event,
+            _: RectF,
             _: RectF,
             _: &mut (),
             _: &mut (),

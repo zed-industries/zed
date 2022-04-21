@@ -29,6 +29,7 @@ pub struct Layer {
     images: Vec<Image>,
     shadows: Vec<Shadow>,
     glyphs: Vec<Glyph>,
+    image_glyphs: Vec<ImageGlyph>,
     icons: Vec<Icon>,
     paths: Vec<Path>,
 }
@@ -56,6 +57,14 @@ pub struct Glyph {
     pub id: GlyphId,
     pub origin: Vector2F,
     pub color: Color,
+}
+
+#[derive(Debug)]
+pub struct ImageGlyph {
+    pub font_id: FontId,
+    pub font_size: f32,
+    pub id: GlyphId,
+    pub origin: Vector2F,
 }
 
 pub struct Icon {
@@ -204,6 +213,10 @@ impl Scene {
         self.active_layer().push_glyph(glyph)
     }
 
+    pub fn push_image_glyph(&mut self, image_glyph: ImageGlyph) {
+        self.active_layer().push_image_glyph(image_glyph)
+    }
+
     pub fn push_icon(&mut self, icon: Icon) {
         self.active_layer().push_icon(icon)
     }
@@ -264,13 +277,14 @@ impl Layer {
     pub fn new(clip_bounds: Option<RectF>) -> Self {
         Self {
             clip_bounds,
-            quads: Vec::new(),
-            underlines: Vec::new(),
-            images: Vec::new(),
-            shadows: Vec::new(),
-            glyphs: Vec::new(),
-            icons: Vec::new(),
-            paths: Vec::new(),
+            quads: Default::default(),
+            underlines: Default::default(),
+            images: Default::default(),
+            shadows: Default::default(),
+            image_glyphs: Default::default(),
+            glyphs: Default::default(),
+            icons: Default::default(),
+            paths: Default::default(),
         }
     }
 
@@ -316,6 +330,14 @@ impl Layer {
 
     pub fn shadows(&self) -> &[Shadow] {
         self.shadows.as_slice()
+    }
+
+    fn push_image_glyph(&mut self, glyph: ImageGlyph) {
+        self.image_glyphs.push(glyph);
+    }
+
+    pub fn image_glyphs(&self) -> &[ImageGlyph] {
+        self.image_glyphs.as_slice()
     }
 
     fn push_glyph(&mut self, glyph: Glyph) {

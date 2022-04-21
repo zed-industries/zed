@@ -61,3 +61,20 @@ pub enum Event {
         left_mouse_down: bool,
     },
 }
+
+impl Event {
+    pub fn position(&self) -> Option<Vector2F> {
+        match self {
+            Event::KeyDown { .. } => None,
+            Event::ScrollWheel { position, .. }
+            | Event::LeftMouseDown { position, .. }
+            | Event::LeftMouseUp { position }
+            | Event::LeftMouseDragged { position }
+            | Event::RightMouseDown { position, .. }
+            | Event::RightMouseUp { position }
+            | Event::NavigateMouseDown { position, .. }
+            | Event::NavigateMouseUp { position, .. }
+            | Event::MouseMoved { position, .. } => Some(*position),
+        }
+    }
+}

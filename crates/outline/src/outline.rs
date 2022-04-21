@@ -4,45 +4,31 @@ use editor::{
 };
 use fuzzy::StringMatch;
 use gpui::{
-    action,
-    elements::*,
-    geometry::vector::Vector2F,
-    keymap::{self, Binding},
-    AppContext, Axis, Entity, MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    actions, elements::*, geometry::vector::Vector2F, AppContext, Entity, MutableAppContext,
+    RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use language::Outline;
 use ordered_float::OrderedFloat;
+use picker::{Picker, PickerDelegate};
+use settings::Settings;
 use std::cmp::{self, Reverse};
-use workspace::{
-    menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev},
-    Settings, Workspace,
-};
+use workspace::Workspace;
 
-action!(Toggle);
+actions!(outline, [Toggle]);
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_bindings([
-        Binding::new("cmd-shift-O", Toggle, Some("Editor")),
-        Binding::new("escape", Toggle, Some("OutlineView")),
-    ]);
     cx.add_action(OutlineView::toggle);
-    cx.add_action(OutlineView::confirm);
-    cx.add_action(OutlineView::select_prev);
-    cx.add_action(OutlineView::select_next);
-    cx.add_action(OutlineView::select_first);
-    cx.add_action(OutlineView::select_last);
+    Picker::<OutlineView>::init(cx);
 }
 
 struct OutlineView {
-    handle: WeakViewHandle<Self>,
+    picker: ViewHandle<Picker<Self>>,
     active_editor: ViewHandle<Editor>,
     outline: Outline<Anchor>,
     selected_match_index: usize,
     prev_scroll_position: Option<Vector2F>,
     matches: Vec<StringMatch>,
-    query_editor: ViewHandle<Editor>,
-    list_state: UniformListState,
+    last_query: String,
 }
 
 pub enum Event {
@@ -62,38 +48,12 @@ impl View for OutlineView {
         "OutlineView"
     }
 
-    fn keymap_context(&self, _: &AppContext) -> keymap::Context {
-        let mut cx = Self::default_keymap_context();
-        cx.set.insert("menu".into());
-        cx
-    }
-
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let settings = cx.global::<Settings>();
-
-        Flex::new(Axis::Vertical)
-            .with_child(
-                Container::new(ChildView::new(&self.query_editor).boxed())
-                    .with_style(settings.theme.selector.input_editor.container)
-                    .boxed(),
-            )
-            .with_child(
-                FlexItem::new(self.render_matches(cx))
-                    .flex(1.0, false)
-                    .boxed(),
-            )
-            .contained()
-            .with_style(settings.theme.selector.container)
-            .constrained()
-            .with_max_width(800.0)
-            .with_max_height(1200.0)
-            .aligned()
-            .top()
-            .named("outline view")
+    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+        ChildView::new(self.picker.clone()).boxed()
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.query_editor);
+        cx.focus(&self.picker);
     }
 }
 
@@ -103,24 +63,16 @@ impl OutlineView {
         editor: ViewHandle<Editor>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let query_editor = cx.add_view(|cx| {
-            Editor::single_line(Some(|theme| theme.selector.input_editor.clone()), cx)
-        });
-        cx.subscribe(&query_editor, Self::on_query_editor_event)
-            .detach();
-
-        let mut this = Self {
-            handle: cx.weak_handle(),
+        let handle = cx.weak_handle();
+        Self {
+            picker: cx.add_view(|cx| Picker::new(handle, cx).with_max_size(800., 1200.)),
+            last_query: Default::default(),
             matches: Default::default(),
             selected_match_index: 0,
             prev_scroll_position: Some(editor.update(cx, |editor, cx| editor.scroll_position(cx))),
             active_editor: editor,
             outline,
-            query_editor,
-            list_state: Default::default(),
-        };
-        this.update_matches(cx);
-        this
+        }
     }
 
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
@@ -144,34 +96,18 @@ impl OutlineView {
         }
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
-        if self.selected_match_index > 0 {
-            self.select(self.selected_match_index - 1, true, false, cx);
-        }
+    fn restore_active_editor(&mut self, cx: &mut MutableAppContext) {
+        self.active_editor.update(cx, |editor, cx| {
+            editor.highlight_rows(None);
+            if let Some(scroll_position) = self.prev_scroll_position {
+                editor.set_scroll_position(scroll_position, cx);
+            }
+        })
     }
 
-    fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
-        if self.selected_match_index + 1 < self.matches.len() {
-            self.select(self.selected_match_index + 1, true, false, cx);
-        }
-    }
-
-    fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
-        self.select(0, true, false, cx);
-    }
-
-    fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
-        self.select(self.matches.len().saturating_sub(1), true, false, cx);
-    }
-
-    fn select(&mut self, index: usize, navigate: bool, center: bool, cx: &mut ViewContext<Self>) {
-        self.selected_match_index = index;
-        self.list_state.scroll_to(if center {
-            ScrollTarget::Center(index)
-        } else {
-            ScrollTarget::Show(index)
-        });
-        if navigate {
+    fn set_selected_index(&mut self, ix: usize, navigate: bool, cx: &mut ViewContext<Self>) {
+        self.selected_match_index = ix;
+        if navigate && !self.matches.is_empty() {
             let selected_match = &self.matches[self.selected_match_index];
             let outline_item = &self.outline.items[selected_match.candidate_id];
             self.active_editor.update(cx, |active_editor, cx| {
@@ -188,27 +124,6 @@ impl OutlineView {
         cx.notify();
     }
 
-    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
-        self.prev_scroll_position.take();
-        self.active_editor.update(cx, |active_editor, cx| {
-            if let Some(rows) = active_editor.highlighted_rows() {
-                let snapshot = active_editor.snapshot(cx).display_snapshot;
-                let position = DisplayPoint::new(rows.start, 0).to_point(&snapshot);
-                active_editor.select_ranges([position..position], Some(Autoscroll::Center), cx);
-            }
-        });
-        cx.emit(Event::Dismissed);
-    }
-
-    fn restore_active_editor(&mut self, cx: &mut MutableAppContext) {
-        self.active_editor.update(cx, |editor, cx| {
-            editor.highlight_rows(None);
-            if let Some(scroll_position) = self.prev_scroll_position {
-                editor.set_scroll_position(scroll_position, cx);
-            }
-        })
-    }
-
     fn on_event(
         workspace: &mut Workspace,
         _: ViewHandle<Self>,
@@ -219,24 +134,27 @@ impl OutlineView {
             Event::Dismissed => workspace.dismiss_modal(cx),
         }
     }
+}
 
-    fn on_query_editor_event(
-        &mut self,
-        _: ViewHandle<Editor>,
-        event: &editor::Event,
-        cx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            editor::Event::Blurred => cx.emit(Event::Dismissed),
-            editor::Event::BufferEdited { .. } => self.update_matches(cx),
-            _ => {}
-        }
+impl PickerDelegate for OutlineView {
+    fn match_count(&self) -> usize {
+        self.matches.len()
     }
 
-    fn update_matches(&mut self, cx: &mut ViewContext<Self>) {
+    fn selected_index(&self) -> usize {
+        self.selected_match_index
+    }
+
+    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Self>) {
+        self.set_selected_index(ix, true, cx);
+    }
+
+    fn center_selection_after_match_updates(&self) -> bool {
+        true
+    }
+
+    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) -> Task<()> {
         let selected_index;
-        let navigate_to_selected_index;
-        let query = self.query_editor.update(cx, |buffer, cx| buffer.text(cx));
         if query.is_empty() {
             self.restore_active_editor(cx);
             self.matches = self
@@ -276,9 +194,8 @@ impl OutlineView {
                     (ix, depth, distance_to_closest_endpoint)
                 })
                 .max_by_key(|(_, depth, distance)| (*depth, Reverse(*distance)))
-                .unwrap()
-                .0;
-            navigate_to_selected_index = false;
+                .map(|(ix, _, _)| ix)
+                .unwrap_or(0);
         } else {
             self.matches = smol::block_on(self.outline.search(&query, cx.background().clone()));
             selected_index = self
@@ -288,57 +205,33 @@ impl OutlineView {
                 .max_by_key(|(_, m)| OrderedFloat(m.score))
                 .map(|(ix, _)| ix)
                 .unwrap_or(0);
-            navigate_to_selected_index = !self.matches.is_empty();
         }
-        self.select(selected_index, navigate_to_selected_index, true, cx);
+        self.last_query = query;
+        self.set_selected_index(selected_index, !self.last_query.is_empty(), cx);
+        Task::ready(())
     }
 
-    fn render_matches(&self, cx: &AppContext) -> ElementBox {
-        if self.matches.is_empty() {
-            let settings = cx.global::<Settings>();
-            return Container::new(
-                Label::new(
-                    "No matches".into(),
-                    settings.theme.selector.empty.label.clone(),
-                )
-                .boxed(),
-            )
-            .with_style(settings.theme.selector.empty.container)
-            .named("empty matches");
-        }
-
-        let handle = self.handle.clone();
-        let list = UniformList::new(
-            self.list_state.clone(),
-            self.matches.len(),
-            move |mut range, items, cx| {
-                let cx = cx.as_ref();
-                let view = handle.upgrade(cx).unwrap();
-                let view = view.read(cx);
-                let start = range.start;
-                range.end = cmp::min(range.end, view.matches.len());
-                items.extend(
-                    view.matches[range]
-                        .iter()
-                        .enumerate()
-                        .map(move |(ix, m)| view.render_match(m, start + ix, cx)),
-                );
-            },
-        );
-
-        Container::new(list.boxed())
-            .with_margin_top(6.0)
-            .named("matches")
+    fn confirm(&mut self, cx: &mut ViewContext<Self>) {
+        self.prev_scroll_position.take();
+        self.active_editor.update(cx, |active_editor, cx| {
+            if let Some(rows) = active_editor.highlighted_rows() {
+                let snapshot = active_editor.snapshot(cx).display_snapshot;
+                let position = DisplayPoint::new(rows.start, 0).to_point(&snapshot);
+                active_editor.select_ranges([position..position], Some(Autoscroll::Center), cx);
+            }
+        });
+        cx.emit(Event::Dismissed);
     }
 
-    fn render_match(
-        &self,
-        string_match: &StringMatch,
-        index: usize,
-        cx: &AppContext,
-    ) -> ElementBox {
+    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
+        self.restore_active_editor(cx);
+        cx.emit(Event::Dismissed);
+    }
+
+    fn render_match(&self, ix: usize, selected: bool, cx: &AppContext) -> ElementBox {
         let settings = cx.global::<Settings>();
-        let style = if index == self.selected_match_index {
+        let string_match = &self.matches[ix];
+        let style = if selected {
             &settings.theme.selector.active_item
         } else {
             &settings.theme.selector.item

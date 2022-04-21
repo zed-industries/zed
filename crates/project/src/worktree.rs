@@ -11,7 +11,10 @@ use client::{proto, Client, TypedEnvelope};
 use clock::ReplicaId;
 use collections::HashMap;
 use futures::{
-    channel::mpsc::{self, UnboundedSender},
+    channel::{
+        mpsc::{self, UnboundedSender},
+        oneshot,
+    },
     Stream, StreamExt,
 };
 use fuzzy::CharBag;
@@ -26,7 +29,6 @@ use language::{
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
-    oneshot,
     prelude::{Sink as _, Stream as _},
     watch,
 };
@@ -231,8 +233,6 @@ impl Worktree {
                             DiagnosticSummary {
                                 error_count: summary.error_count as usize,
                                 warning_count: summary.warning_count as usize,
-                                info_count: summary.info_count as usize,
-                                hint_count: summary.hint_count as usize,
                             },
                         )
                     }),
@@ -564,29 +564,37 @@ impl LocalWorktree {
         worktree_path: Arc<Path>,
         diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
         _: &mut ModelContext<Worktree>,
-    ) -> Result<()> {
-        let summary = DiagnosticSummary::new(&diagnostics);
-        self.diagnostic_summaries
-            .insert(PathKey(worktree_path.clone()), summary.clone());
-        self.diagnostics.insert(worktree_path.clone(), diagnostics);
-
-        if let Some(share) = self.share.as_ref() {
-            self.client
-                .send(proto::UpdateDiagnosticSummary {
-                    project_id: share.project_id,
-                    worktree_id: self.id().to_proto(),
-                    summary: Some(proto::DiagnosticSummary {
-                        path: worktree_path.to_string_lossy().to_string(),
-                        error_count: summary.error_count as u32,
-                        warning_count: summary.warning_count as u32,
-                        info_count: summary.info_count as u32,
-                        hint_count: summary.hint_count as u32,
-                    }),
-                })
-                .log_err();
+    ) -> Result<bool> {
+        self.diagnostics.remove(&worktree_path);
+        let old_summary = self
+            .diagnostic_summaries
+            .remove(&PathKey(worktree_path.clone()))
+            .unwrap_or_default();
+        let new_summary = DiagnosticSummary::new(&diagnostics);
+        if !new_summary.is_empty() {
+            self.diagnostic_summaries
+                .insert(PathKey(worktree_path.clone()), new_summary);
+            self.diagnostics.insert(worktree_path.clone(), diagnostics);
         }
 
-        Ok(())
+        let updated = !old_summary.is_empty() || !new_summary.is_empty();
+        if updated {
+            if let Some(share) = self.share.as_ref() {
+                self.client
+                    .send(proto::UpdateDiagnosticSummary {
+                        project_id: share.project_id,
+                        worktree_id: self.id().to_proto(),
+                        summary: Some(proto::DiagnosticSummary {
+                            path: worktree_path.to_string_lossy().to_string(),
+                            error_count: new_summary.error_count as u32,
+                            warning_count: new_summary.warning_count as u32,
+                        }),
+                    })
+                    .log_err();
+            }
+        }
+
+        Ok(updated)
     }
 
     pub fn scan_complete(&self) -> impl Future<Output = ()> {
@@ -727,11 +735,11 @@ impl LocalWorktree {
 
     pub fn share(&mut self, project_id: u64, cx: &mut ModelContext<Worktree>) -> Task<Result<()>> {
         let register = self.register(project_id, cx);
-        let (mut share_tx, mut share_rx) = oneshot::channel();
+        let (share_tx, share_rx) = oneshot::channel();
         let (snapshots_to_send_tx, snapshots_to_send_rx) =
             smol::channel::unbounded::<LocalSnapshot>();
         if self.share.is_some() {
-            let _ = share_tx.try_send(Ok(()));
+            let _ = share_tx.send(Ok(()));
         } else {
             let rpc = self.client.clone();
             let worktree_id = cx.model_id() as u64;
@@ -756,15 +764,15 @@ impl LocalWorktree {
                                 })
                                 .await
                             {
-                                let _ = share_tx.try_send(Err(error));
+                                let _ = share_tx.send(Err(error));
                                 return Err(anyhow!("failed to send initial update worktree"));
                             } else {
-                                let _ = share_tx.try_send(Ok(()));
+                                let _ = share_tx.send(Ok(()));
                                 snapshot
                             }
                         }
                         Err(error) => {
-                            let _ = share_tx.try_send(Err(error.into()));
+                            let _ = share_tx.send(Err(error.into()));
                             return Err(anyhow!("failed to send initial update worktree"));
                         }
                     };
@@ -804,9 +812,8 @@ impl LocalWorktree {
                 });
             }
             share_rx
-                .next()
                 .await
-                .unwrap_or_else(|| Err(anyhow!("share ended")))
+                .unwrap_or_else(|_| Err(anyhow!("share ended")))
         })
     }
 
@@ -845,15 +852,16 @@ impl RemoteWorktree {
         path: Arc<Path>,
         summary: &proto::DiagnosticSummary,
     ) {
-        self.diagnostic_summaries.insert(
-            PathKey(path.clone()),
-            DiagnosticSummary {
-                error_count: summary.error_count as usize,
-                warning_count: summary.warning_count as usize,
-                info_count: summary.info_count as usize,
-                hint_count: summary.hint_count as usize,
-            },
-        );
+        let summary = DiagnosticSummary {
+            error_count: summary.error_count as usize,
+            warning_count: summary.warning_count as usize,
+        };
+        if summary.is_empty() {
+            self.diagnostic_summaries.remove(&PathKey(path.clone()));
+        } else {
+            self.diagnostic_summaries
+                .insert(PathKey(path.clone()), summary);
+        }
     }
 }
 

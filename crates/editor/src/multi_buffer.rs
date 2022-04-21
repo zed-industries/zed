@@ -11,6 +11,7 @@ use language::{
     Language, OffsetRangeExt, Outline, OutlineItem, Selection, ToOffset as _, ToPoint as _,
     ToPointUtf16 as _, TransactionId,
 };
+use settings::Settings;
 use std::{
     cell::{Ref, RefCell},
     cmp, fmt, io,
@@ -297,8 +298,10 @@ impl MultiBuffer {
                 .into_iter()
                 .map(|range| range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot));
             return buffer.update(cx, |buffer, cx| {
+                let language_name = buffer.language().map(|language| language.name());
+                let indent_size = cx.global::<Settings>().tab_size(language_name.as_deref());
                 if autoindent {
-                    buffer.edit_with_autoindent(ranges, new_text, cx);
+                    buffer.edit_with_autoindent(ranges, new_text, indent_size, cx);
                 } else {
                     buffer.edit(ranges, new_text, cx);
                 }
@@ -392,10 +395,12 @@ impl MultiBuffer {
                             );
                         }
                     }
+                    let language_name = buffer.language().map(|l| l.name());
+                    let indent_size = cx.global::<Settings>().tab_size(language_name.as_deref());
 
                     if autoindent {
-                        buffer.edit_with_autoindent(deletions, "", cx);
-                        buffer.edit_with_autoindent(insertions, new_text.clone(), cx);
+                        buffer.edit_with_autoindent(deletions, "", indent_size, cx);
+                        buffer.edit_with_autoindent(insertions, new_text.clone(), indent_size, cx);
                     } else {
                         buffer.edit(deletions, "", cx);
                         buffer.edit(insertions, new_text.clone(), cx);
@@ -783,7 +788,7 @@ impl MultiBuffer {
             old: edit_start..edit_start,
             new: edit_start..edit_end,
         }]);
-
+        cx.emit(Event::Edited);
         cx.notify();
         ids
     }
@@ -797,10 +802,12 @@ impl MultiBuffer {
         snapshot.trailing_excerpt_update_count += 1;
         snapshot.is_dirty = false;
         snapshot.has_conflict = false;
+
         self.subscriptions.publish_mut([Edit {
             old: 0..prev_len,
             new: 0..0,
         }]);
+        cx.emit(Event::Edited);
         cx.notify();
     }
 
@@ -858,6 +865,29 @@ impl MultiBuffer {
                     .clone(),
                 excerpt.range.clone(),
             )
+        })
+    }
+
+    // If point is at the end of the buffer, the last excerpt is returned
+    pub fn point_to_buffer_offset<'a, T: ToOffset>(
+        &'a self,
+        point: T,
+        cx: &AppContext,
+    ) -> Option<(ModelHandle<Buffer>, usize)> {
+        let snapshot = self.read(cx);
+        let offset = point.to_offset(&snapshot);
+        let mut cursor = snapshot.excerpts.cursor::<usize>();
+        cursor.seek(&offset, Bias::Right, &());
+        if cursor.item().is_none() {
+            cursor.prev(&());
+        }
+
+        cursor.item().map(|excerpt| {
+            let excerpt_start = excerpt.range.start.to_offset(&excerpt.buffer);
+            let buffer_point = excerpt_start + offset - *cursor.start();
+            let buffer = self.buffers.borrow()[&excerpt.buffer_id].buffer.clone();
+
+            (buffer, buffer_point)
         })
     }
 
@@ -965,6 +995,7 @@ impl MultiBuffer {
         }
 
         self.subscriptions.publish_mut(edits);
+        cx.emit(Event::Edited);
         cx.notify();
     }
 
@@ -1057,12 +1088,13 @@ impl MultiBuffer {
             .unwrap_or(false)
     }
 
-    pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
-        self.buffers
-            .borrow()
-            .values()
-            .next()
-            .and_then(|state| state.buffer.read(cx).language())
+    pub fn language_at<'a, T: ToOffset>(
+        &self,
+        point: T,
+        cx: &'a AppContext,
+    ) -> Option<&'a Arc<Language>> {
+        self.point_to_buffer_offset(point, cx)
+            .and_then(|(buffer, _)| buffer.read(cx).language())
     }
 
     pub fn file<'a>(&self, cx: &'a AppContext) -> Option<&'a dyn File> {
@@ -2899,7 +2931,7 @@ mod tests {
     use gpui::MutableAppContext;
     use language::{Buffer, Rope};
     use rand::prelude::*;
-    use std::env;
+    use std::{env, rc::Rc};
     use text::{Point, RandomCharIter};
     use util::test::sample_text;
 
@@ -2956,6 +2988,15 @@ mod tests {
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'g'), cx));
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
 
+        let events = Rc::new(RefCell::new(Vec::<Event>::new()));
+        multibuffer.update(cx, |_, cx| {
+            let events = events.clone();
+            cx.subscribe(&multibuffer, move |_, _, event, _| {
+                events.borrow_mut().push(event.clone())
+            })
+            .detach();
+        });
+
         let subscription = multibuffer.update(cx, |multibuffer, cx| {
             let subscription = multibuffer.subscribe();
             multibuffer.push_excerpts(buffer_1.clone(), [Point::new(1, 2)..Point::new(2, 5)], cx);
@@ -2979,6 +3020,12 @@ mod tests {
 
             subscription
         });
+
+        // Adding excerpts emits an edited event.
+        assert_eq!(
+            events.borrow().as_slice(),
+            &[Event::Edited, Event::Edited, Event::Edited]
+        );
 
         let snapshot = multibuffer.read(cx).snapshot(cx);
         assert_eq!(
@@ -3760,6 +3807,7 @@ mod tests {
 
     #[gpui::test]
     fn test_history(cx: &mut MutableAppContext) {
+        cx.set_global(Settings::test(cx));
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, "1234", cx));
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, "5678", cx));
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));

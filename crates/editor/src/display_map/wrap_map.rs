@@ -559,11 +559,6 @@ impl WrapSnapshot {
         Patch::new(wrap_edits)
     }
 
-    pub fn text_chunks(&self, wrap_row: u32) -> impl Iterator<Item = &str> {
-        self.chunks(wrap_row..self.max_point().row() + 1, false, None)
-            .map(|h| h.text)
-    }
-
     pub fn chunks<'a>(
         &'a self,
         rows: Range<u32>,
@@ -599,16 +594,23 @@ impl WrapSnapshot {
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
-        let mut len = 0;
-        for chunk in self.text_chunks(row) {
-            if let Some(newline_ix) = chunk.find('\n') {
-                len += newline_ix;
-                break;
+        let mut cursor = self.transforms.cursor::<(WrapPoint, TabPoint)>();
+        cursor.seek(&WrapPoint::new(row + 1, 0), Bias::Left, &());
+        if cursor
+            .item()
+            .map_or(false, |transform| transform.is_isomorphic())
+        {
+            let overshoot = row - cursor.start().0.row();
+            let tab_row = cursor.start().1.row() + overshoot;
+            let tab_line_len = self.tab_snapshot.line_len(tab_row);
+            if overshoot == 0 {
+                cursor.start().0.column() + (tab_line_len - cursor.start().1.column())
             } else {
-                len += chunk.len();
+                tab_line_len
             }
+        } else {
+            cursor.start().0.column()
         }
-        len as u32
     }
 
     pub fn soft_wrap_indent(&self, row: u32) -> Option<u32> {
@@ -741,6 +743,7 @@ impl WrapSnapshot {
                 }
             }
 
+            let text = language::Rope::from(self.text().as_str());
             let input_buffer_rows = self.buffer_snapshot().buffer_rows(0).collect::<Vec<_>>();
             let mut expected_buffer_rows = Vec::new();
             let mut prev_tab_row = 0;
@@ -754,6 +757,8 @@ impl WrapSnapshot {
                     expected_buffer_rows.push(input_buffer_rows[buffer_point.row as usize]);
                     prev_tab_row = tab_point.row();
                 }
+
+                assert_eq!(self.line_len(display_row), text.line_len(display_row));
             }
 
             for start_display_row in 0..expected_buffer_rows.len() {
@@ -957,6 +962,10 @@ impl WrapPoint {
         &mut self.0.row
     }
 
+    pub fn column(self) -> u32 {
+        self.0.column
+    }
+
     pub fn column_mut(&mut self) -> &mut u32 {
         &mut self.0.column
     }
@@ -1014,12 +1023,14 @@ mod tests {
     use gpui::test::observe;
     use language::RandomCharIter;
     use rand::prelude::*;
+    use settings::Settings;
     use smol::stream::StreamExt;
     use std::{cmp, env};
     use text::Rope;
 
     #[gpui::test(iterations = 100)]
     async fn test_random_wraps(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
         cx.foreground().set_block_on_ticks(0..=50);
         cx.foreground().forbid_parking();
         let operations = env::var("OPERATIONS")
@@ -1104,7 +1115,8 @@ mod tests {
                 }
                 20..=39 => {
                     for (folds_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
-                        let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+                        let (tabs_snapshot, tab_edits) =
+                            tab_map.sync(folds_snapshot, fold_edits, tab_size);
                         let (mut snapshot, wrap_edits) =
                             wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
                         snapshot.check_invariants();
@@ -1129,7 +1141,7 @@ mod tests {
                 "Unwrapped text (unexpanded tabs): {:?}",
                 folds_snapshot.text()
             );
-            let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+            let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits, tab_size);
             log::info!("Unwrapped text (expanded tabs): {:?}", tabs_snapshot.text());
 
             let unwrapped_text = tabs_snapshot.text();
@@ -1267,6 +1279,11 @@ mod tests {
     impl WrapSnapshot {
         pub fn text(&self) -> String {
             self.text_chunks(0).collect()
+        }
+
+        pub fn text_chunks(&self, wrap_row: u32) -> impl Iterator<Item = &str> {
+            self.chunks(wrap_row..self.max_point().row() + 1, false, None)
+                .map(|h| h.text)
         }
 
         fn verify_chunks(&mut self, rng: &mut impl Rng) {

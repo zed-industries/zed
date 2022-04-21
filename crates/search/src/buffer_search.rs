@@ -1,50 +1,47 @@
-use crate::{active_match_index, match_index_for_direction, Direction, SearchOption, SelectMatch};
+use crate::{
+    active_match_index, match_index_for_direction, Direction, SearchOption, SelectNextMatch,
+    SelectPrevMatch,
+};
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, Anchor, Autoscroll, Bias, Editor};
 use gpui::{
-    action, elements::*, keymap::Binding, platform::CursorStyle, AppContext, Entity,
-    MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
+    actions, elements::*, impl_actions, impl_internal_actions, platform::CursorStyle, AppContext,
+    Entity, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
 use language::OffsetRangeExt;
 use project::search::SearchQuery;
+use serde::Deserialize;
+use settings::Settings;
 use std::ops::Range;
-use workspace::{ItemHandle, Pane, Settings, ToolbarItemLocation, ToolbarItemView};
+use workspace::{ItemHandle, Pane, ToolbarItemLocation, ToolbarItemView};
 
-action!(Deploy, bool);
-action!(Dismiss);
-action!(FocusEditor);
-action!(ToggleSearchOption, SearchOption);
+#[derive(Clone, Deserialize)]
+pub struct Deploy {
+    pub focus: bool,
+}
+
+#[derive(Clone)]
+pub struct ToggleSearchOption(pub SearchOption);
+
+actions!(buffer_search, [Dismiss, FocusEditor]);
+impl_actions!(buffer_search, [Deploy]);
+impl_internal_actions!(buffer_search, [ToggleSearchOption]);
 
 pub enum Event {
     UpdateLocation,
 }
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_bindings([
-        Binding::new("cmd-f", Deploy(true), Some("Editor && mode == full")),
-        Binding::new("cmd-e", Deploy(false), Some("Editor && mode == full")),
-        Binding::new("escape", Dismiss, Some("BufferSearchBar")),
-        Binding::new("cmd-f", FocusEditor, Some("BufferSearchBar")),
-        Binding::new(
-            "enter",
-            SelectMatch(Direction::Next),
-            Some("BufferSearchBar"),
-        ),
-        Binding::new(
-            "shift-enter",
-            SelectMatch(Direction::Prev),
-            Some("BufferSearchBar"),
-        ),
-        Binding::new("cmd-g", SelectMatch(Direction::Next), Some("Pane")),
-        Binding::new("cmd-shift-G", SelectMatch(Direction::Prev), Some("Pane")),
-    ]);
     cx.add_action(BufferSearchBar::deploy);
     cx.add_action(BufferSearchBar::dismiss);
     cx.add_action(BufferSearchBar::focus_editor);
     cx.add_action(BufferSearchBar::toggle_search_option);
-    cx.add_action(BufferSearchBar::select_match);
-    cx.add_action(BufferSearchBar::select_match_on_pane);
+    cx.add_action(BufferSearchBar::select_next_match);
+    cx.add_action(BufferSearchBar::select_prev_match);
+    cx.add_action(BufferSearchBar::select_next_match_on_pane);
+    cx.add_action(BufferSearchBar::select_prev_match_on_pane);
+    cx.add_action(BufferSearchBar::handle_editor_cancel);
 }
 
 pub struct BufferSearchBar {
@@ -320,14 +317,27 @@ impl BufferSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |cx| cx.dispatch_action(SelectMatch(direction)))
+        .on_click(move |cx| match direction {
+            Direction::Prev => cx.dispatch_action(SelectPrevMatch),
+            Direction::Next => cx.dispatch_action(SelectNextMatch),
+        })
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
     }
 
-    fn deploy(pane: &mut Pane, Deploy(focus): &Deploy, cx: &mut ViewContext<Pane>) {
+    fn deploy(pane: &mut Pane, action: &Deploy, cx: &mut ViewContext<Pane>) {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            if search_bar.update(cx, |search_bar, cx| search_bar.show(*focus, cx)) {
+            if search_bar.update(cx, |search_bar, cx| search_bar.show(action.focus, cx)) {
+                return;
+            }
+        }
+        cx.propagate_action();
+    }
+
+    fn handle_editor_cancel(pane: &mut Pane, _: &editor::Cancel, cx: &mut ViewContext<Pane>) {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+            if !search_bar.read(cx).dismissed {
+                search_bar.update(cx, |search_bar, cx| search_bar.dismiss(&Dismiss, cx));
                 return;
             }
         }
@@ -363,7 +373,15 @@ impl BufferSearchBar {
         cx.notify();
     }
 
-    fn select_match(&mut self, &SelectMatch(direction): &SelectMatch, cx: &mut ViewContext<Self>) {
+    fn select_next_match(&mut self, _: &SelectNextMatch, cx: &mut ViewContext<Self>) {
+        self.select_match(Direction::Next, cx);
+    }
+
+    fn select_prev_match(&mut self, _: &SelectPrevMatch, cx: &mut ViewContext<Self>) {
+        self.select_match(Direction::Prev, cx);
+    }
+
+    fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         if let Some(index) = self.active_match_index {
             if let Some(editor) = self.active_editor.as_ref() {
                 editor.update(cx, |editor, cx| {
@@ -384,9 +402,23 @@ impl BufferSearchBar {
         }
     }
 
-    fn select_match_on_pane(pane: &mut Pane, action: &SelectMatch, cx: &mut ViewContext<Pane>) {
+    fn select_next_match_on_pane(
+        pane: &mut Pane,
+        action: &SelectNextMatch,
+        cx: &mut ViewContext<Pane>,
+    ) {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |search_bar, cx| search_bar.select_match(action, cx));
+            search_bar.update(cx, |bar, cx| bar.select_next_match(action, cx));
+        }
+    }
+
+    fn select_prev_match_on_pane(
+        pane: &mut Pane,
+        action: &SelectPrevMatch,
+        cx: &mut ViewContext<Pane>,
+    ) {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+            search_bar.update(cx, |bar, cx| bar.select_prev_match(action, cx));
         }
     }
 
@@ -512,14 +544,14 @@ impl BufferSearchBar {
                                         }
                                     }
 
-                                    let theme = &cx.global::<Settings>().theme.search;
                                     editor.highlight_background::<Self>(
                                         ranges,
-                                        theme.match_background,
+                                        |theme| theme.search.match_background,
                                         cx,
                                     );
                                 });
                             }
+                            cx.notify();
                         });
                     }
                 }));
@@ -694,7 +726,7 @@ mod tests {
         });
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(0));
-            search_bar.select_match(&SelectMatch(Direction::Next), cx);
+            search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
@@ -705,7 +737,7 @@ mod tests {
         });
 
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.select_match(&SelectMatch(Direction::Next), cx);
+            search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
@@ -716,7 +748,7 @@ mod tests {
         });
 
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.select_match(&SelectMatch(Direction::Next), cx);
+            search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
@@ -727,7 +759,7 @@ mod tests {
         });
 
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.select_match(&SelectMatch(Direction::Next), cx);
+            search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
@@ -738,7 +770,7 @@ mod tests {
         });
 
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.select_match(&SelectMatch(Direction::Prev), cx);
+            search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
@@ -749,7 +781,7 @@ mod tests {
         });
 
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.select_match(&SelectMatch(Direction::Prev), cx);
+            search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
@@ -760,7 +792,7 @@ mod tests {
         });
 
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.select_match(&SelectMatch(Direction::Prev), cx);
+            search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
@@ -777,7 +809,7 @@ mod tests {
         });
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(1));
-            search_bar.select_match(&SelectMatch(Direction::Prev), cx);
+            search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
@@ -794,7 +826,7 @@ mod tests {
         });
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(1));
-            search_bar.select_match(&SelectMatch(Direction::Next), cx);
+            search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
@@ -811,7 +843,7 @@ mod tests {
         });
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(2));
-            search_bar.select_match(&SelectMatch(Direction::Prev), cx);
+            search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
@@ -828,7 +860,7 @@ mod tests {
         });
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(2));
-            search_bar.select_match(&SelectMatch(Direction::Next), cx);
+            search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
@@ -845,7 +877,7 @@ mod tests {
         });
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(0));
-            search_bar.select_match(&SelectMatch(Direction::Prev), cx);
+            search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]

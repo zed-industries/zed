@@ -9,31 +9,32 @@ path = "src/rpc.rs"
 doctest = false
 
 [features]
-test-support = ["gpui/test-support"]
+test-support = ["collections/test-support", "gpui/test-support"]
 
 [dependencies]
+clock = { path = "../clock" }
+collections = { path = "../collections" }
+gpui = { path = "../gpui", optional = true }
+util = { path = "../util" }
 anyhow = "1.0"
 async-lock = "2.4"
 async-tungstenite = "0.16"
 base64 = "0.13"
 futures = "0.3"
-log = "0.4"
+log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"
-postage = { version = "0.4.1", features = ["futures-traits"] }
 prost = "0.8"
 rand = "0.8"
 rsa = "0.4"
 serde = { version = "1", features = ["derive"] }
 smol-timeout = "0.6"
 zstd = "0.9"
-clock = { path = "../clock" }
-gpui = { path = "../gpui", optional = true }
-util = { path = "../util" }
 
 [build-dependencies]
 prost-build = "0.8"
 
 [dev-dependencies]
+collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 smol = "1.2.5"
 tempdir = "0.3.7"

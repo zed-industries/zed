@@ -1,211 +1,102 @@
-mod g_prefix;
-
-use editor::{char_kind, movement, Bias};
-use gpui::{action, keymap::Binding, MutableAppContext, ViewContext};
+use crate::{
+    motion::Motion,
+    state::{Mode, Operator},
+    Vim,
+};
+use editor::Bias;
+use gpui::MutableAppContext;
 use language::SelectionGoal;
-use workspace::Workspace;
 
-use crate::{mode::NormalState, Mode, SwitchMode, VimState};
-
-action!(GPrefix);
-action!(MoveLeft);
-action!(MoveDown);
-action!(MoveUp);
-action!(MoveRight);
-action!(MoveToStartOfLine);
-action!(MoveToEndOfLine);
-action!(MoveToEnd);
-action!(MoveToNextWordStart, bool);
-action!(MoveToNextWordEnd, bool);
-action!(MoveToPreviousWordStart, bool);
-
-pub fn init(cx: &mut MutableAppContext) {
-    let context = Some("Editor && vim_mode == normal");
-    cx.add_bindings(vec![
-        Binding::new("i", SwitchMode(Mode::Insert), context),
-        Binding::new("g", SwitchMode(Mode::Normal(NormalState::GPrefix)), context),
-        Binding::new("h", MoveLeft, context),
-        Binding::new("j", MoveDown, context),
-        Binding::new("k", MoveUp, context),
-        Binding::new("l", MoveRight, context),
-        Binding::new("0", MoveToStartOfLine, context),
-        Binding::new("shift-$", MoveToEndOfLine, context),
-        Binding::new("shift-G", MoveToEnd, context),
-        Binding::new("w", MoveToNextWordStart(false), context),
-        Binding::new("shift-W", MoveToNextWordStart(true), context),
-        Binding::new("e", MoveToNextWordEnd(false), context),
-        Binding::new("shift-E", MoveToNextWordEnd(true), context),
-        Binding::new("b", MoveToPreviousWordStart(false), context),
-        Binding::new("shift-B", MoveToPreviousWordStart(true), context),
-    ]);
-    g_prefix::init(cx);
-
-    cx.add_action(move_left);
-    cx.add_action(move_down);
-    cx.add_action(move_up);
-    cx.add_action(move_right);
-    cx.add_action(move_to_start_of_line);
-    cx.add_action(move_to_end_of_line);
-    cx.add_action(move_to_end);
-    cx.add_action(move_to_next_word_start);
-    cx.add_action(move_to_next_word_end);
-    cx.add_action(move_to_previous_word_start);
+pub fn normal_motion(motion: Motion, cx: &mut MutableAppContext) {
+    Vim::update(cx, |vim, cx| {
+        match vim.state.operator_stack.pop() {
+            None => move_cursor(vim, motion, cx),
+            Some(Operator::Change) => change_over(vim, motion, cx),
+            Some(Operator::Delete) => delete_over(vim, motion, cx),
+            Some(Operator::Namespace(_)) => {
+                // Can't do anything for a namespace operator. Ignoring
+            }
+        }
+        vim.clear_operator(cx);
+    });
 }
 
-fn move_left(_: &mut Workspace, _: &MoveLeft, cx: &mut ViewContext<Workspace>) {
-    VimState::update_global(cx, |state, cx| {
-        state.update_active_editor(cx, |editor, cx| {
-            editor.move_cursors(cx, |map, mut cursor, _| {
-                *cursor.column_mut() = cursor.column().saturating_sub(1);
-                (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
+fn move_cursor(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
+    vim.update_active_editor(cx, |editor, cx| {
+        editor.move_cursors(cx, |map, cursor, goal| {
+            motion.move_point(map, cursor, goal, true)
+        })
+    });
+}
+
+fn change_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
+    vim.update_active_editor(cx, |editor, cx| {
+        editor.transact(cx, |editor, cx| {
+            // Don't clip at line ends during change operation
+            editor.set_clip_at_line_ends(false, cx);
+            editor.move_selections(cx, |map, selection| {
+                let (head, goal) = motion.move_point(map, selection.head(), selection.goal, false);
+                selection.set_head(head, goal);
+
+                if motion.line_wise() {
+                    selection.start = map.prev_line_boundary(selection.start.to_point(map)).1;
+                    selection.end = map.next_line_boundary(selection.end.to_point(map)).1;
+                }
             });
-        });
-    })
-}
-
-fn move_down(_: &mut Workspace, _: &MoveDown, cx: &mut ViewContext<Workspace>) {
-    VimState::update_global(cx, |state, cx| {
-        state.update_active_editor(cx, |editor, cx| {
-            editor.move_cursors(cx, movement::down);
+            editor.set_clip_at_line_ends(true, cx);
+            editor.insert(&"", cx);
         });
     });
+    vim.switch_mode(Mode::Insert, cx)
 }
 
-fn move_up(_: &mut Workspace, _: &MoveUp, cx: &mut ViewContext<Workspace>) {
-    VimState::update_global(cx, |state, cx| {
-        state.update_active_editor(cx, |editor, cx| {
-            editor.move_cursors(cx, movement::up);
-        });
-    });
-}
+fn delete_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
+    vim.update_active_editor(cx, |editor, cx| {
+        editor.transact(cx, |editor, cx| {
+            // Use goal column to preserve previous position
+            editor.set_clip_at_line_ends(false, cx);
+            editor.move_selections(cx, |map, selection| {
+                let original_head = selection.head();
+                let (head, _) = motion.move_point(map, selection.head(), selection.goal, false);
+                // Set the goal column to the original position in order to fix it up
+                // after the deletion
+                selection.set_head(head, SelectionGoal::Column(original_head.column()));
 
-fn move_right(_: &mut Workspace, _: &MoveRight, cx: &mut ViewContext<Workspace>) {
-    VimState::update_global(cx, |state, cx| {
-        state.update_active_editor(cx, |editor, cx| {
-            editor.move_cursors(cx, |map, mut cursor, _| {
-                *cursor.column_mut() += 1;
-                (map.clip_point(cursor, Bias::Right), SelectionGoal::None)
-            });
-        });
-    });
-}
-
-fn move_to_start_of_line(
-    _: &mut Workspace,
-    _: &MoveToStartOfLine,
-    cx: &mut ViewContext<Workspace>,
-) {
-    VimState::update_global(cx, |state, cx| {
-        state.update_active_editor(cx, |editor, cx| {
-            editor.move_cursors(cx, |map, cursor, _| {
-                (
-                    movement::line_beginning(map, cursor, false),
-                    SelectionGoal::None,
-                )
-            });
-        });
-    });
-}
-
-fn move_to_end_of_line(_: &mut Workspace, _: &MoveToEndOfLine, cx: &mut ViewContext<Workspace>) {
-    VimState::update_global(cx, |state, cx| {
-        state.update_active_editor(cx, |editor, cx| {
-            editor.move_cursors(cx, |map, cursor, _| {
-                (
-                    map.clip_point(movement::line_end(map, cursor, false), Bias::Left),
-                    SelectionGoal::None,
-                )
-            });
-        });
-    });
-}
-
-fn move_to_end(_: &mut Workspace, _: &MoveToEnd, cx: &mut ViewContext<Workspace>) {
-    VimState::update_global(cx, |state, cx| {
-        state.update_active_editor(cx, |editor, cx| {
-            editor.replace_selections_with(cx, |map| map.clip_point(map.max_point(), Bias::Left));
-        });
-    });
-}
-
-fn move_to_next_word_start(
-    _: &mut Workspace,
-    &MoveToNextWordStart(treat_punctuation_as_word): &MoveToNextWordStart,
-    cx: &mut ViewContext<Workspace>,
-) {
-    VimState::update_global(cx, |state, cx| {
-        state.update_active_editor(cx, |editor, cx| {
-            editor.move_cursors(cx, |map, mut cursor, _| {
-                let mut crossed_newline = false;
-                cursor = movement::find_boundary(map, cursor, |left, right| {
-                    let left_kind = char_kind(left).coerce_punctuation(treat_punctuation_as_word);
-                    let right_kind = char_kind(right).coerce_punctuation(treat_punctuation_as_word);
-                    let at_newline = right == '\n';
-
-                    let found = (left_kind != right_kind && !right.is_whitespace())
-                        || (at_newline && crossed_newline)
-                        || (at_newline && left == '\n'); // Prevents skipping repeated empty lines
-
-                    if at_newline {
-                        crossed_newline = true;
+                if motion.line_wise() {
+                    if selection.end.row() == map.max_point().row() {
+                        // Delete previous line break since we are at the end of the document
+                        if selection.start.row() > 0 {
+                            *selection.start.row_mut() = selection.start.row().saturating_sub(1);
+                            selection.start = map.clip_point(selection.start, Bias::Left);
+                            selection.start =
+                                map.next_line_boundary(selection.start.to_point(map)).1;
+                        } else {
+                            // Selection covers the whole document. Just delete to the start of the
+                            // line.
+                            selection.start =
+                                map.prev_line_boundary(selection.start.to_point(map)).1;
+                        }
+                        selection.end = map.next_line_boundary(selection.end.to_point(map)).1;
+                    } else {
+                        // Delete next line break so that we leave the previous line alone
+                        selection.start = map.prev_line_boundary(selection.start.to_point(map)).1;
+                        *selection.end.column_mut() = 0;
+                        *selection.end.row_mut() += 1;
+                        selection.end = map.clip_point(selection.end, Bias::Left);
                     }
-                    found
-                });
-                (cursor, SelectionGoal::None)
+                }
             });
-        });
-    });
-}
+            editor.insert(&"", cx);
 
-fn move_to_next_word_end(
-    _: &mut Workspace,
-    &MoveToNextWordEnd(treat_punctuation_as_word): &MoveToNextWordEnd,
-    cx: &mut ViewContext<Workspace>,
-) {
-    VimState::update_global(cx, |state, cx| {
-        state.update_active_editor(cx, |editor, cx| {
-            editor.move_cursors(cx, |map, mut cursor, _| {
-                *cursor.column_mut() += 1;
-                cursor = movement::find_boundary(map, cursor, |left, right| {
-                    let left_kind = char_kind(left).coerce_punctuation(treat_punctuation_as_word);
-                    let right_kind = char_kind(right).coerce_punctuation(treat_punctuation_as_word);
-
-                    left_kind != right_kind && !left.is_whitespace()
-                });
-                // find_boundary clips, so if the character after the next character is a newline or at the end of the document, we know
-                // we have backtraced already
-                if !map
-                    .chars_at(cursor)
-                    .skip(1)
-                    .next()
-                    .map(|c| c == '\n')
-                    .unwrap_or(true)
-                {
-                    *cursor.column_mut() = cursor.column().saturating_sub(1);
+            // Fixup cursor position after the deletion
+            editor.set_clip_at_line_ends(true, cx);
+            editor.move_cursors(cx, |map, mut cursor, goal| {
+                if motion.line_wise() {
+                    if let SelectionGoal::Column(column) = goal {
+                        *cursor.column_mut() = column
+                    }
                 }
                 (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
-            });
-        });
-    });
-}
-
-fn move_to_previous_word_start(
-    _: &mut Workspace,
-    &MoveToPreviousWordStart(treat_punctuation_as_word): &MoveToPreviousWordStart,
-    cx: &mut ViewContext<Workspace>,
-) {
-    VimState::update_global(cx, |state, cx| {
-        state.update_active_editor(cx, |editor, cx| {
-            editor.move_cursors(cx, |map, mut cursor, _| {
-                // This works even though find_preceding_boundary is called for every character in the line containing
-                // cursor because the newline is checked only once.
-                cursor = movement::find_preceding_boundary(map, cursor, |left, right| {
-                    let left_kind = char_kind(left).coerce_punctuation(treat_punctuation_as_word);
-                    let right_kind = char_kind(right).coerce_punctuation(treat_punctuation_as_word);
-
-                    (left_kind != right_kind && !right.is_whitespace()) || left == '\n'
-                });
-                (cursor, SelectionGoal::None)
             });
         });
     });
@@ -216,7 +107,13 @@ mod test {
     use indoc::indoc;
     use util::test::marked_text;
 
-    use crate::vim_test_context::VimTestContext;
+    use crate::{
+        state::{
+            Mode::{self, *},
+            Namespace, Operator,
+        },
+        vim_test_context::VimTestContext,
+    };
 
     #[gpui::test]
     async fn test_hjkl(cx: &mut gpui::TestAppContext) {
@@ -322,19 +219,22 @@ mod test {
 
     #[gpui::test]
     async fn test_jump_to_end(cx: &mut gpui::TestAppContext) {
-        let initial_content = indoc! {"
-            The quick
+        let mut cx = VimTestContext::new(cx, true, "").await;
+
+        cx.set_state(
+            indoc! {"
+            The |quick
             
             brown fox jumps
-            over the lazy dog"};
-        let mut cx = VimTestContext::new(cx, true, initial_content).await;
-
+            over the lazy dog"},
+            Mode::Normal,
+        );
         cx.simulate_keystroke("shift-G");
         cx.assert_editor_state(indoc! {"
             The quick
             
             brown fox jumps
-            over the lazy do|g"});
+            over| the lazy dog"});
 
         // Repeat the action doesn't move
         cx.simulate_keystroke("shift-G");
@@ -342,7 +242,7 @@ mod test {
             The quick
             
             brown fox jumps
-            over the lazy do|g"});
+            over| the lazy dog"});
     }
 
     #[gpui::test]
@@ -361,7 +261,7 @@ mod test {
         }
 
         // Reset and test ignoring punctuation
-        cx.simulate_keystrokes(&["g", "g"]);
+        cx.simulate_keystrokes(["g", "g", "0"]);
         let (_, cursor_offsets) = marked_text(indoc! {"
             The |quick-brown
             |
@@ -391,7 +291,7 @@ mod test {
         }
 
         // Reset and test ignoring punctuation
-        cx.simulate_keystrokes(&["g", "g"]);
+        cx.simulate_keystrokes(["g", "g", "0"]);
         let (_, cursor_offsets) = marked_text(indoc! {"
             Th|e quick-brow|n
             
@@ -413,7 +313,7 @@ mod test {
             |fox_jumps |over
             |the"});
         let mut cx = VimTestContext::new(cx, true, &initial_content).await;
-        cx.simulate_keystroke("shift-G");
+        cx.simulate_keystrokes(["shift-G", "shift-$"]);
 
         for cursor_offset in cursor_offsets.into_iter().rev() {
             cx.simulate_keystroke("b");
@@ -421,7 +321,7 @@ mod test {
         }
 
         // Reset and test ignoring punctuation
-        cx.simulate_keystroke("shift-G");
+        cx.simulate_keystrokes(["shift-G", "shift-$"]);
         let (_, cursor_offsets) = marked_text(indoc! {"
             ||The |quick-brown
             |
@@ -432,5 +332,475 @@ mod test {
             cx.simulate_keystroke("shift-B");
             cx.assert_newest_selection_head_offset(cursor_offset);
         }
+    }
+
+    #[gpui::test]
+    async fn test_g_prefix_and_abort(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true, "").await;
+
+        // Can abort with escape to get back to normal mode
+        cx.simulate_keystroke("g");
+        assert_eq!(cx.mode(), Normal);
+        assert_eq!(
+            cx.active_operator(),
+            Some(Operator::Namespace(Namespace::G))
+        );
+        cx.simulate_keystroke("escape");
+        assert_eq!(cx.mode(), Normal);
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_move_to_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true, "").await;
+
+        cx.set_state(
+            indoc! {"
+            The q|uick
+            
+            brown fox jumps
+            over the lazy dog"},
+            Mode::Normal,
+        );
+
+        // Jump to the end to
+        cx.simulate_keystroke("shift-G");
+        cx.assert_editor_state(indoc! {"
+            The quick
+            
+            brown fox jumps
+            over |the lazy dog"});
+
+        // Jump to the start
+        cx.simulate_keystrokes(["g", "g"]);
+        cx.assert_editor_state(indoc! {"
+            The q|uick
+            
+            brown fox jumps
+            over the lazy dog"});
+        assert_eq!(cx.mode(), Normal);
+        assert_eq!(cx.active_operator(), None);
+
+        // Repeat action doesn't change
+        cx.simulate_keystrokes(["g", "g"]);
+        cx.assert_editor_state(indoc! {"
+            The q|uick
+            
+            brown fox jumps
+            over the lazy dog"});
+        assert_eq!(cx.mode(), Normal);
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_change(cx: &mut gpui::TestAppContext) {
+        fn assert(motion: &str, initial_state: &str, state_after: &str, cx: &mut VimTestContext) {
+            cx.assert_binding(
+                ["c", motion],
+                initial_state,
+                Mode::Normal,
+                state_after,
+                Mode::Insert,
+            );
+        }
+        let cx = &mut VimTestContext::new(cx, true, "").await;
+        assert("h", "Te|st", "T|st", cx);
+        assert("l", "Te|st", "Te|t", cx);
+        assert("w", "|Test", "|", cx);
+        assert("w", "Te|st", "Te|", cx);
+        assert("w", "Te|st Test", "Te| Test", cx);
+        assert("e", "Te|st Test", "Te| Test", cx);
+        assert("b", "Te|st", "|st", cx);
+        assert("b", "Test Te|st", "Test |st", cx);
+        assert(
+            "w",
+            indoc! {"
+            The quick
+            brown |fox
+            jumps over"},
+            indoc! {"
+            The quick
+            brown |
+            jumps over"},
+            cx,
+        );
+        assert(
+            "shift-W",
+            indoc! {"
+            The quick
+            brown |fox-fox
+            jumps over"},
+            indoc! {"
+            The quick
+            brown |
+            jumps over"},
+            cx,
+        );
+        assert(
+            "k",
+            indoc! {"
+            The quick
+            brown |fox"},
+            indoc! {"
+            |"},
+            cx,
+        );
+        assert(
+            "j",
+            indoc! {"
+            The q|uick
+            brown fox"},
+            indoc! {"
+            |"},
+            cx,
+        );
+        assert(
+            "shift-$",
+            indoc! {"
+            The q|uick
+            brown fox"},
+            indoc! {"
+            The q|
+            brown fox"},
+            cx,
+        );
+        assert(
+            "0",
+            indoc! {"
+            The q|uick
+            brown fox"},
+            indoc! {"
+            |uick
+            brown fox"},
+            cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_delete(cx: &mut gpui::TestAppContext) {
+        fn assert(motion: &str, initial_state: &str, state_after: &str, cx: &mut VimTestContext) {
+            cx.assert_binding(
+                ["d", motion],
+                initial_state,
+                Mode::Normal,
+                state_after,
+                Mode::Normal,
+            );
+        }
+        let cx = &mut VimTestContext::new(cx, true, "").await;
+        assert("h", "Te|st", "T|st", cx);
+        assert("l", "Te|st", "Te|t", cx);
+        assert("w", "|Test", "|", cx);
+        assert("w", "Te|st", "T|e", cx);
+        assert("w", "Te|st Test", "Te|Test", cx);
+        assert("e", "Te|st Test", "Te| Test", cx);
+        assert("b", "Te|st", "|st", cx);
+        assert("b", "Test Te|st", "Test |st", cx);
+        assert(
+            "w",
+            indoc! {"
+            The quick
+            brown |fox
+            jumps over"},
+            // Trailing space after cursor
+            indoc! {"
+            The quick
+            brown| 
+            jumps over"},
+            cx,
+        );
+        assert(
+            "shift-W",
+            indoc! {"
+            The quick
+            brown |fox-fox
+            jumps over"},
+            // Trailing space after cursor
+            indoc! {"
+            The quick
+            brown| 
+            jumps over"},
+            cx,
+        );
+        assert(
+            "shift-$",
+            indoc! {"
+            The q|uick
+            brown fox"},
+            indoc! {"
+            The |q
+            brown fox"},
+            cx,
+        );
+        assert(
+            "0",
+            indoc! {"
+            The q|uick
+            brown fox"},
+            indoc! {"
+            |uick
+            brown fox"},
+            cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_linewise_delete(cx: &mut gpui::TestAppContext) {
+        fn assert(motion: &str, initial_state: &str, state_after: &str, cx: &mut VimTestContext) {
+            cx.assert_binding(
+                ["d", motion],
+                initial_state,
+                Mode::Normal,
+                state_after,
+                Mode::Normal,
+            );
+        }
+        let cx = &mut VimTestContext::new(cx, true, "").await;
+        assert(
+            "k",
+            indoc! {"
+            The quick
+            brown |fox
+            jumps over"},
+            indoc! {"
+            jumps |over"},
+            cx,
+        );
+        assert(
+            "k",
+            indoc! {"
+            The quick
+            brown fox
+            jumps |over"},
+            indoc! {"
+            The qu|ick"},
+            cx,
+        );
+        assert(
+            "j",
+            indoc! {"
+            The q|uick
+            brown fox
+            jumps over"},
+            indoc! {"
+            jumps| over"},
+            cx,
+        );
+        assert(
+            "j",
+            indoc! {"
+            The quick
+            brown| fox
+            jumps over"},
+            indoc! {"
+            The q|uick"},
+            cx,
+        );
+        assert(
+            "j",
+            indoc! {"
+            The quick
+            brown| fox
+            jumps over"},
+            indoc! {"
+            The q|uick"},
+            cx,
+        );
+        cx.assert_binding(
+            ["d", "g", "g"],
+            indoc! {"
+            The quick
+            brown| fox
+            jumps over
+            the lazy"},
+            Mode::Normal,
+            indoc! {"
+            jumps| over
+            the lazy"},
+            Mode::Normal,
+        );
+        cx.assert_binding(
+            ["d", "g", "g"],
+            indoc! {"
+            The quick
+            brown fox
+            jumps over
+            the l|azy"},
+            Mode::Normal,
+            "|",
+            Mode::Normal,
+        );
+        assert(
+            "shift-G",
+            indoc! {"
+            The quick
+            brown| fox
+            jumps over
+            the lazy"},
+            indoc! {"
+            The q|uick"},
+            cx,
+        );
+        cx.assert_binding(
+            ["d", "g", "g"],
+            indoc! {"
+            The q|uick
+            brown fox
+            jumps over
+            the lazy"},
+            Mode::Normal,
+            indoc! {"
+            brown| fox
+            jumps over
+            the lazy"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_linewise_change(cx: &mut gpui::TestAppContext) {
+        fn assert(motion: &str, initial_state: &str, state_after: &str, cx: &mut VimTestContext) {
+            cx.assert_binding(
+                ["c", motion],
+                initial_state,
+                Mode::Normal,
+                state_after,
+                Mode::Insert,
+            );
+        }
+        let cx = &mut VimTestContext::new(cx, true, "").await;
+        assert(
+            "k",
+            indoc! {"
+            The quick
+            brown |fox
+            jumps over"},
+            indoc! {"
+            |
+            jumps over"},
+            cx,
+        );
+        assert(
+            "k",
+            indoc! {"
+            The quick
+            brown fox
+            jumps |over"},
+            indoc! {"
+            The quick
+            |"},
+            cx,
+        );
+        assert(
+            "j",
+            indoc! {"
+            The q|uick
+            brown fox
+            jumps over"},
+            indoc! {"
+            |
+            jumps over"},
+            cx,
+        );
+        assert(
+            "j",
+            indoc! {"
+            The quick
+            brown| fox
+            jumps over"},
+            indoc! {"
+            The quick
+            |"},
+            cx,
+        );
+        assert(
+            "j",
+            indoc! {"
+            The quick
+            brown| fox
+            jumps over"},
+            indoc! {"
+            The quick
+            |"},
+            cx,
+        );
+        assert(
+            "shift-G",
+            indoc! {"
+            The quick
+            brown| fox
+            jumps over
+            the lazy"},
+            indoc! {"
+            The quick
+            |"},
+            cx,
+        );
+        assert(
+            "shift-G",
+            indoc! {"
+            The quick
+            brown| fox
+            jumps over
+            the lazy"},
+            indoc! {"
+            The quick
+            |"},
+            cx,
+        );
+        assert(
+            "shift-G",
+            indoc! {"
+            The quick
+            brown fox
+            jumps over
+            the l|azy"},
+            indoc! {"
+            The quick
+            brown fox
+            jumps over
+            |"},
+            cx,
+        );
+        cx.assert_binding(
+            ["c", "g", "g"],
+            indoc! {"
+            The quick
+            brown| fox
+            jumps over
+            the lazy"},
+            Mode::Normal,
+            indoc! {"
+            |
+            jumps over
+            the lazy"},
+            Mode::Insert,
+        );
+        cx.assert_binding(
+            ["c", "g", "g"],
+            indoc! {"
+            The quick
+            brown fox
+            jumps over
+            the l|azy"},
+            Mode::Normal,
+            "|",
+            Mode::Insert,
+        );
+        cx.assert_binding(
+            ["c", "g", "g"],
+            indoc! {"
+            The q|uick
+            brown fox
+            jumps over
+            the lazy"},
+            Mode::Normal,
+            indoc! {"
+            |
+            brown fox
+            jumps over
+            the lazy"},
+            Mode::Insert,
+        );
     }
 }

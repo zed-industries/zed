@@ -1,11 +1,12 @@
-use crate::{assets::Assets, build_window_options, build_workspace, AppState};
+use crate::{build_window_options, build_workspace, AppState};
+use assets::Assets;
 use client::{test::FakeHttpClient, ChannelList, Client, UserStore};
 use gpui::MutableAppContext;
 use language::LanguageRegistry;
 use project::fs::FakeFs;
+use settings::Settings;
 use std::sync::Arc;
 use theme::ThemeRegistry;
-use workspace::Settings;
 
 #[cfg(test)]
 #[ctor::ctor]

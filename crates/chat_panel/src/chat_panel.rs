@@ -4,19 +4,18 @@ use client::{
 };
 use editor::Editor;
 use gpui::{
-    action,
+    actions,
     elements::*,
-    keymap::Binding,
     platform::CursorStyle,
     views::{ItemType, Select, SelectStyle},
     AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View,
     ViewContext, ViewHandle,
 };
 use postage::prelude::Stream;
+use settings::{Settings, SoftWrap};
 use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
 use util::{ResultExt, TryFutureExt};
-use workspace::{settings::SoftWrap, Settings};
 
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
 
@@ -33,14 +32,11 @@ pub struct ChatPanel {
 
 pub enum Event {}
 
-action!(Send);
-action!(LoadMoreMessages);
+actions!(chat_panel, [Send, LoadMoreMessages]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ChatPanel::send);
     cx.add_action(ChatPanel::load_more_messages);
-
-    cx.add_bindings(vec![Binding::new("enter", Send, Some("ChatPanel"))]);
 }
 
 impl ChatPanel {

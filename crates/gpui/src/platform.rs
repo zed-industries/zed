@@ -15,7 +15,7 @@ use crate::{
         vector::Vector2F,
     },
     text_layout::{LineLayout, RunStyle},
-    AnyAction, ClipboardItem, Menu, Scene,
+    Action, ClipboardItem, Menu, Scene,
 };
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
@@ -56,7 +56,7 @@ pub trait Platform: Send + Sync {
 
     fn local_timezone(&self) -> UtcOffset;
 
-    fn path_for_resource(&self, name: Option<&str>, extension: Option<&str>) -> Result<PathBuf>;
+    fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
     fn app_path(&self) -> Result<PathBuf>;
     fn app_version(&self) -> Result<AppVersion>;
 }
@@ -66,10 +66,10 @@ pub(crate) trait ForegroundPlatform {
     fn on_resign_active(&self, callback: Box<dyn FnMut()>);
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>);
-    fn on_open_files(&self, callback: Box<dyn FnMut(Vec<PathBuf>)>);
+    fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
     fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>);
 
-    fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn AnyAction)>);
+    fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn set_menus(&self, menus: Vec<Menu>);
     fn prompt_for_paths(
         &self,
@@ -164,6 +164,12 @@ impl FromStr for AppVersion {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum RasterizationOptions {
+    Alpha,
+    Bgra,
+}
+
 pub trait FontSystem: Send + Sync {
     fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> anyhow::Result<()>;
     fn load_family(&self, name: &str) -> anyhow::Result<Vec<FontId>>;
@@ -183,6 +189,7 @@ pub trait FontSystem: Send + Sync {
         glyph_id: GlyphId,
         subpixel_shift: Vector2F,
         scale_factor: f32,
+        options: RasterizationOptions,
     ) -> Option<(RectI, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: f32, runs: &[(usize, RunStyle)]) -> LineLayout;
     fn wrap_line(&self, text: &str, font_id: FontId, font_size: f32, width: f32) -> Vec<usize>;

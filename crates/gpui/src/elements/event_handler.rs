@@ -84,13 +84,14 @@ impl Element for EventHandler {
     fn dispatch_event(
         &mut self,
         event: &Event,
-        bounds: RectF,
+        _: RectF,
+        visible_bounds: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         cx: &mut EventContext,
     ) -> bool {
         if let Some(capture) = self.capture.as_mut() {
-            if capture(event, bounds, cx) {
+            if capture(event, visible_bounds, cx) {
                 return true;
             }
         }
@@ -101,7 +102,7 @@ impl Element for EventHandler {
             match event {
                 Event::LeftMouseDown { position, .. } => {
                     if let Some(callback) = self.mouse_down.as_mut() {
-                        if bounds.contains_point(*position) {
+                        if visible_bounds.contains_point(*position) {
                             return callback(cx);
                         }
                     }
@@ -109,7 +110,7 @@ impl Element for EventHandler {
                 }
                 Event::RightMouseDown { position, .. } => {
                     if let Some(callback) = self.right_mouse_down.as_mut() {
-                        if bounds.contains_point(*position) {
+                        if visible_bounds.contains_point(*position) {
                             return callback(cx);
                         }
                     }
@@ -121,7 +122,7 @@ impl Element for EventHandler {
                     ..
                 } => {
                     if let Some(callback) = self.navigate_mouse_down.as_mut() {
-                        if bounds.contains_point(*position) {
+                        if visible_bounds.contains_point(*position) {
                             return callback(*direction, cx);
                         }
                     }

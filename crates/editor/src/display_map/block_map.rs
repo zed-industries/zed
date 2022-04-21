@@ -969,6 +969,7 @@ mod tests {
     use crate::multi_buffer::MultiBuffer;
     use gpui::{elements::Empty, Element};
     use rand::prelude::*;
+    use settings::Settings;
     use std::env;
     use text::RandomCharIter;
 
@@ -988,6 +989,8 @@ mod tests {
 
     #[gpui::test]
     fn test_basic_blocks(cx: &mut gpui::MutableAppContext) {
+        cx.set_global(Settings::test(cx));
+
         let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
         let font_id = cx
             .font_cache()
@@ -1157,7 +1160,7 @@ mod tests {
 
         let (folds_snapshot, fold_edits) =
             fold_map.read(buffer_snapshot, subscription.consume().into_inner());
-        let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+        let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits, 4);
         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
             wrap_map.sync(tabs_snapshot, tab_edits, cx)
         });
@@ -1167,6 +1170,8 @@ mod tests {
 
     #[gpui::test]
     fn test_blocks_on_wrapped_lines(cx: &mut gpui::MutableAppContext) {
+        cx.set_global(Settings::test(cx));
+
         let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
         let font_id = cx
             .font_cache()
@@ -1209,6 +1214,8 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_random_blocks(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
+        cx.set_global(Settings::test(cx));
+
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
@@ -1296,7 +1303,8 @@ mod tests {
 
                     let (folds_snapshot, fold_edits) =
                         fold_map.read(buffer_snapshot.clone(), vec![]);
-                    let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+                    let (tabs_snapshot, tab_edits) =
+                        tab_map.sync(folds_snapshot, fold_edits, tab_size);
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tabs_snapshot, tab_edits, cx)
                     });
@@ -1318,7 +1326,8 @@ mod tests {
 
                     let (folds_snapshot, fold_edits) =
                         fold_map.read(buffer_snapshot.clone(), vec![]);
-                    let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+                    let (tabs_snapshot, tab_edits) =
+                        tab_map.sync(folds_snapshot, fold_edits, tab_size);
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tabs_snapshot, tab_edits, cx)
                     });
@@ -1338,7 +1347,7 @@ mod tests {
             }
 
             let (folds_snapshot, fold_edits) = fold_map.read(buffer_snapshot.clone(), buffer_edits);
-            let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+            let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits, tab_size);
             let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                 wrap_map.sync(tabs_snapshot, tab_edits, cx)
             });

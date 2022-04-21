@@ -2,30 +2,38 @@
 #![allow(non_snake_case)]
 
 use anyhow::{anyhow, Context, Result};
+use assets::Assets;
+use cli::{
+    ipc::{self, IpcSender},
+    CliRequest, CliResponse, IpcHandshake,
+};
 use client::{self, http, ChannelList, UserStore};
 use fs::OpenOptions;
-use futures::{channel::oneshot, StreamExt};
-use gpui::{App, AssetSource, Task};
+use futures::{
+    channel::{mpsc, oneshot},
+    FutureExt, SinkExt, StreamExt,
+};
+use gpui::{App, AssetSource, AsyncAppContext, Task};
 use log::LevelFilter;
 use parking_lot::Mutex;
 use project::Fs;
+use settings::{self, KeymapFile, Settings, SettingsFileContent};
 use smol::process::Command;
-use std::{env, fs, path::PathBuf, sync::Arc};
+use std::{env, fs, path::PathBuf, sync::Arc, thread, time::Duration};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
 use util::ResultExt;
-use workspace::{
-    self,
-    settings::{self, SettingsFile},
-    AppState, OpenNew, OpenParams, OpenPaths, Settings,
-};
+use workspace::{self, AppState, OpenNew, OpenPaths};
 use zed::{
-    self, assets::Assets, build_window_options, build_workspace, fs::RealFs, languages, menus,
+    self, build_window_options, build_workspace,
+    fs::RealFs,
+    languages, menus,
+    settings_file::{settings_from_files, watch_keymap_file, WatchedJsonFile},
 };
 
 fn main() {
     init_logger();
 
-    let app = gpui::App::new(Assets).unwrap();
+    let mut app = gpui::App::new(Assets).unwrap();
     load_embedded_fonts(&app);
 
     let fs = Arc::new(RealFs);
@@ -46,8 +54,37 @@ fn main() {
                 soft_wrap: Some(settings::SoftWrap::PreferredLineLength),
                 ..Default::default()
             },
+        )
+        .with_overrides(
+            "Rust",
+            settings::LanguageOverride {
+                tab_size: Some(4),
+                ..Default::default()
+            },
+        )
+        .with_overrides(
+            "JavaScript",
+            settings::LanguageOverride {
+                tab_size: Some(2),
+                ..Default::default()
+            },
+        )
+        .with_overrides(
+            "TypeScript",
+            settings::LanguageOverride {
+                tab_size: Some(2),
+                ..Default::default()
+            },
+        )
+        .with_overrides(
+            "TSX",
+            settings::LanguageOverride {
+                tab_size: Some(2),
+                ..Default::default()
+            },
         );
-    let settings_file = load_settings_file(&app, fs.clone());
+
+    let config_files = load_config_files(&app, fs.clone());
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
         Task::ready(())
@@ -56,6 +93,18 @@ fn main() {
             load_login_shell_environment().await.log_err();
         })
     };
+
+    let (cli_connections_tx, mut cli_connections_rx) = mpsc::unbounded();
+    app.on_open_urls(move |urls, _| {
+        if let Some(server_name) = urls.first().and_then(|url| url.strip_prefix("zed-cli://")) {
+            if let Some(cli_connection) = connect_to_cli(server_name).log_err() {
+                cli_connections_tx
+                    .unbounded_send(cli_connection)
+                    .map_err(|_| anyhow!("no listener for cli connections"))
+                    .log_err();
+            };
+        }
+    });
 
     app.run(move |cx| {
         let http = http::client();
@@ -69,6 +118,7 @@ fn main() {
         project::Project::init(&client);
         client::Channel::init(&client);
         client::init(client.clone(), cx);
+        command_palette::init(cx);
         workspace::init(&client, cx);
         editor::init(cx);
         go_to_line::init(cx);
@@ -97,13 +147,16 @@ fn main() {
         })
         .detach_and_log_err(cx);
 
-        let settings_file = cx.background().block(settings_file).unwrap();
-        let mut settings_rx = Settings::from_files(
+        let (settings_file, keymap_file) = cx.background().block(config_files).unwrap();
+        let mut settings_rx = settings_from_files(
             default_settings,
             vec![settings_file],
             themes.clone(),
             cx.font_cache().clone(),
         );
+
+        cx.spawn(|cx| watch_keymap_file(keymap_file, cx)).detach();
+
         let settings = cx.background().block(settings_rx.next()).unwrap();
         cx.spawn(|mut cx| async move {
             while let Some(settings) = settings_rx.next().await {
@@ -130,20 +183,32 @@ fn main() {
             build_workspace,
         });
         journal::init(app_state.clone(), cx);
+        theme_selector::init(cx);
         zed::init(&app_state, cx);
-        theme_selector::init(app_state.themes.clone(), cx);
 
         cx.set_menus(menus::menus(&app_state.clone()));
 
         if stdout_is_a_pty() {
             cx.platform().activate(true);
-        }
-
-        let paths = collect_path_args();
-        if paths.is_empty() {
-            cx.dispatch_global_action(OpenNew(app_state.clone()));
+            let paths = collect_path_args();
+            if paths.is_empty() {
+                cx.dispatch_global_action(OpenNew(app_state.clone()));
+            } else {
+                cx.dispatch_global_action(OpenPaths { paths, app_state });
+            }
         } else {
-            cx.dispatch_global_action(OpenPaths(OpenParams { paths, app_state }));
+            if let Ok(Some(connection)) = cli_connections_rx.try_next() {
+                cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
+                    .detach();
+            } else {
+                cx.dispatch_global_action(OpenNew(app_state.clone()));
+            }
+            cx.spawn(|cx| async move {
+                while let Some(connection) = cli_connections_rx.next().await {
+                    handle_cli_connection(connection, app_state.clone(), cx.clone()).await;
+                }
+            })
+            .detach();
         }
     });
 }
@@ -239,15 +304,137 @@ fn load_embedded_fonts(app: &App) {
         .unwrap();
 }
 
-fn load_settings_file(app: &App, fs: Arc<dyn Fs>) -> oneshot::Receiver<SettingsFile> {
+fn load_config_files(
+    app: &App,
+    fs: Arc<dyn Fs>,
+) -> oneshot::Receiver<(
+    WatchedJsonFile<SettingsFileContent>,
+    WatchedJsonFile<KeymapFile>,
+)> {
     let executor = app.background();
     let (tx, rx) = oneshot::channel();
     executor
         .clone()
         .spawn(async move {
-            let file = SettingsFile::new(fs, &executor, zed::SETTINGS_PATH.clone()).await;
-            tx.send(file).ok()
+            let settings_file =
+                WatchedJsonFile::new(fs.clone(), &executor, zed::SETTINGS_PATH.clone()).await;
+            let keymap_file = WatchedJsonFile::new(fs, &executor, zed::KEYMAP_PATH.clone()).await;
+            tx.send((settings_file, keymap_file)).ok()
         })
         .detach();
     rx
+}
+
+fn connect_to_cli(
+    server_name: &str,
+) -> Result<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)> {
+    let handshake_tx = cli::ipc::IpcSender::<IpcHandshake>::connect(server_name.to_string())
+        .context("error connecting to cli")?;
+    let (request_tx, request_rx) = ipc::channel::<CliRequest>()?;
+    let (response_tx, response_rx) = ipc::channel::<CliResponse>()?;
+
+    handshake_tx
+        .send(IpcHandshake {
+            requests: request_tx,
+            responses: response_rx,
+        })
+        .context("error sending ipc handshake")?;
+
+    let (mut async_request_tx, async_request_rx) =
+        futures::channel::mpsc::channel::<CliRequest>(16);
+    thread::spawn(move || {
+        while let Ok(cli_request) = request_rx.recv() {
+            if smol::block_on(async_request_tx.send(cli_request)).is_err() {
+                break;
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    });
+
+    Ok((async_request_rx, response_tx))
+}
+
+async fn handle_cli_connection(
+    (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
+    app_state: Arc<AppState>,
+    mut cx: AsyncAppContext,
+) {
+    if let Some(request) = requests.next().await {
+        match request {
+            CliRequest::Open { paths, wait } => {
+                let (workspace, items) = cx
+                    .update(|cx| workspace::open_paths(&paths, &app_state, cx))
+                    .await;
+
+                let mut errored = false;
+                let mut futures = Vec::new();
+                cx.update(|cx| {
+                    for (item, path) in items.into_iter().zip(&paths) {
+                        match item {
+                            Some(Ok(item)) => {
+                                let released = oneshot::channel();
+                                item.on_release(
+                                    cx,
+                                    Box::new(move |_| {
+                                        let _ = released.0.send(());
+                                    }),
+                                )
+                                .detach();
+                                futures.push(released.1);
+                            }
+                            Some(Err(err)) => {
+                                responses
+                                    .send(CliResponse::Stderr {
+                                        message: format!("error opening {:?}: {}", path, err),
+                                    })
+                                    .log_err();
+                                errored = true;
+                            }
+                            None => {}
+                        }
+                    }
+                });
+
+                if wait {
+                    let background = cx.background();
+                    let wait = async move {
+                        if paths.is_empty() {
+                            let (done_tx, done_rx) = oneshot::channel();
+                            let _subscription = cx.update(|cx| {
+                                cx.observe_release(&workspace, move |_, _| {
+                                    let _ = done_tx.send(());
+                                })
+                            });
+                            drop(workspace);
+                            let _ = done_rx.await;
+                        } else {
+                            let _ = futures::future::try_join_all(futures).await;
+                        };
+                    }
+                    .fuse();
+                    futures::pin_mut!(wait);
+
+                    loop {
+                        // Repeatedly check if CLI is still open to avoid wasting resources
+                        // waiting for files or workspaces to close.
+                        let mut timer = background.timer(Duration::from_secs(1)).fuse();
+                        futures::select_biased! {
+                            _ = wait => break,
+                            _ = timer => {
+                                if responses.send(CliResponse::Ping).is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                responses
+                    .send(CliResponse::Exit {
+                        status: if errored { 1 } else { 0 },
+                    })
+                    .log_err();
+            }
+        }
+    }
 }

@@ -12,7 +12,7 @@ use text::Point;
 pub struct TabMap(Mutex<TabSnapshot>);
 
 impl TabMap {
-    pub fn new(input: FoldSnapshot, tab_size: usize) -> (Self, TabSnapshot) {
+    pub fn new(input: FoldSnapshot, tab_size: u32) -> (Self, TabSnapshot) {
         let snapshot = TabSnapshot {
             fold_snapshot: input,
             tab_size,
@@ -24,12 +24,13 @@ impl TabMap {
         &self,
         fold_snapshot: FoldSnapshot,
         mut fold_edits: Vec<FoldEdit>,
+        tab_size: u32,
     ) -> (TabSnapshot, Vec<TabEdit>) {
         let mut old_snapshot = self.0.lock();
         let max_offset = old_snapshot.fold_snapshot.len();
         let new_snapshot = TabSnapshot {
             fold_snapshot,
-            tab_size: old_snapshot.tab_size,
+            tab_size,
         };
 
         let mut tab_edits = Vec::with_capacity(fold_edits.len());
@@ -87,12 +88,28 @@ impl TabMap {
 #[derive(Clone)]
 pub struct TabSnapshot {
     pub fold_snapshot: FoldSnapshot,
-    pub tab_size: usize,
+    pub tab_size: u32,
 }
 
 impl TabSnapshot {
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
         self.fold_snapshot.buffer_snapshot()
+    }
+
+    pub fn line_len(&self, row: u32) -> u32 {
+        let max_point = self.max_point();
+        if row < max_point.row() {
+            self.chunks(
+                TabPoint::new(row, 0)..TabPoint::new(row + 1, 0),
+                false,
+                None,
+            )
+            .map(|chunk| chunk.text.len() as u32)
+            .sum::<u32>()
+                - 1
+        } else {
+            max_point.column()
+        }
     }
 
     pub fn text_summary(&self) -> TextSummary {
@@ -234,7 +251,7 @@ impl TabSnapshot {
             .to_buffer_point(&self.fold_snapshot)
     }
 
-    fn expand_tabs(chars: impl Iterator<Item = char>, column: usize, tab_size: usize) -> usize {
+    fn expand_tabs(chars: impl Iterator<Item = char>, column: usize, tab_size: u32) -> usize {
         let mut expanded_chars = 0;
         let mut expanded_bytes = 0;
         let mut collapsed_bytes = 0;
@@ -243,7 +260,7 @@ impl TabSnapshot {
                 break;
             }
             if c == '\t' {
-                let tab_len = tab_size - expanded_chars % tab_size;
+                let tab_len = tab_size as usize - expanded_chars % tab_size as usize;
                 expanded_bytes += tab_len;
                 expanded_chars += tab_len;
             } else {
@@ -259,7 +276,7 @@ impl TabSnapshot {
         mut chars: impl Iterator<Item = char>,
         column: usize,
         bias: Bias,
-        tab_size: usize,
+        tab_size: u32,
     ) -> (usize, usize, usize) {
         let mut expanded_bytes = 0;
         let mut expanded_chars = 0;
@@ -270,7 +287,7 @@ impl TabSnapshot {
             }
 
             if c == '\t' {
-                let tab_len = tab_size - (expanded_chars % tab_size);
+                let tab_len = tab_size as usize - (expanded_chars % tab_size as usize);
                 expanded_chars += tab_len;
                 expanded_bytes += tab_len;
                 if expanded_bytes > column {
@@ -383,7 +400,7 @@ pub struct TabChunks<'a> {
     column: usize,
     output_position: Point,
     max_output_position: Point,
-    tab_size: usize,
+    tab_size: u32,
     skip_leading_tab: bool,
 }
 
@@ -415,16 +432,16 @@ impl<'a> Iterator for TabChunks<'a> {
                         });
                     } else {
                         self.chunk.text = &self.chunk.text[1..];
-                        let mut len = self.tab_size - self.column % self.tab_size;
+                        let mut len = self.tab_size - self.column as u32 % self.tab_size;
                         let next_output_position = cmp::min(
-                            self.output_position + Point::new(0, len as u32),
+                            self.output_position + Point::new(0, len),
                             self.max_output_position,
                         );
-                        len = (next_output_position.column - self.output_position.column) as usize;
-                        self.column += len;
+                        len = next_output_position.column - self.output_position.column;
+                        self.column += len as usize;
                         self.output_position = next_output_position;
                         return Some(Chunk {
-                            text: &SPACES[0..len],
+                            text: &SPACES[0..len as usize],
                             ..self.chunk
                         });
                     }
@@ -516,8 +533,11 @@ mod tests {
                 actual_summary.longest_row = expected_summary.longest_row;
                 actual_summary.longest_row_chars = expected_summary.longest_row_chars;
             }
+            assert_eq!(actual_summary, expected_summary);
+        }
 
-            assert_eq!(actual_summary, expected_summary,);
+        for row in 0..=text.max_point().row {
+            assert_eq!(tabs_snapshot.line_len(row), text.line_len(row));
         }
     }
 }

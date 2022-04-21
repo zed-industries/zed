@@ -2,7 +2,6 @@ pub mod lsp_status;
 pub mod menu;
 pub mod pane;
 pub mod pane_group;
-pub mod settings;
 pub mod sidebar;
 mod status_bar;
 mod toolbar;
@@ -14,16 +13,16 @@ use client::{
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
 use gpui::{
-    action,
+    actions,
     color::Color,
     elements::*,
-    geometry::{vector::vec2f, PathBuilder},
-    json::{self, to_string_pretty, ToJson},
-    keymap::Binding,
+    geometry::{rect::RectF, vector::vec2f, PathBuilder},
+    impl_internal_actions,
+    json::{self, ToJson},
     platform::{CursorStyle, WindowOptions},
-    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Border, ClipboardItem, Entity,
-    ImageData, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle,
+    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Border, Entity, ImageData,
+    ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::LanguageRegistry;
 use log::error;
@@ -31,8 +30,8 @@ pub use pane::*;
 pub use pane_group::*;
 use postage::prelude::Stream;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, Worktree};
-pub use settings::Settings;
-use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus};
+use settings::Settings;
+use sidebar::{Side, Sidebar, ToggleSidebarItem, ToggleSidebarItemFocus};
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
@@ -70,32 +69,56 @@ type FollowableItemBuilders = HashMap<
     ),
 >;
 
-action!(Open, Arc<AppState>);
-action!(OpenNew, Arc<AppState>);
-action!(OpenPaths, OpenParams);
-action!(ToggleShare);
-action!(ToggleFollow, PeerId);
-action!(FollowNextCollaborator);
-action!(Unfollow);
-action!(JoinProject, JoinProjectParams);
-action!(Save);
-action!(DebugElements);
-action!(ActivatePreviousPane);
-action!(ActivateNextPane);
+actions!(
+    workspace,
+    [
+        ToggleShare,
+        Unfollow,
+        Save,
+        ActivatePreviousPane,
+        ActivateNextPane,
+        FollowNextCollaborator,
+    ]
+);
+
+#[derive(Clone)]
+pub struct Open(pub Arc<AppState>);
+
+#[derive(Clone)]
+pub struct OpenNew(pub Arc<AppState>);
+
+#[derive(Clone)]
+pub struct OpenPaths {
+    pub paths: Vec<PathBuf>,
+    pub app_state: Arc<AppState>,
+}
+
+#[derive(Clone)]
+pub struct ToggleFollow(pub PeerId);
+
+#[derive(Clone)]
+pub struct JoinProject {
+    pub project_id: u64,
+    pub app_state: Arc<AppState>,
+}
+
+impl_internal_actions!(
+    workspace,
+    [Open, OpenNew, OpenPaths, ToggleFollow, JoinProject]
+);
 
 pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     pane::init(cx);
-    menu::init(cx);
 
     cx.add_global_action(open);
     cx.add_global_action(move |action: &OpenPaths, cx: &mut MutableAppContext| {
-        open_paths(&action.0.paths, &action.0.app_state, cx).detach();
+        open_paths(&action.paths, &action.app_state, cx).detach();
     });
     cx.add_global_action(move |action: &OpenNew, cx: &mut MutableAppContext| {
         open_new(&action.0, cx)
     });
     cx.add_global_action(move |action: &JoinProject, cx: &mut MutableAppContext| {
-        join_project(action.0.project_id, &action.0.app_state, cx).detach();
+        join_project(action.project_id, &action.app_state, cx).detach();
     });
 
     cx.add_action(Workspace::toggle_share);
@@ -112,7 +135,6 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
             workspace.save_active_item(cx).detach_and_log_err(cx);
         },
     );
-    cx.add_action(Workspace::debug_elements);
     cx.add_action(Workspace::toggle_sidebar_item);
     cx.add_action(Workspace::toggle_sidebar_item_focus);
     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
@@ -121,29 +143,6 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
         workspace.activate_next_pane(cx)
     });
-    cx.add_bindings(vec![
-        Binding::new("ctrl-alt-cmd-f", FollowNextCollaborator, None),
-        Binding::new("cmd-s", Save, None),
-        Binding::new("cmd-alt-i", DebugElements, None),
-        Binding::new("cmd-k cmd-left", ActivatePreviousPane, None),
-        Binding::new("cmd-k cmd-right", ActivateNextPane, None),
-        Binding::new(
-            "cmd-shift-!",
-            ToggleSidebarItem(SidebarItemId {
-                side: Side::Left,
-                item_index: 0,
-            }),
-            None,
-        ),
-        Binding::new(
-            "cmd-1",
-            ToggleSidebarItemFocus(SidebarItemId {
-                side: Side::Left,
-                item_index: 0,
-            }),
-            None,
-        ),
-    ]);
 
     client.add_view_request_handler(Workspace::handle_follow);
     client.add_view_message_handler(Workspace::handle_unfollow);
@@ -186,18 +185,6 @@ pub struct AppState {
     pub build_window_options: fn() -> WindowOptions<'static>,
     pub build_workspace:
         fn(ModelHandle<Project>, &Arc<AppState>, &mut ViewContext<Workspace>) -> Workspace,
-}
-
-#[derive(Clone)]
-pub struct OpenParams {
-    pub paths: Vec<PathBuf>,
-    pub app_state: Arc<AppState>,
-}
-
-#[derive(Clone)]
-pub struct JoinProjectParams {
-    pub project_id: u64,
-    pub app_state: Arc<AppState>,
 }
 
 pub trait Item: View {
@@ -386,6 +373,11 @@ pub trait ItemHandle: 'static + fmt::Debug {
         -> Task<Result<()>>;
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle>;
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
+    fn on_release(
+        &self,
+        cx: &mut MutableAppContext,
+        callback: Box<dyn FnOnce(&mut MutableAppContext)>,
+    ) -> gpui::Subscription;
 }
 
 pub trait WeakItemHandle {
@@ -421,17 +413,17 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         Box::new(self.clone())
     }
 
+    fn set_nav_history(&self, nav_history: Rc<RefCell<NavHistory>>, cx: &mut MutableAppContext) {
+        self.update(cx, |item, cx| {
+            item.set_nav_history(ItemNavHistory::new(nav_history, &cx.handle()), cx);
+        })
+    }
+
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemHandle>> {
         self.update(cx, |item, cx| {
             cx.add_option_view(|cx| item.clone_on_split(cx))
         })
         .map(|handle| Box::new(handle) as Box<dyn ItemHandle>)
-    }
-
-    fn set_nav_history(&self, nav_history: Rc<RefCell<NavHistory>>, cx: &mut MutableAppContext) {
-        self.update(cx, |item, cx| {
-            item.set_nav_history(ItemNavHistory::new(nav_history, &cx.handle()), cx);
-        })
     }
 
     fn added_to_pane(
@@ -494,8 +486,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             }
 
             if T::should_close_item_on_event(event) {
-                pane.update(cx, |pane, cx| pane.close_item(item.id(), cx))
-                    .detach();
+                Pane::close_item(workspace, pane, item.id(), cx).detach_and_log_err(cx);
                 return;
             }
 
@@ -523,6 +514,30 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.update(cx, |this, cx| this.navigate(data, cx))
     }
 
+    fn id(&self) -> usize {
+        self.id()
+    }
+
+    fn to_any(&self) -> AnyViewHandle {
+        self.into()
+    }
+
+    fn is_dirty(&self, cx: &AppContext) -> bool {
+        self.read(cx).is_dirty(cx)
+    }
+
+    fn has_conflict(&self, cx: &AppContext) -> bool {
+        self.read(cx).has_conflict(cx)
+    }
+
+    fn can_save(&self, cx: &AppContext) -> bool {
+        self.read(cx).can_save(cx)
+    }
+
+    fn can_save_as(&self, cx: &AppContext) -> bool {
+        self.read(cx).can_save_as(cx)
+    }
+
     fn save(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.save(project, cx))
     }
@@ -544,30 +559,6 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.update(cx, |item, cx| item.reload(project, cx))
     }
 
-    fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.read(cx).is_dirty(cx)
-    }
-
-    fn has_conflict(&self, cx: &AppContext) -> bool {
-        self.read(cx).has_conflict(cx)
-    }
-
-    fn id(&self) -> usize {
-        self.id()
-    }
-
-    fn to_any(&self) -> AnyViewHandle {
-        self.into()
-    }
-
-    fn can_save(&self, cx: &AppContext) -> bool {
-        self.read(cx).can_save(cx)
-    }
-
-    fn can_save_as(&self, cx: &AppContext) -> bool {
-        self.read(cx).can_save_as(cx)
-    }
-
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle> {
         self.read(cx).act_as_type(type_id, self, cx)
     }
@@ -580,6 +571,14 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         } else {
             None
         }
+    }
+
+    fn on_release(
+        &self,
+        cx: &mut MutableAppContext,
+        callback: Box<dyn FnOnce(&mut MutableAppContext)>,
+    ) -> gpui::Subscription {
+        cx.observe_release(self, move |_, cx| callback(cx))
     }
 }
 
@@ -611,6 +610,7 @@ pub struct WorkspaceParams {
     pub client: Arc<Client>,
     pub fs: Arc<dyn Fs>,
     pub languages: Arc<LanguageRegistry>,
+    pub themes: Arc<ThemeRegistry>,
     pub user_store: ModelHandle<UserStore>,
     pub channel_list: ModelHandle<ChannelList>,
 }
@@ -640,6 +640,7 @@ impl WorkspaceParams {
             channel_list: cx
                 .add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx)),
             client,
+            themes: ThemeRegistry::new((), cx.font_cache().clone()),
             fs,
             languages,
             user_store,
@@ -658,6 +659,7 @@ impl WorkspaceParams {
             ),
             client: app_state.client.clone(),
             fs: app_state.fs.clone(),
+            themes: app_state.themes.clone(),
             languages: app_state.languages.clone(),
             user_store: app_state.user_store.clone(),
             channel_list: app_state.channel_list.clone(),
@@ -675,6 +677,7 @@ pub struct Workspace {
     user_store: ModelHandle<client::UserStore>,
     remote_entity_subscription: Option<Subscription>,
     fs: Arc<dyn Fs>,
+    themes: Arc<ThemeRegistry>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
     left_sidebar: Sidebar,
@@ -735,7 +738,7 @@ impl Workspace {
         })
         .detach();
 
-        let pane = cx.add_view(|cx| Pane::new(params.project.clone(), cx));
+        let pane = cx.add_view(|cx| Pane::new(cx));
         let pane_id = pane.id();
         cx.observe(&pane, move |me, _, cx| {
             let active_entry = me.active_project_path(cx);
@@ -783,6 +786,7 @@ impl Workspace {
             remote_entity_subscription: None,
             user_store: params.user_store.clone(),
             fs: params.fs.clone(),
+            themes: params.themes.clone(),
             left_sidebar: Sidebar::new(Side::Left),
             right_sidebar: Sidebar::new(Side::Right),
             project: params.project.clone(),
@@ -813,6 +817,10 @@ impl Workspace {
 
     pub fn project(&self) -> &ModelHandle<Project> {
         &self.project
+    }
+
+    pub fn themes(&self) -> Arc<ThemeRegistry> {
+        self.themes.clone()
     }
 
     pub fn worktrees<'a>(
@@ -1050,24 +1058,8 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn debug_elements(&mut self, _: &DebugElements, cx: &mut ViewContext<Self>) {
-        match to_string_pretty(&cx.debug_elements()) {
-            Ok(json) => {
-                let kib = json.len() as f32 / 1024.;
-                cx.as_mut().write_to_clipboard(ClipboardItem::new(json));
-                log::info!(
-                    "copied {:.1} KiB of element debug JSON to the clipboard",
-                    kib
-                );
-            }
-            Err(error) => {
-                log::error!("error debugging elements: {}", error);
-            }
-        };
-    }
-
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane = cx.add_view(|cx| Pane::new(self.project.clone(), cx));
+        let pane = cx.add_view(|cx| Pane::new(cx));
         let pane_id = pane.id();
         cx.observe(&pane, move |me, _, cx| {
             let active_entry = me.active_project_path(cx);
@@ -2067,7 +2059,8 @@ impl Element for AvatarRibbon {
     fn dispatch_event(
         &mut self,
         _: &gpui::Event,
-        _: gpui::geometry::rect::RectF,
+        _: RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         _: &mut gpui::EventContext,
@@ -2090,9 +2083,9 @@ impl Element for AvatarRibbon {
     }
 }
 
-impl std::fmt::Debug for OpenParams {
+impl std::fmt::Debug for OpenPaths {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpenParams")
+        f.debug_struct("OpenPaths")
             .field("paths", &self.paths)
             .finish()
     }
@@ -2107,7 +2100,7 @@ fn open(action: &Open, cx: &mut MutableAppContext) {
     });
     cx.spawn(|mut cx| async move {
         if let Some(paths) = paths.recv().await.flatten() {
-            cx.update(|cx| cx.dispatch_global_action(OpenPaths(OpenParams { paths, app_state })));
+            cx.update(|cx| cx.dispatch_global_action(OpenPaths { paths, app_state }));
         }
     })
     .detach();
@@ -2119,7 +2112,10 @@ pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: &Arc<AppState>,
     cx: &mut MutableAppContext,
-) -> Task<ViewHandle<Workspace>> {
+) -> Task<(
+    ViewHandle<Workspace>,
+    Vec<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>,
+)> {
     log::info!("open paths {:?}", abs_paths);
 
     // Open paths in existing workspace if possible
@@ -2156,8 +2152,8 @@ pub fn open_paths(
 
     let task = workspace.update(cx, |workspace, cx| workspace.open_paths(abs_paths, cx));
     cx.spawn(|_| async move {
-        task.await;
-        workspace
+        let items = task.await;
+        (workspace, items)
     })
 }
 

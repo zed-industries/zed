@@ -1,18 +1,19 @@
-use crate::{ItemHandle, Settings, StatusItemView};
+use crate::{ItemHandle, StatusItemView};
 use futures::StreamExt;
-use gpui::AppContext;
+use gpui::{actions, AppContext};
 use gpui::{
-    action, elements::*, platform::CursorStyle, Entity, ModelHandle, MutableAppContext,
-    RenderContext, View, ViewContext,
+    elements::*, platform::CursorStyle, Entity, ModelHandle, MutableAppContext, RenderContext,
+    View, ViewContext,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
 use project::{LanguageServerProgress, Project};
+use settings::Settings;
 use smallvec::SmallVec;
 use std::cmp::Reverse;
 use std::fmt::Write;
 use std::sync::Arc;
 
-action!(DismissErrorMessage);
+actions!(lsp_status, [DismissErrorMessage]);
 
 pub struct LspStatus {
     checking_for_update: Vec<String>,

@@ -6,7 +6,7 @@ use crate::{
     json::{self, ToJson},
     platform::Event,
     text_layout::TextLayoutCache,
-    Action, AnyAction, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox,
+    Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox,
     ElementStateContext, Entity, FontSystem, ModelHandle, ReadModel, ReadView, Scene,
     UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
@@ -51,15 +51,21 @@ impl Presenter {
     }
 
     pub fn dispatch_path(&self, app: &AppContext) -> Vec<usize> {
-        let mut path = Vec::new();
-        if let Some(mut view_id) = app.focused_view_id(self.window_id) {
-            path.push(view_id);
-            while let Some(parent_id) = self.parents.get(&view_id).copied() {
-                path.push(parent_id);
-                view_id = parent_id;
-            }
-            path.reverse();
+        if let Some(view_id) = app.focused_view_id(self.window_id) {
+            self.dispatch_path_from(view_id)
+        } else {
+            Vec::new()
         }
+    }
+
+    pub(crate) fn dispatch_path_from(&self, mut view_id: usize) -> Vec<usize> {
+        let mut path = Vec::new();
+        path.push(view_id);
+        while let Some(parent_id) = self.parents.get(&view_id).copied() {
+            path.push(parent_id);
+            view_id = parent_id;
+        }
+        path.reverse();
         path
     }
 
@@ -209,21 +215,24 @@ impl Presenter {
     }
 
     pub fn debug_elements(&self, cx: &AppContext) -> Option<json::Value> {
-        cx.root_view_id(self.window_id)
-            .and_then(|root_view_id| self.rendered_views.get(&root_view_id))
-            .map(|root_element| {
-                root_element.debug(&DebugContext {
-                    rendered_views: &self.rendered_views,
-                    font_cache: &self.font_cache,
-                    app: cx,
+        let view = cx.root_view(self.window_id)?;
+        Some(json!({
+            "root_view": view.debug_json(cx),
+            "root_element": self.rendered_views.get(&view.id())
+                .map(|root_element| {
+                    root_element.debug(&DebugContext {
+                        rendered_views: &self.rendered_views,
+                        font_cache: &self.font_cache,
+                        app: cx,
+                    })
                 })
-            })
+        }))
     }
 }
 
 pub struct DispatchDirective {
     pub path: Vec<usize>,
-    pub action: Box<dyn AnyAction>,
+    pub action: Box<dyn Action>,
 }
 
 pub struct LayoutContext<'a> {
@@ -535,6 +544,7 @@ impl Element for ChildView {
         &mut self,
         event: &Event,
         _: RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         cx: &mut EventContext,
@@ -553,6 +563,7 @@ impl Element for ChildView {
             "type": "ChildView",
             "view_id": self.view.id(),
             "bounds": bounds.to_json(),
+            "view": self.view.debug_json(cx.app),
             "child": if let Some(view) = cx.rendered_views.get(&self.view.id()) {
                 view.debug(cx)
             } else {

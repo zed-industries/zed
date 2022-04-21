@@ -35,21 +35,24 @@ impl Connection {
     #[cfg(any(test, feature = "test-support"))]
     pub fn in_memory(
         executor: std::sync::Arc<gpui::executor::Background>,
-    ) -> (Self, Self, postage::barrier::Sender) {
-        use postage::prelude::Stream;
+    ) -> (Self, Self, std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering::SeqCst},
+            Arc,
+        };
 
-        let (kill_tx, kill_rx) = postage::barrier::channel();
-        let (a_tx, a_rx) = channel(kill_rx.clone(), executor.clone());
-        let (b_tx, b_rx) = channel(kill_rx, executor);
+        let killed = Arc::new(AtomicBool::new(false));
+        let (a_tx, a_rx) = channel(killed.clone(), executor.clone());
+        let (b_tx, b_rx) = channel(killed.clone(), executor);
         return (
             Self { tx: a_tx, rx: b_rx },
             Self { tx: b_tx, rx: a_rx },
-            kill_tx,
+            killed,
         );
 
         fn channel(
-            kill_rx: postage::barrier::Receiver,
-            executor: std::sync::Arc<gpui::executor::Background>,
+            killed: Arc<AtomicBool>,
+            executor: Arc<gpui::executor::Background>,
         ) -> (
             Box<dyn Send + Unpin + futures::Sink<WebSocketMessage, Error = WebSocketError>>,
             Box<
@@ -57,20 +60,17 @@ impl Connection {
             >,
         ) {
             use futures::channel::mpsc;
-            use std::{
-                io::{Error, ErrorKind},
-                sync::Arc,
-            };
+            use std::io::{Error, ErrorKind};
 
             let (tx, rx) = mpsc::unbounded::<WebSocketMessage>();
 
             let tx = tx
                 .sink_map_err(|e| WebSocketError::from(Error::new(ErrorKind::Other, e)))
                 .with({
-                    let kill_rx = kill_rx.clone();
+                    let killed = killed.clone();
                     let executor = Arc::downgrade(&executor);
                     move |msg| {
-                        let mut kill_rx = kill_rx.clone();
+                        let killed = killed.clone();
                         let executor = executor.clone();
                         Box::pin(async move {
                             if let Some(executor) = executor.upgrade() {
@@ -78,7 +78,7 @@ impl Connection {
                             }
 
                             // Writes to a half-open TCP connection will error.
-                            if kill_rx.try_recv().is_ok() {
+                            if killed.load(SeqCst) {
                                 std::io::Result::Err(
                                     Error::new(ErrorKind::Other, "connection lost").into(),
                                 )?;
@@ -90,10 +90,10 @@ impl Connection {
                 });
 
             let rx = rx.then({
-                let kill_rx = kill_rx.clone();
+                let killed = killed.clone();
                 let executor = Arc::downgrade(&executor);
                 move |msg| {
-                    let mut kill_rx = kill_rx.clone();
+                    let killed = killed.clone();
                     let executor = executor.clone();
                     Box::pin(async move {
                         if let Some(executor) = executor.upgrade() {
@@ -101,7 +101,7 @@ impl Connection {
                         }
 
                         // Reads from a half-open TCP connection will hang.
-                        if kill_rx.try_recv().is_ok() {
+                        if killed.load(SeqCst) {
                             futures::future::pending::<()>().await;
                         }
 

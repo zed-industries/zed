@@ -8,9 +8,10 @@ path = "src/auto_update.rs"
 doctest = false
 
 [dependencies]
-gpui = { path = "../gpui" }
-theme = { path = "../theme" }
 client = { path = "../client" }
+gpui = { path = "../gpui" }
+settings = { path = "../settings" }
+theme = { path = "../theme" }
 workspace = { path = "../workspace" }
 anyhow = "1.0.38"
 lazy_static = "1.4"

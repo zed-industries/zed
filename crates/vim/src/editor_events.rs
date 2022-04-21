@@ -1,7 +1,7 @@
 use editor::{EditorBlurred, EditorCreated, EditorFocused, EditorMode, EditorReleased};
 use gpui::MutableAppContext;
 
-use crate::{mode::Mode, SwitchMode, VimState};
+use crate::{state::Mode, Vim};
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.subscribe_global(editor_created).detach();
@@ -11,9 +11,9 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 fn editor_created(EditorCreated(editor): &EditorCreated, cx: &mut MutableAppContext) {
-    cx.update_default_global(|vim_state: &mut VimState, cx| {
-        vim_state.editors.insert(editor.id(), editor.downgrade());
-        vim_state.sync_editor_options(cx);
+    cx.update_default_global(|vim: &mut Vim, cx| {
+        vim.editors.insert(editor.id(), editor.downgrade());
+        vim.sync_editor_options(cx);
     })
 }
 
@@ -21,17 +21,17 @@ fn editor_focused(EditorFocused(editor): &EditorFocused, cx: &mut MutableAppCont
     let mode = if matches!(editor.read(cx).mode(), EditorMode::SingleLine) {
         Mode::Insert
     } else {
-        Mode::normal()
+        Mode::Normal
     };
 
-    VimState::update_global(cx, |state, cx| {
+    Vim::update(cx, |state, cx| {
         state.active_editor = Some(editor.downgrade());
-        state.switch_mode(&SwitchMode(mode), cx);
+        state.switch_mode(mode, cx);
     });
 }
 
 fn editor_blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut MutableAppContext) {
-    VimState::update_global(cx, |state, cx| {
+    Vim::update(cx, |state, cx| {
         if let Some(previous_editor) = state.active_editor.clone() {
             if previous_editor == editor.clone() {
                 state.active_editor = None;
@@ -42,11 +42,11 @@ fn editor_blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut MutableAppCont
 }
 
 fn editor_released(EditorReleased(editor): &EditorReleased, cx: &mut MutableAppContext) {
-    cx.update_default_global(|vim_state: &mut VimState, _| {
-        vim_state.editors.remove(&editor.id());
-        if let Some(previous_editor) = vim_state.active_editor.clone() {
+    cx.update_default_global(|vim: &mut Vim, _| {
+        vim.editors.remove(&editor.id());
+        if let Some(previous_editor) = vim.active_editor.clone() {
             if previous_editor == editor.clone() {
-                vim_state.active_editor = None;
+                vim.active_editor = None;
             }
         }
     });

@@ -59,6 +59,7 @@ where
         &mut self,
         _: &crate::Event,
         _: RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         _: &mut crate::EventContext,

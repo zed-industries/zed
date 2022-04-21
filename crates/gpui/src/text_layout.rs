@@ -191,6 +191,7 @@ pub struct Glyph {
     pub id: GlyphId,
     pub position: Vector2F,
     pub index: usize,
+    pub is_emoji: bool,
 }
 
 impl Line {
@@ -323,13 +324,22 @@ impl Line {
                     });
                 }
 
-                cx.scene.push_glyph(scene::Glyph {
-                    font_id: run.font_id,
-                    font_size: self.layout.font_size,
-                    id: glyph.id,
-                    origin: glyph_origin,
-                    color,
-                });
+                if glyph.is_emoji {
+                    cx.scene.push_image_glyph(scene::ImageGlyph {
+                        font_id: run.font_id,
+                        font_size: self.layout.font_size,
+                        id: glyph.id,
+                        origin: glyph_origin,
+                    });
+                } else {
+                    cx.scene.push_glyph(scene::Glyph {
+                        font_id: run.font_id,
+                        font_size: self.layout.font_size,
+                        id: glyph.id,
+                        origin: glyph_origin,
+                        color,
+                    });
+                }
             }
         }
 
@@ -389,13 +399,22 @@ impl Line {
                         .bounding_box(run.font_id, self.layout.font_size),
                 );
                 if glyph_bounds.intersects(visible_bounds) {
-                    cx.scene.push_glyph(scene::Glyph {
-                        font_id: run.font_id,
-                        font_size: self.layout.font_size,
-                        id: glyph.id,
-                        origin: glyph_bounds.origin() + baseline_origin,
-                        color,
-                    });
+                    if glyph.is_emoji {
+                        cx.scene.push_image_glyph(scene::ImageGlyph {
+                            font_id: run.font_id,
+                            font_size: self.layout.font_size,
+                            id: glyph.id,
+                            origin: glyph_bounds.origin() + baseline_origin,
+                        });
+                    } else {
+                        cx.scene.push_glyph(scene::Glyph {
+                            font_id: run.font_id,
+                            font_size: self.layout.font_size,
+                            id: glyph.id,
+                            origin: glyph_bounds.origin() + baseline_origin,
+                            color,
+                        });
+                    }
                 }
             }
         }

@@ -22,6 +22,7 @@ use gpui::{
 };
 use json::json;
 use language::{Bias, DiagnosticSeverity};
+use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
@@ -917,9 +918,11 @@ impl Element for EditorElement {
             let display_map = view.display_map.update(cx, |map, cx| map.snapshot(cx));
 
             highlighted_rows = view.highlighted_rows();
+            let theme = cx.global::<Settings>().theme.as_ref();
             highlighted_ranges = view.background_highlights_in_range(
                 start_anchor.clone()..end_anchor.clone(),
                 &display_map,
+                theme,
             );
 
             let mut remote_selections = HashMap::default();
@@ -1146,6 +1149,7 @@ impl Element for EditorElement {
     fn dispatch_event(
         &mut self,
         event: &Event,
+        _: RectF,
         _: RectF,
         layout: &mut LayoutState,
         paint: &mut PaintState,
@@ -1494,8 +1498,8 @@ mod tests {
         display_map::{BlockDisposition, BlockProperties},
         Editor, MultiBuffer,
     };
+    use settings::Settings;
     use util::test::sample_text;
-    use workspace::Settings;
 
     #[gpui::test]
     fn test_layout_line_numbers(cx: &mut gpui::MutableAppContext) {

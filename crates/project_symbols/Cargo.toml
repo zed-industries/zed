@@ -11,11 +11,21 @@ doctest = false
 editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
+picker = { path = "../picker" }
 project = { path = "../project" }
 text = { path = "../text" }
+settings = { path = "../settings" }
 workspace = { path = "../workspace" }
 util = { path = "../util" }
 anyhow = "1.0.38"
 ordered-float = "2.1.1"
 postage = { version = "0.4", features = ["futures-traits"] }
 smol = "1.2"
+
+[dev-dependencies]
+futures = "0.3"
+settings = { path = "../settings", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
+language = { path = "../language", features = ["test-support"] }
+lsp = { path = "../lsp", features = ["test-support"] }
+project = { path = "../project", features = ["test-support"] }

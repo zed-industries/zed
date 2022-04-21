@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use client::http::{self, HttpClient};
 use gpui::{
-    action,
+    actions,
     elements::{Empty, MouseEventHandler, Text},
     platform::AppVersion,
     AsyncAppContext, Element, Entity, ModelContext, ModelHandle, MutableAppContext, Task, View,
@@ -9,10 +9,11 @@ use gpui::{
 };
 use lazy_static::lazy_static;
 use serde::Deserialize;
+use settings::Settings;
 use smol::{fs::File, io::AsyncReadExt, process::Command};
 use std::{env, ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
 use surf::Request;
-use workspace::{ItemHandle, Settings, StatusItemView};
+use workspace::{ItemHandle, StatusItemView};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const ACCESS_TOKEN: &'static str = "618033988749894";
@@ -23,6 +24,8 @@ lazy_static! {
         .and_then(|v| v.parse().ok());
     pub static ref ZED_APP_PATH: Option<PathBuf> = env::var("ZED_APP_PATH").ok().map(PathBuf::from);
 }
+
+actions!(auto_update, [Check, DismissErrorMessage]);
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum AutoUpdateStatus {
@@ -46,8 +49,6 @@ pub struct AutoUpdateIndicator {
     updater: Option<ModelHandle<AutoUpdater>>,
 }
 
-action!(DismissErrorMessage);
-
 #[derive(Deserialize)]
 struct JsonRelease {
     version: String,
@@ -66,13 +67,12 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut Mutab
             updater
         });
         cx.set_global(Some(auto_updater));
+        cx.add_global_action(|_: &Check, cx| {
+            if let Some(updater) = AutoUpdater::get(cx) {
+                updater.update(cx, |updater, cx| updater.poll(cx));
+            }
+        });
         cx.add_action(AutoUpdateIndicator::dismiss_error_message);
-    }
-}
-
-pub fn check(cx: &mut MutableAppContext) {
-    if let Some(updater) = AutoUpdater::get(cx) {
-        updater.update(cx, |updater, cx| updater.poll(cx));
     }
 }
 

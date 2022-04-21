@@ -16,13 +16,13 @@ use display_map::*;
 pub use element::*;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    action,
+    actions,
     color::Color,
     elements::*,
     executor,
     fonts::{self, HighlightStyle, TextStyle},
     geometry::vector::{vec2f, Vector2F},
-    keymap::Binding,
+    impl_actions, impl_internal_actions,
     platform::CursorStyle,
     text_layout, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
     ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
@@ -41,6 +41,7 @@ pub use multi_buffer::{
 use ordered_float::OrderedFloat;
 use project::{Project, ProjectTransaction};
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use smallvec::SmallVec;
 use smol::Timer;
 use snippet::Snippet;
@@ -55,93 +56,154 @@ use std::{
 };
 pub use sum_tree::Bias;
 use text::rope::TextDimension;
-use theme::DiagnosticStyle;
+use theme::{DiagnosticStyle, Theme};
 use util::{post_inc, ResultExt, TryFutureExt};
-use workspace::{settings, ItemNavHistory, Settings, Workspace};
+use workspace::{ItemNavHistory, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 
-action!(Cancel);
-action!(Backspace);
-action!(Delete);
-action!(Input, String);
-action!(Newline);
-action!(Tab, Direction);
-action!(Indent);
-action!(Outdent);
-action!(DeleteLine);
-action!(DeleteToPreviousWordStart);
-action!(DeleteToPreviousSubwordStart);
-action!(DeleteToNextWordEnd);
-action!(DeleteToNextSubwordEnd);
-action!(DeleteToBeginningOfLine);
-action!(DeleteToEndOfLine);
-action!(CutToEndOfLine);
-action!(DuplicateLine);
-action!(MoveLineUp);
-action!(MoveLineDown);
-action!(Cut);
-action!(Copy);
-action!(Paste);
-action!(Undo);
-action!(Redo);
-action!(MoveUp);
-action!(MoveDown);
-action!(MoveLeft);
-action!(MoveRight);
-action!(MoveToPreviousWordStart);
-action!(MoveToPreviousSubwordStart);
-action!(MoveToNextWordEnd);
-action!(MoveToNextSubwordEnd);
-action!(MoveToBeginningOfLine);
-action!(MoveToEndOfLine);
-action!(MoveToBeginning);
-action!(MoveToEnd);
-action!(SelectUp);
-action!(SelectDown);
-action!(SelectLeft);
-action!(SelectRight);
-action!(SelectToPreviousWordStart);
-action!(SelectToPreviousSubwordStart);
-action!(SelectToNextWordEnd);
-action!(SelectToNextSubwordEnd);
-action!(SelectToBeginningOfLine, bool);
-action!(SelectToEndOfLine, bool);
-action!(SelectToBeginning);
-action!(SelectToEnd);
-action!(SelectAll);
-action!(SelectLine);
-action!(SplitSelectionIntoLines);
-action!(AddSelectionAbove);
-action!(AddSelectionBelow);
-action!(SelectNext, bool);
-action!(ToggleComments);
-action!(SelectLargerSyntaxNode);
-action!(SelectSmallerSyntaxNode);
-action!(MoveToEnclosingBracket);
-action!(UndoSelection);
-action!(RedoSelection);
-action!(GoToDiagnostic, Direction);
-action!(GoToDefinition);
-action!(FindAllReferences);
-action!(Rename);
-action!(ConfirmRename);
-action!(PageUp);
-action!(PageDown);
-action!(Fold);
-action!(UnfoldLines);
-action!(FoldSelectedRanges);
-action!(Scroll, Vector2F);
-action!(Select, SelectPhase);
-action!(ShowCompletions);
-action!(ToggleCodeActions, bool);
-action!(ConfirmCompletion, Option<usize>);
-action!(ConfirmCodeAction, Option<usize>);
-action!(OpenExcerpts);
-action!(RestartLanguageServer);
+#[derive(Clone, Deserialize)]
+pub struct SelectNext {
+    #[serde(default)]
+    pub replace_newest: bool,
+}
+
+#[derive(Clone)]
+pub struct GoToDiagnostic(pub Direction);
+
+#[derive(Clone)]
+pub struct Scroll(pub Vector2F);
+
+#[derive(Clone)]
+pub struct Select(pub SelectPhase);
+
+#[derive(Clone, Deserialize)]
+pub struct Input(pub String);
+
+#[derive(Clone, Deserialize)]
+pub struct SelectToBeginningOfLine {
+    #[serde(default)]
+    stop_at_soft_wraps: bool,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct SelectToEndOfLine {
+    #[serde(default)]
+    stop_at_soft_wraps: bool,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct ToggleCodeActions {
+    #[serde(default)]
+    pub deployed_from_indicator: bool,
+}
+
+#[derive(Clone, Default, Deserialize)]
+pub struct ConfirmCompletion {
+    #[serde(default)]
+    pub item_ix: Option<usize>,
+}
+
+#[derive(Clone, Default, Deserialize)]
+pub struct ConfirmCodeAction {
+    #[serde(default)]
+    pub item_ix: Option<usize>,
+}
+
+actions!(
+    editor,
+    [
+        Cancel,
+        Backspace,
+        Delete,
+        Newline,
+        GoToNextDiagnostic,
+        GoToPrevDiagnostic,
+        Indent,
+        Outdent,
+        DeleteLine,
+        DeleteToPreviousWordStart,
+        DeleteToPreviousSubwordStart,
+        DeleteToNextWordEnd,
+        DeleteToNextSubwordEnd,
+        DeleteToBeginningOfLine,
+        DeleteToEndOfLine,
+        CutToEndOfLine,
+        DuplicateLine,
+        MoveLineUp,
+        MoveLineDown,
+        Cut,
+        Copy,
+        Paste,
+        Undo,
+        Redo,
+        MoveUp,
+        MoveDown,
+        MoveLeft,
+        MoveRight,
+        MoveToPreviousWordStart,
+        MoveToPreviousSubwordStart,
+        MoveToNextWordEnd,
+        MoveToNextSubwordEnd,
+        MoveToBeginningOfLine,
+        MoveToEndOfLine,
+        MoveToBeginning,
+        MoveToEnd,
+        SelectUp,
+        SelectDown,
+        SelectLeft,
+        SelectRight,
+        SelectToPreviousWordStart,
+        SelectToPreviousSubwordStart,
+        SelectToNextWordEnd,
+        SelectToNextSubwordEnd,
+        SelectToBeginning,
+        SelectToEnd,
+        SelectAll,
+        SelectLine,
+        SplitSelectionIntoLines,
+        AddSelectionAbove,
+        AddSelectionBelow,
+        Tab,
+        TabPrev,
+        ToggleComments,
+        SelectLargerSyntaxNode,
+        SelectSmallerSyntaxNode,
+        MoveToEnclosingBracket,
+        UndoSelection,
+        RedoSelection,
+        GoToDefinition,
+        FindAllReferences,
+        Rename,
+        ConfirmRename,
+        PageUp,
+        PageDown,
+        Fold,
+        UnfoldLines,
+        FoldSelectedRanges,
+        ShowCompletions,
+        OpenExcerpts,
+        RestartLanguageServer,
+    ]
+);
+
+impl_actions!(
+    editor,
+    [
+        Input,
+        SelectNext,
+        SelectToBeginningOfLine,
+        SelectToEndOfLine,
+        ToggleCodeActions,
+        ConfirmCompletion,
+        ConfirmCodeAction,
+    ]
+);
+
+impl_internal_actions!(editor, [Scroll, Select]);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -153,159 +215,6 @@ pub enum Direction {
 }
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_bindings(vec![
-        Binding::new("escape", Cancel, Some("Editor")),
-        Binding::new("backspace", Backspace, Some("Editor")),
-        Binding::new("ctrl-h", Backspace, Some("Editor")),
-        Binding::new("delete", Delete, Some("Editor")),
-        Binding::new("ctrl-d", Delete, Some("Editor")),
-        Binding::new("enter", Newline, Some("Editor && mode == full")),
-        Binding::new(
-            "alt-enter",
-            Input("\n".into()),
-            Some("Editor && mode == auto_height"),
-        ),
-        Binding::new(
-            "enter",
-            ConfirmCompletion(None),
-            Some("Editor && showing_completions"),
-        ),
-        Binding::new(
-            "enter",
-            ConfirmCodeAction(None),
-            Some("Editor && showing_code_actions"),
-        ),
-        Binding::new("enter", ConfirmRename, Some("Editor && renaming")),
-        Binding::new("tab", Tab(Direction::Next), Some("Editor")),
-        Binding::new("shift-tab", Tab(Direction::Prev), Some("Editor")),
-        Binding::new(
-            "tab",
-            ConfirmCompletion(None),
-            Some("Editor && showing_completions"),
-        ),
-        Binding::new("cmd-[", Outdent, Some("Editor")),
-        Binding::new("cmd-]", Indent, Some("Editor")),
-        Binding::new("ctrl-shift-K", DeleteLine, Some("Editor")),
-        Binding::new("alt-backspace", DeleteToPreviousWordStart, Some("Editor")),
-        Binding::new("alt-h", DeleteToPreviousWordStart, Some("Editor")),
-        Binding::new(
-            "ctrl-alt-backspace",
-            DeleteToPreviousSubwordStart,
-            Some("Editor"),
-        ),
-        Binding::new("ctrl-alt-h", DeleteToPreviousSubwordStart, Some("Editor")),
-        Binding::new("alt-delete", DeleteToNextWordEnd, Some("Editor")),
-        Binding::new("alt-d", DeleteToNextWordEnd, Some("Editor")),
-        Binding::new("ctrl-alt-delete", DeleteToNextSubwordEnd, Some("Editor")),
-        Binding::new("ctrl-alt-d", DeleteToNextSubwordEnd, Some("Editor")),
-        Binding::new("cmd-backspace", DeleteToBeginningOfLine, Some("Editor")),
-        Binding::new("cmd-delete", DeleteToEndOfLine, Some("Editor")),
-        Binding::new("ctrl-k", CutToEndOfLine, Some("Editor")),
-        Binding::new("cmd-shift-D", DuplicateLine, Some("Editor")),
-        Binding::new("ctrl-cmd-up", MoveLineUp, Some("Editor")),
-        Binding::new("ctrl-cmd-down", MoveLineDown, Some("Editor")),
-        Binding::new("cmd-x", Cut, Some("Editor")),
-        Binding::new("cmd-c", Copy, Some("Editor")),
-        Binding::new("cmd-v", Paste, Some("Editor")),
-        Binding::new("cmd-z", Undo, Some("Editor")),
-        Binding::new("cmd-shift-Z", Redo, Some("Editor")),
-        Binding::new("up", MoveUp, Some("Editor")),
-        Binding::new("down", MoveDown, Some("Editor")),
-        Binding::new("left", MoveLeft, Some("Editor")),
-        Binding::new("right", MoveRight, Some("Editor")),
-        Binding::new("ctrl-p", MoveUp, Some("Editor")),
-        Binding::new("ctrl-n", MoveDown, Some("Editor")),
-        Binding::new("ctrl-b", MoveLeft, Some("Editor")),
-        Binding::new("ctrl-f", MoveRight, Some("Editor")),
-        Binding::new("alt-left", MoveToPreviousWordStart, Some("Editor")),
-        Binding::new("alt-b", MoveToPreviousWordStart, Some("Editor")),
-        Binding::new("ctrl-alt-left", MoveToPreviousSubwordStart, Some("Editor")),
-        Binding::new("ctrl-alt-b", MoveToPreviousSubwordStart, Some("Editor")),
-        Binding::new("alt-right", MoveToNextWordEnd, Some("Editor")),
-        Binding::new("alt-f", MoveToNextWordEnd, Some("Editor")),
-        Binding::new("ctrl-alt-right", MoveToNextSubwordEnd, Some("Editor")),
-        Binding::new("ctrl-alt-f", MoveToNextSubwordEnd, Some("Editor")),
-        Binding::new("cmd-left", MoveToBeginningOfLine, Some("Editor")),
-        Binding::new("ctrl-a", MoveToBeginningOfLine, Some("Editor")),
-        Binding::new("cmd-right", MoveToEndOfLine, Some("Editor")),
-        Binding::new("ctrl-e", MoveToEndOfLine, Some("Editor")),
-        Binding::new("cmd-up", MoveToBeginning, Some("Editor")),
-        Binding::new("cmd-down", MoveToEnd, Some("Editor")),
-        Binding::new("shift-up", SelectUp, Some("Editor")),
-        Binding::new("ctrl-shift-P", SelectUp, Some("Editor")),
-        Binding::new("shift-down", SelectDown, Some("Editor")),
-        Binding::new("ctrl-shift-N", SelectDown, Some("Editor")),
-        Binding::new("shift-left", SelectLeft, Some("Editor")),
-        Binding::new("ctrl-shift-B", SelectLeft, Some("Editor")),
-        Binding::new("shift-right", SelectRight, Some("Editor")),
-        Binding::new("ctrl-shift-F", SelectRight, Some("Editor")),
-        Binding::new("alt-shift-left", SelectToPreviousWordStart, Some("Editor")),
-        Binding::new("alt-shift-B", SelectToPreviousWordStart, Some("Editor")),
-        Binding::new(
-            "ctrl-alt-shift-left",
-            SelectToPreviousSubwordStart,
-            Some("Editor"),
-        ),
-        Binding::new(
-            "ctrl-alt-shift-B",
-            SelectToPreviousSubwordStart,
-            Some("Editor"),
-        ),
-        Binding::new("alt-shift-right", SelectToNextWordEnd, Some("Editor")),
-        Binding::new("alt-shift-F", SelectToNextWordEnd, Some("Editor")),
-        Binding::new(
-            "cmd-shift-left",
-            SelectToBeginningOfLine(true),
-            Some("Editor"),
-        ),
-        Binding::new(
-            "ctrl-alt-shift-right",
-            SelectToNextSubwordEnd,
-            Some("Editor"),
-        ),
-        Binding::new("ctrl-alt-shift-F", SelectToNextSubwordEnd, Some("Editor")),
-        Binding::new(
-            "ctrl-shift-A",
-            SelectToBeginningOfLine(true),
-            Some("Editor"),
-        ),
-        Binding::new("cmd-shift-right", SelectToEndOfLine(true), Some("Editor")),
-        Binding::new("ctrl-shift-E", SelectToEndOfLine(true), Some("Editor")),
-        Binding::new("cmd-shift-up", SelectToBeginning, Some("Editor")),
-        Binding::new("cmd-shift-down", SelectToEnd, Some("Editor")),
-        Binding::new("cmd-a", SelectAll, Some("Editor")),
-        Binding::new("cmd-l", SelectLine, Some("Editor")),
-        Binding::new("cmd-shift-L", SplitSelectionIntoLines, Some("Editor")),
-        Binding::new("cmd-alt-up", AddSelectionAbove, Some("Editor")),
-        Binding::new("cmd-ctrl-p", AddSelectionAbove, Some("Editor")),
-        Binding::new("cmd-alt-down", AddSelectionBelow, Some("Editor")),
-        Binding::new("cmd-ctrl-n", AddSelectionBelow, Some("Editor")),
-        Binding::new("cmd-d", SelectNext(false), Some("Editor")),
-        Binding::new("cmd-k cmd-d", SelectNext(true), Some("Editor")),
-        Binding::new("cmd-/", ToggleComments, Some("Editor")),
-        Binding::new("alt-up", SelectLargerSyntaxNode, Some("Editor")),
-        Binding::new("ctrl-w", SelectLargerSyntaxNode, Some("Editor")),
-        Binding::new("alt-down", SelectSmallerSyntaxNode, Some("Editor")),
-        Binding::new("ctrl-shift-W", SelectSmallerSyntaxNode, Some("Editor")),
-        Binding::new("cmd-u", UndoSelection, Some("Editor")),
-        Binding::new("cmd-shift-U", RedoSelection, Some("Editor")),
-        Binding::new("f8", GoToDiagnostic(Direction::Next), Some("Editor")),
-        Binding::new("shift-f8", GoToDiagnostic(Direction::Prev), Some("Editor")),
-        Binding::new("f2", Rename, Some("Editor")),
-        Binding::new("f12", GoToDefinition, Some("Editor")),
-        Binding::new("alt-shift-f12", FindAllReferences, Some("Editor")),
-        Binding::new("ctrl-m", MoveToEnclosingBracket, Some("Editor")),
-        Binding::new("pageup", PageUp, Some("Editor")),
-        Binding::new("pagedown", PageDown, Some("Editor")),
-        Binding::new("alt-cmd-[", Fold, Some("Editor")),
-        Binding::new("alt-cmd-]", UnfoldLines, Some("Editor")),
-        Binding::new("alt-cmd-f", FoldSelectedRanges, Some("Editor")),
-        Binding::new("ctrl-space", ShowCompletions, Some("Editor")),
-        Binding::new("cmd-.", ToggleCodeActions(false), Some("Editor")),
-        Binding::new("alt-enter", OpenExcerpts, Some("Editor")),
-        Binding::new("cmd-f10", RestartLanguageServer, Some("Editor")),
-    ]);
-
     cx.add_action(Editor::open_new);
     cx.add_action(|this: &mut Editor, action: &Scroll, cx| this.set_scroll_position(action.0, cx));
     cx.add_action(Editor::select);
@@ -315,6 +224,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::backspace);
     cx.add_action(Editor::delete);
     cx.add_action(Editor::tab);
+    cx.add_action(Editor::tab_prev);
     cx.add_action(Editor::indent);
     cx.add_action(Editor::outdent);
     cx.add_action(Editor::delete_line);
@@ -369,7 +279,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::move_to_enclosing_bracket);
     cx.add_action(Editor::undo_selection);
     cx.add_action(Editor::redo_selection);
-    cx.add_action(Editor::go_to_diagnostic);
+    cx.add_action(Editor::go_to_next_diagnostic);
+    cx.add_action(Editor::go_to_prev_diagnostic);
     cx.add_action(Editor::go_to_definition);
     cx.add_action(Editor::page_up);
     cx.add_action(Editor::page_down);
@@ -490,7 +401,7 @@ pub struct Editor {
     vertical_scroll_margin: f32,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
-    background_highlights: BTreeMap<TypeId, (Color, Vec<Range<Anchor>>)>,
+    background_highlights: BTreeMap<TypeId, (fn(&Theme) -> Color, Vec<Range<Anchor>>)>,
     nav_history: Option<ItemNavHistory>,
     context_menu: Option<ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
@@ -767,7 +678,9 @@ impl CompletionsMenu {
                     )
                     .with_cursor_style(CursorStyle::PointingHand)
                     .on_mouse_down(move |cx| {
-                        cx.dispatch_action(ConfirmCompletion(Some(item_ix)));
+                        cx.dispatch_action(ConfirmCompletion {
+                            item_ix: Some(item_ix),
+                        });
                     })
                     .boxed(),
                 );
@@ -893,7 +806,9 @@ impl CodeActionsMenu {
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_mouse_down(move |cx| {
-                            cx.dispatch_action(ConfirmCodeAction(Some(item_ix)));
+                            cx.dispatch_action(ConfirmCodeAction {
+                                item_ix: Some(item_ix),
+                            });
                         })
                         .boxed(),
                     );
@@ -933,8 +848,13 @@ struct ClipboardSelection {
 }
 
 pub struct NavigationData {
-    anchor: Anchor,
-    offset: usize,
+    // Matching offsets for anchor and scroll_top_anchor allows us to recreate the anchor if the buffer
+    // has since been closed
+    cursor_anchor: Anchor,
+    cursor_offset: usize,
+    scroll_position: Vector2F,
+    scroll_top_anchor: Anchor,
+    scroll_top_offset: usize,
 }
 
 pub struct EditorCreated(pub ViewHandle<Editor>);
@@ -1008,7 +928,6 @@ impl Editor {
             let style = build_style(&*settings, get_field_editor_theme, None, cx);
             DisplayMap::new(
                 buffer.clone(),
-                settings.tab_size,
                 style.text.font_id,
                 style.text.font_size,
                 None,
@@ -1094,7 +1013,7 @@ impl Editor {
         if project.read(cx).is_remote() {
             cx.propagate_action();
         } else if let Some(buffer) = project
-            .update(cx, |project, cx| project.create_buffer(cx))
+            .update(cx, |project, cx| project.create_buffer("", None, cx))
             .log_err()
         {
             workspace.add_item(
@@ -1130,8 +1049,12 @@ impl Editor {
         }
     }
 
-    pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
-        self.buffer.read(cx).language(cx)
+    pub fn language_at<'a, T: ToOffset>(
+        &self,
+        point: T,
+        cx: &'a AppContext,
+    ) -> Option<&'a Arc<Language>> {
+        self.buffer.read(cx).language_at(point, cx)
     }
 
     fn style(&self, cx: &AppContext) -> EditorStyle {
@@ -1782,33 +1705,37 @@ impl Editor {
             return;
         }
 
-        if self.mode != EditorMode::Full {
-            cx.propagate_action();
-            return;
-        }
-
-        if self.active_diagnostics.is_some() {
-            self.dismiss_diagnostics(cx);
-        } else if let Some(pending) = self.pending_selection.clone() {
-            let mut selections = self.selections.clone();
-            if selections.is_empty() {
-                selections = Arc::from([pending.selection]);
+        if self.mode == EditorMode::Full {
+            if self.active_diagnostics.is_some() {
+                self.dismiss_diagnostics(cx);
+                return;
             }
-            self.set_selections(selections, None, true, cx);
-            self.request_autoscroll(Autoscroll::Fit, cx);
-        } else {
-            let mut oldest_selection = self.oldest_selection::<usize>(&cx);
-            if self.selection_count() == 1 {
-                if oldest_selection.is_empty() {
-                    cx.propagate_action();
-                    return;
-                }
 
+            if let Some(pending) = self.pending_selection.clone() {
+                let mut selections = self.selections.clone();
+                if selections.is_empty() {
+                    selections = Arc::from([pending.selection]);
+                }
+                self.set_selections(selections, None, true, cx);
+                self.request_autoscroll(Autoscroll::Fit, cx);
+                return;
+            }
+
+            let mut oldest_selection = self.oldest_selection::<usize>(&cx);
+            if self.selection_count() > 1 {
+                self.update_selections(vec![oldest_selection], Some(Autoscroll::Fit), cx);
+                return;
+            }
+
+            if !oldest_selection.is_empty() {
                 oldest_selection.start = oldest_selection.head().clone();
                 oldest_selection.end = oldest_selection.head().clone();
+                self.update_selections(vec![oldest_selection], Some(Autoscroll::Fit), cx);
+                return;
             }
-            self.update_selections(vec![oldest_selection], Some(Autoscroll::Fit), cx);
         }
+
+        cx.propagate_action();
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2388,7 +2315,7 @@ impl Editor {
 
     pub fn confirm_completion(
         &mut self,
-        ConfirmCompletion(completion_ix): &ConfirmCompletion,
+        action: &ConfirmCompletion,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         use language::ToOffset as _;
@@ -2401,7 +2328,7 @@ impl Editor {
 
         let mat = completions_menu
             .matches
-            .get(completion_ix.unwrap_or(completions_menu.selected_item))?;
+            .get(action.item_ix.unwrap_or(completions_menu.selected_item))?;
         let buffer_handle = completions_menu.buffer;
         let completion = completions_menu.completions.get(mat.candidate_id)?;
 
@@ -2491,11 +2418,7 @@ impl Editor {
         }))
     }
 
-    pub fn toggle_code_actions(
-        &mut self,
-        &ToggleCodeActions(deployed_from_indicator): &ToggleCodeActions,
-        cx: &mut ViewContext<Self>,
-    ) {
+    pub fn toggle_code_actions(&mut self, action: &ToggleCodeActions, cx: &mut ViewContext<Self>) {
         if matches!(
             self.context_menu.as_ref(),
             Some(ContextMenu::CodeActions(_))
@@ -2505,6 +2428,7 @@ impl Editor {
             return;
         }
 
+        let deployed_from_indicator = action.deployed_from_indicator;
         let mut task = self.code_actions_task.take();
         cx.spawn_weak(|this, mut cx| async move {
             while let Some(prev_task) = task {
@@ -2539,7 +2463,7 @@ impl Editor {
 
     pub fn confirm_code_action(
         workspace: &mut Workspace,
-        ConfirmCodeAction(action_ix): &ConfirmCodeAction,
+        action: &ConfirmCodeAction,
         cx: &mut ViewContext<Workspace>,
     ) -> Option<Task<Result<()>>> {
         let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
@@ -2550,7 +2474,7 @@ impl Editor {
         } else {
             return None;
         };
-        let action_ix = action_ix.unwrap_or(actions_menu.selected_item);
+        let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
         let action = actions_menu.actions.get(action_ix)?.clone();
         let title = action.lsp_action.title.clone();
         let buffer = actions_menu.buffer;
@@ -2629,8 +2553,11 @@ impl Editor {
                 cx.add_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
             workspace.add_item(Box::new(editor.clone()), cx);
             editor.update(cx, |editor, cx| {
-                let color = editor.style(cx).highlighted_line_background;
-                editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
+                editor.highlight_background::<Self>(
+                    ranges_to_highlight,
+                    |theme| theme.editor.highlighted_line_background,
+                    cx,
+                );
             });
         });
 
@@ -2697,9 +2624,6 @@ impl Editor {
                     }
 
                     let buffer_id = cursor_position.buffer_id;
-                    let style = this.style(cx);
-                    let read_background = style.document_highlight_read_background;
-                    let write_background = style.document_highlight_write_background;
                     let buffer = this.buffer.read(cx);
                     if !buffer
                         .text_anchor_for_position(cursor_position, cx)
@@ -2746,12 +2670,12 @@ impl Editor {
 
                     this.highlight_background::<DocumentHighlightRead>(
                         read_ranges,
-                        read_background,
+                        |theme| theme.editor.document_highlight_read_background,
                         cx,
                     );
                     this.highlight_background::<DocumentHighlightWrite>(
                         write_ranges,
-                        write_background,
+                        |theme| theme.editor.document_highlight_write_background,
                         cx,
                     );
                     cx.notify();
@@ -2777,7 +2701,9 @@ impl Editor {
                 .with_cursor_style(CursorStyle::PointingHand)
                 .with_padding(Padding::uniform(3.))
                 .on_mouse_down(|cx| {
-                    cx.dispatch_action(ToggleCodeActions(true));
+                    cx.dispatch_action(ToggleCodeActions {
+                        deployed_from_indicator: true,
+                    });
                 })
                 .boxed(),
             )
@@ -2871,8 +2797,8 @@ impl Editor {
         self.move_to_snippet_tabstop(Bias::Right, cx)
     }
 
-    pub fn move_to_prev_snippet_tabstop(&mut self, cx: &mut ViewContext<Self>) {
-        self.move_to_snippet_tabstop(Bias::Left, cx);
+    pub fn move_to_prev_snippet_tabstop(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        self.move_to_snippet_tabstop(Bias::Left, cx)
     }
 
     pub fn move_to_snippet_tabstop(&mut self, bias: Bias, cx: &mut ViewContext<Self>) -> bool {
@@ -2945,8 +2871,9 @@ impl Editor {
                     .buffer_line_for_row(old_head.row)
                 {
                     let indent_column = buffer.indent_column_for_line(line_buffer_range.start.row);
+                    let language_name = buffer.language().map(|language| language.name());
+                    let indent = cx.global::<Settings>().tab_size(language_name.as_deref());
                     if old_head.column <= indent_column && old_head.column > 0 {
-                        let indent = buffer.indent_size();
                         new_head = cmp::min(
                             new_head,
                             Point::new(old_head.row, ((old_head.column - 1) / indent) * indent),
@@ -2976,60 +2903,58 @@ impl Editor {
         });
     }
 
-    pub fn tab(&mut self, &Tab(direction): &Tab, cx: &mut ViewContext<Self>) {
-        match direction {
-            Direction::Prev => {
-                if !self.snippet_stack.is_empty() {
-                    self.move_to_prev_snippet_tabstop(cx);
-                    return;
-                }
+    pub fn tab_prev(&mut self, _: &TabPrev, cx: &mut ViewContext<Self>) {
+        if self.move_to_prev_snippet_tabstop(cx) {
+            return;
+        }
 
-                self.outdent(&Outdent, cx);
-            }
-            Direction::Next => {
-                if self.move_to_next_snippet_tabstop(cx) {
-                    return;
-                }
+        self.outdent(&Outdent, cx);
+    }
 
-                let tab_size = cx.global::<Settings>().tab_size;
-                let mut selections = self.local_selections::<Point>(cx);
-                if selections.iter().all(|s| s.is_empty()) {
-                    self.transact(cx, |this, cx| {
-                        this.buffer.update(cx, |buffer, cx| {
-                            for selection in &mut selections {
-                                let char_column = buffer
-                                    .read(cx)
-                                    .text_for_range(
-                                        Point::new(selection.start.row, 0)..selection.start,
-                                    )
-                                    .flat_map(str::chars)
-                                    .count();
-                                let chars_to_next_tab_stop = tab_size - (char_column % tab_size);
-                                buffer.edit(
-                                    [selection.start..selection.start],
-                                    " ".repeat(chars_to_next_tab_stop),
-                                    cx,
-                                );
-                                selection.start.column += chars_to_next_tab_stop as u32;
-                                selection.end = selection.start;
-                            }
-                        });
-                        this.update_selections(selections, Some(Autoscroll::Fit), cx);
-                    });
-                } else {
-                    self.indent(&Indent, cx);
-                }
-            }
+    pub fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
+        if self.move_to_next_snippet_tabstop(cx) {
+            return;
+        }
+
+        let mut selections = self.local_selections::<Point>(cx);
+        if selections.iter().all(|s| s.is_empty()) {
+            self.transact(cx, |this, cx| {
+                this.buffer.update(cx, |buffer, cx| {
+                    for selection in &mut selections {
+                        let language_name =
+                            buffer.language_at(selection.start, cx).map(|l| l.name());
+                        let tab_size = cx.global::<Settings>().tab_size(language_name.as_deref());
+                        let char_column = buffer
+                            .read(cx)
+                            .text_for_range(Point::new(selection.start.row, 0)..selection.start)
+                            .flat_map(str::chars)
+                            .count();
+                        let chars_to_next_tab_stop = tab_size - (char_column as u32 % tab_size);
+                        buffer.edit(
+                            [selection.start..selection.start],
+                            " ".repeat(chars_to_next_tab_stop as usize),
+                            cx,
+                        );
+                        selection.start.column += chars_to_next_tab_stop;
+                        selection.end = selection.start;
+                    }
+                });
+                this.update_selections(selections, Some(Autoscroll::Fit), cx);
+            });
+        } else {
+            self.indent(&Indent, cx);
         }
     }
 
     pub fn indent(&mut self, _: &Indent, cx: &mut ViewContext<Self>) {
-        let tab_size = cx.global::<Settings>().tab_size;
         let mut selections = self.local_selections::<Point>(cx);
         self.transact(cx, |this, cx| {
             let mut last_indent = None;
             this.buffer.update(cx, |buffer, cx| {
+                let snapshot = buffer.snapshot(cx);
                 for selection in &mut selections {
+                    let language_name = buffer.language_at(selection.start, cx).map(|l| l.name());
+                    let tab_size = cx.global::<Settings>().tab_size(language_name.as_deref());
                     let mut start_row = selection.start.row;
                     let mut end_row = selection.end.row + 1;
 
@@ -3053,12 +2978,12 @@ impl Editor {
                     }
 
                     for row in start_row..end_row {
-                        let indent_column = buffer.read(cx).indent_column_for_line(row) as usize;
+                        let indent_column = snapshot.indent_column_for_line(row);
                         let columns_to_next_tab_stop = tab_size - (indent_column % tab_size);
                         let row_start = Point::new(row, 0);
                         buffer.edit(
                             [row_start..row_start],
-                            " ".repeat(columns_to_next_tab_stop),
+                            " ".repeat(columns_to_next_tab_stop as usize),
                             cx,
                         );
 
@@ -3080,14 +3005,16 @@ impl Editor {
     }
 
     pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
-        let tab_size = cx.global::<Settings>().tab_size;
         let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut deletion_ranges = Vec::new();
         let mut last_outdent = None;
         {
-            let buffer = self.buffer.read(cx).read(cx);
+            let buffer = self.buffer.read(cx);
+            let snapshot = buffer.snapshot(cx);
             for selection in &selections {
+                let language_name = buffer.language_at(selection.start, cx).map(|l| l.name());
+                let tab_size = cx.global::<Settings>().tab_size(language_name.as_deref());
                 let mut rows = selection.spanned_rows(false, &display_map);
 
                 // Avoid re-outdenting a row that has already been outdented by a
@@ -3099,11 +3026,11 @@ impl Editor {
                 }
 
                 for row in rows {
-                    let column = buffer.indent_column_for_line(row) as usize;
+                    let column = snapshot.indent_column_for_line(row);
                     if column > 0 {
-                        let mut deletion_len = (column % tab_size) as u32;
+                        let mut deletion_len = column % tab_size;
                         if deletion_len == 0 {
-                            deletion_len = tab_size as u32;
+                            deletion_len = tab_size;
                         }
                         deletion_ranges.push(Point::new(row, 0)..Point::new(row, deletion_len));
                         last_outdent = Some(row);
@@ -3847,12 +3774,12 @@ impl Editor {
 
     pub fn select_to_beginning_of_line(
         &mut self,
-        SelectToBeginningOfLine(stop_at_soft_boundaries): &SelectToBeginningOfLine,
+        action: &SelectToBeginningOfLine,
         cx: &mut ViewContext<Self>,
     ) {
         self.move_selection_heads(cx, |map, head, _| {
             (
-                movement::line_beginning(map, head, *stop_at_soft_boundaries),
+                movement::line_beginning(map, head, action.stop_at_soft_wraps),
                 SelectionGoal::None,
             )
         });
@@ -3864,7 +3791,12 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
-            this.select_to_beginning_of_line(&SelectToBeginningOfLine(false), cx);
+            this.select_to_beginning_of_line(
+                &SelectToBeginningOfLine {
+                    stop_at_soft_wraps: false,
+                },
+                cx,
+            );
             this.backspace(&Backspace, cx);
         });
     }
@@ -3877,12 +3809,12 @@ impl Editor {
 
     pub fn select_to_end_of_line(
         &mut self,
-        SelectToEndOfLine(stop_at_soft_boundaries): &SelectToEndOfLine,
+        action: &SelectToEndOfLine,
         cx: &mut ViewContext<Self>,
     ) {
         self.move_selection_heads(cx, |map, head, _| {
             (
-                movement::line_end(map, head, *stop_at_soft_boundaries),
+                movement::line_end(map, head, action.stop_at_soft_wraps),
                 SelectionGoal::None,
             )
         });
@@ -3890,14 +3822,24 @@ impl Editor {
 
     pub fn delete_to_end_of_line(&mut self, _: &DeleteToEndOfLine, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            this.select_to_end_of_line(&SelectToEndOfLine(false), cx);
+            this.select_to_end_of_line(
+                &SelectToEndOfLine {
+                    stop_at_soft_wraps: false,
+                },
+                cx,
+            );
             this.delete(&Delete, cx);
         });
     }
 
     pub fn cut_to_end_of_line(&mut self, _: &CutToEndOfLine, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            this.select_to_end_of_line(&SelectToEndOfLine(false), cx);
+            this.select_to_end_of_line(
+                &SelectToEndOfLine {
+                    stop_at_soft_wraps: false,
+                },
+                cx,
+            );
             this.cut(&Cut, cx);
         });
     }
@@ -3959,6 +3901,7 @@ impl Editor {
             let buffer = self.buffer.read(cx).read(cx);
             let offset = position.to_offset(&buffer);
             let point = position.to_point(&buffer);
+            let scroll_top_offset = self.scroll_top_anchor.to_offset(&buffer);
             drop(buffer);
 
             if let Some(new_position) = new_position {
@@ -3969,8 +3912,11 @@ impl Editor {
             }
 
             nav_history.push(Some(NavigationData {
-                anchor: position,
-                offset,
+                cursor_anchor: position,
+                cursor_offset: offset,
+                scroll_position: self.scroll_position,
+                scroll_top_anchor: self.scroll_top_anchor.clone(),
+                scroll_top_offset,
             }));
         }
     }
@@ -4144,7 +4090,6 @@ impl Editor {
 
     pub fn select_next(&mut self, action: &SelectNext, cx: &mut ViewContext<Self>) {
         self.push_to_selection_history();
-        let replace_newest = action.0;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
         let mut selections = self.local_selections::<usize>(cx);
@@ -4183,7 +4128,7 @@ impl Editor {
                 }
 
                 if let Some(next_selected_range) = next_selected_range {
-                    if replace_newest {
+                    if action.replace_newest {
                         if let Some(newest_id) =
                             selections.iter().max_by_key(|s| s.id).map(|s| s.id)
                         {
@@ -4243,24 +4188,26 @@ impl Editor {
     }
 
     pub fn toggle_comments(&mut self, _: &ToggleComments, cx: &mut ViewContext<Self>) {
-        // Get the line comment prefix. Split its trailing whitespace into a separate string,
-        // as that portion won't be used for detecting if a line is a comment.
-        let full_comment_prefix =
-            if let Some(prefix) = self.language(cx).and_then(|l| l.line_comment_prefix()) {
-                prefix.to_string()
-            } else {
-                return;
-            };
-        let comment_prefix = full_comment_prefix.trim_end_matches(' ');
-        let comment_prefix_whitespace = &full_comment_prefix[comment_prefix.len()..];
-
         self.transact(cx, |this, cx| {
             let mut selections = this.local_selections::<Point>(cx);
             let mut all_selection_lines_are_comments = true;
             let mut edit_ranges = Vec::new();
             let mut last_toggled_row = None;
             this.buffer.update(cx, |buffer, cx| {
+                // TODO: Handle selections that cross excerpts
                 for selection in &mut selections {
+                    // Get the line comment prefix. Split its trailing whitespace into a separate string,
+                    // as that portion won't be used for detecting if a line is a comment.
+                    let full_comment_prefix = if let Some(prefix) = buffer
+                        .language_at(selection.start, cx)
+                        .and_then(|l| l.line_comment_prefix())
+                    {
+                        prefix.to_string()
+                    } else {
+                        return;
+                    };
+                    let comment_prefix = full_comment_prefix.trim_end_matches(' ');
+                    let comment_prefix_whitespace = &full_comment_prefix[comment_prefix.len()..];
                     edit_ranges.clear();
                     let snapshot = buffer.snapshot(cx);
 
@@ -4452,11 +4399,15 @@ impl Editor {
         self.selection_history.mode = SelectionHistoryMode::Normal;
     }
 
-    pub fn go_to_diagnostic(
-        &mut self,
-        &GoToDiagnostic(direction): &GoToDiagnostic,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn go_to_next_diagnostic(&mut self, _: &GoToNextDiagnostic, cx: &mut ViewContext<Self>) {
+        self.go_to_diagnostic(Direction::Next, cx)
+    }
+
+    fn go_to_prev_diagnostic(&mut self, _: &GoToPrevDiagnostic, cx: &mut ViewContext<Self>) {
+        self.go_to_diagnostic(Direction::Prev, cx)
+    }
+
+    pub fn go_to_diagnostic(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selection = self.newest_selection_with_snapshot::<usize>(&buffer);
         let mut active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
@@ -4640,8 +4591,11 @@ impl Editor {
                 let editor =
                     cx.add_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
                 editor.update(cx, |editor, cx| {
-                    let color = editor.style(cx).highlighted_line_background;
-                    editor.highlight_background::<Self>(ranges_to_highlight, color, cx);
+                    editor.highlight_background::<Self>(
+                        ranges_to_highlight,
+                        |theme| theme.editor.highlighted_line_background,
+                        cx,
+                    );
                 });
                 workspace.add_item(Box::new(editor), cx);
             });
@@ -4852,25 +4806,6 @@ impl Editor {
         }
 
         Some(rename)
-    }
-
-    fn invalidate_rename_range(
-        &mut self,
-        buffer: &MultiBufferSnapshot,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if let Some(rename) = self.pending_rename.as_ref() {
-            if self.selections.len() == 1 {
-                let head = self.selections[0].head().to_offset(buffer);
-                let range = rename.range.to_offset(buffer).to_inclusive();
-                if range.contains(&head) {
-                    return;
-                }
-            }
-            let rename = self.pending_rename.take().unwrap();
-            self.remove_blocks([rename.block_id].into_iter().collect(), cx);
-            self.clear_background_highlights::<Rename>(cx);
-        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -5378,7 +5313,7 @@ impl Editor {
         self.select_larger_syntax_node_stack.clear();
         self.autoclose_stack.invalidate(&self.selections, &buffer);
         self.snippet_stack.invalidate(&self.selections, &buffer);
-        self.invalidate_rename_range(&buffer, cx);
+        self.take_rename(false, cx);
 
         let new_cursor_position = self.newest_anchor_selection().head();
 
@@ -5668,16 +5603,22 @@ impl Editor {
     }
 
     pub fn soft_wrap_mode(&self, cx: &AppContext) -> SoftWrap {
-        let language = self.language(cx);
+        let language_name = self
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|singleton_buffer| singleton_buffer.read(cx).language())
+            .map(|l| l.name());
+
         let settings = cx.global::<Settings>();
         let mode = self
             .soft_wrap_mode_override
-            .unwrap_or_else(|| settings.soft_wrap(language));
+            .unwrap_or_else(|| settings.soft_wrap(language_name.as_deref()));
         match mode {
             settings::SoftWrap::None => SoftWrap::None,
             settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
             settings::SoftWrap::PreferredLineLength => {
-                SoftWrap::Column(settings.preferred_line_length(language))
+                SoftWrap::Column(settings.preferred_line_length(language_name.as_deref()))
             }
         }
     }
@@ -5703,18 +5644,18 @@ impl Editor {
     pub fn highlight_background<T: 'static>(
         &mut self,
         ranges: Vec<Range<Anchor>>,
-        color: Color,
+        color_fetcher: fn(&Theme) -> Color,
         cx: &mut ViewContext<Self>,
     ) {
         self.background_highlights
-            .insert(TypeId::of::<T>(), (color, ranges));
+            .insert(TypeId::of::<T>(), (color_fetcher, ranges));
         cx.notify();
     }
 
     pub fn clear_background_highlights<T: 'static>(
         &mut self,
         cx: &mut ViewContext<Self>,
-    ) -> Option<(Color, Vec<Range<Anchor>>)> {
+    ) -> Option<(fn(&Theme) -> Color, Vec<Range<Anchor>>)> {
         cx.notify();
         self.background_highlights.remove(&TypeId::of::<T>())
     }
@@ -5728,23 +5669,20 @@ impl Editor {
         let buffer = &snapshot.buffer_snapshot;
         let start = buffer.anchor_before(0);
         let end = buffer.anchor_after(buffer.len());
-        self.background_highlights_in_range(start..end, &snapshot)
-    }
-
-    pub fn background_highlights_for_type<T: 'static>(&self) -> Option<(Color, &[Range<Anchor>])> {
-        self.background_highlights
-            .get(&TypeId::of::<T>())
-            .map(|(color, ranges)| (*color, ranges.as_slice()))
+        let theme = cx.global::<Settings>().theme.as_ref();
+        self.background_highlights_in_range(start..end, &snapshot, theme)
     }
 
     pub fn background_highlights_in_range(
         &self,
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,
+        theme: &Theme,
     ) -> Vec<(Range<DisplayPoint>, Color)> {
         let mut results = Vec::new();
         let buffer = &display_snapshot.buffer_snapshot;
-        for (color, ranges) in self.background_highlights.values() {
+        for (color_fetcher, ranges) in self.background_highlights.values() {
+            let color = color_fetcher(theme);
             let start_ix = match ranges.binary_search_by(|probe| {
                 let cmp = probe.end.cmp(&search_range.start, &buffer);
                 if cmp.is_gt() {
@@ -5767,7 +5705,7 @@ impl Editor {
                     .end
                     .to_point(buffer)
                     .to_display_point(display_snapshot);
-                results.push((start..end, *color))
+                results.push((start..end, color))
             }
         }
         results
@@ -5935,8 +5873,6 @@ impl Editor {
         // and activating a new item causes the pane to call a method on us reentrantly,
         // which panics if we're on the stack.
         cx.defer(move |workspace, cx| {
-            workspace.activate_next_pane(cx);
-
             for (buffer, ranges) in new_selections_by_buffer.into_iter() {
                 let editor = workspace.open_project_item::<Self>(buffer, cx);
                 editor.update(cx, |editor, cx| {
@@ -6461,14 +6397,18 @@ pub fn styled_runs_for_code_label<'a>(
 
 #[cfg(test)]
 mod tests {
+    use crate::test::{assert_text_with_selections, select_ranges};
+
     use super::*;
     use gpui::{
         geometry::rect::RectF,
         platform::{WindowBounds, WindowOptions},
     };
+    use indoc::indoc;
     use language::{FakeLspAdapter, LanguageConfig};
     use lsp::FakeLanguageServer;
     use project::FakeFs;
+    use settings::LanguageOverride;
     use smol::stream::StreamExt;
     use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
@@ -6478,7 +6418,7 @@ mod tests {
 
     #[gpui::test]
     fn test_edit_events(cx: &mut MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = cx.add_model(|cx| language::Buffer::new(0, "123456", cx));
 
         let events = Rc::new(RefCell::new(Vec::new()));
@@ -6586,7 +6526,7 @@ mod tests {
 
     #[gpui::test]
     fn test_undo_redo_with_selection_restoration(cx: &mut MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let mut now = Instant::now();
         let buffer = cx.add_model(|cx| language::Buffer::new(0, "123456", cx));
         let group_interval = buffer.read(cx).transaction_group_interval();
@@ -6655,7 +6595,7 @@ mod tests {
 
     #[gpui::test]
     fn test_selection_with_mouse(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
 
         let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\nddddddd\n", cx);
         let (_, editor) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
@@ -6720,7 +6660,7 @@ mod tests {
 
     #[gpui::test]
     fn test_canceling_pending_selection(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
 
@@ -6752,10 +6692,10 @@ mod tests {
 
     #[gpui::test]
     fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         use workspace::Item;
         let nav_history = Rc::new(RefCell::new(workspace::NavHistory::default()));
-        let buffer = MultiBuffer::build_simple(&sample_text(30, 5, 'a'), cx);
+        let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
 
         cx.add_window(Default::default(), |cx| {
             let mut editor = build_editor(buffer.clone(), cx);
@@ -6806,13 +6746,29 @@ mod tests {
             );
             assert!(nav_history.borrow_mut().pop_backward().is_none());
 
+            // Set scroll position to check later
+            editor.set_scroll_position(Vector2F::new(5.5, 5.5), cx);
+            let original_scroll_position = editor.scroll_position;
+            let original_scroll_top_anchor = editor.scroll_top_anchor.clone();
+
+            // Jump to the end of the document and adjust scroll
+            editor.move_to_end(&MoveToEnd, cx);
+            editor.set_scroll_position(Vector2F::new(-2.5, -0.5), cx);
+            assert_ne!(editor.scroll_position, original_scroll_position);
+            assert_ne!(editor.scroll_top_anchor, original_scroll_top_anchor);
+
+            let nav_entry = nav_history.borrow_mut().pop_backward().unwrap();
+            editor.navigate(nav_entry.data.unwrap(), cx);
+            assert_eq!(editor.scroll_position, original_scroll_position);
+            assert_eq!(editor.scroll_top_anchor, original_scroll_top_anchor);
+
             editor
         });
     }
 
     #[gpui::test]
     fn test_cancel(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
 
@@ -6852,7 +6808,7 @@ mod tests {
 
     #[gpui::test]
     fn test_fold(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(
             &"
                 impl Foo {
@@ -6937,7 +6893,7 @@ mod tests {
 
     #[gpui::test]
     fn test_move_cursor(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
@@ -7011,7 +6967,7 @@ mod tests {
 
     #[gpui::test]
     fn test_move_cursor_multibyte(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
@@ -7112,7 +7068,7 @@ mod tests {
 
     #[gpui::test]
     fn test_move_cursor_different_line_lengths(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
         view.update(cx, |view, cx| {
@@ -7157,7 +7113,7 @@ mod tests {
 
     #[gpui::test]
     fn test_beginning_end_of_line(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("abc\n  def", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -7228,7 +7184,12 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.move_left(&MoveLeft, cx);
-            view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
+            view.select_to_beginning_of_line(
+                &SelectToBeginningOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                cx,
+            );
             assert_eq!(
                 view.selected_display_ranges(cx),
                 &[
@@ -7239,7 +7200,12 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
+            view.select_to_beginning_of_line(
+                &SelectToBeginningOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                cx,
+            );
             assert_eq!(
                 view.selected_display_ranges(cx),
                 &[
@@ -7250,7 +7216,12 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
+            view.select_to_beginning_of_line(
+                &SelectToBeginningOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                cx,
+            );
             assert_eq!(
                 view.selected_display_ranges(cx),
                 &[
@@ -7261,7 +7232,12 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_to_end_of_line(&SelectToEndOfLine(true), cx);
+            view.select_to_end_of_line(
+                &SelectToEndOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                cx,
+            );
             assert_eq!(
                 view.selected_display_ranges(cx),
                 &[
@@ -7298,7 +7274,7 @@ mod tests {
 
     #[gpui::test]
     fn test_prev_next_word_boundary(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("use std::str::{foo, bar}\n\n  {baz.qux()}", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -7403,7 +7379,7 @@ mod tests {
 
     #[gpui::test]
     fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("use one::{\n    two::three::four::five\n};", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
 
@@ -7456,7 +7432,7 @@ mod tests {
 
     #[gpui::test]
     fn test_delete_to_word_boundary(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("one two three four", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
@@ -7493,7 +7469,7 @@ mod tests {
 
     #[gpui::test]
     fn test_newline(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("aaaa\n    bbbb\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
@@ -7514,7 +7490,7 @@ mod tests {
 
     #[gpui::test]
     fn test_newline_with_old_selections(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(
             "
                 a
@@ -7599,7 +7575,7 @@ mod tests {
 
     #[gpui::test]
     fn test_insert_with_old_selections(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("a( X ), b( Y ), c( Z )", cx);
         let (_, editor) = cx.add_window(Default::default(), |cx| {
             let mut editor = build_editor(buffer.clone(), cx);
@@ -7626,81 +7602,226 @@ mod tests {
 
     #[gpui::test]
     fn test_indent_outdent(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
-        let buffer = MultiBuffer::build_simple("  one two\nthree\n four", cx);
+        cx.set_global(Settings::test(cx));
+        let buffer = MultiBuffer::build_simple(
+            indoc! {"
+                  one two
+                three
+                 four"},
+            cx,
+        );
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
         view.update(cx, |view, cx| {
             // two selections on the same line
-            view.select_display_ranges(
-                &[
-                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 5),
-                    DisplayPoint::new(0, 6)..DisplayPoint::new(0, 9),
-                ],
+            select_ranges(
+                view,
+                indoc! {"
+                      [one] [two]
+                    three
+                     four"},
                 cx,
             );
 
             // indent from mid-tabstop to full tabstop
-            view.tab(&Tab(Direction::Next), cx);
-            assert_eq!(view.text(cx), "    one two\nthree\n four");
-            assert_eq!(
-                view.selected_display_ranges(cx),
-                &[
-                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 7),
-                    DisplayPoint::new(0, 8)..DisplayPoint::new(0, 11),
-                ]
+            view.tab(&Tab, cx);
+            assert_text_with_selections(
+                view,
+                indoc! {"
+                        [one] [two]
+                    three
+                     four"},
+                cx,
             );
 
             // outdent from 1 tabstop to 0 tabstops
-            view.tab(&Tab(Direction::Prev), cx);
-            assert_eq!(view.text(cx), "one two\nthree\n four");
-            assert_eq!(
-                view.selected_display_ranges(cx),
-                &[
-                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 3),
-                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 7),
-                ]
+            view.tab_prev(&TabPrev, cx);
+            assert_text_with_selections(
+                view,
+                indoc! {"
+                    [one] [two]
+                    three
+                     four"},
+                cx,
             );
 
             // select across line ending
-            view.select_display_ranges(&[DisplayPoint::new(1, 1)..DisplayPoint::new(2, 0)], cx);
+            select_ranges(
+                view,
+                indoc! {"
+                    one two
+                    t[hree
+                    ] four"},
+                cx,
+            );
 
             // indent and outdent affect only the preceding line
-            view.tab(&Tab(Direction::Next), cx);
-            assert_eq!(view.text(cx), "one two\n    three\n four");
-            assert_eq!(
-                view.selected_display_ranges(cx),
-                &[DisplayPoint::new(1, 5)..DisplayPoint::new(2, 0)]
+            view.tab(&Tab, cx);
+            assert_text_with_selections(
+                view,
+                indoc! {"
+                    one two
+                        t[hree
+                    ] four"},
+                cx,
             );
-            view.tab(&Tab(Direction::Prev), cx);
-            assert_eq!(view.text(cx), "one two\nthree\n four");
-            assert_eq!(
-                view.selected_display_ranges(cx),
-                &[DisplayPoint::new(1, 1)..DisplayPoint::new(2, 0)]
+            view.tab_prev(&TabPrev, cx);
+            assert_text_with_selections(
+                view,
+                indoc! {"
+                    one two
+                    t[hree
+                    ] four"},
+                cx,
             );
 
             // Ensure that indenting/outdenting works when the cursor is at column 0.
-            view.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
-            view.tab(&Tab(Direction::Next), cx);
-            assert_eq!(view.text(cx), "one two\n    three\n four");
-            assert_eq!(
-                view.selected_display_ranges(cx),
-                &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4)]
+            select_ranges(
+                view,
+                indoc! {"
+                    one two
+                    []three
+                     four"},
+                cx,
+            );
+            view.tab(&Tab, cx);
+            assert_text_with_selections(
+                view,
+                indoc! {"
+                    one two
+                        []three
+                     four"},
+                cx,
             );
 
-            view.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
-            view.tab(&Tab(Direction::Prev), cx);
-            assert_eq!(view.text(cx), "one two\nthree\n four");
-            assert_eq!(
-                view.selected_display_ranges(cx),
-                &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
+            select_ranges(
+                view,
+                indoc! {"
+                    one two
+                    []    three
+                     four"},
+                cx,
+            );
+            view.tab_prev(&TabPrev, cx);
+            assert_text_with_selections(
+                view,
+                indoc! {"
+                    one two
+                    []three
+                     four"},
+                cx,
             );
         });
     }
 
     #[gpui::test]
+    fn test_indent_outdent_with_excerpts(cx: &mut gpui::MutableAppContext) {
+        cx.set_global(
+            Settings::test(cx)
+                .with_overrides(
+                    "TOML",
+                    LanguageOverride {
+                        tab_size: Some(2),
+                        ..Default::default()
+                    },
+                )
+                .with_overrides(
+                    "Rust",
+                    LanguageOverride {
+                        tab_size: Some(4),
+                        ..Default::default()
+                    },
+                ),
+        );
+        let toml_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "TOML".into(),
+                ..Default::default()
+            },
+            None,
+        ));
+        let rust_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                ..Default::default()
+            },
+            None,
+        ));
+
+        let toml_buffer = cx
+            .add_model(|cx| Buffer::new(0, "a = 1\nb = 2\n", cx).with_language(toml_language, cx));
+        let rust_buffer = cx.add_model(|cx| {
+            Buffer::new(0, "const c: usize = 3;\n", cx).with_language(rust_language, cx)
+        });
+        let multibuffer = cx.add_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(0);
+            multibuffer.push_excerpts(
+                toml_buffer.clone(),
+                [Point::new(0, 0)..Point::new(2, 0)],
+                cx,
+            );
+            multibuffer.push_excerpts(
+                rust_buffer.clone(),
+                [Point::new(0, 0)..Point::new(1, 0)],
+                cx,
+            );
+            multibuffer
+        });
+
+        cx.add_window(Default::default(), |cx| {
+            let mut editor = build_editor(multibuffer, cx);
+
+            assert_eq!(
+                editor.text(cx),
+                indoc! {"
+                    a = 1
+                    b = 2
+
+                    const c: usize = 3;
+                "}
+            );
+
+            select_ranges(
+                &mut editor,
+                indoc! {"
+                    [a] = 1
+                    b = 2
+
+                    [const c:] usize = 3;
+                "},
+                cx,
+            );
+
+            editor.tab(&Tab, cx);
+            assert_text_with_selections(
+                &mut editor,
+                indoc! {"
+                      [a] = 1
+                    b = 2
+
+                        [const c:] usize = 3;
+                "},
+                cx,
+            );
+            editor.tab_prev(&TabPrev, cx);
+            assert_text_with_selections(
+                &mut editor,
+                indoc! {"
+                    [a] = 1
+                    b = 2
+
+                    [const c:] usize = 3;
+                "},
+                cx,
+            );
+
+            editor
+        });
+    }
+
+    #[gpui::test]
     fn test_backspace(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(MultiBuffer::build_simple("", cx), cx)
         });
@@ -7745,7 +7866,7 @@ mod tests {
 
     #[gpui::test]
     fn test_delete(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer =
             MultiBuffer::build_simple("one two three\nfour five six\nseven eight nine\nten\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
@@ -7773,7 +7894,7 @@ mod tests {
 
     #[gpui::test]
     fn test_delete_line(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -7796,7 +7917,7 @@ mod tests {
             );
         });
 
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -7812,7 +7933,7 @@ mod tests {
 
     #[gpui::test]
     fn test_duplicate_line(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -7862,7 +7983,7 @@ mod tests {
 
     #[gpui::test]
     fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(10, 5, 'a'), cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -7958,7 +8079,7 @@ mod tests {
 
     #[gpui::test]
     fn test_move_line_up_down_with_blocks(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(10, 5, 'a'), cx);
         let snapshot = buffer.read(cx).snapshot(cx);
         let (_, editor) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
@@ -7979,7 +8100,7 @@ mod tests {
 
     #[gpui::test]
     fn test_clipboard(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("one✅ two three four five six ", cx);
         let view = cx
             .add_window(Default::default(), |cx| build_editor(buffer.clone(), cx))
@@ -8108,7 +8229,7 @@ mod tests {
 
     #[gpui::test]
     fn test_select_all(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("abc\nde\nfgh", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -8122,7 +8243,7 @@ mod tests {
 
     #[gpui::test]
     fn test_select_line(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(6, 5, 'a'), cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -8167,7 +8288,7 @@ mod tests {
 
     #[gpui::test]
     fn test_split_selection_into_lines(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(9, 5, 'a'), cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
@@ -8233,7 +8354,7 @@ mod tests {
 
     #[gpui::test]
     fn test_add_selection_above_below(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("abc\ndefghi\n\njk\nlmno\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
 
@@ -8417,7 +8538,7 @@ mod tests {
 
     #[gpui::test]
     fn test_select_next(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
 
         let (text, ranges) = marked_text_ranges("[abc]\n[abc] [abc]\ndefabc\n[abc]");
         let buffer = MultiBuffer::build_simple(&text, cx);
@@ -8425,10 +8546,20 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.select_ranges([ranges[1].start + 1..ranges[1].start + 1], None, cx);
-            view.select_next(&SelectNext(false), cx);
+            view.select_next(
+                &SelectNext {
+                    replace_newest: false,
+                },
+                cx,
+            );
             assert_eq!(view.selected_ranges(cx), &ranges[1..2]);
 
-            view.select_next(&SelectNext(false), cx);
+            view.select_next(
+                &SelectNext {
+                    replace_newest: false,
+                },
+                cx,
+            );
             assert_eq!(view.selected_ranges(cx), &ranges[1..3]);
 
             view.undo_selection(&UndoSelection, cx);
@@ -8437,17 +8568,27 @@ mod tests {
             view.redo_selection(&RedoSelection, cx);
             assert_eq!(view.selected_ranges(cx), &ranges[1..3]);
 
-            view.select_next(&SelectNext(false), cx);
+            view.select_next(
+                &SelectNext {
+                    replace_newest: false,
+                },
+                cx,
+            );
             assert_eq!(view.selected_ranges(cx), &ranges[1..4]);
 
-            view.select_next(&SelectNext(false), cx);
+            view.select_next(
+                &SelectNext {
+                    replace_newest: false,
+                },
+                cx,
+            );
             assert_eq!(view.selected_ranges(cx), &ranges[0..4]);
         });
     }
 
     #[gpui::test]
     async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
-        cx.update(populate_settings);
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
         let language = Arc::new(Language::new(
             LanguageConfig::default(),
             Some(tree_sitter_rust::language()),
@@ -8588,7 +8729,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
-        cx.update(populate_settings);
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
         let language = Arc::new(
             Language::new(
                 LanguageConfig {
@@ -8645,7 +8786,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
-        cx.update(populate_settings);
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
         let language = Arc::new(Language::new(
             LanguageConfig {
                 brackets: vec![
@@ -8792,7 +8933,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_snippets(cx: &mut gpui::TestAppContext) {
-        cx.update(populate_settings);
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
 
         let text = "
             a. b
@@ -8900,7 +9041,7 @@ mod tests {
     #[gpui::test]
     async fn test_format_during_save(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
-        cx.update(populate_settings);
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
 
         let mut language = Language::new(
             LanguageConfig {
@@ -8952,6 +9093,7 @@ mod tests {
                     params.text_document.uri,
                     lsp::Url::from_file_path("/file.rs").unwrap()
                 );
+                assert_eq!(params.options.tab_size, 4);
                 Ok(Some(vec![lsp::TextEdit::new(
                     lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
                     ", ".to_string(),
@@ -8988,11 +9130,39 @@ mod tests {
             "one\ntwo\nthree\n"
         );
         assert!(!cx.read(|cx| editor.is_dirty(cx)));
+
+        // Set rust language override and assert overriden tabsize is sent to language server
+        cx.update(|cx| {
+            cx.update_global::<Settings, _, _>(|settings, _| {
+                settings.language_overrides.insert(
+                    "Rust".into(),
+                    LanguageOverride {
+                        tab_size: Some(8),
+                        ..Default::default()
+                    },
+                );
+            })
+        });
+
+        let save = cx.update(|cx| editor.save(project.clone(), cx));
+        fake_server
+            .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path("/file.rs").unwrap()
+                );
+                assert_eq!(params.options.tab_size, 8);
+                Ok(Some(vec![]))
+            })
+            .next()
+            .await;
+        cx.foreground().start_waiting();
+        save.await.unwrap();
     }
 
     #[gpui::test]
     async fn test_completion(cx: &mut gpui::TestAppContext) {
-        cx.update(populate_settings);
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
 
         let mut language = Language::new(
             LanguageConfig {
@@ -9066,7 +9236,7 @@ mod tests {
         let apply_additional_edits = editor.update(cx, |editor, cx| {
             editor.move_down(&MoveDown, cx);
             let apply_additional_edits = editor
-                .confirm_completion(&ConfirmCompletion(None), cx)
+                .confirm_completion(&ConfirmCompletion::default(), cx)
                 .unwrap();
             assert_eq!(
                 editor.text(cx),
@@ -9149,7 +9319,7 @@ mod tests {
 
         let apply_additional_edits = editor.update(cx, |editor, cx| {
             let apply_additional_edits = editor
-                .confirm_completion(&ConfirmCompletion(None), cx)
+                .confirm_completion(&ConfirmCompletion::default(), cx)
                 .unwrap();
             assert_eq!(
                 editor.text(cx),
@@ -9233,7 +9403,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
-        cx.update(populate_settings);
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
         let language = Arc::new(Language::new(
             LanguageConfig {
                 line_comment: Some("// ".to_string()),
@@ -9313,7 +9483,7 @@ mod tests {
 
     #[gpui::test]
     fn test_editing_disjoint_excerpts(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
@@ -9356,7 +9526,7 @@ mod tests {
 
     #[gpui::test]
     fn test_editing_overlapping_excerpts(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
@@ -9411,7 +9581,7 @@ mod tests {
 
     #[gpui::test]
     fn test_refresh_selections(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
         let mut excerpt1_id = None;
         let multibuffer = cx.add_model(|cx| {
@@ -9489,7 +9659,7 @@ mod tests {
 
     #[gpui::test]
     fn test_refresh_selections_while_selecting_with_mouse(cx: &mut gpui::MutableAppContext) {
-        populate_settings(cx);
+        cx.set_global(Settings::test(cx));
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
         let mut excerpt1_id = None;
         let multibuffer = cx.add_model(|cx| {
@@ -9543,7 +9713,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
-        cx.update(populate_settings);
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
         let language = Arc::new(Language::new(
             LanguageConfig {
                 brackets: vec![
@@ -9611,7 +9781,8 @@ mod tests {
     #[gpui::test]
     fn test_highlighted_ranges(cx: &mut gpui::MutableAppContext) {
         let buffer = MultiBuffer::build_simple(&sample_text(16, 8, 'a'), cx);
-        populate_settings(cx);
+
+        cx.set_global(Settings::test(cx));
         let (_, editor) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
         editor.update(cx, |editor, cx| {
@@ -9631,7 +9802,7 @@ mod tests {
                     anchor_range(Point::new(6, 3)..Point::new(6, 5)),
                     anchor_range(Point::new(8, 4)..Point::new(8, 6)),
                 ],
-                Color::red(),
+                |_| Color::red(),
                 cx,
             );
             editor.highlight_background::<Type2>(
@@ -9641,7 +9812,7 @@ mod tests {
                     anchor_range(Point::new(7, 4)..Point::new(7, 7)),
                     anchor_range(Point::new(9, 5)..Point::new(9, 8)),
                 ],
-                Color::green(),
+                |_| Color::green(),
                 cx,
             );
 
@@ -9649,6 +9820,7 @@ mod tests {
             let mut highlighted_ranges = editor.background_highlights_in_range(
                 anchor_range(Point::new(3, 4)..Point::new(7, 4)),
                 &snapshot,
+                cx.global::<Settings>().theme.as_ref(),
             );
             // Enforce a consistent ordering based on color without relying on the ordering of the
             // highlight's `TypeId` which is non-deterministic.
@@ -9678,6 +9850,7 @@ mod tests {
                 editor.background_highlights_in_range(
                     anchor_range(Point::new(5, 6)..Point::new(6, 4)),
                     &snapshot,
+                    cx.global::<Settings>().theme.as_ref(),
                 ),
                 &[(
                     DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
@@ -9690,7 +9863,8 @@ mod tests {
     #[gpui::test]
     fn test_following(cx: &mut gpui::MutableAppContext) {
         let buffer = MultiBuffer::build_simple(&sample_text(16, 8, 'a'), cx);
-        populate_settings(cx);
+
+        cx.set_global(Settings::test(cx));
 
         let (_, leader) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
         let (_, follower) = cx.add_window(
@@ -9855,11 +10029,6 @@ mod tests {
 
     fn build_editor(buffer: ModelHandle<MultiBuffer>, cx: &mut ViewContext<Editor>) -> Editor {
         Editor::new(EditorMode::Full, buffer, None, None, cx)
-    }
-
-    fn populate_settings(cx: &mut gpui::MutableAppContext) {
-        let settings = Settings::test(cx);
-        cx.set_global(settings);
     }
 
     fn assert_selection_ranges(

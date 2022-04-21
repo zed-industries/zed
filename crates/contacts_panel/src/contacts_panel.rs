@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use client::{Contact, UserStore};
 use gpui::{
     elements::*,
@@ -8,7 +6,9 @@ use gpui::{
     Element, ElementBox, Entity, LayoutContext, ModelHandle, RenderContext, Subscription, View,
     ViewContext,
 };
-use workspace::{AppState, JoinProject, JoinProjectParams, Settings};
+use settings::Settings;
+use std::sync::Arc;
+use workspace::{AppState, JoinProject};
 
 pub struct ContactsPanel {
     contacts: ListState,
@@ -206,10 +206,10 @@ impl ContactsPanel {
                                 })
                                 .on_click(move |cx| {
                                     if !is_host && !is_guest {
-                                        cx.dispatch_global_action(JoinProject(JoinProjectParams {
+                                        cx.dispatch_global_action(JoinProject {
                                             project_id,
                                             app_state: app_state.clone(),
-                                        }));
+                                        });
                                     }
                                 })
                                 .flex(1., true)

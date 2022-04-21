@@ -276,12 +276,32 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
             "arguments: (arguments (identifier)))))))",
         )
     );
+}
 
-    fn get_tree_sexp(buffer: &ModelHandle<Buffer>, cx: &gpui::TestAppContext) -> String {
-        buffer.read_with(cx, |buffer, _| {
-            buffer.syntax_tree().unwrap().root_node().to_sexp()
-        })
-    }
+#[gpui::test]
+async fn test_resetting_language(cx: &mut gpui::TestAppContext) {
+    let buffer = cx.add_model(|cx| {
+        let mut buffer = Buffer::new(0, "{}", cx).with_language(Arc::new(rust_lang()), cx);
+        buffer.set_sync_parse_timeout(Duration::ZERO);
+        buffer
+    });
+
+    // Wait for the initial text to parse
+    buffer
+        .condition(&cx, |buffer, _| !buffer.is_parsing())
+        .await;
+    assert_eq!(
+        get_tree_sexp(&buffer, &cx),
+        "(source_file (expression_statement (block)))"
+    );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_language(Some(Arc::new(json_lang())), cx)
+    });
+    buffer
+        .condition(&cx, |buffer, _| !buffer.is_parsing())
+        .await;
+    assert_eq!(get_tree_sexp(&buffer, &cx), "(document (object))");
 }
 
 #[gpui::test]
@@ -556,13 +576,13 @@ fn test_edit_with_autoindent(cx: &mut MutableAppContext) {
         let text = "fn a() {}";
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
 
-        buffer.edit_with_autoindent([8..8], "\n\n", cx);
+        buffer.edit_with_autoindent([8..8], "\n\n", 4, cx);
         assert_eq!(buffer.text(), "fn a() {\n    \n}");
 
-        buffer.edit_with_autoindent([Point::new(1, 4)..Point::new(1, 4)], "b()\n", cx);
+        buffer.edit_with_autoindent([Point::new(1, 4)..Point::new(1, 4)], "b()\n", 4, cx);
         assert_eq!(buffer.text(), "fn a() {\n    b()\n    \n}");
 
-        buffer.edit_with_autoindent([Point::new(2, 4)..Point::new(2, 4)], ".c", cx);
+        buffer.edit_with_autoindent([Point::new(2, 4)..Point::new(2, 4)], ".c", 4, cx);
         assert_eq!(buffer.text(), "fn a() {\n    b()\n        .c\n}");
 
         buffer
@@ -584,7 +604,12 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
 
         // Lines 2 and 3 don't match the indentation suggestion. When editing these lines,
         // their indentation is not adjusted.
-        buffer.edit_with_autoindent([empty(Point::new(1, 1)), empty(Point::new(2, 1))], "()", cx);
+        buffer.edit_with_autoindent(
+            [empty(Point::new(1, 1)), empty(Point::new(2, 1))],
+            "()",
+            4,
+            cx,
+        );
         assert_eq!(
             buffer.text(),
             "
@@ -601,6 +626,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
         buffer.edit_with_autoindent(
             [empty(Point::new(1, 1)), empty(Point::new(2, 1))],
             "\n.f\n.g",
+            4,
             cx,
         );
         assert_eq!(
@@ -631,7 +657,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
 
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
 
-        buffer.edit_with_autoindent([5..5], "\nb", cx);
+        buffer.edit_with_autoindent([5..5], "\nb", 4, cx);
         assert_eq!(
             buffer.text(),
             "
@@ -643,7 +669,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
 
         // The indentation suggestion changed because `@end` node (a close paren)
         // is now at the beginning of the line.
-        buffer.edit_with_autoindent([Point::new(1, 4)..Point::new(1, 5)], "", cx);
+        buffer.edit_with_autoindent([Point::new(1, 4)..Point::new(1, 5)], "", 4, cx);
         assert_eq!(
             buffer.text(),
             "
@@ -795,7 +821,10 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
             }
             50..=59 if replica_ids.len() < max_peers => {
                 let old_buffer = buffer.read(cx).to_proto();
-                let new_replica_id = replica_ids.len() as ReplicaId;
+                let new_replica_id = (0..=replica_ids.len() as ReplicaId)
+                    .filter(|replica_id| *replica_id != buffer.read(cx).replica_id())
+                    .choose(&mut rng)
+                    .unwrap();
                 log::info!(
                     "Adding new replica {} (replicating from {})",
                     new_replica_id,
@@ -804,6 +833,11 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
                 new_buffer = Some(cx.add_model(|cx| {
                     let mut new_buffer =
                         Buffer::from_proto(new_replica_id, old_buffer, None, cx).unwrap();
+                    log::info!(
+                        "New replica {} text: {:?}",
+                        new_buffer.replica_id(),
+                        new_buffer.text()
+                    );
                     new_buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
                     let network = network.clone();
                     cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
@@ -817,8 +851,33 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
                     .detach();
                     new_buffer
                 }));
-                replica_ids.push(new_replica_id);
                 network.borrow_mut().replicate(replica_id, new_replica_id);
+
+                if new_replica_id as usize == replica_ids.len() {
+                    replica_ids.push(new_replica_id);
+                } else {
+                    let new_buffer = new_buffer.take().unwrap();
+                    while network.borrow().has_unreceived(new_replica_id) {
+                        let ops = network
+                            .borrow_mut()
+                            .receive(new_replica_id)
+                            .into_iter()
+                            .map(|op| proto::deserialize_operation(op).unwrap());
+                        if ops.len() > 0 {
+                            log::info!(
+                                "peer {} (version: {:?}) applying {} ops from the network. {:?}",
+                                new_replica_id,
+                                buffer.read(cx).version(),
+                                ops.len(),
+                                ops
+                            );
+                            new_buffer.update(cx, |new_buffer, cx| {
+                                new_buffer.apply_ops(ops, cx).unwrap();
+                            });
+                        }
+                    }
+                    buffers[new_replica_id as usize] = new_buffer;
+                }
             }
             60..=69 if mutation_count != 0 => {
                 buffer.update(cx, |buffer, cx| {
@@ -835,9 +894,11 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
                     .map(|op| proto::deserialize_operation(op).unwrap());
                 if ops.len() > 0 {
                     log::info!(
-                        "peer {} applying {} ops from the network.",
+                        "peer {} (version: {:?}) applying {} ops from the network. {:?}",
                         replica_id,
-                        ops.len()
+                        buffer.read(cx).version(),
+                        ops.len(),
+                        ops
                     );
                     buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx).unwrap());
                 }
@@ -860,6 +921,12 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
     let first_buffer = buffers[0].read(cx).snapshot();
     for buffer in &buffers[1..] {
         let buffer = buffer.read(cx).snapshot();
+        assert_eq!(
+            buffer.version(),
+            first_buffer.version(),
+            "Replica {} version != Replica 0 version",
+            buffer.replica_id()
+        );
         assert_eq!(
             buffer.text(),
             first_buffer.text(),
@@ -889,7 +956,12 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
             .filter(|(replica_id, _)| **replica_id != buffer.replica_id())
             .map(|(replica_id, selections)| (*replica_id, selections.iter().collect::<Vec<_>>()))
             .collect::<Vec<_>>();
-        assert_eq!(actual_remote_selections, expected_remote_selections);
+        assert_eq!(
+            actual_remote_selections,
+            expected_remote_selections,
+            "Replica {} remote selections != expected selections",
+            buffer.replica_id()
+        );
     }
 }
 
@@ -976,6 +1048,23 @@ fn rust_lang() -> Language {
         "#,
     )
     .unwrap()
+}
+
+fn json_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "Json".into(),
+            path_suffixes: vec!["js".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_json::language()),
+    )
+}
+
+fn get_tree_sexp(buffer: &ModelHandle<Buffer>, cx: &gpui::TestAppContext) -> String {
+    buffer.read_with(cx, |buffer, _| {
+        buffer.syntax_tree().unwrap().root_node().to_sexp()
+    })
 }
 
 fn empty(point: Point) -> Range<Point> {

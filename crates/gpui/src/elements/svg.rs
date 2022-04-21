@@ -76,6 +76,7 @@ impl Element for Svg {
         &mut self,
         _: &Event,
         _: RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         _: &mut EventContext,

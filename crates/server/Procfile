@@ -1,2 +1,0 @@
-web: ./target/release/zed-server
-release: ./target/release/sqlx migrate run

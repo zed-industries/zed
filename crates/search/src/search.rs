@@ -1,6 +1,6 @@
 pub use buffer_search::BufferSearchBar;
 use editor::{Anchor, MultiBufferSnapshot};
-use gpui::{action, MutableAppContext};
+use gpui::{actions, impl_internal_actions, MutableAppContext};
 pub use project_search::{ProjectSearchBar, ProjectSearchView};
 use std::{
     cmp::{self, Ordering},
@@ -15,8 +15,11 @@ pub fn init(cx: &mut MutableAppContext) {
     project_search::init(cx);
 }
 
-action!(ToggleSearchOption, SearchOption);
-action!(SelectMatch, Direction);
+#[derive(Clone)]
+pub struct ToggleSearchOption(pub SearchOption);
+
+actions!(search, [SelectNextMatch, SelectPrevMatch]);
+impl_internal_actions!(search, [ToggleSearchOption]);
 
 #[derive(Clone, Copy)]
 pub enum SearchOption {

@@ -1,7 +1,7 @@
 use super::{AppVersion, CursorStyle, WindowBounds};
 use crate::{
     geometry::vector::{vec2f, Vector2F},
-    AnyAction, ClipboardItem,
+    Action, ClipboardItem,
 };
 use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
@@ -66,13 +66,13 @@ impl super::ForegroundPlatform for ForegroundPlatform {
 
     fn on_event(&self, _: Box<dyn FnMut(crate::Event) -> bool>) {}
 
-    fn on_open_files(&self, _: Box<dyn FnMut(Vec<std::path::PathBuf>)>) {}
+    fn on_open_urls(&self, _: Box<dyn FnMut(Vec<String>)>) {}
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce() -> ()>) {
         unimplemented!()
     }
 
-    fn on_menu_command(&self, _: Box<dyn FnMut(&dyn AnyAction)>) {}
+    fn on_menu_command(&self, _: Box<dyn FnMut(&dyn Action)>) {}
 
     fn set_menus(&self, _: Vec<crate::Menu>) {}
 
@@ -161,7 +161,7 @@ impl super::Platform for Platform {
         UtcOffset::UTC
     }
 
-    fn path_for_resource(&self, _name: Option<&str>, _extension: Option<&str>) -> Result<PathBuf> {
+    fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {
         Err(anyhow!("app not running inside a bundle"))
     }
 

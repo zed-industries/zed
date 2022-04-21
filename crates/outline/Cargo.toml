@@ -12,6 +12,8 @@ editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
+picker = { path = "../picker" }
+settings = { path = "../settings" }
 text = { path = "../text" }
 workspace = { path = "../workspace" }
 ordered-float = "2.1.1"

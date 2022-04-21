@@ -1,0 +1,24 @@
+[package]
+name = "settings"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/settings.rs"
+doctest = false
+
+[features]
+test-support = []
+
+[dependencies]
+assets = { path = "../assets" }
+collections = { path = "../collections" }
+gpui = { path = "../gpui" }
+theme = { path = "../theme" }
+util = { path = "../util" }
+anyhow = "1.0.38"
+schemars = "0.8"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1.0.64", features = ["preserve_order"] }
+serde_path_to_error = "0.1.4"
+toml = "0.5"

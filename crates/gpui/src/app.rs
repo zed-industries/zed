@@ -1,19 +1,23 @@
+pub mod action;
+
 use crate::{
     elements::ElementBox,
     executor::{self, Task},
-    keymap::{self, Keystroke},
+    keymap::{self, Binding, Keystroke},
     platform::{self, CursorStyle, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::post_inc,
     AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
 };
-use anyhow::{anyhow, Result};
+pub use action::*;
+use anyhow::{anyhow, Context, Result};
 use collections::btree_map;
 use keymap::MatchResult;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use platform::Event;
 use postage::oneshot;
+use smallvec::SmallVec;
 use smol::prelude::*;
 use std::{
     any::{type_name, Any, TypeId},
@@ -58,6 +62,9 @@ pub trait View: Entity + Sized {
         let mut cx = keymap::Context::default();
         cx.set.insert(Self::ui_name().into());
         cx
+    }
+    fn debug_json(&self, _: &AppContext) -> serde_json::Value {
+        serde_json::Value::Null
     }
 }
 
@@ -142,89 +149,6 @@ pub trait ElementStateContext: DerefMut<Target = MutableAppContext> {
     }
 }
 
-pub trait Action: 'static + AnyAction {
-    type Argument: 'static + Clone;
-}
-
-pub trait AnyAction {
-    fn id(&self) -> TypeId;
-    fn name(&self) -> &'static str;
-    fn as_any(&self) -> &dyn Any;
-    fn boxed_clone(&self) -> Box<dyn AnyAction>;
-    fn boxed_clone_as_any(&self) -> Box<dyn Any>;
-}
-
-#[macro_export]
-macro_rules! action {
-    ($name:ident, $arg:ty) => {
-        #[derive(Clone)]
-        pub struct $name(pub $arg);
-
-        impl $crate::Action for $name {
-            type Argument = $arg;
-        }
-
-        impl $crate::AnyAction for $name {
-            fn id(&self) -> std::any::TypeId {
-                std::any::TypeId::of::<$name>()
-            }
-
-            fn name(&self) -> &'static str {
-                stringify!($name)
-            }
-
-            fn as_any(&self) -> &dyn std::any::Any {
-                self
-            }
-
-            fn boxed_clone(&self) -> Box<dyn $crate::AnyAction> {
-                Box::new(self.clone())
-            }
-
-            fn boxed_clone_as_any(&self) -> Box<dyn std::any::Any> {
-                Box::new(self.clone())
-            }
-        }
-
-        impl From<$arg> for $name {
-            fn from(arg: $arg) -> Self {
-                Self(arg)
-            }
-        }
-    };
-
-    ($name:ident) => {
-        #[derive(Clone, Debug, Eq, PartialEq)]
-        pub struct $name;
-
-        impl $crate::Action for $name {
-            type Argument = ();
-        }
-
-        impl $crate::AnyAction for $name {
-            fn id(&self) -> std::any::TypeId {
-                std::any::TypeId::of::<$name>()
-            }
-
-            fn name(&self) -> &'static str {
-                stringify!($name)
-            }
-
-            fn as_any(&self) -> &dyn std::any::Any {
-                self
-            }
-
-            fn boxed_clone(&self) -> Box<dyn $crate::AnyAction> {
-                Box::new(self.clone())
-            }
-
-            fn boxed_clone_as_any(&self) -> Box<dyn std::any::Any> {
-                Box::new(self.clone())
-            }
-        }
-    };
-}
-
 pub struct Menu<'a> {
     pub name: &'a str,
     pub items: Vec<MenuItem<'a>>,
@@ -234,7 +158,7 @@ pub enum MenuItem<'a> {
     Action {
         name: &'a str,
         keystroke: Option<&'a str>,
-        action: Box<dyn AnyAction>,
+        action: Box<dyn Action>,
     },
     Separator,
 }
@@ -324,7 +248,7 @@ impl App {
         self
     }
 
-    pub fn on_quit<F>(self, mut callback: F) -> Self
+    pub fn on_quit<F>(&mut self, mut callback: F) -> &mut Self
     where
         F: 'static + FnMut(&mut MutableAppContext),
     {
@@ -336,7 +260,7 @@ impl App {
         self
     }
 
-    pub fn on_event<F>(self, mut callback: F) -> Self
+    pub fn on_event<F>(&mut self, mut callback: F) -> &mut Self
     where
         F: 'static + FnMut(Event, &mut MutableAppContext) -> bool,
     {
@@ -350,15 +274,15 @@ impl App {
         self
     }
 
-    pub fn on_open_files<F>(self, mut callback: F) -> Self
+    pub fn on_open_urls<F>(&mut self, mut callback: F) -> &mut Self
     where
-        F: 'static + FnMut(Vec<PathBuf>, &mut MutableAppContext),
+        F: 'static + FnMut(Vec<String>, &mut MutableAppContext),
     {
         let cx = self.0.clone();
         self.0
             .borrow_mut()
             .foreground_platform
-            .on_open_files(Box::new(move |paths| {
+            .on_open_urls(Box::new(move |paths| {
                 callback(paths, &mut *cx.borrow_mut())
             }));
         self
@@ -426,15 +350,17 @@ impl TestAppContext {
         cx
     }
 
-    pub fn dispatch_action<A: Action>(
-        &self,
-        window_id: usize,
-        responder_chain: Vec<usize>,
-        action: A,
-    ) {
-        self.cx
-            .borrow_mut()
-            .dispatch_action_any(window_id, &responder_chain, &action);
+    pub fn dispatch_action<A: Action>(&self, window_id: usize, action: A) {
+        let mut cx = self.cx.borrow_mut();
+        let dispatch_path = cx
+            .presenters_and_platform_windows
+            .get(&window_id)
+            .unwrap()
+            .0
+            .borrow()
+            .dispatch_path(cx.as_ref());
+
+        cx.dispatch_action_any(window_id, &dispatch_path, &action);
     }
 
     pub fn dispatch_global_action<A: Action>(&self, action: A) {
@@ -455,9 +381,9 @@ impl TestAppContext {
                 .unwrap()
                 .0
                 .clone();
-            let responder_chain = presenter.borrow().dispatch_path(cx.as_ref());
+            let dispatch_path = presenter.borrow().dispatch_path(cx.as_ref());
 
-            if !cx.dispatch_keystroke(window_id, responder_chain, &keystroke) {
+            if !cx.dispatch_keystroke(window_id, dispatch_path, &keystroke) {
                 presenter.borrow_mut().dispatch_event(
                     Event::KeyDown {
                         keystroke,
@@ -594,6 +520,15 @@ impl TestAppContext {
     #[cfg(any(test, feature = "test-support"))]
     pub fn leak_detector(&self) -> Arc<Mutex<LeakDetector>> {
         self.cx.borrow().leak_detector()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn assert_dropped(&self, handle: impl WeakHandle) {
+        self.cx
+            .borrow()
+            .leak_detector()
+            .lock()
+            .assert_dropped(handle.id())
     }
 }
 
@@ -776,20 +711,23 @@ impl ReadViewWith for TestAppContext {
 }
 
 type ActionCallback =
-    dyn FnMut(&mut dyn AnyView, &dyn AnyAction, &mut MutableAppContext, usize, usize);
-type GlobalActionCallback = dyn FnMut(&dyn AnyAction, &mut MutableAppContext);
+    dyn FnMut(&mut dyn AnyView, &dyn Action, &mut MutableAppContext, usize, usize);
+type GlobalActionCallback = dyn FnMut(&dyn Action, &mut MutableAppContext);
 
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
 type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
+type FocusObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type GlobalObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
-type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
+type ReleaseObservationCallback = Box<dyn FnOnce(&dyn Any, &mut MutableAppContext)>;
+type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
 
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
     foreground_platform: Rc<dyn platform::ForegroundPlatform>,
     assets: Arc<AssetCache>,
     cx: AppContext,
+    action_deserializers: HashMap<&'static str, (TypeId, DeserializeActionCallback)>,
     capture_actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     global_actions: HashMap<TypeId, Box<GlobalActionCallback>>,
@@ -802,6 +740,8 @@ pub struct MutableAppContext {
     global_subscriptions:
         Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalSubscriptionCallback>>>>>,
     observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>,
+    focus_observations:
+        Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<FocusObservationCallback>>>>>,
     global_observations:
         Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalObservationCallback>>>>>,
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
@@ -809,6 +749,7 @@ pub struct MutableAppContext {
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
     foreground: Rc<executor::Foreground>,
     pending_effects: VecDeque<Effect>,
+    pending_focus_index: Option<usize>,
     pending_notifications: HashSet<usize>,
     pending_global_notifications: HashSet<TypeId>,
     pending_flushes: usize,
@@ -842,6 +783,7 @@ impl MutableAppContext {
                 font_cache,
                 platform,
             },
+            action_deserializers: HashMap::new(),
             capture_actions: HashMap::new(),
             actions: HashMap::new(),
             global_actions: HashMap::new(),
@@ -853,11 +795,13 @@ impl MutableAppContext {
             subscriptions: Default::default(),
             global_subscriptions: Default::default(),
             observations: Default::default(),
+            focus_observations: Default::default(),
             release_observations: Default::default(),
             global_observations: Default::default(),
             presenters_and_platform_windows: HashMap::new(),
             foreground,
             pending_effects: VecDeque::new(),
+            pending_focus_index: None,
             pending_notifications: HashSet::new(),
             pending_global_notifications: HashSet::new(),
             pending_flushes: 0,
@@ -926,6 +870,20 @@ impl MutableAppContext {
             .and_then(|(presenter, _)| presenter.borrow().debug_elements(self))
     }
 
+    pub fn deserialize_action(
+        &self,
+        name: &str,
+        argument: Option<&str>,
+    ) -> Result<Box<dyn Action>> {
+        let callback = self
+            .action_deserializers
+            .get(name)
+            .ok_or_else(|| anyhow!("unknown action {}", name))?
+            .1;
+        callback(argument.unwrap_or("{}"))
+            .with_context(|| format!("invalid data for action {}", name))
+    }
+
     pub fn add_action<A, V, F>(&mut self, handler: F)
     where
         A: Action,
@@ -952,7 +910,7 @@ impl MutableAppContext {
     {
         let handler = Box::new(
             move |view: &mut dyn AnyView,
-                  action: &dyn AnyAction,
+                  action: &dyn Action,
                   cx: &mut MutableAppContext,
                   window_id: usize,
                   view_id: usize| {
@@ -967,6 +925,10 @@ impl MutableAppContext {
                 );
             },
         );
+
+        self.action_deserializers
+            .entry(A::qualified_name())
+            .or_insert((TypeId::of::<A>(), A::from_json_str));
 
         let actions = if capture {
             &mut self.capture_actions
@@ -998,17 +960,24 @@ impl MutableAppContext {
         A: Action,
         F: 'static + FnMut(&A, &mut MutableAppContext),
     {
-        let handler = Box::new(move |action: &dyn AnyAction, cx: &mut MutableAppContext| {
+        let handler = Box::new(move |action: &dyn Action, cx: &mut MutableAppContext| {
             let action = action.as_any().downcast_ref().unwrap();
             handler(action, cx);
         });
+
+        self.action_deserializers
+            .entry(A::qualified_name())
+            .or_insert((TypeId::of::<A>(), A::from_json_str));
 
         if self
             .global_actions
             .insert(TypeId::of::<A>(), handler)
             .is_some()
         {
-            panic!("registered multiple global handlers for the same action type");
+            panic!(
+                "registered multiple global handlers for {}",
+                type_name::<A>()
+            );
         }
     }
 
@@ -1222,6 +1191,32 @@ impl MutableAppContext {
         }
     }
 
+    fn observe_focus<F, V>(&mut self, handle: &ViewHandle<V>, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(ViewHandle<V>, &mut MutableAppContext) -> bool,
+        V: View,
+    {
+        let subscription_id = post_inc(&mut self.next_subscription_id);
+        let observed = handle.downgrade();
+        let view_id = handle.id();
+        self.pending_effects.push_back(Effect::FocusObservation {
+            view_id,
+            subscription_id,
+            callback: Box::new(move |cx| {
+                if let Some(observed) = observed.upgrade(cx) {
+                    callback(observed, cx)
+                } else {
+                    false
+                }
+            }),
+        });
+        Subscription::FocusObservation {
+            id: subscription_id,
+            view_id,
+            observations: Some(Arc::downgrade(&self.focus_observations)),
+        }
+    }
+
     pub fn observe_global<G, F>(&mut self, mut observe: F) -> Subscription
     where
         G: Any,
@@ -1250,12 +1245,12 @@ impl MutableAppContext {
         }
     }
 
-    pub fn observe_release<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
+    pub fn observe_release<E, H, F>(&mut self, handle: &H, callback: F) -> Subscription
     where
         E: Entity,
         E::Event: 'static,
         H: Handle<E>,
-        F: 'static + FnMut(&E, &mut Self),
+        F: 'static + FnOnce(&E, &mut Self),
     {
         let id = post_inc(&mut self.next_subscription_id);
         self.release_observations
@@ -1311,20 +1306,71 @@ impl MutableAppContext {
         }
     }
 
+    pub fn available_actions(
+        &self,
+        window_id: usize,
+        view_id: usize,
+    ) -> impl Iterator<Item = (&'static str, Box<dyn Action>, SmallVec<[&Binding; 1]>)> {
+        let mut action_types: HashSet<_> = self.global_actions.keys().copied().collect();
+
+        let presenter = self
+            .presenters_and_platform_windows
+            .get(&window_id)
+            .unwrap()
+            .0
+            .clone();
+        let dispatch_path = presenter.borrow().dispatch_path_from(view_id);
+        for view_id in dispatch_path {
+            if let Some(view) = self.views.get(&(window_id, view_id)) {
+                let view_type = view.as_any().type_id();
+                if let Some(actions) = self.actions.get(&view_type) {
+                    action_types.extend(actions.keys().copied());
+                }
+            }
+        }
+
+        self.action_deserializers
+            .iter()
+            .filter_map(move |(name, (type_id, deserialize))| {
+                if action_types.contains(type_id) {
+                    Some((
+                        *name,
+                        deserialize("{}").ok()?,
+                        self.keystroke_matcher
+                            .bindings_for_action_type(*type_id)
+                            .collect(),
+                    ))
+                } else {
+                    None
+                }
+            })
+    }
+
+    pub fn dispatch_action_at(&mut self, window_id: usize, view_id: usize, action: &dyn Action) {
+        let presenter = self
+            .presenters_and_platform_windows
+            .get(&window_id)
+            .unwrap()
+            .0
+            .clone();
+        let dispatch_path = presenter.borrow().dispatch_path_from(view_id);
+        self.dispatch_action_any(window_id, &dispatch_path, action);
+    }
+
     pub fn dispatch_action<A: Action>(
         &mut self,
         window_id: usize,
-        responder_chain: Vec<usize>,
+        dispatch_path: Vec<usize>,
         action: &A,
     ) {
-        self.dispatch_action_any(window_id, &responder_chain, action);
+        self.dispatch_action_any(window_id, &dispatch_path, action);
     }
 
     pub(crate) fn dispatch_action_any(
         &mut self,
         window_id: usize,
         path: &[usize],
-        action: &dyn AnyAction,
+        action: &dyn Action,
     ) -> bool {
         self.update(|this| {
             this.halt_action_dispatch = false;
@@ -1384,7 +1430,7 @@ impl MutableAppContext {
         self.dispatch_global_action_any(&action);
     }
 
-    fn dispatch_global_action_any(&mut self, action: &dyn AnyAction) -> bool {
+    fn dispatch_global_action_any(&mut self, action: &dyn Action) -> bool {
         self.update(|this| {
             if let Some((name, mut handler)) = this.global_actions.remove_entry(&action.id()) {
                 handler(action, this);
@@ -1400,14 +1446,18 @@ impl MutableAppContext {
         self.keystroke_matcher.add_bindings(bindings);
     }
 
+    pub fn clear_bindings(&mut self) {
+        self.keystroke_matcher.clear_bindings();
+    }
+
     pub fn dispatch_keystroke(
         &mut self,
         window_id: usize,
-        responder_chain: Vec<usize>,
+        dispatch_path: Vec<usize>,
         keystroke: &Keystroke,
     ) -> bool {
         let mut context_chain = Vec::new();
-        for view_id in &responder_chain {
+        for view_id in &dispatch_path {
             let view = self
                 .cx
                 .views
@@ -1420,13 +1470,12 @@ impl MutableAppContext {
         for (i, cx) in context_chain.iter().enumerate().rev() {
             match self
                 .keystroke_matcher
-                .push_keystroke(keystroke.clone(), responder_chain[i], cx)
+                .push_keystroke(keystroke.clone(), dispatch_path[i], cx)
             {
                 MatchResult::None => {}
                 MatchResult::Pending => pending = true,
                 MatchResult::Action(action) => {
-                    if self.dispatch_action_any(window_id, &responder_chain[0..=i], action.as_ref())
-                    {
+                    if self.dispatch_action_any(window_id, &dispatch_path[0..=i], action.as_ref()) {
                         self.keystroke_matcher.clear_pending();
                         return true;
                     }
@@ -1706,7 +1755,7 @@ impl MutableAppContext {
                 });
 
                 if let Some(view_id) = change_focus_to {
-                    self.focus(window_id, Some(view_id));
+                    self.handle_focus_effect(window_id, Some(view_id));
                 }
 
                 self.pending_effects
@@ -1729,6 +1778,9 @@ impl MutableAppContext {
             let mut refreshing = false;
             loop {
                 if let Some(effect) = self.pending_effects.pop_front() {
+                    if let Some(pending_focus_index) = self.pending_focus_index.as_mut() {
+                        *pending_focus_index = pending_focus_index.saturating_sub(1);
+                    }
                     match effect {
                         Effect::Subscription {
                             entity_id,
@@ -1752,13 +1804,13 @@ impl MutableAppContext {
                             callback,
                         } => self.handle_observation_effect(entity_id, subscription_id, callback),
                         Effect::ModelNotification { model_id } => {
-                            self.notify_model_observers(model_id)
+                            self.handle_model_notification_effect(model_id)
                         }
                         Effect::ViewNotification { window_id, view_id } => {
-                            self.notify_view_observers(window_id, view_id)
+                            self.handle_view_notification_effect(window_id, view_id)
                         }
                         Effect::GlobalNotification { type_id } => {
-                            self.notify_global_observers(type_id)
+                            self.handle_global_notification_effect(type_id)
                         }
                         Effect::Deferred {
                             callback,
@@ -1771,13 +1823,20 @@ impl MutableAppContext {
                             }
                         }
                         Effect::ModelRelease { model_id, model } => {
-                            self.notify_release_observers(model_id, model.as_any())
+                            self.handle_entity_release_effect(model_id, model.as_any())
                         }
                         Effect::ViewRelease { view_id, view } => {
-                            self.notify_release_observers(view_id, view.as_any())
+                            self.handle_entity_release_effect(view_id, view.as_any())
                         }
                         Effect::Focus { window_id, view_id } => {
-                            self.focus(window_id, view_id);
+                            self.handle_focus_effect(window_id, view_id);
+                        }
+                        Effect::FocusObservation {
+                            view_id,
+                            subscription_id,
+                            callback,
+                        } => {
+                            self.handle_focus_observation_effect(view_id, subscription_id, callback)
                         }
                         Effect::ResizeWindow { window_id } => {
                             if let Some(window) = self.cx.windows.get_mut(&window_id) {
@@ -2009,7 +2068,31 @@ impl MutableAppContext {
         }
     }
 
-    fn notify_model_observers(&mut self, observed_id: usize) {
+    fn handle_focus_observation_effect(
+        &mut self,
+        view_id: usize,
+        subscription_id: usize,
+        callback: FocusObservationCallback,
+    ) {
+        match self
+            .focus_observations
+            .lock()
+            .entry(view_id)
+            .or_default()
+            .entry(subscription_id)
+        {
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(Some(callback));
+            }
+            // Observation was dropped before effect was processed
+            btree_map::Entry::Occupied(entry) => {
+                debug_assert!(entry.get().is_none());
+                entry.remove();
+            }
+        }
+    }
+
+    fn handle_model_notification_effect(&mut self, observed_id: usize) {
         let callbacks = self.observations.lock().remove(&observed_id);
         if let Some(callbacks) = callbacks {
             if self.cx.models.contains_key(&observed_id) {
@@ -2038,7 +2121,11 @@ impl MutableAppContext {
         }
     }
 
-    fn notify_view_observers(&mut self, observed_window_id: usize, observed_view_id: usize) {
+    fn handle_view_notification_effect(
+        &mut self,
+        observed_window_id: usize,
+        observed_view_id: usize,
+    ) {
         if let Some(window) = self.cx.windows.get_mut(&observed_window_id) {
             window
                 .invalidation
@@ -2079,7 +2166,7 @@ impl MutableAppContext {
         }
     }
 
-    fn notify_global_observers(&mut self, observed_type_id: TypeId) {
+    fn handle_global_notification_effect(&mut self, observed_type_id: TypeId) {
         let callbacks = self.global_observations.lock().remove(&observed_type_id);
         if let Some(callbacks) = callbacks {
             if let Some(global) = self.cx.globals.remove(&observed_type_id) {
@@ -2107,16 +2194,18 @@ impl MutableAppContext {
         }
     }
 
-    fn notify_release_observers(&mut self, entity_id: usize, entity: &dyn Any) {
+    fn handle_entity_release_effect(&mut self, entity_id: usize, entity: &dyn Any) {
         let callbacks = self.release_observations.lock().remove(&entity_id);
         if let Some(callbacks) = callbacks {
-            for (_, mut callback) in callbacks {
+            for (_, callback) in callbacks {
                 callback(entity, self);
             }
         }
     }
 
-    fn focus(&mut self, window_id: usize, focused_id: Option<usize>) {
+    fn handle_focus_effect(&mut self, window_id: usize, focused_id: Option<usize>) {
+        self.pending_focus_index.take();
+
         if self
             .cx
             .windows
@@ -2145,9 +2234,43 @@ impl MutableAppContext {
                 if let Some(mut focused_view) = this.cx.views.remove(&(window_id, focused_id)) {
                     focused_view.on_focus(this, window_id, focused_id);
                     this.cx.views.insert((window_id, focused_id), focused_view);
+
+                    let callbacks = this.focus_observations.lock().remove(&focused_id);
+                    if let Some(callbacks) = callbacks {
+                        for (id, callback) in callbacks {
+                            if let Some(mut callback) = callback {
+                                let alive = callback(this);
+                                if alive {
+                                    match this
+                                        .focus_observations
+                                        .lock()
+                                        .entry(focused_id)
+                                        .or_default()
+                                        .entry(id)
+                                    {
+                                        btree_map::Entry::Vacant(entry) => {
+                                            entry.insert(Some(callback));
+                                        }
+                                        btree_map::Entry::Occupied(entry) => {
+                                            entry.remove();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         })
+    }
+
+    fn focus(&mut self, window_id: usize, view_id: Option<usize>) {
+        if let Some(pending_focus_index) = self.pending_focus_index {
+            self.pending_effects.remove(pending_focus_index);
+        }
+        self.pending_focus_index = Some(self.pending_effects.len());
+        self.pending_effects
+            .push_back(Effect::Focus { window_id, view_id });
     }
 
     pub fn spawn<F, Fut, T>(&self, f: F) -> Task<T>
@@ -2316,6 +2439,12 @@ pub struct AppContext {
 }
 
 impl AppContext {
+    pub(crate) fn root_view(&self, window_id: usize) -> Option<AnyViewHandle> {
+        self.windows
+            .get(&window_id)
+            .map(|window| window.root_view.clone())
+    }
+
     pub fn root_view_id(&self, window_id: usize) -> Option<usize> {
         self.windows
             .get(&window_id)
@@ -2345,11 +2474,11 @@ impl AppContext {
     }
 
     pub fn global<T: 'static>(&self) -> &T {
-        self.globals
-            .get(&TypeId::of::<T>())
-            .expect("no app state has been added for this type")
-            .downcast_ref()
-            .unwrap()
+        if let Some(global) = self.globals.get(&TypeId::of::<T>()) {
+            global.downcast_ref().unwrap()
+        } else {
+            panic!("no global has been added for {}", type_name::<T>());
+        }
     }
 }
 
@@ -2495,6 +2624,11 @@ pub enum Effect {
         window_id: usize,
         view_id: Option<usize>,
     },
+    FocusObservation {
+        view_id: usize,
+        subscription_id: usize,
+        callback: FocusObservationCallback,
+    },
     ResizeWindow {
         window_id: usize,
     },
@@ -2566,6 +2700,15 @@ impl Debug for Effect {
                 .field("window_id", window_id)
                 .field("view_id", view_id)
                 .finish(),
+            Effect::FocusObservation {
+                view_id,
+                subscription_id,
+                ..
+            } => f
+                .debug_struct("Effect::FocusObservation")
+                .field("view_id", view_id)
+                .field("subscription_id", subscription_id)
+                .finish(),
             Effect::ResizeWindow { window_id } => f
                 .debug_struct("Effect::RefreshWindow")
                 .field("window_id", window_id)
@@ -2629,6 +2772,7 @@ pub trait AnyView {
     fn on_focus(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
     fn on_blur(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
     fn keymap_context(&self, cx: &AppContext) -> keymap::Context;
+    fn debug_json(&self, cx: &AppContext) -> serde_json::Value;
 }
 
 impl<T> AnyView for T
@@ -2691,6 +2835,10 @@ where
 
     fn keymap_context(&self, cx: &AppContext) -> keymap::Context {
         View::keymap_context(self, cx)
+    }
+
+    fn debug_json(&self, cx: &AppContext) -> serde_json::Value {
+        View::debug_json(self, cx)
     }
 }
 
@@ -2973,24 +3121,15 @@ impl<'a, T: View> ViewContext<'a, T> {
         S: Into<AnyViewHandle>,
     {
         let handle = handle.into();
-        self.app.pending_effects.push_back(Effect::Focus {
-            window_id: handle.window_id,
-            view_id: Some(handle.view_id),
-        });
+        self.app.focus(handle.window_id, Some(handle.view_id));
     }
 
     pub fn focus_self(&mut self) {
-        self.app.pending_effects.push_back(Effect::Focus {
-            window_id: self.window_id,
-            view_id: Some(self.view_id),
-        });
+        self.app.focus(self.window_id, Some(self.view_id));
     }
 
     pub fn blur(&mut self) {
-        self.app.pending_effects.push_back(Effect::Focus {
-            window_id: self.window_id,
-            view_id: None,
-        });
+        self.app.focus(self.window_id, None);
     }
 
     pub fn add_model<S, F>(&mut self, build_model: F) -> ModelHandle<S>
@@ -3046,6 +3185,24 @@ impl<'a, T: View> ViewContext<'a, T> {
     {
         let observer = self.weak_handle();
         self.app.observe_internal(handle, move |observed, cx| {
+            if let Some(observer) = observer.upgrade(cx) {
+                observer.update(cx, |observer, cx| {
+                    callback(observer, observed, cx);
+                });
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    pub fn observe_focus<F, V>(&mut self, handle: &ViewHandle<V>, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut T, ViewHandle<V>, &mut ViewContext<T>),
+        V: View,
+    {
+        let observer = self.weak_handle();
+        self.app.observe_focus(handle, move |observed, cx| {
             if let Some(observer) = observer.upgrade(cx) {
                 observer.update(cx, |observer, cx| {
                     callback(observer, observed, cx);
@@ -3301,6 +3458,10 @@ pub trait Handle<T> {
         Self: Sized;
 }
 
+pub trait WeakHandle {
+    fn id(&self) -> usize;
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum EntityLocation {
     Model(usize),
@@ -3375,12 +3536,10 @@ impl<T: Entity> ModelHandle<T> {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
-        use postage::prelude::{Sink as _, Stream as _};
-
-        let (mut tx, mut rx) = postage::mpsc::channel(1);
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
         let mut cx = cx.cx.borrow_mut();
         let subscription = cx.observe(self, move |_, _| {
-            tx.try_send(()).ok();
+            tx.unbounded_send(()).ok();
         });
 
         let duration = if std::env::var("CI").is_ok() {
@@ -3390,7 +3549,7 @@ impl<T: Entity> ModelHandle<T> {
         };
 
         async move {
-            let notification = crate::util::timeout(duration, rx.recv())
+            let notification = crate::util::timeout(duration, rx.next())
                 .await
                 .expect("next notification timed out");
             drop(subscription);
@@ -3403,12 +3562,10 @@ impl<T: Entity> ModelHandle<T> {
     where
         T::Event: Clone,
     {
-        use postage::prelude::{Sink as _, Stream as _};
-
-        let (mut tx, mut rx) = postage::mpsc::channel(1);
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
         let mut cx = cx.cx.borrow_mut();
         let subscription = cx.subscribe(self, move |_, event, _| {
-            tx.blocking_send(event.clone()).ok();
+            tx.unbounded_send(event.clone()).ok();
         });
 
         let duration = if std::env::var("CI").is_ok() {
@@ -3417,8 +3574,9 @@ impl<T: Entity> ModelHandle<T> {
             Duration::from_secs(1)
         };
 
+        cx.foreground.start_waiting();
         async move {
-            let event = crate::util::timeout(duration, rx.recv())
+            let event = crate::util::timeout(duration, rx.next())
                 .await
                 .expect("next event timed out");
             drop(subscription);
@@ -3432,22 +3590,20 @@ impl<T: Entity> ModelHandle<T> {
         cx: &TestAppContext,
         mut predicate: impl FnMut(&T, &AppContext) -> bool,
     ) -> impl Future<Output = ()> {
-        use postage::prelude::{Sink as _, Stream as _};
-
-        let (tx, mut rx) = postage::mpsc::channel(1024);
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
 
         let mut cx = cx.cx.borrow_mut();
         let subscriptions = (
             cx.observe(self, {
-                let mut tx = tx.clone();
+                let tx = tx.clone();
                 move |_, _| {
-                    tx.blocking_send(()).ok();
+                    tx.unbounded_send(()).ok();
                 }
             }),
             cx.subscribe(self, {
-                let mut tx = tx.clone();
+                let tx = tx.clone();
                 move |_, _, _| {
-                    tx.blocking_send(()).ok();
+                    tx.unbounded_send(()).ok();
                 }
             }),
         );
@@ -3478,7 +3634,7 @@ impl<T: Entity> ModelHandle<T> {
                     }
 
                     cx.borrow().foreground().start_waiting();
-                    rx.recv()
+                    rx.next()
                         .await
                         .expect("model dropped with pending condition");
                     cx.borrow().foreground().finish_waiting();
@@ -3573,6 +3729,12 @@ impl<T: Entity> Handle<T> for ModelHandle<T> {
 pub struct WeakModelHandle<T> {
     model_id: usize,
     model_type: PhantomData<T>,
+}
+
+impl<T> WeakHandle for WeakModelHandle<T> {
+    fn id(&self) -> usize {
+        self.model_id
+    }
 }
 
 unsafe impl<T> Send for WeakModelHandle<T> {}
@@ -3961,6 +4123,12 @@ impl AnyViewHandle {
     pub fn view_type(&self) -> TypeId {
         self.view_type
     }
+
+    pub fn debug_json(&self, cx: &AppContext) -> serde_json::Value {
+        cx.views
+            .get(&(self.window_id, self.view_id))
+            .map_or_else(|| serde_json::Value::Null, |view| view.debug_json(cx))
+    }
 }
 
 impl Clone for AnyViewHandle {
@@ -4144,6 +4312,12 @@ pub struct WeakViewHandle<T> {
     view_type: PhantomData<T>,
 }
 
+impl<T> WeakHandle for WeakViewHandle<T> {
+    fn id(&self) -> usize {
+        self.view_id
+    }
+}
+
 impl<T: View> WeakViewHandle<T> {
     fn new(window_id: usize, view_id: usize) -> Self {
         Self {
@@ -4304,6 +4478,12 @@ pub enum Subscription {
             Weak<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalObservationCallback>>>>>,
         >,
     },
+    FocusObservation {
+        id: usize,
+        view_id: usize,
+        observations:
+            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<FocusObservationCallback>>>>>>,
+    },
     ReleaseObservation {
         id: usize,
         entity_id: usize,
@@ -4328,6 +4508,9 @@ impl Subscription {
                 observations.take();
             }
             Subscription::ReleaseObservation { observations, .. } => {
+                observations.take();
+            }
+            Subscription::FocusObservation { observations, .. } => {
                 observations.take();
             }
         }
@@ -4422,6 +4605,22 @@ impl Drop for Subscription {
                     }
                 }
             }
+            Subscription::FocusObservation {
+                id,
+                view_id,
+                observations,
+            } => {
+                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
+                    match observations.lock().entry(*view_id).or_default().entry(*id) {
+                        btree_map::Entry::Vacant(entry) => {
+                            entry.insert(None);
+                        }
+                        btree_map::Entry::Occupied(entry) => {
+                            entry.remove();
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -4470,11 +4669,36 @@ impl LeakDetector {
         }
     }
 
+    pub fn assert_dropped(&mut self, entity_id: usize) {
+        if let Some((type_name, backtraces)) = self.handle_backtraces.get_mut(&entity_id) {
+            for trace in backtraces.values_mut() {
+                if let Some(trace) = trace {
+                    trace.resolve();
+                    eprintln!("{:?}", crate::util::CwdBacktrace(trace));
+                }
+            }
+
+            let hint = if *LEAK_BACKTRACE {
+                ""
+            } else {
+                " – set LEAK_BACKTRACE=1 for more information"
+            };
+
+            panic!(
+                "{} handles to {} {} still exist{}",
+                backtraces.len(),
+                type_name.unwrap_or("entity"),
+                entity_id,
+                hint
+            );
+        }
+    }
+
     pub fn detect(&mut self) {
         let mut found_leaks = false;
         for (id, (type_name, backtraces)) in self.handle_backtraces.iter_mut() {
             eprintln!(
-                "leaked {} handles to {:?} {}",
+                "leaked {} handles to {} {}",
                 backtraces.len(),
                 type_name.unwrap_or("entity"),
                 id
@@ -4606,7 +4830,8 @@ impl RefCounts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::elements::*;
+    use crate::{actions, elements::*, impl_actions};
+    use serde::Deserialize;
     use smol::future::poll_once;
     use std::{
         cell::Cell,
@@ -5684,23 +5909,56 @@ mod tests {
             }
         }
 
-        let events: Arc<Mutex<Vec<String>>> = Default::default();
+        let view_events: Arc<Mutex<Vec<String>>> = Default::default();
         let (window_id, view_1) = cx.add_window(Default::default(), |_| View {
-            events: events.clone(),
+            events: view_events.clone(),
             name: "view 1".to_string(),
         });
         let view_2 = cx.add_view(window_id, |_| View {
-            events: events.clone(),
+            events: view_events.clone(),
             name: "view 2".to_string(),
         });
 
-        view_1.update(cx, |_, cx| cx.focus(&view_2));
+        let observed_events: Arc<Mutex<Vec<String>>> = Default::default();
+        view_1.update(cx, |_, cx| {
+            cx.observe_focus(&view_2, {
+                let observed_events = observed_events.clone();
+                move |this, view, cx| {
+                    observed_events.lock().push(format!(
+                        "{} observed {}'s focus",
+                        this.name,
+                        view.read(cx).name
+                    ))
+                }
+            })
+            .detach();
+        });
+        view_2.update(cx, |_, cx| {
+            cx.observe_focus(&view_1, {
+                let observed_events = observed_events.clone();
+                move |this, view, cx| {
+                    observed_events.lock().push(format!(
+                        "{} observed {}'s focus",
+                        this.name,
+                        view.read(cx).name
+                    ))
+                }
+            })
+            .detach();
+        });
+
+        view_1.update(cx, |_, cx| {
+            // Ensure only the latest focus is honored.
+            cx.focus(&view_2);
+            cx.focus(&view_1);
+            cx.focus(&view_2);
+        });
         view_1.update(cx, |_, cx| cx.focus(&view_1));
         view_1.update(cx, |_, cx| cx.focus(&view_2));
         view_1.update(cx, |_, _| drop(view_2));
 
         assert_eq!(
-            *events.lock(),
+            *view_events.lock(),
             [
                 "view 1 focused".to_string(),
                 "view 1 blurred".to_string(),
@@ -5711,6 +5969,50 @@ mod tests {
                 "view 2 focused".to_string(),
                 "view 1 focused".to_string(),
             ],
+        );
+        assert_eq!(
+            *observed_events.lock(),
+            [
+                "view 1 observed view 2's focus".to_string(),
+                "view 2 observed view 1's focus".to_string(),
+                "view 1 observed view 2's focus".to_string(),
+            ]
+        );
+    }
+
+    #[crate::test(self)]
+    fn test_deserialize_actions(cx: &mut MutableAppContext) {
+        #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+        pub struct ComplexAction {
+            arg: String,
+            count: usize,
+        }
+
+        actions!(test::something, [SimpleAction]);
+        impl_actions!(test::something, [ComplexAction]);
+
+        cx.add_global_action(move |_: &SimpleAction, _: &mut MutableAppContext| {});
+        cx.add_global_action(move |_: &ComplexAction, _: &mut MutableAppContext| {});
+
+        let action1 = cx
+            .deserialize_action(
+                "test::something::ComplexAction",
+                Some(r#"{"arg": "a", "count": 5}"#),
+            )
+            .unwrap();
+        let action2 = cx
+            .deserialize_action("test::something::SimpleAction", None)
+            .unwrap();
+        assert_eq!(
+            action1.as_any().downcast_ref::<ComplexAction>().unwrap(),
+            &ComplexAction {
+                arg: "a".to_string(),
+                count: 5,
+            }
+        );
+        assert_eq!(
+            action2.as_any().downcast_ref::<SimpleAction>().unwrap(),
+            &SimpleAction
         );
     }
 
@@ -5752,29 +6054,32 @@ mod tests {
             }
         }
 
-        action!(Action, &'static str);
+        #[derive(Clone, Deserialize)]
+        pub struct Action(pub String);
+
+        impl_actions!(test, [Action]);
 
         let actions = Rc::new(RefCell::new(Vec::new()));
 
-        {
+        cx.add_global_action({
             let actions = actions.clone();
-            cx.add_global_action(move |_: &Action, _: &mut MutableAppContext| {
+            move |_: &Action, _: &mut MutableAppContext| {
                 actions.borrow_mut().push("global".to_string());
-            });
-        }
+            }
+        });
 
-        {
+        cx.add_action({
             let actions = actions.clone();
-            cx.add_action(move |view: &mut ViewA, action: &Action, cx| {
+            move |view: &mut ViewA, action: &Action, cx| {
                 assert_eq!(action.0, "bar");
                 cx.propagate_action();
                 actions.borrow_mut().push(format!("{} a", view.id));
-            });
-        }
+            }
+        });
 
-        {
+        cx.add_action({
             let actions = actions.clone();
-            cx.add_action(move |view: &mut ViewA, _: &Action, cx| {
+            move |view: &mut ViewA, _: &Action, cx| {
                 if view.id != 1 {
                     cx.add_view(|cx| {
                         cx.propagate_action(); // Still works on a nested ViewContext
@@ -5782,32 +6087,32 @@ mod tests {
                     });
                 }
                 actions.borrow_mut().push(format!("{} b", view.id));
-            });
-        }
+            }
+        });
 
-        {
+        cx.add_action({
             let actions = actions.clone();
-            cx.add_action(move |view: &mut ViewB, _: &Action, cx| {
+            move |view: &mut ViewB, _: &Action, cx| {
                 cx.propagate_action();
                 actions.borrow_mut().push(format!("{} c", view.id));
-            });
-        }
+            }
+        });
 
-        {
+        cx.add_action({
             let actions = actions.clone();
-            cx.add_action(move |view: &mut ViewB, _: &Action, cx| {
+            move |view: &mut ViewB, _: &Action, cx| {
                 cx.propagate_action();
                 actions.borrow_mut().push(format!("{} d", view.id));
-            });
-        }
+            }
+        });
 
-        {
+        cx.capture_action({
             let actions = actions.clone();
-            cx.capture_action(move |view: &mut ViewA, _: &Action, cx| {
+            move |view: &mut ViewA, _: &Action, cx| {
                 cx.propagate_action();
                 actions.borrow_mut().push(format!("{} capture", view.id));
-            });
-        }
+            }
+        });
 
         let (window_id, view_1) = cx.add_window(Default::default(), |_| ViewA { id: 1 });
         let view_2 = cx.add_view(window_id, |_| ViewB { id: 2 });
@@ -5817,7 +6122,7 @@ mod tests {
         cx.dispatch_action(
             window_id,
             vec![view_1.id(), view_2.id(), view_3.id(), view_4.id()],
-            &Action("bar"),
+            &Action("bar".to_string()),
         );
 
         assert_eq!(
@@ -5840,7 +6145,7 @@ mod tests {
         cx.dispatch_action(
             window_id,
             vec![view_2.id(), view_3.id(), view_4.id()],
-            &Action("bar"),
+            &Action("bar".to_string()),
         );
 
         assert_eq!(
@@ -5860,7 +6165,10 @@ mod tests {
 
     #[crate::test(self)]
     fn test_dispatch_keystroke(cx: &mut MutableAppContext) {
-        action!(Action, &'static str);
+        #[derive(Clone, Deserialize)]
+        pub struct Action(String);
+
+        impl_actions!(test, [Action]);
 
         struct View {
             id: usize,
@@ -5912,16 +6220,20 @@ mod tests {
         // "a" and "b" in its context, but not "c".
         cx.add_bindings(vec![keymap::Binding::new(
             "a",
-            Action("a"),
+            Action("a".to_string()),
             Some("a && b && !c"),
         )]);
 
-        cx.add_bindings(vec![keymap::Binding::new("b", Action("b"), None)]);
+        cx.add_bindings(vec![keymap::Binding::new(
+            "b",
+            Action("b".to_string()),
+            None,
+        )]);
 
         let actions = Rc::new(RefCell::new(Vec::new()));
-        {
+        cx.add_action({
             let actions = actions.clone();
-            cx.add_action(move |view: &mut View, action: &Action, cx| {
+            move |view: &mut View, action: &Action, cx| {
                 if action.0 == "a" {
                     actions.borrow_mut().push(format!("{} a", view.id));
                 } else {
@@ -5930,14 +6242,15 @@ mod tests {
                         .push(format!("{} {}", view.id, action.0));
                     cx.propagate_action();
                 }
-            });
-        }
-        {
+            }
+        });
+
+        cx.add_global_action({
             let actions = actions.clone();
-            cx.add_global_action(move |action: &Action, _| {
+            move |action: &Action, _| {
                 actions.borrow_mut().push(format!("global {}", action.0));
-            });
-        }
+            }
+        });
 
         cx.dispatch_keystroke(
             window_id,

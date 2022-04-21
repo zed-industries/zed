@@ -2,8 +2,8 @@ use std::{any::Any, f32::INFINITY};
 
 use crate::{
     json::{self, ToJson, Value},
-    Axis, DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint, Vector2FExt,
+    Axis, DebugContext, Element, ElementBox, ElementStateContext, ElementStateHandle, Event,
+    EventContext, LayoutContext, PaintContext, SizeConstraint, Vector2FExt,
 };
 use pathfinder_geometry::{
     rect::RectF,
@@ -11,9 +11,16 @@ use pathfinder_geometry::{
 };
 use serde_json::json;
 
+#[derive(Default)]
+struct ScrollState {
+    scroll_to: Option<usize>,
+    scroll_position: f32,
+}
+
 pub struct Flex {
     axis: Axis,
     children: Vec<ElementBox>,
+    scroll_state: Option<ElementStateHandle<ScrollState>>,
 }
 
 impl Flex {
@@ -21,6 +28,7 @@ impl Flex {
         Self {
             axis,
             children: Default::default(),
+            scroll_state: None,
         }
     }
 
@@ -30,6 +38,22 @@ impl Flex {
 
     pub fn column() -> Self {
         Self::new(Axis::Vertical)
+    }
+
+    pub fn scrollable<Tag, C>(
+        mut self,
+        element_id: usize,
+        scroll_to: Option<usize>,
+        cx: &mut C,
+    ) -> Self
+    where
+        Tag: 'static,
+        C: ElementStateContext,
+    {
+        let scroll_state = cx.element_state::<Tag, ScrollState>(element_id);
+        scroll_state.update(cx, |scroll_state, _| scroll_state.scroll_to = scroll_to);
+        self.scroll_state = Some(scroll_state);
+        self
     }
 
     fn layout_flex_children(
@@ -167,6 +191,30 @@ impl Element for Flex {
             size.set_y(constraint.max.y());
         }
 
+        if let Some(scroll_state) = self.scroll_state.as_ref() {
+            scroll_state.update(cx, |scroll_state, _| {
+                if let Some(scroll_to) = scroll_state.scroll_to.take() {
+                    let visible_start = scroll_state.scroll_position;
+                    let visible_end = visible_start + size.along(self.axis);
+                    if let Some(child) = self.children.get(scroll_to) {
+                        let child_start: f32 = self.children[..scroll_to]
+                            .iter()
+                            .map(|c| c.size().along(self.axis))
+                            .sum();
+                        let child_end = child_start + child.size().along(self.axis);
+                        if child_start < visible_start {
+                            scroll_state.scroll_position = child_start;
+                        } else if child_end > visible_end {
+                            scroll_state.scroll_position = child_end - size.along(self.axis);
+                        }
+                    }
+                }
+
+                scroll_state.scroll_position =
+                    scroll_state.scroll_position.min(-remaining_space).max(0.);
+            });
+        }
+
         (size, remaining_space)
     }
 
@@ -181,7 +229,16 @@ impl Element for Flex {
         if overflowing {
             cx.scene.push_layer(Some(bounds));
         }
+
         let mut child_origin = bounds.origin();
+        if let Some(scroll_state) = self.scroll_state.as_ref() {
+            let scroll_position = scroll_state.read(cx).scroll_position;
+            match self.axis {
+                Axis::Horizontal => child_origin.set_x(child_origin.x() - scroll_position),
+                Axis::Vertical => child_origin.set_y(child_origin.y() - scroll_position),
+            }
+        }
+
         for child in &mut self.children {
             if *remaining_space > 0. {
                 if let Some(metadata) = child.metadata::<FlexParentData>() {
@@ -208,14 +265,48 @@ impl Element for Flex {
     fn dispatch_event(
         &mut self,
         event: &Event,
+        bounds: RectF,
         _: RectF,
-        _: &mut Self::LayoutState,
+        remaining_space: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         cx: &mut EventContext,
     ) -> bool {
         let mut handled = false;
         for child in &mut self.children {
             handled = child.dispatch_event(event, cx) || handled;
+        }
+        if !handled {
+            if let &Event::ScrollWheel {
+                position,
+                delta,
+                precise,
+            } = event
+            {
+                if *remaining_space < 0. && bounds.contains_point(position) {
+                    if let Some(scroll_state) = self.scroll_state.as_ref() {
+                        scroll_state.update(cx, |scroll_state, cx| {
+                            let mut delta = match self.axis {
+                                Axis::Horizontal => {
+                                    if delta.x() != 0. {
+                                        delta.x()
+                                    } else {
+                                        delta.y()
+                                    }
+                                }
+                                Axis::Vertical => delta.y(),
+                            };
+                            if !precise {
+                                delta *= 20.;
+                            }
+
+                            scroll_state.scroll_position -= delta;
+
+                            handled = true;
+                            cx.notify();
+                        });
+                    }
+                }
+            }
         }
         handled
     }
@@ -294,6 +385,7 @@ impl Element for FlexItem {
     fn dispatch_event(
         &mut self,
         event: &Event,
+        _: RectF,
         _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
