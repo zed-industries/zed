@@ -1,0 +1,9 @@
+name = "TOML"
+path_suffixes = ["toml"]
+line_comment = "# "
+autoclose_before = ",]}"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false },
+]

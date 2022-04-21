@@ -38,6 +38,11 @@ pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegi
             Some(Arc::new(rust::RustLspAdapter)),
         ),
         (
+            "toml",
+            tree_sitter_toml::language(),
+            None, //
+        ),
+        (
             "tsx",
             tree_sitter_typescript::language_tsx(),
             Some(Arc::new(typescript::TypeScriptLspAdapter)),
