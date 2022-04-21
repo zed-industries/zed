@@ -1132,7 +1132,19 @@ impl Project {
             if file.is_local() {
                 let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
                 let initial_snapshot = buffer.text_snapshot();
-                let language_server = self.language_server_for_buffer(buffer, cx).cloned();
+
+                let mut language_server = None;
+                let mut language_id = None;
+                if let Some(language) = buffer.language() {
+                    let worktree_id = file.worktree_id(cx);
+                    if let Some(adapter) = language.lsp_adapter() {
+                        language_id = adapter.id_for_language(language.name().as_ref());
+                        language_server = self
+                            .language_servers
+                            .get(&(worktree_id, adapter.name()))
+                            .cloned();
+                    }
+                }
 
                 if let Some(local_worktree) = file.worktree.read(cx).as_local() {
                     if let Some(diagnostics) = local_worktree.diagnostics_for_path(file.path()) {
@@ -1147,7 +1159,7 @@ impl Project {
                             lsp::DidOpenTextDocumentParams {
                                 text_document: lsp::TextDocumentItem::new(
                                     uri,
-                                    Default::default(),
+                                    language_id.unwrap_or_default(),
                                     0,
                                     initial_snapshot.text(),
                                 ),
@@ -1437,7 +1449,7 @@ impl Project {
 
                     this.update(&mut cx, |this, cx| {
                         this.language_servers
-                            .insert(key.clone(), (adapter, language_server.clone()));
+                            .insert(key.clone(), (adapter.clone(), language_server.clone()));
                         this.language_server_statuses.insert(
                             server_id,
                             LanguageServerStatus {
@@ -1494,12 +1506,13 @@ impl Project {
                                     .or_insert_with(|| vec![(0, buffer.text_snapshot())]);
                                 let (version, initial_snapshot) = versions.last().unwrap();
                                 let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+                                let language_id = adapter.id_for_language(language.name().as_ref());
                                 language_server
                                     .notify::<lsp::notification::DidOpenTextDocument>(
                                         lsp::DidOpenTextDocumentParams {
                                             text_document: lsp::TextDocumentItem::new(
                                                 uri,
-                                                Default::default(),
+                                                language_id.unwrap_or_default(),
                                                 *version,
                                                 initial_snapshot.text(),
                                             ),

@@ -127,4 +127,12 @@ impl LspAdapter for JsonLspAdapter {
             "provideFormatter": true
         }))
     }
+
+    fn id_for_language(&self, name: &str) -> Option<String> {
+        if name == "JSON" {
+            Some("jsonc".into())
+        } else {
+            None
+        }
+    }
 }
