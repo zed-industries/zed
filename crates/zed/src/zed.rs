@@ -25,7 +25,7 @@ pub use project::{self, fs};
 use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
 use serde_json::to_string_pretty;
-use settings::Settings;
+use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -41,6 +41,7 @@ actions!(
         Quit,
         DebugElements,
         OpenSettings,
+        OpenKeymap,
         IncreaseBufferFontSize,
         DecreaseBufferFontSize,
         InstallCommandLineInterface,
@@ -78,39 +79,13 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action({
         let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
-            let app_state = app_state.clone();
-            cx.spawn(move |workspace, mut cx| async move {
-                let fs = &app_state.fs;
-                if !fs.is_file(&SETTINGS_PATH).await {
-                    fs.create_dir(&ROOT_PATH).await?;
-                    fs.create_file(&SETTINGS_PATH, Default::default()).await?;
-                }
-
-                workspace
-                    .update(&mut cx, |workspace, cx| {
-                        if workspace.project().read(cx).is_local() {
-                            workspace.open_paths(&[SETTINGS_PATH.clone()], cx)
-                        } else {
-                            let (_, workspace) =
-                                cx.add_window((app_state.build_window_options)(), |cx| {
-                                    let project = Project::local(
-                                        app_state.client.clone(),
-                                        app_state.user_store.clone(),
-                                        app_state.languages.clone(),
-                                        app_state.fs.clone(),
-                                        cx,
-                                    );
-                                    (app_state.build_workspace)(project, &app_state, cx)
-                                });
-                            workspace.update(cx, |workspace, cx| {
-                                workspace.open_paths(&[SETTINGS_PATH.clone()], cx)
-                            })
-                        }
-                    })
-                    .await;
-                Ok::<_, anyhow::Error>(())
-            })
-            .detach_and_log_err(cx);
+            open_config_file(&SETTINGS_PATH, app_state.clone(), cx);
+        }
+    });
+    cx.add_action({
+        let app_state = app_state.clone();
+        move |_: &mut Workspace, _: &OpenKeymap, cx: &mut ViewContext<Workspace>| {
+            open_config_file(&KEYMAP_PATH, app_state.clone(), cx);
         }
     });
     cx.add_action(
@@ -137,7 +112,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     );
 
     workspace::lsp_status::init(cx);
-
     settings::KeymapFileContent::load_defaults(cx);
 }
 
@@ -179,13 +153,18 @@ pub fn build_workspace(
     let theme_names = app_state.themes.list().collect();
     let language_names = app_state.languages.language_names();
 
-    project.update(cx, |project, _| {
+    project.update(cx, |project, cx| {
+        let action_names = cx.all_action_names().collect::<Vec<_>>();
         project.set_language_server_settings(serde_json::json!({
             "json": {
                 "schemas": [
                     {
-                        "fileMatch": "**/.zed/settings.json",
-                        "schema": Settings::file_json_schema(theme_names, language_names),
+                        "fileMatch": [".zed/settings.json"],
+                        "schema": settings_file_json_schema(theme_names, language_names),
+                    },
+                    {
+                        "fileMatch": [".zed/keymap.json"],
+                        "schema": keymap_file_json_schema(&action_names),
                     }
                 ]
             }
@@ -287,6 +266,44 @@ async fn install_cli(cx: &AsyncAppContext) -> Result<()> {
     } else {
         Err(anyhow!("error running osascript"))
     }
+}
+
+fn open_config_file(
+    path: &'static Path,
+    app_state: Arc<AppState>,
+    cx: &mut ViewContext<Workspace>,
+) {
+    cx.spawn(|workspace, mut cx| async move {
+        let fs = &app_state.fs;
+        if !fs.is_file(path).await {
+            fs.create_dir(&ROOT_PATH).await?;
+            fs.create_file(path, Default::default()).await?;
+        }
+
+        workspace
+            .update(&mut cx, |workspace, cx| {
+                if workspace.project().read(cx).is_local() {
+                    workspace.open_paths(&[path.to_path_buf()], cx)
+                } else {
+                    let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
+                        let project = Project::local(
+                            app_state.client.clone(),
+                            app_state.user_store.clone(),
+                            app_state.languages.clone(),
+                            app_state.fs.clone(),
+                            cx,
+                        );
+                        (app_state.build_workspace)(project, &app_state, cx)
+                    });
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.open_paths(&[path.to_path_buf()], cx)
+                    })
+                }
+            })
+            .await;
+        Ok::<_, anyhow::Error>(())
+    })
+    .detach_and_log_err(cx)
 }
 
 #[cfg(test)]

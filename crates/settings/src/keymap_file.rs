@@ -3,14 +3,38 @@ use anyhow::{Context, Result};
 use assets::Assets;
 use collections::BTreeMap;
 use gpui::{keymap::Binding, MutableAppContext};
+use schemars::{
+    gen::{SchemaGenerator, SchemaSettings},
+    schema::{InstanceType, Schema, SchemaObject, SingleOrVec, SubschemaValidation},
+    JsonSchema,
+};
 use serde::Deserialize;
-use serde_json::value::RawValue;
+use serde_json::{value::RawValue, Value};
+
+#[derive(Deserialize, Default, Clone, JsonSchema)]
+#[serde(transparent)]
+pub struct KeymapFileContent(Vec<KeymapBlock>);
+
+#[derive(Deserialize, Default, Clone, JsonSchema)]
+pub struct KeymapBlock {
+    #[serde(default)]
+    context: Option<String>,
+    bindings: BTreeMap<String, KeymapAction>,
+}
 
 #[derive(Deserialize, Default, Clone)]
 #[serde(transparent)]
-pub struct KeymapFileContent(BTreeMap<String, ActionsByKeystroke>);
+pub struct KeymapAction(Box<RawValue>);
 
-type ActionsByKeystroke = BTreeMap<String, Box<RawValue>>;
+impl JsonSchema for KeymapAction {
+    fn schema_name() -> String {
+        "KeymapAction".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        Schema::Bool(true)
+    }
+}
 
 #[derive(Deserialize)]
 struct ActionWithData(Box<str>, Box<RawValue>);
@@ -29,13 +53,12 @@ impl KeymapFileContent {
     }
 
     pub fn add(self, cx: &mut MutableAppContext) -> Result<()> {
-        for (context, actions) in self.0 {
-            let context = if context == "*" { None } else { Some(context) };
+        for KeymapBlock { context, bindings } in self.0 {
             cx.add_bindings(
-                actions
+                bindings
                     .into_iter()
                     .map(|(keystroke, action)| {
-                        let action = action.get();
+                        let action = action.0.get();
 
                         // This is a workaround for a limitation in serde: serde-rs/json#497
                         // We want to deserialize the action data as a `RawValue` so that we can
@@ -60,4 +83,40 @@ impl KeymapFileContent {
         }
         Ok(())
     }
+}
+
+pub fn keymap_file_json_schema(action_names: &[&'static str]) -> serde_json::Value {
+    let mut root_schema = SchemaSettings::draft07()
+        .with(|settings| settings.option_add_null_type = false)
+        .into_generator()
+        .into_root_schema_for::<KeymapFileContent>();
+
+    let action_schema = Schema::Object(SchemaObject {
+        subschemas: Some(Box::new(SubschemaValidation {
+            one_of: Some(vec![
+                Schema::Object(SchemaObject {
+                    instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
+                    enum_values: Some(
+                        action_names
+                            .into_iter()
+                            .map(|name| Value::String(name.to_string()))
+                            .collect(),
+                    ),
+                    ..Default::default()
+                }),
+                Schema::Object(SchemaObject {
+                    instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Array))),
+                    ..Default::default()
+                }),
+            ]),
+            ..Default::default()
+        })),
+        ..Default::default()
+    });
+
+    root_schema
+        .definitions
+        .insert("KeymapAction".to_owned(), action_schema);
+
+    serde_json::to_value(root_schema).unwrap()
 }
