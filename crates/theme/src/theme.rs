@@ -153,6 +153,8 @@ pub struct StatusBar {
     pub cursor_position: TextStyle,
     pub diagnostic_message: TextStyle,
     pub lsp_message: TextStyle,
+    pub auto_update_progress_message: TextStyle,
+    pub auto_update_done_message: TextStyle,
 }
 
 #[derive(Deserialize, Default)]

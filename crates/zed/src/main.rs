@@ -114,6 +114,7 @@ fn main() {
         let channel_list =
             cx.add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx));
 
+        auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
         project::Project::init(&client);
         client::Channel::init(&client);
         client::init(client.clone(), cx);
@@ -178,8 +179,8 @@ fn main() {
             client,
             user_store,
             fs,
-            build_window_options: &build_window_options,
-            build_workspace: &build_workspace,
+            build_window_options,
+            build_workspace,
         });
         journal::init(app_state.clone(), cx);
         theme_selector::init(cx);

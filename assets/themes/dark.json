@@ -239,6 +239,16 @@
         "family": "Zed Sans",
         "color": "#808080",
         "size": 14
+      },
+      "auto_update_progress_message": {
+        "family": "Zed Sans",
+        "color": "#808080",
+        "size": 14
+      },
+      "auto_update_done_message": {
+        "family": "Zed Sans",
+        "color": "#808080",
+        "size": 14
       }
     },
     "titlebar": {

@@ -14,7 +14,9 @@ use cocoa::{
         NSPasteboardTypeString, NSSavePanel, NSWindow,
     },
     base::{id, nil, selector, YES},
-    foundation::{NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSString, NSURL},
+    foundation::{
+        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSString, NSUInteger, NSURL,
+    },
 };
 use core_foundation::{
     base::{CFType, CFTypeRef, OSStatus, TCFType as _},
@@ -45,6 +47,9 @@ use std::{
     sync::Arc,
 };
 use time::UtcOffset;
+
+#[allow(non_upper_case_globals)]
+const NSUTF8StringEncoding: NSUInteger = 4;
 
 const MAC_PLATFORM_IVAR: &'static str = "platform";
 static mut APP_CLASS: *const Class = ptr::null();
@@ -607,6 +612,39 @@ impl platform::Platform for MacPlatform {
             }
         }
     }
+
+    fn app_path(&self) -> Result<PathBuf> {
+        unsafe {
+            let bundle: id = NSBundle::mainBundle();
+            if bundle.is_null() {
+                Err(anyhow!("app is not running inside a bundle"))
+            } else {
+                Ok(path_from_objc(msg_send![bundle, bundlePath]))
+            }
+        }
+    }
+
+    fn app_version(&self) -> Result<platform::AppVersion> {
+        unsafe {
+            let bundle: id = NSBundle::mainBundle();
+            if bundle.is_null() {
+                Err(anyhow!("app is not running inside a bundle"))
+            } else {
+                let version: id = msg_send![bundle, objectForInfoDictionaryKey: ns_string("CFBundleShortVersionString")];
+                let len = msg_send![version, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
+                let bytes = version.UTF8String() as *const u8;
+                let version = str::from_utf8(slice::from_raw_parts(bytes, len)).unwrap();
+                version.parse()
+            }
+        }
+    }
+}
+
+unsafe fn path_from_objc(path: id) -> PathBuf {
+    let len = msg_send![path, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
+    let bytes = path.UTF8String() as *const u8;
+    let path = str::from_utf8(slice::from_raw_parts(bytes, len)).unwrap();
+    PathBuf::from(path)
 }
 
 unsafe fn get_foreground_platform(object: &mut Object) -> &MacForegroundPlatform {

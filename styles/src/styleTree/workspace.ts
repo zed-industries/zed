@@ -98,6 +98,8 @@ export default function workspace(theme: Theme) {
       cursorPosition: text(theme, "sans", "muted"),
       diagnosticMessage: text(theme, "sans", "muted"),
       lspMessage: text(theme, "sans", "muted"),
+      autoUpdateProgressMessage: text(theme, "sans", "muted"),
+      autoUpdateDoneMessage: text(theme, "sans", "muted"),
     },
     titlebar: {
       avatarWidth: 18,

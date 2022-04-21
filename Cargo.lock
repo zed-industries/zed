@@ -554,6 +554,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "auto_update"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "gpui",
+ "lazy_static",
+ "log",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "surf",
+ "tempdir",
+ "theme",
+ "workspace",
+]
+
+[[package]]
 name = "autocfg"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6382,13 +6401,14 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "zed"
-version = "0.28.1"
+version = "0.29.0"
 dependencies = [
  "anyhow",
  "assets",
  "async-compression",
  "async-recursion",
  "async-trait",
+ "auto_update",
  "breadcrumbs",
  "chat_panel",
  "cli",

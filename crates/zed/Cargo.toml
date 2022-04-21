@@ -14,22 +14,9 @@ doctest = false
 name = "Zed"
 path = "src/main.rs"
 
-[features]
-test-support = [
-    "text/test-support",
-    "client/test-support",
-    "editor/test-support",
-    "gpui/test-support",
-    "language/test-support",
-    "lsp/test-support",
-    "project/test-support",
-    "rpc/test-support",
-    "tempdir",
-    "workspace/test-support",
-]
-
 [dependencies]
 assets = { path = "../assets" }
+auto_update = { path = "../auto_update" }
 breadcrumbs = { path = "../breadcrumbs" }
 chat_panel = { path = "../chat_panel" }
 cli = { path = "../cli" }
@@ -93,7 +80,7 @@ simplelog = "0.9"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2.5"
 surf = "2.2"
-tempdir = { version = "0.3.7", optional = true }
+tempdir = { version = "0.3.7" }
 thiserror = "1.0.29"
 tiny_http = "0.8"
 toml = "0.5"
@@ -119,7 +106,6 @@ util = { path = "../util", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
 env_logger = "0.8"
 serde_json = { version = "1.0.64", features = ["preserve_order"] }
-tempdir = { version = "0.3.7" }
 unindent = "0.1.7"
 
 [package.metadata.bundle]

@@ -17,7 +17,7 @@ use crate::{
     text_layout::{LineLayout, RunStyle},
     Action, ClipboardItem, Menu, Scene,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_task::Runnable;
 pub use event::{Event, NavigationDirection};
 use postage::oneshot;
@@ -25,6 +25,7 @@ use std::{
     any::Any,
     path::{Path, PathBuf},
     rc::Rc,
+    str::FromStr,
     sync::Arc,
 };
 use time::UtcOffset;
@@ -54,7 +55,10 @@ pub trait Platform: Send + Sync {
     fn set_cursor_style(&self, style: CursorStyle);
 
     fn local_timezone(&self) -> UtcOffset;
+
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
+    fn app_path(&self) -> Result<PathBuf>;
+    fn app_version(&self) -> Result<AppVersion>;
 }
 
 pub(crate) trait ForegroundPlatform {
@@ -126,6 +130,38 @@ pub enum CursorStyle {
     Arrow,
     ResizeLeftRight,
     PointingHand,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AppVersion {
+    major: usize,
+    minor: usize,
+    patch: usize,
+}
+
+impl FromStr for AppVersion {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        let mut components = s.trim().split('.');
+        let major = components
+            .next()
+            .ok_or_else(|| anyhow!("missing major version number"))?
+            .parse()?;
+        let minor = components
+            .next()
+            .ok_or_else(|| anyhow!("missing minor version number"))?
+            .parse()?;
+        let patch = components
+            .next()
+            .ok_or_else(|| anyhow!("missing patch version number"))?
+            .parse()?;
+        Ok(Self {
+            major,
+            minor,
+            patch,
+        })
+    }
 }
 
 #[derive(Copy, Clone, Debug)]

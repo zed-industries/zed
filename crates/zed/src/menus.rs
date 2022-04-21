@@ -13,6 +13,11 @@ pub fn menus(state: &Arc<AppState>) -> Vec<Menu<'static>> {
                     keystroke: None,
                     action: Box::new(super::About),
                 },
+                MenuItem::Action {
+                    name: "Check for Updates",
+                    keystroke: None,
+                    action: Box::new(auto_update::Check),
+                },
                 MenuItem::Separator,
                 MenuItem::Action {
                     name: "Install CLI",

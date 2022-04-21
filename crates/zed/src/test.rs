@@ -40,7 +40,7 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
         client,
         user_store,
         fs: FakeFs::new(cx.background().clone()),
-        build_window_options: &build_window_options,
-        build_workspace: &build_workspace,
+        build_window_options,
+        build_workspace,
     })
 }
