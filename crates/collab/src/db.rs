@@ -23,17 +23,6 @@ macro_rules! test_support {
 
 #[async_trait]
 pub trait Db: Send + Sync {
-    async fn create_signup(
-        &self,
-        github_login: &str,
-        email_address: &str,
-        about: &str,
-        wants_releases: bool,
-        wants_updates: bool,
-        wants_community: bool,
-    ) -> Result<SignupId>;
-    async fn get_all_signups(&self) -> Result<Vec<Signup>>;
-    async fn destroy_signup(&self, id: SignupId) -> Result<()>;
     async fn create_user(&self, github_login: &str, admin: bool) -> Result<UserId>;
     async fn get_all_users(&self) -> Result<Vec<User>>;
     async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>>;
@@ -107,60 +96,6 @@ impl PostgresDb {
 
 #[async_trait]
 impl Db for PostgresDb {
-    // signups
-    async fn create_signup(
-        &self,
-        github_login: &str,
-        email_address: &str,
-        about: &str,
-        wants_releases: bool,
-        wants_updates: bool,
-        wants_community: bool,
-    ) -> Result<SignupId> {
-        test_support!(self, {
-            let query = "
-                INSERT INTO signups (
-                    github_login,
-                    email_address,
-                    about,
-                    wants_releases,
-                    wants_updates,
-                    wants_community
-                )
-                VALUES ($1, $2, $3, $4, $5, $6)
-                RETURNING id
-            ";
-            Ok(sqlx::query_scalar(query)
-                .bind(github_login)
-                .bind(email_address)
-                .bind(about)
-                .bind(wants_releases)
-                .bind(wants_updates)
-                .bind(wants_community)
-                .fetch_one(&self.pool)
-                .await
-                .map(SignupId)?)
-        })
-    }
-
-    async fn get_all_signups(&self) -> Result<Vec<Signup>> {
-        test_support!(self, {
-            let query = "SELECT * FROM signups ORDER BY github_login ASC";
-            Ok(sqlx::query_as(query).fetch_all(&self.pool).await?)
-        })
-    }
-
-    async fn destroy_signup(&self, id: SignupId) -> Result<()> {
-        test_support!(self, {
-            let query = "DELETE FROM signups WHERE id = $1";
-            Ok(sqlx::query(query)
-                .bind(id.0)
-                .execute(&self.pool)
-                .await
-                .map(drop)?)
-        })
-    }
-
     // users
 
     async fn create_user(&self, github_login: &str, admin: bool) -> Result<UserId> {
@@ -577,18 +512,6 @@ pub struct Org {
     pub slug: String,
 }
 
-id_type!(SignupId);
-#[derive(Debug, FromRow, Serialize)]
-pub struct Signup {
-    pub id: SignupId,
-    pub github_login: String,
-    pub email_address: String,
-    pub about: String,
-    pub wants_releases: Option<bool>,
-    pub wants_updates: Option<bool>,
-    pub wants_community: Option<bool>,
-}
-
 id_type!(ChannelId);
 #[derive(Clone, Debug, FromRow, Serialize)]
 pub struct Channel {
@@ -853,26 +776,6 @@ pub mod tests {
 
     #[async_trait]
     impl Db for FakeDb {
-        async fn create_signup(
-            &self,
-            _github_login: &str,
-            _email_address: &str,
-            _about: &str,
-            _wants_releases: bool,
-            _wants_updates: bool,
-            _wants_community: bool,
-        ) -> Result<SignupId> {
-            unimplemented!()
-        }
-
-        async fn get_all_signups(&self) -> Result<Vec<Signup>> {
-            unimplemented!()
-        }
-
-        async fn destroy_signup(&self, _id: SignupId) -> Result<()> {
-            unimplemented!()
-        }
-
         async fn create_user(&self, github_login: &str, admin: bool) -> Result<UserId> {
             self.background.simulate_random_delay().await;
 
