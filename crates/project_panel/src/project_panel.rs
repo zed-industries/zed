@@ -24,7 +24,7 @@ use workspace::{
 pub struct ProjectPanel {
     project: ModelHandle<Project>,
     list: UniformListState,
-    visible_entries: Vec<(WorktreeId, Vec<usize>)>,
+    visible_entries: Vec<(WorktreeId, Vec<ProjectEntryId>)>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     selection: Option<Selection>,
     handle: WeakViewHandle<Self>,
@@ -34,7 +34,6 @@ pub struct ProjectPanel {
 struct Selection {
     worktree_id: WorktreeId,
     entry_id: ProjectEntryId,
-    index: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -204,12 +203,23 @@ impl ProjectPanel {
 
     fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
         if let Some(selection) = self.selection {
-            let prev_ix = selection.index.saturating_sub(1);
-            let (worktree, entry) = self.visible_entry_for_index(prev_ix, cx).unwrap();
+            let (mut worktree_ix, mut entry_ix, _) =
+                self.index_for_selection(selection).unwrap_or_default();
+            if entry_ix > 0 {
+                entry_ix -= 1;
+            } else {
+                if worktree_ix > 0 {
+                    worktree_ix -= 1;
+                    entry_ix = self.visible_entries[worktree_ix].1.len() - 1;
+                } else {
+                    return;
+                }
+            }
+
+            let (worktree_id, worktree_entries) = &self.visible_entries[worktree_ix];
             self.selection = Some(Selection {
-                worktree_id: worktree.id(),
-                entry_id: entry.id,
-                index: prev_ix,
+                worktree_id: *worktree_id,
+                entry_id: worktree_entries[entry_ix],
             });
             self.autoscroll();
             cx.notify();
@@ -224,15 +234,26 @@ impl ProjectPanel {
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
         if let Some(selection) = self.selection {
-            let next_ix = selection.index + 1;
-            if let Some((worktree, entry)) = self.visible_entry_for_index(next_ix, cx) {
-                self.selection = Some(Selection {
-                    worktree_id: worktree.id(),
-                    entry_id: entry.id,
-                    index: next_ix,
-                });
-                self.autoscroll();
-                cx.notify();
+            let (mut worktree_ix, mut entry_ix, _) =
+                self.index_for_selection(selection).unwrap_or_default();
+            if let Some((_, worktree_entries)) = self.visible_entries.get(worktree_ix) {
+                if entry_ix + 1 < worktree_entries.len() {
+                    entry_ix += 1;
+                } else {
+                    worktree_ix += 1;
+                    entry_ix = 0;
+                }
+            }
+
+            if let Some((worktree_id, worktree_entries)) = self.visible_entries.get(worktree_ix) {
+                if let Some(entry_id) = worktree_entries.get(entry_ix) {
+                    self.selection = Some(Selection {
+                        worktree_id: *worktree_id,
+                        entry_id: *entry_id,
+                    });
+                    self.autoscroll();
+                    cx.notify();
+                }
             }
         } else {
             self.select_first(cx);
@@ -251,7 +272,6 @@ impl ProjectPanel {
                 self.selection = Some(Selection {
                     worktree_id,
                     entry_id: root_entry.id,
-                    index: 0,
                 });
                 self.autoscroll();
                 cx.notify();
@@ -260,35 +280,32 @@ impl ProjectPanel {
     }
 
     fn autoscroll(&mut self) {
-        if let Some(selection) = self.selection {
-            self.list.scroll_to(ScrollTarget::Show(selection.index));
+        if let Some((_, _, index)) = self.selection.and_then(|s| self.index_for_selection(s)) {
+            self.list.scroll_to(ScrollTarget::Show(index));
         }
     }
 
-    fn visible_entry_for_index<'a>(
-        &self,
-        target_ix: usize,
-        cx: &'a AppContext,
-    ) -> Option<(&'a Worktree, &'a project::Entry)> {
-        let project = self.project.read(cx);
-        let mut offset = None;
-        let mut ix = 0;
-        for (worktree_id, visible_entries) in &self.visible_entries {
-            if target_ix < ix + visible_entries.len() {
-                offset = project
-                    .worktree_for_id(*worktree_id, cx)
-                    .map(|w| (w.read(cx), visible_entries[target_ix - ix]));
+    fn index_for_selection(&self, selection: Selection) -> Option<(usize, usize, usize)> {
+        let mut worktree_index = 0;
+        let mut entry_index = 0;
+        let mut visible_entries_index = 0;
+        for (worktree_id, worktree_entries) in &self.visible_entries {
+            if *worktree_id == selection.worktree_id {
+                for entry_id in worktree_entries {
+                    if *entry_id == selection.entry_id {
+                        return Some((worktree_index, entry_index, visible_entries_index));
+                    } else {
+                        visible_entries_index += 1;
+                        entry_index += 1;
+                    }
+                }
                 break;
             } else {
-                ix += visible_entries.len();
+                visible_entries_index += worktree_entries.len();
             }
+            worktree_index += 1;
         }
-
-        offset.and_then(|(worktree, offset)| {
-            let mut entries = worktree.entries(false);
-            entries.advance_to_offset(offset);
-            Some((worktree, entries.entry()?))
-        })
+        None
     }
 
     fn selected_entry<'a>(&self, cx: &'a AppContext) -> Option<(&'a Worktree, &'a project::Entry)> {
@@ -310,7 +327,6 @@ impl ProjectPanel {
             .filter(|worktree| worktree.read(cx).is_visible());
         self.visible_entries.clear();
 
-        let mut entry_ix = 0;
         for worktree in worktrees {
             let snapshot = worktree.read(cx).snapshot();
             let worktree_id = snapshot.id();
@@ -331,26 +347,7 @@ impl ProjectPanel {
             let mut visible_worktree_entries = Vec::new();
             let mut entry_iter = snapshot.entries(false);
             while let Some(item) = entry_iter.entry() {
-                visible_worktree_entries.push(entry_iter.offset());
-                if let Some(new_selected_entry) = new_selected_entry {
-                    if new_selected_entry == (worktree_id, item.id) {
-                        self.selection = Some(Selection {
-                            worktree_id,
-                            entry_id: item.id,
-                            index: entry_ix,
-                        });
-                    }
-                } else if self.selection.map_or(false, |e| {
-                    e.worktree_id == worktree_id && e.entry_id == item.id
-                }) {
-                    self.selection = Some(Selection {
-                        worktree_id,
-                        entry_id: item.id,
-                        index: entry_ix,
-                    });
-                }
-
-                entry_ix += 1;
+                visible_worktree_entries.push(item.id);
                 if expanded_dir_ids.binary_search(&item.id).is_err() {
                     if entry_iter.advance_to_sibling() {
                         continue;
@@ -360,6 +357,13 @@ impl ProjectPanel {
             }
             self.visible_entries
                 .push((worktree_id, visible_worktree_entries));
+        }
+
+        if let Some((worktree_id, entry_id)) = new_selected_entry {
+            self.selection = Some(Selection {
+                worktree_id,
+                entry_id,
+            });
         }
     }
 
@@ -419,14 +423,12 @@ impl ProjectPanel {
                     .map(Vec::as_slice)
                     .unwrap_or(&[]);
                 let root_name = OsStr::new(snapshot.root_name());
-                let mut cursor = snapshot.entries(false);
-
-                for ix in visible_worktree_entries[range.start.saturating_sub(ix)..end_ix - ix]
+                for entry_id in visible_worktree_entries
+                    [range.start.saturating_sub(ix)..end_ix - ix]
                     .iter()
                     .copied()
                 {
-                    cursor.advance_to_offset(ix);
-                    if let Some(entry) = cursor.entry() {
+                    if let Some(entry) = snapshot.entry_for_id(entry_id) {
                         let filename = entry.path.file_name().unwrap_or(root_name);
                         let details = EntryDetails {
                             filename: filename.to_string_lossy().to_string(),
