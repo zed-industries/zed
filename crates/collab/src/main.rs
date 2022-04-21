@@ -8,17 +8,14 @@ mod expiring;
 mod github;
 mod rpc;
 
-use self::errors::TideResultExt as _;
 use ::rpc::Peer;
-use anyhow::Result;
 use async_std::net::TcpListener;
 use async_trait::async_trait;
-use auth::RequestExt as _;
 use db::{Db, PostgresDb};
-use handlebars::{Handlebars, TemplateRenderError};
+use handlebars::Handlebars;
 use parking_lot::RwLock;
 use rust_embed::RustEmbed;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 use surf::http::cookies::SameSite;
 use tide::sessions::SessionMiddleware;
@@ -45,28 +42,16 @@ pub struct Config {
 pub struct AppState {
     db: Arc<dyn Db>,
     handlebars: RwLock<Handlebars<'static>>,
-    auth_client: auth::Client,
-    github_client: Arc<github::AppClient>,
-    repo_client: github::RepoClient,
     config: Config,
 }
 
 impl AppState {
     async fn new(config: Config) -> tide::Result<Arc<Self>> {
         let db = PostgresDb::new(&config.database_url, 5).await?;
-        let github_client =
-            github::AppClient::new(config.github_app_id, config.github_private_key.clone());
-        let repo_client = github_client
-            .repo("zed-industries/zed".into())
-            .await
-            .context("failed to initialize github client")?;
 
         let this = Self {
             db: Arc::new(db),
             handlebars: Default::default(),
-            auth_client: auth::build_client(&config.github_client_id, &config.github_client_secret),
-            github_client,
-            repo_client,
             config,
         };
         this.register_partials();
@@ -87,47 +72,18 @@ impl AppState {
             }
         }
     }
-
-    fn render_template(
-        &self,
-        path: &'static str,
-        data: &impl Serialize,
-    ) -> Result<String, TemplateRenderError> {
-        #[cfg(debug_assertions)]
-        self.register_partials();
-
-        self.handlebars.read().render_template(
-            std::str::from_utf8(&Templates::get(path).unwrap().data).unwrap(),
-            data,
-        )
-    }
 }
 
 #[async_trait]
 trait RequestExt {
-    async fn layout_data(&mut self) -> tide::Result<Arc<LayoutData>>;
     fn db(&self) -> &Arc<dyn Db>;
 }
 
 #[async_trait]
 impl RequestExt for Request {
-    async fn layout_data(&mut self) -> tide::Result<Arc<LayoutData>> {
-        if self.ext::<Arc<LayoutData>>().is_none() {
-            self.set_ext(Arc::new(LayoutData {
-                current_user: self.current_user().await?,
-            }));
-        }
-        Ok(self.ext::<Arc<LayoutData>>().unwrap().clone())
-    }
-
     fn db(&self) -> &Arc<dyn Db> {
         &self.state().db
     }
-}
-
-#[derive(Serialize)]
-struct LayoutData {
-    current_user: Option<auth::User>,
 }
 
 #[async_std::main]
@@ -173,9 +129,7 @@ pub async fn run_server(
         )
         .with_same_site_policy(SameSite::Lax), // Required obtain our session in /auth_callback
     );
-    web.with(errors::Middleware);
     api::add_routes(&mut web);
-    auth::add_routes(&mut web);
 
     let mut assets = tide::new();
     assets.with(CompressMiddleware::new());

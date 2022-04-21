@@ -1180,9 +1180,8 @@ fn header_contains_ignore_case<T>(
 mod tests {
     use super::*;
     use crate::{
-        auth,
         db::{tests::TestDb, UserId},
-        github, AppState, Config,
+        AppState, Config,
     };
     use ::rpc::Peer;
     use client::{
@@ -5731,13 +5730,9 @@ mod tests {
             let mut config = Config::default();
             config.session_secret = "a".repeat(32);
             config.database_url = test_db.url.clone();
-            let github_client = github::AppClient::test();
             Arc::new(AppState {
                 db: test_db.db().clone(),
                 handlebars: Default::default(),
-                auth_client: auth::build_client("", ""),
-                repo_client: github::RepoClient::test(&github_client),
-                github_client,
                 config,
             })
         }
