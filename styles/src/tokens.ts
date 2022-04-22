@@ -71,6 +71,12 @@ export interface ColorToken {
   type: "color",
   step?: number,
 }
+export function color(value: string): ColorToken {
+  return {
+    value,
+    type: "color",
+  };
+}
 export const colors = {
   neutral: colorRamp(["white", "black"], { steps: 37, increment: 25 }), // (900/25) + 1
   rose: colorRamp("#F43F5EFF"),

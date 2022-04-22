@@ -1,4 +1,4 @@
-import { colors, fontWeights, NumberToken } from "../tokens";
+import { color, colors, fontWeights, NumberToken } from "../tokens";
 import { withOpacity } from "../utils/color";
 import Theme, { buildPlayer, Syntax } from "./theme";
 
