@@ -360,8 +360,10 @@ mod tests {
             .await;
         assert_eq!(cx.window_ids().len(), 1);
         let workspace_1 = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
-        workspace_1.read_with(cx, |workspace, cx| {
-            assert_eq!(workspace.worktrees(cx).count(), 2)
+        workspace_1.update(cx, |workspace, cx| {
+            assert_eq!(workspace.worktrees(cx).count(), 2);
+            assert!(workspace.left_sidebar_mut().active_item().is_some());
+            assert!(workspace.active_pane().is_focused(cx));
         });
 
         cx.update(|cx| {

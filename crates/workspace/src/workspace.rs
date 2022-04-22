@@ -31,7 +31,7 @@ pub use pane_group::*;
 use postage::prelude::Stream;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, Worktree};
 use settings::Settings;
-use sidebar::{Side, Sidebar, ToggleSidebarItem, ToggleSidebarItemFocus};
+use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus};
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
@@ -2120,7 +2120,6 @@ pub fn open_paths(
 ) -> Task<(
     ViewHandle<Workspace>,
     Vec<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>,
-    bool,
 )> {
     log::info!("open paths {:?}", abs_paths);
 
@@ -2160,9 +2159,24 @@ pub fn open_paths(
     let task = workspace.update(cx, |workspace, cx| {
         workspace.open_paths(abs_paths.to_vec(), cx)
     });
-    cx.spawn(|_| async move {
+    cx.spawn(|mut cx| async move {
         let items = task.await;
-        (workspace, items, is_new_workspace)
+        let opened_dir = items.iter().any(|item| item.is_none());
+
+        // Toggle project browser when opening a new workspace that contains a directory.
+        if is_new_workspace && opened_dir {
+            workspace.update(&mut cx, |workspace, cx| {
+                workspace.toggle_sidebar_item(
+                    &ToggleSidebarItem(SidebarItemId {
+                        side: Side::Left,
+                        item_index: 0,
+                    }),
+                    cx,
+                );
+                cx.focus_self();
+            });
+        }
+        (workspace, items)
     })
 }
 
