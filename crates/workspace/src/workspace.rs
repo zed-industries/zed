@@ -859,44 +859,49 @@ impl Workspace {
 
     pub fn open_paths(
         &mut self,
-        abs_paths: &[PathBuf],
+        mut abs_paths: Vec<PathBuf>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>> {
-        let entries = abs_paths
-            .iter()
-            .cloned()
-            .map(|path| self.project_path_for_path(&path, cx))
-            .collect::<Vec<_>>();
-
         let fs = self.fs.clone();
-        let tasks = abs_paths
-            .iter()
-            .cloned()
-            .zip(entries.into_iter())
-            .map(|(abs_path, project_path)| {
-                cx.spawn(|this, mut cx| {
-                    let fs = fs.clone();
-                    async move {
-                        let project_path = project_path.await.ok()?;
-                        if fs.is_file(&abs_path).await {
-                            Some(
-                                this.update(&mut cx, |this, cx| this.open_path(project_path, cx))
-                                    .await,
-                            )
-                        } else {
-                            None
-                        }
-                    }
-                })
-            })
-            .collect::<Vec<_>>();
 
-        cx.foreground().spawn(async move {
-            let mut items = Vec::new();
-            for task in tasks {
-                items.push(task.await);
+        // Sort the paths to ensure we add worktrees for parents before their children.
+        abs_paths.sort_unstable();
+        cx.spawn(|this, mut cx| async move {
+            let mut entries = Vec::new();
+            for path in &abs_paths {
+                entries.push(
+                    this.update(&mut cx, |this, cx| this.project_path_for_path(path, cx))
+                        .await
+                        .ok(),
+                );
             }
-            items
+
+            let tasks = abs_paths
+                .iter()
+                .cloned()
+                .zip(entries.into_iter())
+                .map(|(abs_path, project_path)| {
+                    let this = this.clone();
+                    cx.spawn(|mut cx| {
+                        let fs = fs.clone();
+                        async move {
+                            let project_path = project_path?;
+                            if fs.is_file(&abs_path).await {
+                                Some(
+                                    this.update(&mut cx, |this, cx| {
+                                        this.open_path(project_path, cx)
+                                    })
+                                    .await,
+                                )
+                            } else {
+                                None
+                            }
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            futures::future::join_all(tasks).await
         })
     }
 
@@ -2152,7 +2157,9 @@ pub fn open_paths(
         .1
     });
 
-    let task = workspace.update(cx, |workspace, cx| workspace.open_paths(abs_paths, cx));
+    let task = workspace.update(cx, |workspace, cx| {
+        workspace.open_paths(abs_paths.to_vec(), cx)
+    });
     cx.spawn(|_| async move {
         let items = task.await;
         (workspace, items, is_new_workspace)

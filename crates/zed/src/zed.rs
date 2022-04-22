@@ -283,7 +283,7 @@ fn open_config_file(
         workspace
             .update(&mut cx, |workspace, cx| {
                 if workspace.project().read(cx).is_local() {
-                    workspace.open_paths(&[path.to_path_buf()], cx)
+                    workspace.open_paths(vec![path.to_path_buf()], cx)
                 } else {
                     let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
                         let project = Project::local(
@@ -296,7 +296,7 @@ fn open_config_file(
                         (app_state.build_workspace)(project, &app_state, cx)
                     });
                     workspace.update(cx, |workspace, cx| {
-                        workspace.open_paths(&[path.to_path_buf()], cx)
+                        workspace.open_paths(vec![path.to_path_buf()], cx)
                     })
                 }
             })
@@ -536,8 +536,10 @@ mod tests {
         let fs = app_state.fs.as_fake();
         fs.insert_dir("/dir1").await;
         fs.insert_dir("/dir2").await;
+        fs.insert_dir("/dir3").await;
         fs.insert_file("/dir1/a.txt", "".into()).await;
         fs.insert_file("/dir2/b.txt", "".into()).await;
+        fs.insert_file("/dir3/c.txt", "".into()).await;
 
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
@@ -553,7 +555,9 @@ mod tests {
 
         // Open a file within an existing worktree.
         cx.update(|cx| {
-            workspace.update(cx, |view, cx| view.open_paths(&["/dir1/a.txt".into()], cx))
+            workspace.update(cx, |view, cx| {
+                view.open_paths(vec!["/dir1/a.txt".into()], cx)
+            })
         })
         .await;
         cx.read(|cx| {
@@ -575,7 +579,9 @@ mod tests {
 
         // Open a file outside of any existing worktree.
         cx.update(|cx| {
-            workspace.update(cx, |view, cx| view.open_paths(&["/dir2/b.txt".into()], cx))
+            workspace.update(cx, |view, cx| {
+                view.open_paths(vec!["/dir2/b.txt".into()], cx)
+            })
         })
         .await;
         cx.read(|cx| {
@@ -606,6 +612,42 @@ mod tests {
                 "b.txt"
             );
         });
+
+        // Ensure opening a directory and one of its children only adds one worktree.
+        cx.update(|cx| {
+            workspace.update(cx, |view, cx| {
+                view.open_paths(vec!["/dir3".into(), "/dir3/c.txt".into()], cx)
+            })
+        })
+        .await;
+        cx.read(|cx| {
+            let worktree_roots = workspace
+                .read(cx)
+                .worktrees(cx)
+                .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
+                .collect::<HashSet<_>>();
+            assert_eq!(
+                worktree_roots,
+                vec!["/dir1", "/dir2/b.txt", "/dir3"]
+                    .into_iter()
+                    .map(Path::new)
+                    .collect(),
+            );
+            assert_eq!(
+                workspace
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .unwrap()
+                    .to_any()
+                    .downcast::<Editor>()
+                    .unwrap()
+                    .read(cx)
+                    .title(cx),
+                "c.txt"
+            );
+        });
     }
 
     #[gpui::test]
@@ -627,7 +669,7 @@ mod tests {
         // Open a file within an existing worktree.
         cx.update(|cx| {
             workspace.update(cx, |view, cx| {
-                view.open_paths(&[PathBuf::from("/root/a.txt")], cx)
+                view.open_paths(vec![PathBuf::from("/root/a.txt")], cx)
             })
         })
         .await;
