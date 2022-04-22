@@ -2115,6 +2115,7 @@ pub fn open_paths(
 ) -> Task<(
     ViewHandle<Workspace>,
     Vec<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>,
+    bool,
 )> {
     log::info!("open paths {:?}", abs_paths);
 
@@ -2136,6 +2137,7 @@ pub fn open_paths(
         }
     }
 
+    let is_new_workspace = existing.is_none();
     let workspace = existing.unwrap_or_else(|| {
         cx.add_window((app_state.build_window_options)(), |cx| {
             let project = Project::local(
@@ -2153,7 +2155,7 @@ pub fn open_paths(
     let task = workspace.update(cx, |workspace, cx| workspace.open_paths(abs_paths, cx));
     cx.spawn(|_| async move {
         let items = task.await;
-        (workspace, items)
+        (workspace, items, is_new_workspace)
     })
 }
 

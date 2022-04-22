@@ -22,7 +22,11 @@ use smol::process::Command;
 use std::{env, fs, path::PathBuf, sync::Arc, thread, time::Duration};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
 use util::ResultExt;
-use workspace::{self, AppState, OpenNew, OpenPaths};
+use workspace::{
+    self,
+    sidebar::{Side, SidebarItemId, ToggleSidebarItem},
+    AppState, OpenNew, OpenPaths,
+};
 use zed::{
     self, build_window_options, build_workspace,
     fs::RealFs,
@@ -362,12 +366,13 @@ async fn handle_cli_connection(
     if let Some(request) = requests.next().await {
         match request {
             CliRequest::Open { paths, wait } => {
-                let (workspace, items) = cx
+                let (workspace, items, is_new_workspace) = cx
                     .update(|cx| workspace::open_paths(&paths, &app_state, cx))
                     .await;
 
                 let mut errored = false;
-                let mut futures = Vec::new();
+                let mut opened_directory = false;
+                let mut item_release_futures = Vec::new();
                 cx.update(|cx| {
                     for (item, path) in items.into_iter().zip(&paths) {
                         match item {
@@ -380,7 +385,7 @@ async fn handle_cli_connection(
                                     }),
                                 )
                                 .detach();
-                                futures.push(released.1);
+                                item_release_futures.push(released.1);
                             }
                             Some(Err(err)) => {
                                 responses
@@ -390,10 +395,22 @@ async fn handle_cli_connection(
                                     .log_err();
                                 errored = true;
                             }
-                            None => {}
+                            None => opened_directory = true,
                         }
                     }
                 });
+
+                if opened_directory && is_new_workspace {
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.toggle_sidebar_item(
+                            &ToggleSidebarItem(SidebarItemId {
+                                side: Side::Left,
+                                item_index: 0,
+                            }),
+                            cx,
+                        );
+                    });
+                }
 
                 if wait {
                     let background = cx.background();
@@ -408,7 +425,7 @@ async fn handle_cli_connection(
                             drop(workspace);
                             let _ = done_rx.await;
                         } else {
-                            let _ = futures::future::try_join_all(futures).await;
+                            let _ = futures::future::try_join_all(item_release_futures).await;
                         };
                     }
                     .fuse();
