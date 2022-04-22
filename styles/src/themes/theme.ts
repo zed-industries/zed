@@ -62,10 +62,19 @@ export interface Syntax {
 export default interface Theme {
   name: string;
   backgroundColor: {
+    // Basically just Title Bar
+    // Lowest background level
     100: BackgroundColorSet;
+    // Tab bars, panels, popovers
+    // Mid-ground
     300: BackgroundColorSet;
+    // The editor
+    // Foreground
     500: BackgroundColorSet;
+    // Hacks for elements on top of the midground
+    // Buttons in a panel, tab bar, or panel
     on300: BackgroundColorSet;
+    // Hacks for elements on top of the editor
     on500: BackgroundColorSet;
     ok: BackgroundColorSet;
     error: BackgroundColorSet;
