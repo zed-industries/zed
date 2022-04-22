@@ -269,6 +269,8 @@ fn humanize_action_name(name: &str) -> String {
             } else {
                 result.push(':');
             }
+        } else if char == '_' {
+            result.push(' ');
         } else if char.is_uppercase() {
             if !result.ends_with(' ') {
                 result.push(' ');
@@ -300,12 +302,16 @@ mod tests {
     #[test]
     fn test_humanize_action_name() {
         assert_eq!(
-            &humanize_action_name("editor::GoToDefinition"),
+            humanize_action_name("editor::GoToDefinition"),
             "editor: go to definition"
         );
         assert_eq!(
-            &humanize_action_name("editor::Backspace"),
+            humanize_action_name("editor::Backspace"),
             "editor: backspace"
+        );
+        assert_eq!(
+            humanize_action_name("go_to_line::Deploy"),
+            "go to line: deploy"
         );
     }
 
