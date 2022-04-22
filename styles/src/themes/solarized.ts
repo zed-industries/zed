@@ -217,22 +217,22 @@ export function solarized(darkTheme: boolean): Theme {
       weight: fontWeights.bold,
     },
     emphasis: {
-      color: textColor.active,
+      color: textColor.feature,
       weight: fontWeights.normal,
     },
-    emphasisStrong: {
-      color: textColor.active,
+    "emphasis.strong": {
+      color: textColor.feature,
       weight: fontWeights.bold,
     },
-    linkUrl: {
+    linkUri: {
       color: colors.green,
       weight: fontWeights.normal,
-      // TODO: add underline
+      underline: true,
     },
     linkText: {
       color: colors.orange,
       weight: fontWeights.normal,
-      // TODO: add italic
+      italic: true,
     },
   };
 

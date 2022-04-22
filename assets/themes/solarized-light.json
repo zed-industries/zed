@@ -89,10 +89,6 @@
         "top": 7
       }
     },
-    "margin": {
-      "bottom": 52,
-      "top": 52
-    },
     "shadow": {
       "blur": 16,
       "color": "#00000052",
@@ -157,6 +153,13 @@
         "left": 8,
         "right": 8
       }
+    },
+    "modal": {
+      "margin": {
+        "bottom": 52,
+        "top": 52
+      },
+      "cursor": "Arrow"
     },
     "left_sidebar": {
       "width": 30,
@@ -689,33 +692,88 @@
       }
     },
     "syntax": {
-      "keyword": "#268bd2",
-      "function": "#b58900",
-      "string": "#cb4b16",
-      "type": "#2aa198",
-      "number": "#859900",
-      "comment": "#073642",
-      "property": "#268bd2",
-      "variant": "#268bd2",
-      "constant": "#657b83",
+      "primary": {
+        "color": "#002b36",
+        "weight": "normal"
+      },
+      "comment": {
+        "color": "#073642",
+        "weight": "normal"
+      },
+      "punctuation": {
+        "color": "#586e75",
+        "weight": "normal"
+      },
+      "constant": {
+        "color": "#657b83",
+        "weight": "normal"
+      },
+      "keyword": {
+        "color": "#268bd2",
+        "weight": "normal"
+      },
+      "function": {
+        "color": "#b58900",
+        "weight": "normal"
+      },
+      "type": {
+        "color": "#2aa198",
+        "weight": "normal"
+      },
+      "variant": {
+        "color": "#268bd2",
+        "weight": "normal"
+      },
+      "property": {
+        "color": "#268bd2",
+        "weight": "normal"
+      },
+      "enum": {
+        "color": "#cb4b16",
+        "weight": "normal"
+      },
+      "operator": {
+        "color": "#cb4b16",
+        "weight": "normal"
+      },
+      "string": {
+        "color": "#cb4b16",
+        "weight": "normal"
+      },
+      "number": {
+        "color": "#859900",
+        "weight": "normal"
+      },
+      "boolean": {
+        "color": "#859900",
+        "weight": "normal"
+      },
+      "predictive": {
+        "color": "#586e75",
+        "weight": "normal"
+      },
       "title": {
         "color": "#b58900",
         "weight": "bold"
       },
-      "emphasis": "#268bd2",
-      "emphasis_strong": {
+      "emphasis": {
+        "color": "#268bd2",
+        "weight": "normal"
+      },
+      "emphasis.strong": {
         "color": "#268bd2",
         "weight": "bold"
       },
       "link_uri": {
         "color": "#859900",
+        "weight": "normal",
         "underline": true
       },
       "link_text": {
         "color": "#cb4b16",
+        "weight": "normal",
         "italic": true
-      },
-      "list_marker": "#586e75"
+      }
     }
   },
   "project_diagnostics": {
