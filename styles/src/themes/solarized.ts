@@ -51,10 +51,10 @@ export function solarized(darkTheme: boolean): Theme {
       focused: bg[2],
     },
     on300: {
-      base: bg[2],
-      hovered: bg[1],
-      active: bg[1],
-      focused: bg[1],
+      base: bg[3],
+      hovered: bg[2],
+      active: bg[2],
+      focused: bg[2],
     },
     on500: {
       base: bg[2],

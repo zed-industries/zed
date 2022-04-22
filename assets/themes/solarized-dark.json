@@ -745,7 +745,7 @@
         "size": 12
       },
       "corner_radius": 4,
-      "background": "#073642",
+      "background": "#002b36",
       "border": {
         "color": "#073642",
         "width": 1
