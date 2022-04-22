@@ -1730,7 +1730,7 @@ impl BufferSnapshot {
             .and_then(|language| language.grammar.as_ref())?;
 
         let mut cursor = QueryCursorHandle::new();
-        cursor.set_byte_range(range);
+        cursor.set_byte_range(range.clone());
         let matches = cursor.matches(
             &grammar.outline_query,
             tree.root_node(),
@@ -1750,7 +1750,10 @@ impl BufferSnapshot {
         let items = matches
             .filter_map(|mat| {
                 let item_node = mat.nodes_for_capture_index(item_capture_ix).next()?;
-                let range = item_node.start_byte()..item_node.end_byte();
+                let item_range = item_node.start_byte()..item_node.end_byte();
+                if item_range.end < range.start || item_range.start > range.end {
+                    return None;
+                }
                 let mut text = String::new();
                 let mut name_ranges = Vec::new();
                 let mut highlight_ranges = Vec::new();
@@ -1808,15 +1811,15 @@ impl BufferSnapshot {
                 }
 
                 while stack.last().map_or(false, |prev_range| {
-                    !prev_range.contains(&range.start) || !prev_range.contains(&range.end)
+                    !prev_range.contains(&item_range.start) || !prev_range.contains(&item_range.end)
                 }) {
                     stack.pop();
                 }
-                stack.push(range.clone());
+                stack.push(item_range.clone());
 
                 Some(OutlineItem {
                     depth: stack.len() - 1,
-                    range: self.anchor_after(range.start)..self.anchor_before(range.end),
+                    range: self.anchor_after(item_range.start)..self.anchor_before(item_range.end),
                     text,
                     highlight_ranges,
                     name_ranges,

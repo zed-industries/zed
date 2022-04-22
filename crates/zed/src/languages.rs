@@ -63,7 +63,7 @@ pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegi
     languages
 }
 
-fn language(
+pub(crate) fn language(
     name: &str,
     grammar: tree_sitter::Language,
     lsp_adapter: Option<Arc<dyn LspAdapter>>,
