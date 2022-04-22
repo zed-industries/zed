@@ -1,11 +1,12 @@
 use anyhow::Context;
 use anyhow::Result;
-use async_std::task::{block_on, yield_now};
 use async_trait::async_trait;
+use futures::executor::block_on;
 use serde::Serialize;
 pub use sqlx::postgres::PgPoolOptions as DbOptions;
 use sqlx::{types::Uuid, FromRow};
 use time::OffsetDateTime;
+use tokio::task::yield_now;
 
 macro_rules! test_support {
     ($self:ident, { $($token:tt)* }) => {{
@@ -81,7 +82,7 @@ pub struct PostgresDb {
 }
 
 impl PostgresDb {
-    pub async fn new(url: &str, max_connections: u32) -> tide::Result<Self> {
+    pub async fn new(url: &str, max_connections: u32) -> Result<Self> {
         let pool = DbOptions::new()
             .max_connections(max_connections)
             .connect(url)

@@ -2,18 +2,17 @@ mod api;
 mod auth;
 mod db;
 mod env;
-mod errors;
 mod rpc;
 
 use ::rpc::Peer;
-use async_std::net::TcpListener;
+use anyhow::Result;
 use async_trait::async_trait;
 use db::{Db, PostgresDb};
 use serde::Deserialize;
 use std::sync::Arc;
-use tide_compress::CompressMiddleware;
+use tokio::net::TcpListener;
 
-type Request = tide::Request<Arc<AppState>>;
+// type Request = tide::Request<Arc<AppState>>;
 
 #[derive(Default, Deserialize)]
 pub struct Config {
@@ -28,7 +27,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    async fn new(config: Config) -> tide::Result<Arc<Self>> {
+    async fn new(config: Config) -> Result<Arc<Self>> {
         let db = PostgresDb::new(&config.database_url, 5).await?;
 
         let this = Self {
@@ -39,24 +38,24 @@ impl AppState {
     }
 }
 
-#[async_trait]
-trait RequestExt {
-    fn db(&self) -> &Arc<dyn Db>;
-}
+// #[async_trait]
+// trait RequestExt {
+//     fn db(&self) -> &Arc<dyn Db>;
+// }
 
-#[async_trait]
-impl RequestExt for Request {
-    fn db(&self) -> &Arc<dyn Db> {
-        &self.state().db
-    }
-}
+// #[async_trait]
+// impl RequestExt for Request {
+//     fn db(&self) -> &Arc<dyn Db> {
+//         &self.state().db
+//     }
+// }
 
-#[async_std::main]
-async fn main() -> tide::Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     if std::env::var("LOG_JSON").is_ok() {
         json_env_logger::init();
     } else {
-        tide::log::start();
+        env_logger::init();
     }
 
     if let Err(error) = env::load_dotenv() {
@@ -78,21 +77,17 @@ async fn main() -> tide::Result<()> {
     Ok(())
 }
 
-pub async fn run_server(
-    state: Arc<AppState>,
-    rpc: Arc<Peer>,
-    listener: TcpListener,
-) -> tide::Result<()> {
-    let mut app = tide::with_state(state.clone());
-    rpc::add_routes(&mut app, &rpc);
+pub async fn run_server(state: Arc<AppState>, rpc: Arc<Peer>, listener: TcpListener) -> Result<()> {
+    // let mut app = tide::with_state(state.clone());
+    // rpc::add_routes(&mut app, &rpc);
 
-    let mut web = tide::with_state(state.clone());
-    web.with(CompressMiddleware::new());
-    api::add_routes(&mut web);
+    // let mut web = tide::with_state(state.clone());
+    // web.with(CompressMiddleware::new());
+    // api::add_routes(&mut web);
 
-    app.at("/").nest(web);
+    // app.at("/").nest(web);
 
-    app.listen(listener).await?;
+    // app.listen(listener).await?;
 
     Ok(())
 }

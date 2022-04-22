@@ -1,5 +1,5 @@
 use crate::db::{ChannelId, UserId};
-use anyhow::anyhow;
+use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use rpc::{proto, ConnectionId};
 use std::{collections::hash_map, path::PathBuf};
@@ -99,7 +99,7 @@ impl Store {
     pub fn remove_connection(
         &mut self,
         connection_id: ConnectionId,
-    ) -> tide::Result<RemovedConnectionState> {
+    ) -> Result<RemovedConnectionState> {
         let connection = if let Some(connection) = self.connections.remove(&connection_id) {
             connection
         } else {
@@ -165,7 +165,7 @@ impl Store {
         }
     }
 
-    pub fn user_id_for_connection(&self, connection_id: ConnectionId) -> tide::Result<UserId> {
+    pub fn user_id_for_connection(&self, connection_id: ConnectionId) -> Result<UserId> {
         Ok(self
             .connections
             .get(&connection_id)
@@ -258,7 +258,7 @@ impl Store {
         worktree_id: u64,
         connection_id: ConnectionId,
         worktree: Worktree,
-    ) -> tide::Result<()> {
+    ) -> Result<()> {
         let project = self
             .projects
             .get_mut(&project_id)
@@ -286,7 +286,7 @@ impl Store {
         &mut self,
         project_id: u64,
         connection_id: ConnectionId,
-    ) -> tide::Result<Project> {
+    ) -> Result<Project> {
         match self.projects.entry(project_id) {
             hash_map::Entry::Occupied(e) => {
                 if e.get().host_connection_id == connection_id {
@@ -326,7 +326,7 @@ impl Store {
         project_id: u64,
         worktree_id: u64,
         acting_connection_id: ConnectionId,
-    ) -> tide::Result<(Worktree, Vec<ConnectionId>)> {
+    ) -> Result<(Worktree, Vec<ConnectionId>)> {
         let project = self
             .projects
             .get_mut(&project_id)
@@ -363,7 +363,7 @@ impl Store {
         &mut self,
         project_id: u64,
         connection_id: ConnectionId,
-    ) -> tide::Result<SharedProject> {
+    ) -> Result<SharedProject> {
         if let Some(project) = self.projects.get_mut(&project_id) {
             if project.host_connection_id == connection_id {
                 let mut share = ProjectShare::default();
@@ -383,7 +383,7 @@ impl Store {
         &mut self,
         project_id: u64,
         acting_connection_id: ConnectionId,
-    ) -> tide::Result<UnsharedProject> {
+    ) -> Result<UnsharedProject> {
         let project = if let Some(project) = self.projects.get_mut(&project_id) {
             project
         } else {
@@ -418,7 +418,7 @@ impl Store {
         worktree_id: u64,
         connection_id: ConnectionId,
         summary: proto::DiagnosticSummary,
-    ) -> tide::Result<Vec<ConnectionId>> {
+    ) -> Result<Vec<ConnectionId>> {
         let project = self
             .projects
             .get_mut(&project_id)
@@ -443,7 +443,7 @@ impl Store {
         project_id: u64,
         connection_id: ConnectionId,
         language_server: proto::LanguageServer,
-    ) -> tide::Result<Vec<ConnectionId>> {
+    ) -> Result<Vec<ConnectionId>> {
         let project = self
             .projects
             .get_mut(&project_id)
@@ -461,7 +461,7 @@ impl Store {
         connection_id: ConnectionId,
         user_id: UserId,
         project_id: u64,
-    ) -> tide::Result<JoinedProject> {
+    ) -> Result<JoinedProject> {
         let connection = self
             .connections
             .get_mut(&connection_id)
@@ -498,7 +498,7 @@ impl Store {
         &mut self,
         connection_id: ConnectionId,
         project_id: u64,
-    ) -> tide::Result<LeftProject> {
+    ) -> Result<LeftProject> {
         let project = self
             .projects
             .get_mut(&project_id)
@@ -533,7 +533,7 @@ impl Store {
         worktree_id: u64,
         removed_entries: &[u64],
         updated_entries: &[proto::Entry],
-    ) -> tide::Result<Vec<ConnectionId>> {
+    ) -> Result<Vec<ConnectionId>> {
         let project = self.write_project(project_id, connection_id)?;
         let worktree = project
             .share_mut()?
@@ -554,13 +554,13 @@ impl Store {
         &self,
         project_id: u64,
         acting_connection_id: ConnectionId,
-    ) -> tide::Result<Vec<ConnectionId>> {
+    ) -> Result<Vec<ConnectionId>> {
         Ok(self
             .read_project(project_id, acting_connection_id)?
             .connection_ids())
     }
 
-    pub fn channel_connection_ids(&self, channel_id: ChannelId) -> tide::Result<Vec<ConnectionId>> {
+    pub fn channel_connection_ids(&self, channel_id: ChannelId) -> Result<Vec<ConnectionId>> {
         Ok(self
             .channels
             .get(&channel_id)
@@ -573,11 +573,7 @@ impl Store {
         self.projects.get(&project_id)
     }
 
-    pub fn read_project(
-        &self,
-        project_id: u64,
-        connection_id: ConnectionId,
-    ) -> tide::Result<&Project> {
+    pub fn read_project(&self, project_id: u64, connection_id: ConnectionId) -> Result<&Project> {
         let project = self
             .projects
             .get(&project_id)
@@ -600,7 +596,7 @@ impl Store {
         &mut self,
         project_id: u64,
         connection_id: ConnectionId,
-    ) -> tide::Result<&mut Project> {
+    ) -> Result<&mut Project> {
         let project = self
             .projects
             .get_mut(&project_id)
@@ -755,14 +751,14 @@ impl Project {
         }
     }
 
-    pub fn share(&self) -> tide::Result<&ProjectShare> {
+    pub fn share(&self) -> Result<&ProjectShare> {
         Ok(self
             .share
             .as_ref()
             .ok_or_else(|| anyhow!("worktree is not shared"))?)
     }
 
-    fn share_mut(&mut self) -> tide::Result<&mut ProjectShare> {
+    fn share_mut(&mut self) -> Result<&mut ProjectShare> {
         Ok(self
             .share
             .as_mut()
