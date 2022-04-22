@@ -2502,13 +2502,12 @@ impl Project {
                                         log::info!("completion out of expected range");
                                         return None;
                                     }
-                                    (
-                                        this.common_prefix_at(
-                                            clipped_position,
-                                            &lsp_completion.label,
-                                        ),
-                                        lsp_completion.label.clone(),
-                                    )
+                                    let text = lsp_completion
+                                        .insert_text
+                                        .as_ref()
+                                        .unwrap_or(&lsp_completion.label)
+                                        .clone();
+                                    (this.common_prefix_at(clipped_position, &text), text.clone())
                                 }
                                 Some(lsp::CompletionTextEdit::InsertAndReplace(_)) => {
                                     log::info!("unsupported insert/replace completion");
