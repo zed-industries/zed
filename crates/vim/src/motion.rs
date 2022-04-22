@@ -1,7 +1,7 @@
 use editor::{
     char_kind,
     display_map::{DisplaySnapshot, ToDisplayPoint},
-    movement, Bias, DisplayPoint,
+    movement, Bias, CharKind, DisplayPoint,
 };
 use gpui::{actions, impl_actions, MutableAppContext};
 use language::{Selection, SelectionGoal};
@@ -23,6 +23,8 @@ pub enum Motion {
     NextWordStart { ignore_punctuation: bool },
     NextWordEnd { ignore_punctuation: bool },
     PreviousWordStart { ignore_punctuation: bool },
+    FirstNonWhitespace,
+    CurrentLine,
     StartOfLine,
     EndOfLine,
     StartOfDocument,
@@ -57,8 +59,10 @@ actions!(
         Down,
         Up,
         Right,
+        FirstNonWhitespace,
         StartOfLine,
         EndOfLine,
+        CurrentLine,
         StartOfDocument,
         EndOfDocument
     ]
@@ -70,8 +74,12 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|_: &mut Workspace, _: &Down, cx: _| motion(Motion::Down, cx));
     cx.add_action(|_: &mut Workspace, _: &Up, cx: _| motion(Motion::Up, cx));
     cx.add_action(|_: &mut Workspace, _: &Right, cx: _| motion(Motion::Right, cx));
+    cx.add_action(|_: &mut Workspace, _: &FirstNonWhitespace, cx: _| {
+        motion(Motion::FirstNonWhitespace, cx)
+    });
     cx.add_action(|_: &mut Workspace, _: &StartOfLine, cx: _| motion(Motion::StartOfLine, cx));
     cx.add_action(|_: &mut Workspace, _: &EndOfLine, cx: _| motion(Motion::EndOfLine, cx));
+    cx.add_action(|_: &mut Workspace, _: &CurrentLine, cx: _| motion(Motion::CurrentLine, cx));
     cx.add_action(|_: &mut Workspace, _: &StartOfDocument, cx: _| {
         motion(Motion::StartOfDocument, cx)
     });
@@ -114,7 +122,7 @@ impl Motion {
     pub fn linewise(self) -> bool {
         use Motion::*;
         match self {
-            Down | Up | StartOfDocument | EndOfDocument => true,
+            Down | Up | StartOfDocument | EndOfDocument | CurrentLine => true,
             _ => false,
         }
     }
@@ -156,8 +164,10 @@ impl Motion {
                 previous_word_start(map, point, ignore_punctuation),
                 SelectionGoal::None,
             ),
+            FirstNonWhitespace => (first_non_whitespace(map, point), SelectionGoal::None),
             StartOfLine => (start_of_line(map, point), SelectionGoal::None),
             EndOfLine => (end_of_line(map, point), SelectionGoal::None),
+            CurrentLine => (end_of_line(map, point), SelectionGoal::None),
             StartOfDocument => (start_of_document(map, point), SelectionGoal::None),
             EndOfDocument => (end_of_document(map, point), SelectionGoal::None),
         }
@@ -288,6 +298,24 @@ fn previous_word_start(
         (left_kind != right_kind && !right.is_whitespace()) || left == '\n'
     });
     point
+}
+
+fn first_non_whitespace(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
+    let mut column = 0;
+    for ch in map.chars_at(DisplayPoint::new(point.row(), 0)) {
+        if ch == '\n' {
+            return point;
+        }
+
+        if char_kind(ch) != CharKind::Whitespace {
+            break;
+        }
+
+        column += ch.len_utf8() as u32;
+    }
+
+    *point.column_mut() = column;
+    map.clip_point(point, Bias::Left)
 }
 
 fn start_of_line(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
