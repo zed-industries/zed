@@ -566,6 +566,18 @@ impl AsyncAppContext {
         self.update(|cx| cx.add_view(window_id, build_view))
     }
 
+    pub fn add_window<T, F>(
+        &mut self,
+        window_options: WindowOptions,
+        build_root_view: F,
+    ) -> (usize, ViewHandle<T>)
+    where
+        T: View,
+        F: FnOnce(&mut ViewContext<T>) -> T,
+    {
+        self.update(|cx| cx.add_window(window_options, build_root_view))
+    }
+
     pub fn platform(&self) -> Arc<dyn Platform> {
         self.0.borrow().platform()
     }

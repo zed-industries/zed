@@ -2141,41 +2141,43 @@ pub fn open_paths(
         }
     }
 
-    let is_new_workspace = existing.is_none();
-    let workspace = existing.unwrap_or_else(|| {
-        cx.add_window((app_state.build_window_options)(), |cx| {
-            let project = Project::local(
-                app_state.client.clone(),
-                app_state.user_store.clone(),
-                app_state.languages.clone(),
-                app_state.fs.clone(),
-                cx,
-            );
-            (app_state.build_workspace)(project, &app_state, cx)
-        })
-        .1
-    });
-
-    let task = workspace.update(cx, |workspace, cx| {
-        workspace.open_paths(abs_paths.to_vec(), cx)
-    });
+    let app_state = app_state.clone();
+    let abs_paths = abs_paths.to_vec();
     cx.spawn(|mut cx| async move {
-        let items = task.await;
-        let opened_dir = items.iter().any(|item| item.is_none());
+        let workspace = if let Some(existing) = existing {
+            existing
+        } else {
+            let contains_directory =
+                futures::future::join_all(abs_paths.iter().map(|path| app_state.fs.is_file(path)))
+                    .await
+                    .contains(&false);
 
-        // Toggle project browser when opening a new workspace that contains a directory.
-        if is_new_workspace && opened_dir {
-            workspace.update(&mut cx, |workspace, cx| {
-                workspace.toggle_sidebar_item(
-                    &ToggleSidebarItem(SidebarItemId {
-                        side: Side::Left,
-                        item_index: 0,
-                    }),
+            cx.add_window((app_state.build_window_options)(), |cx| {
+                let project = Project::local(
+                    app_state.client.clone(),
+                    app_state.user_store.clone(),
+                    app_state.languages.clone(),
+                    app_state.fs.clone(),
                     cx,
                 );
-                cx.focus_self();
-            });
-        }
+                let mut workspace = (app_state.build_workspace)(project, &app_state, cx);
+                if contains_directory {
+                    workspace.toggle_sidebar_item(
+                        &ToggleSidebarItem(SidebarItemId {
+                            side: Side::Left,
+                            item_index: 0,
+                        }),
+                        cx,
+                    );
+                }
+                workspace
+            })
+            .1
+        };
+
+        let items = workspace
+            .update(&mut cx, |workspace, cx| workspace.open_paths(abs_paths, cx))
+            .await;
         (workspace, items)
     })
 }
