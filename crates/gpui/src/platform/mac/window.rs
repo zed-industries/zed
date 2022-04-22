@@ -614,22 +614,42 @@ extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
 
 extern "C" fn window_did_become_key(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let mut window_state_borrow = window_state.as_ref().borrow_mut();
-    if let Some(mut callback) = window_state_borrow.activate_callback.take() {
-        drop(window_state_borrow);
-        callback(true);
-        window_state.borrow_mut().activate_callback = Some(callback);
-    };
+    window_state
+        .as_ref()
+        .borrow()
+        .executor
+        .spawn({
+            let window_state = window_state.clone();
+            async move {
+                let mut window_state_borrow = window_state.as_ref().borrow_mut();
+                if let Some(mut callback) = window_state_borrow.activate_callback.take() {
+                    drop(window_state_borrow);
+                    callback(true);
+                    window_state.borrow_mut().activate_callback = Some(callback);
+                };
+            }
+        })
+        .detach();
 }
 
 extern "C" fn window_did_resign_key(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let mut window_state_borrow = window_state.as_ref().borrow_mut();
-    if let Some(mut callback) = window_state_borrow.activate_callback.take() {
-        drop(window_state_borrow);
-        callback(false);
-        window_state.borrow_mut().activate_callback = Some(callback);
-    };
+    window_state
+        .as_ref()
+        .borrow()
+        .executor
+        .spawn({
+            let window_state = window_state.clone();
+            async move {
+                let mut window_state_borrow = window_state.as_ref().borrow_mut();
+                if let Some(mut callback) = window_state_borrow.activate_callback.take() {
+                    drop(window_state_borrow);
+                    callback(false);
+                    window_state.borrow_mut().activate_callback = Some(callback);
+                };
+            }
+        })
+        .detach();
 }
 
 extern "C" fn close_window(this: &Object, _: Sel) {
