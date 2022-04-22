@@ -3,7 +3,9 @@ import { withOpacity } from "../utils/color";
 
 export interface SyntaxHighlightStyle {
   color: ColorToken;
-  weight: FontWeightToken;
+  weight?: FontWeightToken;
+  underline?: boolean,
+  italic?: boolean,
 }
 
 export interface Player {
@@ -49,12 +51,12 @@ export interface Syntax {
   number: SyntaxHighlightStyle;
   boolean: SyntaxHighlightStyle;
   predictive: SyntaxHighlightStyle;
-  // TODO: Either move the following or rename
   title: SyntaxHighlightStyle;
   emphasis: SyntaxHighlightStyle;
-  emphasisStrong: SyntaxHighlightStyle;
-  linkUrl: SyntaxHighlightStyle;
+  linkUri: SyntaxHighlightStyle;
   linkText: SyntaxHighlightStyle;
+
+  [key: string]: SyntaxHighlightStyle;
 };
 
 export default interface Theme {
