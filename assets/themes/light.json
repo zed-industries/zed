@@ -692,33 +692,88 @@
       }
     },
     "syntax": {
-      "keyword": "#1819a1",
-      "function": "#bb550e",
-      "string": "#eb2d2d",
-      "type": "#a8820e",
-      "number": "#484bed",
-      "comment": "#717171",
-      "property": "#106c4e",
-      "variant": "#97142a",
-      "constant": "#1c1c1c",
+      "primary": {
+        "color": "#1c1c1c",
+        "weight": "normal"
+      },
+      "comment": {
+        "color": "#717171",
+        "weight": "normal"
+      },
+      "punctuation": {
+        "color": "#555555",
+        "weight": "normal"
+      },
+      "constant": {
+        "color": "#1c1c1c",
+        "weight": "normal"
+      },
+      "keyword": {
+        "color": "#1819a1",
+        "weight": "normal"
+      },
+      "function": {
+        "color": "#bb550e",
+        "weight": "normal"
+      },
+      "type": {
+        "color": "#a8820e",
+        "weight": "normal"
+      },
+      "variant": {
+        "color": "#97142a",
+        "weight": "normal"
+      },
+      "property": {
+        "color": "#106c4e",
+        "weight": "normal"
+      },
+      "enum": {
+        "color": "#eb2d2d",
+        "weight": "normal"
+      },
+      "operator": {
+        "color": "#eb2d2d",
+        "weight": "normal"
+      },
+      "string": {
+        "color": "#eb2d2d",
+        "weight": "normal"
+      },
+      "number": {
+        "color": "#484bed",
+        "weight": "normal"
+      },
+      "boolean": {
+        "color": "#eb2d2d",
+        "weight": "normal"
+      },
+      "predictive": {
+        "color": "#808080",
+        "weight": "normal"
+      },
       "title": {
         "color": "#1096d3",
         "weight": "bold"
       },
-      "emphasis": "#484bed",
-      "emphasis_strong": {
+      "emphasis": {
+        "color": "#484bed",
+        "weight": "normal"
+      },
+      "emphasis.strong": {
         "color": "#484bed",
         "weight": "bold"
       },
       "link_uri": {
         "color": "#79ba16",
+        "weight": "normal",
         "underline": true
       },
       "link_text": {
         "color": "#eb2d2d",
+        "weight": "normal",
         "italic": true
-      },
-      "list_marker": "#555555"
+      }
     }
   },
   "project_diagnostics": {

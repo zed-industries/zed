@@ -202,22 +202,22 @@ const syntax: Syntax = {
     weight: fontWeights.bold,
   },
   emphasis: {
-    color: textColor.active,
+    color: textColor.feature,
     weight: fontWeights.normal,
   },
-  emphasisStrong: {
-    color: textColor.active,
+  "emphasis.strong": {
+    color: textColor.feature,
     weight: fontWeights.bold,
   },
-  linkUrl: {
+  linkUri: {
     color: colors.lime[500],
     weight: fontWeights.normal,
-    // TODO: add underline
+    underline: true,
   },
   linkText: {
     color: colors.orange[500],
     weight: fontWeights.normal,
-    // TODO: add italic
+    italic: true,
   },
 };
 

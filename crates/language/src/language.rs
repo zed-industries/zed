@@ -546,7 +546,9 @@ impl Language {
             {
                 let end_offset = offset + chunk.text.len();
                 if let Some(highlight_id) = chunk.syntax_highlight_id {
-                    result.push((offset..end_offset, highlight_id));
+                    if !highlight_id.is_default() {
+                        result.push((offset..end_offset, highlight_id));
+                    }
                 }
                 offset = end_offset;
             }
