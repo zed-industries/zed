@@ -28,6 +28,7 @@ pub fn up(
     map: &DisplaySnapshot,
     start: DisplayPoint,
     goal: SelectionGoal,
+    preserve_column_at_start: bool,
 ) -> (DisplayPoint, SelectionGoal) {
     let mut goal_column = if let SelectionGoal::Column(column) = goal {
         column
@@ -42,6 +43,8 @@ pub fn up(
     );
     if point.row() < start.row() {
         *point.column_mut() = map.column_from_chars(point.row(), goal_column);
+    } else if preserve_column_at_start {
+        return (start, goal);
     } else {
         point = DisplayPoint::new(0, 0);
         goal_column = 0;
@@ -63,6 +66,7 @@ pub fn down(
     map: &DisplaySnapshot,
     start: DisplayPoint,
     goal: SelectionGoal,
+    preserve_column_at_end: bool,
 ) -> (DisplayPoint, SelectionGoal) {
     let mut goal_column = if let SelectionGoal::Column(column) = goal {
         column
@@ -74,6 +78,8 @@ pub fn down(
     let mut point = map.clip_point(DisplayPoint::new(next_row, 0), Bias::Right);
     if point.row() > start.row() {
         *point.column_mut() = map.column_from_chars(point.row(), goal_column);
+    } else if preserve_column_at_end {
+        return (start, goal);
     } else {
         point = map.max_point();
         goal_column = map.column_to_chars(point.row(), point.column())
@@ -503,41 +509,81 @@ mod tests {
 
         // Can't move up into the first excerpt's header
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(2, 2), SelectionGoal::Column(2)),
+            up(
+                &snapshot,
+                DisplayPoint::new(2, 2),
+                SelectionGoal::Column(2),
+                false
+            ),
             (DisplayPoint::new(2, 0), SelectionGoal::Column(0)),
         );
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(2, 0), SelectionGoal::None),
+            up(
+                &snapshot,
+                DisplayPoint::new(2, 0),
+                SelectionGoal::None,
+                false
+            ),
             (DisplayPoint::new(2, 0), SelectionGoal::Column(0)),
         );
 
         // Move up and down within first excerpt
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(4)),
+            up(
+                &snapshot,
+                DisplayPoint::new(3, 4),
+                SelectionGoal::Column(4),
+                false
+            ),
             (DisplayPoint::new(2, 3), SelectionGoal::Column(4)),
         );
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(2, 3), SelectionGoal::Column(4)),
+            down(
+                &snapshot,
+                DisplayPoint::new(2, 3),
+                SelectionGoal::Column(4),
+                false
+            ),
             (DisplayPoint::new(3, 4), SelectionGoal::Column(4)),
         );
 
         // Move up and down across second excerpt's header
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(6, 5), SelectionGoal::Column(5)),
+            up(
+                &snapshot,
+                DisplayPoint::new(6, 5),
+                SelectionGoal::Column(5),
+                false
+            ),
             (DisplayPoint::new(3, 4), SelectionGoal::Column(5)),
         );
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(5)),
+            down(
+                &snapshot,
+                DisplayPoint::new(3, 4),
+                SelectionGoal::Column(5),
+                false
+            ),
             (DisplayPoint::new(6, 5), SelectionGoal::Column(5)),
         );
 
         // Can't move down off the end
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(7, 0), SelectionGoal::Column(0)),
+            down(
+                &snapshot,
+                DisplayPoint::new(7, 0),
+                SelectionGoal::Column(0),
+                false
+            ),
             (DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
         );
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
+            down(
+                &snapshot,
+                DisplayPoint::new(7, 2),
+                SelectionGoal::Column(2),
+                false
+            ),
             (DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
         );
     }
