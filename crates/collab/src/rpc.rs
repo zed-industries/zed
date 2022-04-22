@@ -3829,7 +3829,16 @@ mod tests {
             },
             Some(tree_sitter_rust::language()),
         );
-        let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default());
+        let mut fake_language_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: Default::default(),
+                })),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
         lang_registry.add(Arc::new(language));
 
         // Connect to a server as 2 clients.

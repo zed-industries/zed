@@ -86,6 +86,14 @@ impl LspCommand for PrepareRename {
     type LspRequest = lsp::request::PrepareRenameRequest;
     type ProtoRequest = proto::PrepareRename;
 
+    fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
+        if let Some(lsp::OneOf::Right(rename)) = &capabilities.rename_provider {
+            rename.prepare_provider == Some(true)
+        } else {
+            false
+        }
+    }
+
     fn to_lsp(&self, path: &Path, _: &AppContext) -> lsp::TextDocumentPositionParams {
         lsp::TextDocumentPositionParams {
             text_document: lsp::TextDocumentIdentifier {

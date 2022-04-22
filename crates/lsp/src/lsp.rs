@@ -292,6 +292,10 @@ impl LanguageServer {
                         }),
                         ..Default::default()
                     }),
+                    rename: Some(RenameClientCapabilities {
+                        prepare_support: Some(true),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 }),
                 experimental: Some(json!({
