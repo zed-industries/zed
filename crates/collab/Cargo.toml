@@ -29,6 +29,8 @@ json_env_logger = "0.1"
 lazy_static = "1.4"
 lipsum = { version = "0.8", optional = true }
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
+opentelemetry = { version = "0.17", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.10" }
 parking_lot = "0.11.1"
 rand = "0.8"
 scrypt = "0.7"
@@ -37,6 +39,7 @@ serde_json = "1.0"
 sha-1 = "0.9"
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.17"
+tonic = "0.6"
 tower = "0.4"
 time = "0.2"
 toml = "0.5.8"

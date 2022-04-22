@@ -6,7 +6,10 @@ mod rpc;
 
 use axum::{body::Body, http::StatusCode, response::IntoResponse, Router};
 use db::{Db, PostgresDb};
-
+use opentelemetry::{
+    trace::{get_active_span, Tracer},
+    KeyValue,
+};
 use serde::Deserialize;
 use std::{
     net::{SocketAddr, TcpListener},
@@ -18,6 +21,8 @@ pub struct Config {
     pub http_port: u16,
     pub database_url: String,
     pub api_token: String,
+    pub honeycomb_api_key: Option<String>,
+    pub honeycomb_dataset: Option<String>,
 }
 
 pub struct AppState {
@@ -52,7 +57,16 @@ async fn main() -> Result<()> {
     }
 
     let config = envy::from_env::<Config>().expect("error loading config");
+    init_tracing(&config);
     let state = AppState::new(&config).await?;
+
+    let tracer = opentelemetry::global::tracer("");
+    tracer.in_span("testing", |_| {
+        get_active_span(|span| {
+            span.set_attribute(KeyValue::new("foo", "bar"));
+        });
+        log::info!("testing in span");
+    });
 
     let listener = TcpListener::bind(&format!("0.0.0.0:{}", config.http_port))
         .expect("failed to bind TCP listener");
@@ -111,4 +125,28 @@ impl std::fmt::Display for Error {
             Error::Internal(error) => error.fmt(f),
         }
     }
+}
+
+pub fn init_tracing(config: &Config) -> Option<()> {
+    use opentelemetry_otlp::WithExportConfig;
+    let (honeycomb_api_key, honeycomb_dataset) = config
+        .honeycomb_api_key
+        .clone()
+        .zip(config.honeycomb_dataset.clone())?;
+
+    let mut metadata = tonic::metadata::MetadataMap::new();
+    metadata.insert("x-honeycomb-team", honeycomb_api_key.parse().unwrap());
+    metadata.insert("x-honeycomb-dataset", honeycomb_dataset.parse().unwrap());
+    opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_exporter(
+            opentelemetry_otlp::new_exporter()
+                .tonic()
+                .with_endpoint("api.honeycomb.io:443")
+                .with_metadata(metadata),
+        )
+        .install_batch(opentelemetry::runtime::Tokio)
+        .expect("failed to initialize tracing");
+
+    None
 }
