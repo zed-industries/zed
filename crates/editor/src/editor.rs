@@ -4628,7 +4628,23 @@ impl Editor {
         });
 
         Some(cx.spawn(|this, mut cx| async move {
-            if let Some(rename_range) = prepare_rename.await? {
+            let rename_range = if let Some(range) = prepare_rename.await? {
+                Some(range)
+            } else {
+                this.read_with(&cx, |this, cx| {
+                    let buffer = this.buffer.read(cx).snapshot(cx);
+                    let mut buffer_highlights = this
+                        .document_highlights_for_position(selection.head(), &buffer)
+                        .filter(|highlight| {
+                            highlight.start.excerpt_id() == selection.head().excerpt_id()
+                                && highlight.end.excerpt_id() == selection.head().excerpt_id()
+                        });
+                    buffer_highlights
+                        .next()
+                        .map(|highlight| highlight.start.text_anchor..highlight.end.text_anchor)
+                })
+            };
+            if let Some(rename_range) = rename_range {
                 let rename_buffer_range = rename_range.to_offset(&snapshot);
                 let cursor_offset_in_rename_range =
                     cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
@@ -5671,6 +5687,43 @@ impl Editor {
         let end = buffer.anchor_after(buffer.len());
         let theme = cx.global::<Settings>().theme.as_ref();
         self.background_highlights_in_range(start..end, &snapshot, theme)
+    }
+
+    fn document_highlights_for_position<'a>(
+        &'a self,
+        position: Anchor,
+        buffer: &'a MultiBufferSnapshot,
+    ) -> impl 'a + Iterator<Item = &Range<Anchor>> {
+        let read_highlights = self
+            .background_highlights
+            .get(&TypeId::of::<DocumentHighlightRead>())
+            .map(|h| &h.1);
+        let write_highlights = self
+            .background_highlights
+            .get(&TypeId::of::<DocumentHighlightRead>())
+            .map(|h| &h.1);
+        let left_position = position.bias_left(buffer);
+        let right_position = position.bias_right(buffer);
+        read_highlights
+            .into_iter()
+            .chain(write_highlights)
+            .flat_map(move |ranges| {
+                let start_ix = match ranges.binary_search_by(|probe| {
+                    let cmp = probe.end.cmp(&left_position, &buffer);
+                    if cmp.is_ge() {
+                        Ordering::Greater
+                    } else {
+                        Ordering::Less
+                    }
+                }) {
+                    Ok(i) | Err(i) => i,
+                };
+
+                let right_position = right_position.clone();
+                ranges[start_ix..]
+                    .iter()
+                    .take_while(move |range| range.start.cmp(&right_position, &buffer).is_le())
+            })
     }
 
     pub fn background_highlights_in_range(
