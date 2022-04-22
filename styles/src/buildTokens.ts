@@ -2,6 +2,8 @@ import * as fs from "fs";
 import * as path from "path";
 import dark from "./themes/dark";
 import light from "./themes/light";
+import solarizedDark from "./themes/solarized-dark";
+import solarizedLight from "./themes/solarized-light";
 import Theme from "./themes/theme";
 import { colors, fontFamilies, fontSizes, fontWeights } from "./tokens";
 
@@ -96,7 +98,7 @@ combinedTokens.core = coreTokens;
 
 // Add each theme to the combined tokens and write ${theme}.json.
 // We write `${theme}.json` as a separate file for the design team's convenience, but it isn't consumed by Figma Tokens directly.
-let themes = [dark, light];
+let themes = [dark, light, solarizedDark, solarizedLight];
 themes.forEach((theme) => {
   const themePath = `${distPath}/${theme.name}.json`
   fs.writeFileSync(themePath, JSON.stringify(themeTokens(theme), null, 2));
