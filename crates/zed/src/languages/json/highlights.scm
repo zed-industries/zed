@@ -12,3 +12,10 @@
   (false)
   (null)
 ] @constant
+
+[
+  "{"
+  "}"
+  "["
+  "]"
+] @punctuation.bracket

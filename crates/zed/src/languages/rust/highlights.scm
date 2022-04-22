@@ -35,6 +35,20 @@
  (#match? @constant "^[A-Z][A-Z\\d_]+$"))
 
 [
+  "("
+  ")"
+  "{"
+  "}"
+  "["
+  "]"
+] @punctuation.bracket
+
+(_
+  .
+  "<" @punctuation.bracket
+  ">" @punctuation.bracket)
+
+[
   "as"
   "async"
   "break"
