@@ -469,7 +469,7 @@ mod tests {
         workspace
             .update(cx, |workspace, cx| {
                 workspace.open_paths(
-                    &[PathBuf::from("/root/dir1"), PathBuf::from("/root/dir2")],
+                    vec![PathBuf::from("/root/dir1"), PathBuf::from("/root/dir2")],
                     cx,
                 )
             })

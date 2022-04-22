@@ -8,7 +8,8 @@ pub struct Sidebar {
     side: Side,
     items: Vec<Item>,
     active_item_ix: Option<usize>,
-    width: Rc<RefCell<f32>>,
+    actual_width: Rc<RefCell<f32>>,
+    custom_width: Rc<RefCell<f32>>,
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -42,7 +43,8 @@ impl Sidebar {
             side,
             items: Default::default(),
             active_item_ix: None,
-            width: Rc::new(RefCell::new(260.)),
+            actual_width: Rc::new(RefCell::new(260.)),
+            custom_width: Rc::new(RefCell::new(260.)),
         }
     }
 
@@ -137,12 +139,12 @@ impl Sidebar {
             container.add_child(
                 Hook::new(
                     ConstrainedBox::new(ChildView::new(active_item).boxed())
-                        .with_max_width(*self.width.borrow())
+                        .with_max_width(*self.custom_width.borrow())
                         .boxed(),
                 )
                 .on_after_layout({
-                    let width = self.width.clone();
-                    move |size, _| *width.borrow_mut() = size.x()
+                    let actual_width = self.actual_width.clone();
+                    move |size, _| *actual_width.borrow_mut() = size.x()
                 })
                 .flex(1., false)
                 .boxed(),
@@ -157,7 +159,8 @@ impl Sidebar {
     }
 
     fn render_resize_handle(&self, theme: &Theme, cx: &mut RenderContext<Workspace>) -> ElementBox {
-        let width = self.width.clone();
+        let actual_width = self.actual_width.clone();
+        let custom_width = self.custom_width.clone();
         let side = self.side;
         MouseEventHandler::new::<Self, _, _>(side as usize, cx, |_, _| {
             Container::new(Empty::new().boxed())
@@ -171,10 +174,10 @@ impl Sidebar {
         })
         .with_cursor_style(CursorStyle::ResizeLeftRight)
         .on_drag(move |delta, cx| {
-            let prev_width = *width.borrow();
+            let prev_width = *actual_width.borrow();
             match side {
-                Side::Left => *width.borrow_mut() = 0f32.max(prev_width + delta.x()),
-                Side::Right => *width.borrow_mut() = 0f32.max(prev_width - delta.x()),
+                Side::Left => *custom_width.borrow_mut() = 0f32.max(prev_width + delta.x()),
+                Side::Right => *custom_width.borrow_mut() = 0f32.max(prev_width - delta.x()),
             }
 
             cx.notify();

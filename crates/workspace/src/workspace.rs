@@ -31,7 +31,7 @@ pub use pane_group::*;
 use postage::prelude::Stream;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, Worktree};
 use settings::Settings;
-use sidebar::{Side, Sidebar, ToggleSidebarItem, ToggleSidebarItemFocus};
+use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus};
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
@@ -859,44 +859,49 @@ impl Workspace {
 
     pub fn open_paths(
         &mut self,
-        abs_paths: &[PathBuf],
+        mut abs_paths: Vec<PathBuf>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>> {
-        let entries = abs_paths
-            .iter()
-            .cloned()
-            .map(|path| self.project_path_for_path(&path, cx))
-            .collect::<Vec<_>>();
-
         let fs = self.fs.clone();
-        let tasks = abs_paths
-            .iter()
-            .cloned()
-            .zip(entries.into_iter())
-            .map(|(abs_path, project_path)| {
-                cx.spawn(|this, mut cx| {
-                    let fs = fs.clone();
-                    async move {
-                        let project_path = project_path.await.ok()?;
-                        if fs.is_file(&abs_path).await {
-                            Some(
-                                this.update(&mut cx, |this, cx| this.open_path(project_path, cx))
-                                    .await,
-                            )
-                        } else {
-                            None
-                        }
-                    }
-                })
-            })
-            .collect::<Vec<_>>();
 
-        cx.foreground().spawn(async move {
-            let mut items = Vec::new();
-            for task in tasks {
-                items.push(task.await);
+        // Sort the paths to ensure we add worktrees for parents before their children.
+        abs_paths.sort_unstable();
+        cx.spawn(|this, mut cx| async move {
+            let mut entries = Vec::new();
+            for path in &abs_paths {
+                entries.push(
+                    this.update(&mut cx, |this, cx| this.project_path_for_path(path, cx))
+                        .await
+                        .ok(),
+                );
             }
-            items
+
+            let tasks = abs_paths
+                .iter()
+                .cloned()
+                .zip(entries.into_iter())
+                .map(|(abs_path, project_path)| {
+                    let this = this.clone();
+                    cx.spawn(|mut cx| {
+                        let fs = fs.clone();
+                        async move {
+                            let project_path = project_path?;
+                            if fs.is_file(&abs_path).await {
+                                Some(
+                                    this.update(&mut cx, |this, cx| {
+                                        this.open_path(project_path, cx)
+                                    })
+                                    .await,
+                                )
+                            } else {
+                                None
+                            }
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            futures::future::join_all(tasks).await
         })
     }
 
@@ -2136,23 +2141,43 @@ pub fn open_paths(
         }
     }
 
-    let workspace = existing.unwrap_or_else(|| {
-        cx.add_window((app_state.build_window_options)(), |cx| {
-            let project = Project::local(
-                app_state.client.clone(),
-                app_state.user_store.clone(),
-                app_state.languages.clone(),
-                app_state.fs.clone(),
-                cx,
-            );
-            (app_state.build_workspace)(project, &app_state, cx)
-        })
-        .1
-    });
+    let app_state = app_state.clone();
+    let abs_paths = abs_paths.to_vec();
+    cx.spawn(|mut cx| async move {
+        let workspace = if let Some(existing) = existing {
+            existing
+        } else {
+            let contains_directory =
+                futures::future::join_all(abs_paths.iter().map(|path| app_state.fs.is_file(path)))
+                    .await
+                    .contains(&false);
 
-    let task = workspace.update(cx, |workspace, cx| workspace.open_paths(abs_paths, cx));
-    cx.spawn(|_| async move {
-        let items = task.await;
+            cx.add_window((app_state.build_window_options)(), |cx| {
+                let project = Project::local(
+                    app_state.client.clone(),
+                    app_state.user_store.clone(),
+                    app_state.languages.clone(),
+                    app_state.fs.clone(),
+                    cx,
+                );
+                let mut workspace = (app_state.build_workspace)(project, &app_state, cx);
+                if contains_directory {
+                    workspace.toggle_sidebar_item(
+                        &ToggleSidebarItem(SidebarItemId {
+                            side: Side::Left,
+                            item_index: 0,
+                        }),
+                        cx,
+                    );
+                }
+                workspace
+            })
+            .1
+        };
+
+        let items = workspace
+            .update(&mut cx, |workspace, cx| workspace.open_paths(abs_paths, cx))
+            .await;
         (workspace, items)
     })
 }

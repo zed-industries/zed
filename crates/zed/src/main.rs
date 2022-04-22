@@ -367,7 +367,7 @@ async fn handle_cli_connection(
                     .await;
 
                 let mut errored = false;
-                let mut futures = Vec::new();
+                let mut item_release_futures = Vec::new();
                 cx.update(|cx| {
                     for (item, path) in items.into_iter().zip(&paths) {
                         match item {
@@ -380,7 +380,7 @@ async fn handle_cli_connection(
                                     }),
                                 )
                                 .detach();
-                                futures.push(released.1);
+                                item_release_futures.push(released.1);
                             }
                             Some(Err(err)) => {
                                 responses
@@ -408,7 +408,7 @@ async fn handle_cli_connection(
                             drop(workspace);
                             let _ = done_rx.await;
                         } else {
-                            let _ = futures::future::try_join_all(futures).await;
+                            let _ = futures::future::try_join_all(item_release_futures).await;
                         };
                     }
                     .fuse();
