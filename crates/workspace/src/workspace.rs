@@ -1983,7 +1983,14 @@ impl View for Workspace {
                                 content.add_child(self.right_sidebar.render(&theme, cx));
                                 content.boxed()
                             })
-                            .with_children(self.modal.as_ref().map(|m| ChildView::new(m).boxed()))
+                            .with_children(self.modal.as_ref().map(|m| {
+                                ChildView::new(m)
+                                    .contained()
+                                    .with_style(theme.workspace.modal)
+                                    .aligned()
+                                    .top()
+                                    .boxed()
+                            }))
                             .flex(1.0, true)
                             .boxed(),
                     )

@@ -21,6 +21,7 @@ use anyhow::{anyhow, Result};
 use async_task::Runnable;
 pub use event::{Event, NavigationDirection};
 use postage::oneshot;
+use serde::Deserialize;
 use std::{
     any::Any,
     path::{Path, PathBuf},
@@ -125,11 +126,12 @@ pub enum PromptLevel {
     Critical,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Deserialize)]
 pub enum CursorStyle {
     Arrow,
     ResizeLeftRight,
     PointingHand,
+    IBeam,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]

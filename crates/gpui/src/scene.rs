@@ -7,6 +7,7 @@ use crate::{
     fonts::{FontId, GlyphId},
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
+    platform::CursorStyle,
     ImageData,
 };
 
@@ -32,6 +33,7 @@ pub struct Layer {
     image_glyphs: Vec<ImageGlyph>,
     icons: Vec<Icon>,
     paths: Vec<Path>,
+    cursor_styles: Vec<(RectF, CursorStyle)>,
 }
 
 #[derive(Default, Debug)]
@@ -173,6 +175,13 @@ impl Scene {
         self.stacking_contexts.iter().flat_map(|s| &s.layers)
     }
 
+    pub fn cursor_styles(&self) -> Vec<(RectF, CursorStyle)> {
+        self.layers()
+            .flat_map(|layer| &layer.cursor_styles)
+            .copied()
+            .collect()
+    }
+
     pub fn push_stacking_context(&mut self, clip_bounds: Option<RectF>) {
         self.active_stacking_context_stack
             .push(self.stacking_contexts.len());
@@ -195,6 +204,10 @@ impl Scene {
 
     pub fn push_quad(&mut self, quad: Quad) {
         self.active_layer().push_quad(quad)
+    }
+
+    pub fn push_cursor_style(&mut self, bounds: RectF, style: CursorStyle) {
+        self.active_layer().push_cursor_style(bounds, style);
     }
 
     pub fn push_image(&mut self, image: Image) {
@@ -285,6 +298,7 @@ impl Layer {
             glyphs: Default::default(),
             icons: Default::default(),
             paths: Default::default(),
+            cursor_styles: Default::default(),
         }
     }
 
@@ -300,6 +314,14 @@ impl Layer {
 
     pub fn quads(&self) -> &[Quad] {
         self.quads.as_slice()
+    }
+
+    fn push_cursor_style(&mut self, bounds: RectF, style: CursorStyle) {
+        if let Some(bounds) = bounds.intersection(self.clip_bounds.unwrap_or(bounds)) {
+            if can_draw(bounds) {
+                self.cursor_styles.push((bounds, style));
+            }
+        }
     }
 
     fn push_underline(&mut self, underline: Underline) {

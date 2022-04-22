@@ -75,6 +75,13 @@ export default function workspace(theme: Theme) {
     leaderBorderWidth: 2.0,
     tab,
     activeTab,
+    modal: {
+      margin: {
+        bottom: 52,
+        top: 52,
+      },
+      cursor: "Arrow"
+    },
     leftSidebar: {
       ...sidebar,
       border: border(theme, "primary", { right: true }),

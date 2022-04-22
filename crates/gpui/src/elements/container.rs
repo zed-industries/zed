@@ -1,17 +1,17 @@
-use pathfinder_geometry::rect::RectF;
-use serde::Deserialize;
-use serde_json::json;
-
 use crate::{
     color::Color,
     geometry::{
         deserialize_vec2f,
+        rect::RectF,
         vector::{vec2f, Vector2F},
     },
     json::ToJson,
+    platform::CursorStyle,
     scene::{self, Border, Quad},
     Element, ElementBox, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
+use serde::Deserialize;
+use serde_json::json;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
 pub struct ContainerStyle {
@@ -27,6 +27,8 @@ pub struct ContainerStyle {
     pub corner_radius: f32,
     #[serde(default)]
     pub shadow: Option<Shadow>,
+    #[serde(default)]
+    pub cursor: Option<CursorStyle>,
 }
 
 pub struct Container {
@@ -128,6 +130,11 @@ impl Container {
         self
     }
 
+    pub fn with_cursor(mut self, style: CursorStyle) -> Self {
+        self.style.cursor = Some(style);
+        self
+    }
+
     fn margin_size(&self) -> Vector2F {
         vec2f(
             self.style.margin.left + self.style.margin.right,
@@ -203,6 +210,10 @@ impl Element for Container {
                 sigma: shadow.blur,
                 color: shadow.color,
             });
+        }
+
+        if let Some(style) = self.style.cursor {
+            cx.scene.push_cursor_style(quad_bounds, style);
         }
 
         let child_origin =
