@@ -6,6 +6,10 @@
     "enum" @context
     name: (_) @name) @item
 
+(type_alias_declaration
+    "type" @context
+    name: (_) @name) @item
+
 (function_declaration
     "async"? @context
     "function" @context
@@ -17,6 +21,12 @@
 (interface_declaration
     "interface" @context
     name: (_) @name) @item
+
+(export_statement
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (_) @name) @item))
 
 (program
     (lexical_declaration

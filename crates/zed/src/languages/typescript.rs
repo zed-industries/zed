@@ -144,3 +144,54 @@ impl LspAdapter for TypeScriptLspAdapter {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use gpui::MutableAppContext;
+    use unindent::Unindent;
+
+    #[gpui::test]
+    fn test_outline(cx: &mut MutableAppContext) {
+        let language = crate::languages::language(
+            "typescript",
+            tree_sitter_typescript::language_typescript(),
+            None,
+        );
+
+        let text = r#"
+            function a() {
+              // local variables are omitted
+              let a1 = 1;
+              // all functions are included
+              async function a2() {}
+            }
+            // top-level variables are included
+            let b: C
+            function getB() {}
+            // exported variables are included
+            export const d = e;
+        "#
+        .unindent();
+
+        let buffer = cx.add_model(|cx| {
+            language::Buffer::new(0, text, cx).with_language(Arc::new(language), cx)
+        });
+        let outline = buffer.read(cx).snapshot().outline(None).unwrap();
+        assert_eq!(
+            outline
+                .items
+                .iter()
+                .map(|item| (item.text.as_str(), item.depth))
+                .collect::<Vec<_>>(),
+            &[
+                ("function a ( )", 0),
+                ("async function a2 ( )", 1),
+                ("let b", 0),
+                ("function getB ( )", 0),
+                ("const d", 0),
+            ]
+        );
+    }
+}
