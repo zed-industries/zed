@@ -16,6 +16,7 @@ use gpui::{
         PathBuilder,
     },
     json::{self, ToJson},
+    platform::CursorStyle,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AppContext, Axis, Border, Element, ElementBox, Event, EventContext, LayoutContext,
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
@@ -329,6 +330,7 @@ impl EditorElement {
         let content_origin = bounds.origin() + vec2f(layout.gutter_margin, 0.);
 
         cx.scene.push_layer(Some(bounds));
+        cx.scene.push_cursor_style(bounds, CursorStyle::IBeam);
 
         for (range, color) in &layout.highlighted_ranges {
             self.paint_highlighted_range(

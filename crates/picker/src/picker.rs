@@ -99,8 +99,6 @@ impl<D: PickerDelegate> View for Picker<D> {
             .constrained()
             .with_max_width(self.max_size.x())
             .with_max_height(self.max_size.y())
-            .aligned()
-            .top()
             .named("picker")
     }
 

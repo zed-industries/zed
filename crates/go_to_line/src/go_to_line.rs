@@ -161,29 +161,25 @@ impl View for GoToLine {
             self.max_point.row + 1
         );
 
-        Align::new(
-            ConstrainedBox::new(
-                Container::new(
-                    Flex::new(Axis::Vertical)
-                        .with_child(
-                            Container::new(ChildView::new(&self.line_editor).boxed())
-                                .with_style(theme.input_editor.container)
-                                .boxed(),
-                        )
-                        .with_child(
-                            Container::new(Label::new(label, theme.empty.label.clone()).boxed())
-                                .with_style(theme.empty.container)
-                                .boxed(),
-                        )
-                        .boxed(),
-                )
-                .with_style(theme.container)
-                .boxed(),
+        ConstrainedBox::new(
+            Container::new(
+                Flex::new(Axis::Vertical)
+                    .with_child(
+                        Container::new(ChildView::new(&self.line_editor).boxed())
+                            .with_style(theme.input_editor.container)
+                            .boxed(),
+                    )
+                    .with_child(
+                        Container::new(Label::new(label, theme.empty.label.clone()).boxed())
+                            .with_style(theme.empty.container)
+                            .boxed(),
+                    )
+                    .boxed(),
             )
-            .with_max_width(500.0)
+            .with_style(theme.container)
             .boxed(),
         )
-        .top()
+        .with_max_width(500.0)
         .named("go to line")
     }
 

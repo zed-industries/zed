@@ -89,10 +89,6 @@
         "top": 7
       }
     },
-    "margin": {
-      "bottom": 52,
-      "top": 52
-    },
     "shadow": {
       "blur": 16,
       "color": "#0000001f",
@@ -157,6 +153,13 @@
         "left": 8,
         "right": 8
       }
+    },
+    "modal": {
+      "margin": {
+        "bottom": 52,
+        "top": 52
+      },
+      "cursor": "Arrow"
     },
     "left_sidebar": {
       "width": 30,
