@@ -181,13 +181,14 @@ impl Presenter {
                     self.last_mouse_moved_event = Some(event.clone());
 
                     if !left_mouse_down {
-                        cx.platform().set_cursor_style(CursorStyle::Arrow);
+                        let mut style_to_assign = CursorStyle::Arrow;
                         for (bounds, style) in self.cursor_styles.iter().rev() {
                             if bounds.contains_point(position) {
-                                cx.platform().set_cursor_style(*style);
+                                style_to_assign = *style;
                                 break;
                             }
                         }
+                        cx.platform().set_cursor_style(style_to_assign);
                     }
                 }
                 Event::LeftMouseDragged { position } => {
