@@ -8,9 +8,13 @@ use ::rpc::Peer;
 use anyhow::Result;
 use async_trait::async_trait;
 use db::{Db, PostgresDb};
+use hyper::{
+    server::conn::AddrStream,
+    service::{make_service_fn, service_fn},
+    Body, Request, Response, Server,
+};
 use serde::Deserialize;
-use std::sync::Arc;
-use tokio::net::TcpListener;
+use std::{convert::Infallible, net::TcpListener, sync::Arc};
 
 // type Request = tide::Request<Arc<AppState>>;
 
@@ -71,13 +75,24 @@ async fn main() -> Result<()> {
     run_server(
         state.clone(),
         rpc,
-        TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port)).await?,
+        TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
+            .expect("failed to bind TCP listener"),
     )
     .await?;
     Ok(())
 }
 
 pub async fn run_server(state: Arc<AppState>, rpc: Arc<Peer>, listener: TcpListener) -> Result<()> {
+    let make_service = make_service_fn(|_: &AddrStream| async move {
+        Ok::<_, Infallible>(service_fn(|_: Request<Body>| async move {
+            Response::new(Body::from(format!("hello"))
+        }))
+    });
+
+    Server::from_tcp(listener)
+        .expect("could not create server")
+        .serve(make_service);
+
     // let mut app = tide::with_state(state.clone());
     // rpc::add_routes(&mut app, &rpc);
 
