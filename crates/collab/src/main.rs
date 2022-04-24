@@ -5,16 +5,13 @@ mod env;
 mod rpc;
 
 use ::rpc::Peer;
-use anyhow::Result;
-use async_trait::async_trait;
+use anyhow::{anyhow, Result};
 use db::{Db, PostgresDb};
-use hyper::{
-    server::conn::AddrStream,
-    service::{make_service_fn, service_fn},
-    Body, Request, Response, Server,
-};
+use hyper::{Body, Request, Server};
+use routerify::ext::RequestExt as _;
+use routerify::{Router, RouterService};
 use serde::Deserialize;
-use std::{convert::Infallible, net::TcpListener, sync::Arc};
+use std::{net::TcpListener, sync::Arc};
 
 // type Request = tide::Request<Arc<AppState>>;
 
@@ -42,17 +39,15 @@ impl AppState {
     }
 }
 
-// #[async_trait]
-// trait RequestExt {
-//     fn db(&self) -> &Arc<dyn Db>;
-// }
+trait RequestExt {
+    fn db(&self) -> &Arc<dyn Db>;
+}
 
-// #[async_trait]
-// impl RequestExt for Request {
-//     fn db(&self) -> &Arc<dyn Db> {
-//         &self.state().db
-//     }
-// }
+impl RequestExt for Request<Body> {
+    fn db(&self) -> &Arc<dyn Db> {
+        &self.data::<Arc<AppState>>().unwrap().db
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -82,16 +77,19 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-pub async fn run_server(state: Arc<AppState>, rpc: Arc<Peer>, listener: TcpListener) -> Result<()> {
-    let make_service = make_service_fn(|_: &AddrStream| async move {
-        Ok::<_, Infallible>(service_fn(|_: Request<Body>| async move {
-            Response::new(Body::from(format!("hello"))
-        }))
-    });
+fn router(state: Arc<AppState>, peer: Arc<Peer>) -> Result<Router<Body, anyhow::Error>> {
+    let mut router = Router::builder().data(state);
+    api::add_routes(&mut router);
+    router.build().map_err(|error| anyhow!(error))
+}
 
-    Server::from_tcp(listener)
-        .expect("could not create server")
-        .serve(make_service);
+pub async fn run_server(
+    state: Arc<AppState>,
+    peer: Arc<Peer>,
+    listener: TcpListener,
+) -> Result<()> {
+    let service = RouterService::new(router(state, peer)?).map_err(|error| anyhow!(error))?;
+    Server::from_tcp(listener)?.serve(service);
 
     // let mut app = tide::with_state(state.clone());
     // rpc::add_routes(&mut app, &rpc);

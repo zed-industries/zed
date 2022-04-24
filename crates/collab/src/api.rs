@@ -1,9 +1,23 @@
 // use crate::{auth, db::UserId, AppState, Request, RequestExt as _};
 use async_trait::async_trait;
+use hyper::{
+    header::{CONTENT_LENGTH, CONTENT_TYPE},
+    Body, Request, Response,
+};
+use routerify::prelude::*;
+
+use anyhow::Result;
+use routerify::RouterBuilder;
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
+
+use crate::{AppState, RequestExt};
 // use surf::StatusCode;
+
+pub fn add_routes(router: &mut RouterBuilder<Body, anyhow::Error>) {
+    router.get("/users", get_users);
+}
 
 // pub fn add_routes(app: &mut tide::Server<Arc<AppState>>) {
 //     app.at("/users").get(get_users);
@@ -29,15 +43,23 @@ use std::sync::Arc;
 //         .build())
 // }
 
-// async fn get_users(request: Request) -> tide::Result {
-//     request.require_token().await?;
+async fn get_users(request: Request<Body>) -> Result<Response<Body>> {
+    // request.require_token().await?;
 
-//     let users = request.db().get_all_users().await?;
+    let users = request.db().get_all_users().await?;
 
-//     Ok(tide::Response::builder(StatusCode::Ok)
-//         .body(tide::Body::from_json(&users)?)
-//         .build())
-// }
+    // Body::from
+
+    let body = "Hello World";
+    Ok(Response::builder()
+        .header(CONTENT_LENGTH, body.len() as u64)
+        .header(CONTENT_TYPE, "text/plain")
+        .body(Body::from(body))?)
+
+    // Ok(tide::Response::builder(StatusCode::Ok)
+    //     .body(tide::Body::from_json(&users)?)
+    //     .build())
+}
 
 // async fn create_user(mut request: Request) -> tide::Result {
 //     request.require_token().await?;

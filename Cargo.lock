@@ -896,6 +896,7 @@ dependencies = [
  "parking_lot",
  "project",
  "rand 0.8.3",
+ "routerify",
  "rpc",
  "scrypt",
  "serde",
@@ -3790,6 +3791,19 @@ dependencies = [
  "untrusted",
  "web-sys",
  "winapi 0.3.9",
+]
+
+[[package]]
+name = "routerify"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "496c1d3718081c45ba9c31fbfc07417900aa96f4070ff90dc29961836b7a9945"
+dependencies = [
+ "http",
+ "hyper",
+ "lazy_static",
+ "percent-encoding",
+ "regex",
 ]
 
 [[package]]
