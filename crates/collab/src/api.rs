@@ -1,22 +1,20 @@
 // use crate::{auth, db::UserId, AppState, Request, RequestExt as _};
-use async_trait::async_trait;
-use hyper::{
-    header::{CONTENT_LENGTH, CONTENT_TYPE},
-    Body, Request, Response,
-};
-use routerify::prelude::*;
-
 use anyhow::Result;
-use routerify::RouterBuilder;
+use axum::{
+    body::Body,
+    http::{Request, Response, StatusCode},
+    routing::get,
+    Router,
+};
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
-use crate::{AppState, RequestExt};
+use crate::AppState;
 // use surf::StatusCode;
 
-pub fn add_routes(router: &mut RouterBuilder<Body, anyhow::Error>) {
-    router.get("/users", get_users);
+pub fn add_routes(router: Router<Body>) -> Router<Body> {
+    router.route("/users", get(get_users))
 }
 
 // pub fn add_routes(app: &mut tide::Server<Arc<AppState>>) {
@@ -28,6 +26,25 @@ pub fn add_routes(router: &mut RouterBuilder<Body, anyhow::Error>) {
 //     app.at("/users/:github_login/access_tokens")
 //         .post(create_access_token);
 // }
+
+async fn get_users(request: Request<Body>) -> Result<Response<Body>, (StatusCode, String)> {
+    // request.require_token().await?;
+
+    // let users = request.db().get_all_users().await?;
+
+    // Body::from
+
+    // let body = "Hello World";
+    // Ok(Response::builder()
+    //     .header(CONTENT_LENGTH, body.len() as u64)
+    //     .header(CONTENT_TYPE, "text/plain")
+    //     .body(Body::from(body))?)
+
+    // Ok(tide::Response::builder(StatusCode::Ok)
+    //     .body(tide::Body::from_json(&users)?)
+    //     .build())
+    todo!()
+}
 
 // async fn get_user(request: Request) -> tide::Result {
 //     request.require_token().await?;
@@ -42,24 +59,6 @@ pub fn add_routes(router: &mut RouterBuilder<Body, anyhow::Error>) {
 //         .body(tide::Body::from_json(&user)?)
 //         .build())
 // }
-
-async fn get_users(request: Request<Body>) -> Result<Response<Body>> {
-    // request.require_token().await?;
-
-    let users = request.db().get_all_users().await?;
-
-    // Body::from
-
-    let body = "Hello World";
-    Ok(Response::builder()
-        .header(CONTENT_LENGTH, body.len() as u64)
-        .header(CONTENT_TYPE, "text/plain")
-        .body(Body::from(body))?)
-
-    // Ok(tide::Response::builder(StatusCode::Ok)
-    //     .body(tide::Body::from_json(&users)?)
-    //     .build())
-}
 
 // async fn create_user(mut request: Request) -> tide::Result {
 //     request.require_token().await?;

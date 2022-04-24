@@ -5,11 +5,10 @@ mod env;
 mod rpc;
 
 use ::rpc::Peer;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
+use axum::{body::Body, http::StatusCode, Router};
 use db::{Db, PostgresDb};
-use hyper::{Body, Request, Server};
-use routerify::ext::RequestExt as _;
-use routerify::{Router, RouterService};
+
 use serde::Deserialize;
 use std::{net::TcpListener, sync::Arc};
 
@@ -39,15 +38,15 @@ impl AppState {
     }
 }
 
-trait RequestExt {
-    fn db(&self) -> &Arc<dyn Db>;
-}
+// trait RequestExt {
+//     fn db(&self) -> &Arc<dyn Db>;
+// }
 
-impl RequestExt for Request<Body> {
-    fn db(&self) -> &Arc<dyn Db> {
-        &self.data::<Arc<AppState>>().unwrap().db
-    }
-}
+// impl RequestExt for Request<Body> {
+//     fn db(&self) -> &Arc<dyn Db> {
+//         &self.data::<Arc<AppState>>().unwrap().db
+//     }
+// }
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -77,10 +76,11 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn router(state: Arc<AppState>, peer: Arc<Peer>) -> Result<Router<Body, anyhow::Error>> {
-    let mut router = Router::builder().data(state);
-    api::add_routes(&mut router);
-    router.build().map_err(|error| anyhow!(error))
+async fn handle_anyhow_error(err: anyhow::Error) -> (StatusCode, String) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("Something went wrong: {}", err),
+    )
 }
 
 pub async fn run_server(
@@ -88,19 +88,17 @@ pub async fn run_server(
     peer: Arc<Peer>,
     listener: TcpListener,
 ) -> Result<()> {
-    let service = RouterService::new(router(state, peer)?).map_err(|error| anyhow!(error))?;
-    Server::from_tcp(listener)?.serve(service);
+    let app = Router::<Body>::new();
+    // TODO: Assign app state to request somehow
+    // TODO: Compression on API routes?
+    // TODO: Authenticate API routes.
 
-    // let mut app = tide::with_state(state.clone());
-    // rpc::add_routes(&mut app, &rpc);
+    let app = api::add_routes(app);
+    // TODO: Add rpc routes
 
-    // let mut web = tide::with_state(state.clone());
-    // web.with(CompressMiddleware::new());
-    // api::add_routes(&mut web);
-
-    // app.at("/").nest(web);
-
-    // app.listen(listener).await?;
+    axum::Server::from_tcp(listener)?
+        .serve(app.into_make_service())
+        .await?;
 
     Ok(())
 }

@@ -20,17 +20,16 @@ util = { path = "../util" }
 anyhow = "1.0.40"
 async-trait = "0.1.50"
 async-tungstenite = "0.16"
+axum = "0.5"
 base64 = "0.13"
 envy = "0.4.2"
 env_logger = "0.8"
 futures = "0.3"
-hyper = { version = "0.14", features = ["full"] }
 json_env_logger = "0.1"
 lipsum = { version = "0.8", optional = true }
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"
 rand = "0.8"
-routerify = "3.0"
 scrypt = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
