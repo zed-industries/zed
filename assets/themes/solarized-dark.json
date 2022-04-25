@@ -42,7 +42,7 @@
         "weight": "bold",
         "size": 14
       },
-      "background": "#657b83"
+      "background": "#586e757a"
     },
     "border": {
       "color": "#002b36",
@@ -837,7 +837,7 @@
     },
     "hovered_entry": {
       "height": 22,
-      "background": "#657b83",
+      "background": "#586e7552",
       "icon_color": "#93a1a1",
       "icon_size": 8,
       "icon_spacing": 8,
@@ -860,7 +860,7 @@
     },
     "hovered_selected_entry": {
       "height": 22,
-      "background": "#657b83",
+      "background": "#586e7552",
       "icon_color": "#93a1a1",
       "icon_size": 8,
       "icon_spacing": 8,
@@ -945,7 +945,7 @@
             "right": 8
           }
         },
-        "background": "#657b83",
+        "background": "#586e7552",
         "corner_radius": 6
       },
       "active_item": {
@@ -980,7 +980,7 @@
             "right": 8
           }
         },
-        "background": "#657b83",
+        "background": "#586e7552",
         "corner_radius": 6
       },
       "menu": {
@@ -1170,7 +1170,7 @@
       "padding": {
         "left": 8
       },
-      "background": "#657b83",
+      "background": "#586e7552",
       "corner_radius": 6
     },
     "unshared_project": {
