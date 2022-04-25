@@ -73,6 +73,14 @@ unsafe fn build_classes() {
             sel!(windowDidResize:),
             window_did_resize as extern "C" fn(&Object, Sel, id),
         );
+        decl.add_method(
+            sel!(windowDidBecomeKey:),
+            window_did_change_key_status as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowDidResignKey:),
+            window_did_change_key_status as extern "C" fn(&Object, Sel, id),
+        );
         decl.add_method(sel!(close), close_window as extern "C" fn(&Object, Sel));
         decl.register()
     };
@@ -157,6 +165,7 @@ struct WindowState {
     id: usize,
     native_window: id,
     event_callback: Option<Box<dyn FnMut(Event)>>,
+    activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut()>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     synthetic_drag_counter: usize,
@@ -234,6 +243,7 @@ impl Window {
                 event_callback: None,
                 resize_callback: None,
                 close_callback: None,
+                activate_callback: None,
                 synthetic_drag_counter: 0,
                 executor,
                 scene_to_render: Default::default(),
@@ -331,6 +341,10 @@ impl platform::Window for Window {
 
     fn on_close(&mut self, callback: Box<dyn FnOnce()>) {
         self.0.as_ref().borrow_mut().close_callback = Some(callback);
+    }
+
+    fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>) {
+        self.0.as_ref().borrow_mut().activate_callback = Some(callback);
     }
 
     fn prompt(
@@ -596,6 +610,29 @@ extern "C" fn send_event(this: &Object, _: Sel, native_event: id) {
 extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     window_state.as_ref().borrow().move_traffic_light();
+}
+
+extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
+    let is_active = if selector == sel!(windowDidBecomeKey:) {
+        true
+    } else if selector == sel!(windowDidResignKey:) {
+        false
+    } else {
+        unreachable!();
+    };
+
+    let window_state = unsafe { get_window_state(this) };
+    let executor = window_state.as_ref().borrow().executor.clone();
+    executor
+        .spawn(async move {
+            let mut window_state_borrow = window_state.as_ref().borrow_mut();
+            if let Some(mut callback) = window_state_borrow.activate_callback.take() {
+                drop(window_state_borrow);
+                callback(is_active);
+                window_state.borrow_mut().activate_callback = Some(callback);
+            };
+        })
+        .detach();
 }
 
 extern "C" fn close_window(this: &Object, _: Sel) {

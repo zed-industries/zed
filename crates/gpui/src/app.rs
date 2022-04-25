@@ -1591,6 +1591,7 @@ impl MutableAppContext {
                 Window {
                     root_view: root_view.clone().into(),
                     focused_view_id: Some(root_view.id()),
+                    is_active: true,
                     invalidation: None,
                 },
             );
@@ -1640,8 +1641,15 @@ impl MutableAppContext {
 
         {
             let mut app = self.upgrade();
+            window.on_active_status_change(Box::new(move |is_active| {
+                app.update(|cx| cx.window_changed_active_status(window_id, is_active))
+            }));
+        }
+
+        {
+            let mut app = self.upgrade();
             window.on_resize(Box::new(move || {
-                app.update(|cx| cx.resize_window(window_id))
+                app.update(|cx| cx.window_was_resized(window_id))
             }));
         }
 
@@ -1856,6 +1864,10 @@ impl MutableAppContext {
                                     .get_or_insert(WindowInvalidation::default());
                             }
                         }
+                        Effect::ActivateWindow {
+                            window_id,
+                            is_active,
+                        } => self.handle_activation_effect(window_id, is_active),
                         Effect::RefreshWindows => {
                             refreshing = true;
                         }
@@ -1914,9 +1926,16 @@ impl MutableAppContext {
         }
     }
 
-    fn resize_window(&mut self, window_id: usize) {
+    fn window_was_resized(&mut self, window_id: usize) {
         self.pending_effects
             .push_back(Effect::ResizeWindow { window_id });
+    }
+
+    fn window_changed_active_status(&mut self, window_id: usize, is_active: bool) {
+        self.pending_effects.push_back(Effect::ActivateWindow {
+            window_id,
+            is_active,
+        });
     }
 
     pub fn refresh_windows(&mut self) {
@@ -2202,6 +2221,34 @@ impl MutableAppContext {
                 callback(entity, self);
             }
         }
+    }
+
+    fn handle_activation_effect(&mut self, window_id: usize, active: bool) {
+        if self
+            .cx
+            .windows
+            .get(&window_id)
+            .map(|w| w.is_active)
+            .map_or(false, |cur_active| cur_active == active)
+        {
+            return;
+        }
+
+        self.update(|this| {
+            let window = this.cx.windows.get_mut(&window_id)?;
+            window.is_active = active;
+            let view_id = window.focused_view_id?;
+            if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
+                if active {
+                    view.on_focus(this, window_id, view_id);
+                } else {
+                    view.on_blur(this, window_id, view_id);
+                }
+                this.cx.views.insert((window_id, view_id), view);
+            }
+
+            Some(())
+        });
     }
 
     fn handle_focus_effect(&mut self, window_id: usize, focused_id: Option<usize>) {
@@ -2567,6 +2614,7 @@ impl ReadView for AppContext {
 struct Window {
     root_view: AnyViewHandle,
     focused_view_id: Option<usize>,
+    is_active: bool,
     invalidation: Option<WindowInvalidation>,
 }
 
@@ -2632,6 +2680,10 @@ pub enum Effect {
     },
     ResizeWindow {
         window_id: usize,
+    },
+    ActivateWindow {
+        window_id: usize,
+        is_active: bool,
     },
     RefreshWindows,
 }
@@ -2713,6 +2765,14 @@ impl Debug for Effect {
             Effect::ResizeWindow { window_id } => f
                 .debug_struct("Effect::RefreshWindow")
                 .field("window_id", window_id)
+                .finish(),
+            Effect::ActivateWindow {
+                window_id,
+                is_active,
+            } => f
+                .debug_struct("Effect::ActivateWindow")
+                .field("window_id", window_id)
+                .field("is_active", is_active)
                 .finish(),
             Effect::RefreshWindows => f.debug_struct("Effect::FullViewRefresh").finish(),
         }

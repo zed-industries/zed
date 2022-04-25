@@ -87,6 +87,7 @@ pub trait Dispatcher: Send + Sync {
 pub trait Window: WindowContext {
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn on_event(&mut self, callback: Box<dyn FnMut(Event)>);
+    fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&mut self, callback: Box<dyn FnMut()>);
     fn on_close(&mut self, callback: Box<dyn FnOnce()>);
     fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize>;

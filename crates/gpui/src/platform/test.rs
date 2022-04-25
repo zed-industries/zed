@@ -229,6 +229,8 @@ impl super::Window for Window {
         self.event_handlers.push(callback);
     }
 
+    fn on_active_status_change(&mut self, _: Box<dyn FnMut(bool)>) {}
+
     fn on_resize(&mut self, callback: Box<dyn FnMut()>) {
         self.resize_handlers.push(callback);
     }
