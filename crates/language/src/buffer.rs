@@ -38,7 +38,7 @@ use tree_sitter::{InputEdit, QueryCursor, Tree};
 use util::TryFutureExt as _;
 
 #[cfg(any(test, feature = "test-support"))]
-pub use tree_sitter_rust;
+pub use {tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
 
@@ -1636,6 +1636,34 @@ impl BufferSnapshot {
         self.language
             .as_ref()
             .and_then(|language| language.grammar.as_ref())
+    }
+
+    pub fn range_for_word_token_at<T: ToOffset + ToPoint>(
+        &self,
+        position: T,
+    ) -> Option<Range<usize>> {
+        let offset = position.to_offset(self);
+
+        // Find the first leaf node that touches the position.
+        let tree = self.tree.as_ref()?;
+        let mut cursor = tree.root_node().walk();
+        while cursor.goto_first_child_for_byte(offset).is_some() {}
+        let node = cursor.node();
+        if node.child_count() > 0 {
+            return None;
+        }
+
+        // Check that the leaf node contains word characters.
+        let range = node.byte_range();
+        if self
+            .text_for_range(range.clone())
+            .flat_map(str::chars)
+            .any(|c| c.is_alphanumeric())
+        {
+            return Some(range);
+        } else {
+            None
+        }
     }
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {

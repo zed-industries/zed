@@ -2488,26 +2488,52 @@ impl Project {
                 };
 
                 source_buffer_handle.read_with(&cx, |this, _| {
+                    let snapshot = this.snapshot();
+                    let clipped_position = this.clip_point_utf16(position, Bias::Left);
+                    let mut range_for_token = None;
                     Ok(completions
                         .into_iter()
                         .filter_map(|lsp_completion| {
                             let (old_range, new_text) = match lsp_completion.text_edit.as_ref() {
+                                // If the language server provides a range to overwrite, then
+                                // check that the range is valid.
                                 Some(lsp::CompletionTextEdit::Edit(edit)) => {
-                                    (range_from_lsp(edit.range), edit.new_text.clone())
+                                    let range = range_from_lsp(edit.range);
+                                    let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                                    let end = snapshot.clip_point_utf16(range.end, Bias::Left);
+                                    if start != range.start || end != range.end {
+                                        log::info!("completion out of expected range");
+                                        return None;
+                                    }
+                                    (
+                                        snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                                        edit.new_text.clone(),
+                                    )
                                 }
+                                // If the language server does not provide a range, then infer
+                                // the range based on the syntax tree.
                                 None => {
-                                    let clipped_position =
-                                        this.clip_point_utf16(position, Bias::Left);
                                     if position != clipped_position {
                                         log::info!("completion out of expected range");
                                         return None;
                                     }
+                                    let Range { start, end } = range_for_token
+                                        .get_or_insert_with(|| {
+                                            let offset = position.to_offset(&snapshot);
+                                            snapshot
+                                                .range_for_word_token_at(offset)
+                                                .unwrap_or_else(|| offset..offset)
+                                        })
+                                        .clone();
                                     let text = lsp_completion
                                         .insert_text
                                         .as_ref()
                                         .unwrap_or(&lsp_completion.label)
                                         .clone();
-                                    (this.common_prefix_at(clipped_position, &text), text.clone())
+                                    (
+                                        snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                                        text.clone(),
+                                    )
                                 }
                                 Some(lsp::CompletionTextEdit::InsertAndReplace(_)) => {
                                     log::info!("unsupported insert/replace completion");
@@ -2515,28 +2541,20 @@ impl Project {
                                 }
                             };
 
-                            let clipped_start = this.clip_point_utf16(old_range.start, Bias::Left);
-                            let clipped_end = this.clip_point_utf16(old_range.end, Bias::Left);
-                            if clipped_start == old_range.start && clipped_end == old_range.end {
-                                Some(Completion {
-                                    old_range: this.anchor_before(old_range.start)
-                                        ..this.anchor_after(old_range.end),
-                                    new_text,
-                                    label: language
-                                        .as_ref()
-                                        .and_then(|l| l.label_for_completion(&lsp_completion))
-                                        .unwrap_or_else(|| {
-                                            CodeLabel::plain(
-                                                lsp_completion.label.clone(),
-                                                lsp_completion.filter_text.as_deref(),
-                                            )
-                                        }),
-                                    lsp_completion,
-                                })
-                            } else {
-                                log::info!("completion out of expected range");
-                                None
-                            }
+                            Some(Completion {
+                                old_range,
+                                new_text,
+                                label: language
+                                    .as_ref()
+                                    .and_then(|l| l.label_for_completion(&lsp_completion))
+                                    .unwrap_or_else(|| {
+                                        CodeLabel::plain(
+                                            lsp_completion.label.clone(),
+                                            lsp_completion.filter_text.as_deref(),
+                                        )
+                                    }),
+                                lsp_completion,
+                            })
                         })
                         .collect())
                 })
@@ -4888,8 +4906,8 @@ mod tests {
     use futures::{future, StreamExt};
     use gpui::test::subscribe;
     use language::{
-        tree_sitter_rust, Diagnostic, FakeLspAdapter, LanguageConfig, OffsetRangeExt, Point,
-        ToPoint,
+        tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
+        OffsetRangeExt, Point, ToPoint,
     };
     use lsp::Url;
     use serde_json::json;
@@ -6504,6 +6522,75 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
         }
+    }
+
+    #[gpui::test]
+    async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
+        let mut language = Language::new(
+            LanguageConfig {
+                name: "TypeScript".into(),
+                path_suffixes: vec!["ts".to_string()],
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::language_typescript()),
+        );
+        let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default());
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a.ts": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, cx);
+        project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+
+        let (tree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/dir", true, cx)
+            })
+            .await
+            .unwrap();
+        let worktree_id = tree.read_with(cx, |tree, _| tree.id());
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+
+        let buffer = project
+            .update(cx, |p, cx| p.open_buffer((worktree_id, "a.ts"), cx))
+            .await
+            .unwrap();
+
+        let fake_server = fake_language_servers.next().await.unwrap();
+
+        let text = "let a = b.fqn";
+        buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+        let completions = project.update(cx, |project, cx| {
+            project.completions(&buffer, text.len(), cx)
+        });
+
+        fake_server
+            .handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+                Ok(Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: "fullyQualifiedName?".into(),
+                        insert_text: Some("fullyQualifiedName".into()),
+                        ..Default::default()
+                    },
+                ])))
+            })
+            .next()
+            .await;
+        let completions = completions.await.unwrap();
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].new_text, "fullyQualifiedName");
+        assert_eq!(
+            completions[0].old_range.to_offset(&snapshot),
+            text.len() - 3..text.len()
+        );
     }
 
     #[gpui::test(iterations = 10)]
