@@ -1,6 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import app from "./styleTree/app";
+import caveDark from "./themes/cave-dark";
+import caveLight from "./themes/cave-light";
 import dark from "./themes/dark";
 import light from "./themes/light";
 import solarizedDark from "./themes/solarized-dark";
@@ -11,6 +13,7 @@ import snakeCase from "./utils/snakeCase";
 
 const themes = [
   dark, light,
+  caveDark, caveLight,
   solarizedDark, solarizedLight,
   sulphurpoolDark, sulphurpoolLight
 ];

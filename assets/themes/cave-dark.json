@@ -1,0 +1,1396 @@
+{
+  "selector": {
+    "background": "#26232a",
+    "corner_radius": 8,
+    "padding": 8,
+    "item": {
+      "padding": {
+        "bottom": 4,
+        "left": 12,
+        "right": 12,
+        "top": 4
+      },
+      "corner_radius": 8,
+      "text": {
+        "family": "Zed Sans",
+        "color": "#8b8792",
+        "size": 14
+      },
+      "highlight_text": {
+        "family": "Zed Sans",
+        "color": "#576ddb",
+        "weight": "bold",
+        "size": 14
+      }
+    },
+    "active_item": {
+      "padding": {
+        "bottom": 4,
+        "left": 12,
+        "right": 12,
+        "top": 4
+      },
+      "corner_radius": 8,
+      "text": {
+        "family": "Zed Sans",
+        "color": "#e2dfe7",
+        "size": 14
+      },
+      "highlight_text": {
+        "family": "Zed Sans",
+        "color": "#576ddb",
+        "weight": "bold",
+        "size": 14
+      },
+      "background": "#655f6d"
+    },
+    "border": {
+      "color": "#19171c",
+      "width": 1
+    },
+    "empty": {
+      "text": {
+        "family": "Zed Sans",
+        "color": "#7e7887",
+        "size": 14
+      },
+      "padding": {
+        "bottom": 4,
+        "left": 12,
+        "right": 12,
+        "top": 8
+      }
+    },
+    "input_editor": {
+      "background": "#19171c",
+      "corner_radius": 8,
+      "placeholder_text": {
+        "family": "Zed Sans",
+        "color": "#7e7887",
+        "size": 14
+      },
+      "selection": {
+        "cursor": "#576ddb",
+        "selection": "#576ddb3d"
+      },
+      "text": {
+        "family": "Zed Mono",
+        "color": "#e2dfe7",
+        "size": 14
+      },
+      "border": {
+        "color": "#26232a",
+        "width": 1
+      },
+      "padding": {
+        "bottom": 7,
+        "left": 16,
+        "right": 16,
+        "top": 7
+      }
+    },
+    "shadow": {
+      "blur": 16,
+      "color": "#00000052",
+      "offset": [
+        0,
+        2
+      ]
+    }
+  },
+  "workspace": {
+    "background": "#26232a",
+    "leader_border_opacity": 0.7,
+    "leader_border_width": 2,
+    "tab": {
+      "height": 32,
+      "background": "#26232a",
+      "icon_close": "#8b8792",
+      "icon_close_active": "#efecf4",
+      "icon_conflict": "#a06e3b",
+      "icon_dirty": "#576ddb",
+      "icon_width": 8,
+      "spacing": 8,
+      "text": {
+        "family": "Zed Sans",
+        "color": "#8b8792",
+        "size": 14
+      },
+      "border": {
+        "color": "#19171c",
+        "width": 1,
+        "left": true,
+        "bottom": true,
+        "overlay": true
+      },
+      "padding": {
+        "left": 8,
+        "right": 8
+      }
+    },
+    "active_tab": {
+      "height": 32,
+      "background": "#19171c",
+      "icon_close": "#8b8792",
+      "icon_close_active": "#efecf4",
+      "icon_conflict": "#a06e3b",
+      "icon_dirty": "#576ddb",
+      "icon_width": 8,
+      "spacing": 8,
+      "text": {
+        "family": "Zed Sans",
+        "color": "#efecf4",
+        "size": 14
+      },
+      "border": {
+        "color": "#19171c",
+        "width": 1,
+        "left": true,
+        "bottom": false,
+        "overlay": true
+      },
+      "padding": {
+        "left": 8,
+        "right": 8
+      }
+    },
+    "modal": {
+      "margin": {
+        "bottom": 52,
+        "top": 52
+      },
+      "cursor": "Arrow"
+    },
+    "left_sidebar": {
+      "width": 30,
+      "background": "#26232a",
+      "border": {
+        "color": "#19171c",
+        "width": 1,
+        "right": true
+      },
+      "item": {
+        "height": 32,
+        "icon_color": "#8b8792",
+        "icon_size": 18
+      },
+      "active_item": {
+        "height": 32,
+        "icon_color": "#efecf4",
+        "icon_size": 18
+      },
+      "resize_handle": {
+        "background": "#19171c",
+        "padding": {
+          "left": 1
+        }
+      }
+    },
+    "right_sidebar": {
+      "width": 30,
+      "background": "#26232a",
+      "border": {
+        "color": "#19171c",
+        "width": 1,
+        "left": true
+      },
+      "item": {
+        "height": 32,
+        "icon_color": "#8b8792",
+        "icon_size": 18
+      },
+      "active_item": {
+        "height": 32,
+        "icon_color": "#efecf4",
+        "icon_size": 18
+      },
+      "resize_handle": {
+        "background": "#19171c",
+        "padding": {
+          "left": 1
+        }
+      }
+    },
+    "pane_divider": {
+      "color": "#26232a",
+      "width": 1
+    },
+    "status_bar": {
+      "height": 24,
+      "item_spacing": 8,
+      "padding": {
+        "left": 6,
+        "right": 6
+      },
+      "border": {
+        "color": "#19171c",
+        "width": 1,
+        "top": true,
+        "overlay": true
+      },
+      "cursor_position": {
+        "family": "Zed Sans",
+        "color": "#8b8792",
+        "size": 14
+      },
+      "diagnostic_message": {
+        "family": "Zed Sans",
+        "color": "#8b8792",
+        "size": 14
+      },
+      "lsp_message": {
+        "family": "Zed Sans",
+        "color": "#8b8792",
+        "size": 14
+      },
+      "auto_update_progress_message": {
+        "family": "Zed Sans",
+        "color": "#8b8792",
+        "size": 14
+      },
+      "auto_update_done_message": {
+        "family": "Zed Sans",
+        "color": "#8b8792",
+        "size": 14
+      }
+    },
+    "titlebar": {
+      "avatar_width": 18,
+      "height": 32,
+      "background": "#26232a",
+      "share_icon_color": "#8b8792",
+      "share_icon_active_color": "#576ddb",
+      "title": {
+        "family": "Zed Sans",
+        "color": "#e2dfe7",
+        "size": 14
+      },
+      "avatar": {
+        "corner_radius": 10,
+        "border": {
+          "color": "#00000088",
+          "width": 1
+        }
+      },
+      "avatar_ribbon": {
+        "height": 3,
+        "width": 12
+      },
+      "border": {
+        "color": "#19171c",
+        "width": 1,
+        "bottom": true
+      },
+      "sign_in_prompt": {
+        "family": "Zed Sans",
+        "color": "#8b8792",
+        "size": 12,
+        "border": {
+          "color": "#19171c",
+          "width": 1
+        },
+        "corner_radius": 6,
+        "margin": {
+          "top": 1,
+          "right": 6
+        },
+        "padding": {
+          "left": 6,
+          "right": 6
+        }
+      },
+      "hovered_sign_in_prompt": {
+        "family": "Zed Sans",
+        "color": "#efecf4",
+        "size": 12,
+        "border": {
+          "color": "#19171c",
+          "width": 1
+        },
+        "corner_radius": 6,
+        "margin": {
+          "top": 1,
+          "right": 6
+        },
+        "padding": {
+          "left": 6,
+          "right": 6
+        }
+      },
+      "offline_icon": {
+        "color": "#8b8792",
+        "width": 16,
+        "padding": {
+          "right": 4
+        }
+      },
+      "outdated_warning": {
+        "family": "Zed Sans",
+        "color": "#a06e3b",
+        "size": 13
+      }
+    },
+    "toolbar": {
+      "height": 34,
+      "background": "#19171c",
+      "border": {
+        "color": "#26232a",
+        "width": 1,
+        "bottom": true
+      },
+      "item_spacing": 8,
+      "padding": {
+        "left": 16,
+        "right": 8,
+        "top": 4,
+        "bottom": 4
+      }
+    },
+    "breadcrumbs": {
+      "family": "Zed Mono",
+      "color": "#8b8792",
+      "size": 14,
+      "padding": {
+        "left": 6
+      }
+    },
+    "disconnected_overlay": {
+      "family": "Zed Sans",
+      "color": "#efecf4",
+      "size": 14,
+      "background": "#000000aa"
+    }
+  },
+  "editor": {
+    "text_color": "#efecf4",
+    "background": "#19171c",
+    "active_line_background": "#efecf412",
+    "code_actions_indicator": "#8b8792",
+    "diff_background_deleted": "#be4678",
+    "diff_background_inserted": "#2a9292",
+    "document_highlight_read_background": "#19171c1f",
+    "document_highlight_write_background": "#19171c29",
+    "error_color": "#be4678",
+    "gutter_background": "#19171c",
+    "gutter_padding_factor": 3.5,
+    "highlighted_line_background": "#efecf41f",
+    "line_number": "#7e7887",
+    "line_number_active": "#efecf4",
+    "rename_fade": 0.6,
+    "unnecessary_code_fade": 0.5,
+    "selection": {
+      "cursor": "#576ddb",
+      "selection": "#576ddb3d"
+    },
+    "guest_selections": [
+      {
+        "cursor": "#2a9292",
+        "selection": "#2a92923d"
+      },
+      {
+        "cursor": "#bf40bf",
+        "selection": "#bf40bf3d"
+      },
+      {
+        "cursor": "#aa573c",
+        "selection": "#aa573c3d"
+      },
+      {
+        "cursor": "#955ae7",
+        "selection": "#955ae73d"
+      },
+      {
+        "cursor": "#398bc6",
+        "selection": "#398bc63d"
+      },
+      {
+        "cursor": "#be4678",
+        "selection": "#be46783d"
+      },
+      {
+        "cursor": "#a06e3b",
+        "selection": "#a06e3b3d"
+      }
+    ],
+    "autocomplete": {
+      "background": "#19171c",
+      "corner_radius": 8,
+      "padding": 4,
+      "border": {
+        "color": "#26232a",
+        "width": 1
+      },
+      "item": {
+        "corner_radius": 6,
+        "padding": {
+          "bottom": 2,
+          "left": 6,
+          "right": 6,
+          "top": 2
+        }
+      },
+      "hovered_item": {
+        "corner_radius": 6,
+        "padding": {
+          "bottom": 2,
+          "left": 6,
+          "right": 6,
+          "top": 2
+        },
+        "background": "#26232a"
+      },
+      "margin": {
+        "left": -14
+      },
+      "match_highlight": {
+        "family": "Zed Mono",
+        "color": "#576ddb",
+        "size": 14
+      },
+      "selected_item": {
+        "corner_radius": 6,
+        "padding": {
+          "bottom": 2,
+          "left": 6,
+          "right": 6,
+          "top": 2
+        },
+        "background": "#26232a"
+      }
+    },
+    "diagnostic_header": {
+      "background": "#26232a",
+      "icon_width_factor": 1.5,
+      "text_scale_factor": 0.857,
+      "border": {
+        "color": "#26232a",
+        "width": 1,
+        "bottom": true,
+        "top": true
+      },
+      "code": {
+        "family": "Zed Mono",
+        "color": "#8b8792",
+        "size": 14,
+        "margin": {
+          "left": 10
+        }
+      },
+      "message": {
+        "highlight_text": {
+          "family": "Zed Sans",
+          "color": "#e2dfe7",
+          "size": 14,
+          "weight": "bold"
+        },
+        "text": {
+          "family": "Zed Sans",
+          "color": "#8b8792",
+          "size": 14
+        }
+      }
+    },
+    "diagnostic_path_header": {
+      "background": "#efecf412",
+      "text_scale_factor": 0.857,
+      "filename": {
+        "family": "Zed Mono",
+        "color": "#e2dfe7",
+        "size": 14
+      },
+      "path": {
+        "family": "Zed Mono",
+        "color": "#8b8792",
+        "size": 14,
+        "margin": {
+          "left": 12
+        }
+      }
+    },
+    "error_diagnostic": {
+      "text_scale_factor": 0.857,
+      "header": {
+        "border": {
+          "color": "#19171c",
+          "width": 1,
+          "top": true
+        }
+      },
+      "message": {
+        "text": {
+          "family": "Zed Sans",
+          "color": "#be4678",
+          "size": 14
+        },
+        "highlight_text": {
+          "family": "Zed Sans",
+          "color": "#be4678",
+          "size": 14,
+          "weight": "bold"
+        }
+      }
+    },
+    "warning_diagnostic": {
+      "text_scale_factor": 0.857,
+      "header": {
+        "border": {
+          "color": "#19171c",
+          "width": 1,
+          "top": true
+        }
+      },
+      "message": {
+        "text": {
+          "family": "Zed Sans",
+          "color": "#a06e3b",
+          "size": 14
+        },
+        "highlight_text": {
+          "family": "Zed Sans",
+          "color": "#a06e3b",
+          "size": 14,
+          "weight": "bold"
+        }
+      }
+    },
+    "information_diagnostic": {
+      "text_scale_factor": 0.857,
+      "header": {
+        "border": {
+          "color": "#19171c",
+          "width": 1,
+          "top": true
+        }
+      },
+      "message": {
+        "text": {
+          "family": "Zed Sans",
+          "color": "#576ddb",
+          "size": 14
+        },
+        "highlight_text": {
+          "family": "Zed Sans",
+          "color": "#576ddb",
+          "size": 14,
+          "weight": "bold"
+        }
+      }
+    },
+    "hint_diagnostic": {
+      "text_scale_factor": 0.857,
+      "header": {
+        "border": {
+          "color": "#19171c",
+          "width": 1,
+          "top": true
+        }
+      },
+      "message": {
+        "text": {
+          "family": "Zed Sans",
+          "color": "#576ddb",
+          "size": 14
+        },
+        "highlight_text": {
+          "family": "Zed Sans",
+          "color": "#576ddb",
+          "size": 14,
+          "weight": "bold"
+        }
+      }
+    },
+    "invalid_error_diagnostic": {
+      "text_scale_factor": 0.857,
+      "header": {
+        "border": {
+          "color": "#19171c",
+          "width": 1,
+          "top": true
+        }
+      },
+      "message": {
+        "text": {
+          "family": "Zed Sans",
+          "color": "#8b8792",
+          "size": 14
+        },
+        "highlight_text": {
+          "family": "Zed Sans",
+          "color": "#8b8792",
+          "size": 14,
+          "weight": "bold"
+        }
+      }
+    },
+    "invalid_hint_diagnostic": {
+      "text_scale_factor": 0.857,
+      "header": {
+        "border": {
+          "color": "#19171c",
+          "width": 1,
+          "top": true
+        }
+      },
+      "message": {
+        "text": {
+          "family": "Zed Sans",
+          "color": "#8b8792",
+          "size": 14
+        },
+        "highlight_text": {
+          "family": "Zed Sans",
+          "color": "#8b8792",
+          "size": 14,
+          "weight": "bold"
+        }
+      }
+    },
+    "invalid_information_diagnostic": {
+      "text_scale_factor": 0.857,
+      "header": {
+        "border": {
+          "color": "#19171c",
+          "width": 1,
+          "top": true
+        }
+      },
+      "message": {
+        "text": {
+          "family": "Zed Sans",
+          "color": "#8b8792",
+          "size": 14
+        },
+        "highlight_text": {
+          "family": "Zed Sans",
+          "color": "#8b8792",
+          "size": 14,
+          "weight": "bold"
+        }
+      }
+    },
+    "invalid_warning_diagnostic": {
+      "text_scale_factor": 0.857,
+      "header": {
+        "border": {
+          "color": "#19171c",
+          "width": 1,
+          "top": true
+        }
+      },
+      "message": {
+        "text": {
+          "family": "Zed Sans",
+          "color": "#8b8792",
+          "size": 14
+        },
+        "highlight_text": {
+          "family": "Zed Sans",
+          "color": "#8b8792",
+          "size": 14,
+          "weight": "bold"
+        }
+      }
+    },
+    "syntax": {
+      "primary": {
+        "color": "#efecf4",
+        "weight": "normal"
+      },
+      "comment": {
+        "color": "#8b8792",
+        "weight": "normal"
+      },
+      "punctuation": {
+        "color": "#8b8792",
+        "weight": "normal"
+      },
+      "constant": {
+        "color": "#7e7887",
+        "weight": "normal"
+      },
+      "keyword": {
+        "color": "#576ddb",
+        "weight": "normal"
+      },
+      "function": {
+        "color": "#a06e3b",
+        "weight": "normal"
+      },
+      "type": {
+        "color": "#398bc6",
+        "weight": "normal"
+      },
+      "variant": {
+        "color": "#576ddb",
+        "weight": "normal"
+      },
+      "property": {
+        "color": "#576ddb",
+        "weight": "normal"
+      },
+      "enum": {
+        "color": "#aa573c",
+        "weight": "normal"
+      },
+      "operator": {
+        "color": "#aa573c",
+        "weight": "normal"
+      },
+      "string": {
+        "color": "#aa573c",
+        "weight": "normal"
+      },
+      "number": {
+        "color": "#2a9292",
+        "weight": "normal"
+      },
+      "boolean": {
+        "color": "#2a9292",
+        "weight": "normal"
+      },
+      "predictive": {
+        "color": "#8b8792",
+        "weight": "normal"
+      },
+      "title": {
+        "color": "#a06e3b",
+        "weight": "bold"
+      },
+      "emphasis": {
+        "color": "#576ddb",
+        "weight": "normal"
+      },
+      "emphasis.strong": {
+        "color": "#576ddb",
+        "weight": "bold"
+      },
+      "link_uri": {
+        "color": "#2a9292",
+        "weight": "normal",
+        "underline": true
+      },
+      "link_text": {
+        "color": "#aa573c",
+        "weight": "normal",
+        "italic": true
+      }
+    }
+  },
+  "project_diagnostics": {
+    "tab_icon_spacing": 4,
+    "tab_icon_width": 13,
+    "tab_summary_spacing": 10,
+    "empty_message": {
+      "family": "Zed Sans",
+      "color": "#e2dfe7",
+      "size": 18
+    },
+    "status_bar_item": {
+      "family": "Zed Sans",
+      "color": "#8b8792",
+      "size": 14,
+      "margin": {
+        "right": 10
+      }
+    }
+  },
+  "command_palette": {
+    "keystroke_spacing": 8,
+    "key": {
+      "text": {
+        "family": "Zed Mono",
+        "color": "#8b8792",
+        "size": 12
+      },
+      "corner_radius": 4,
+      "background": "#19171c",
+      "border": {
+        "color": "#26232a",
+        "width": 1
+      },
+      "padding": {
+        "top": 2,
+        "bottom": 2,
+        "left": 8,
+        "right": 8
+      },
+      "margin": {
+        "left": 2
+      }
+    }
+  },
+  "project_panel": {
+    "padding": {
+      "top": 6,
+      "left": 12
+    },
+    "entry": {
+      "height": 22,
+      "icon_color": "#8b8792",
+      "icon_size": 8,
+      "icon_spacing": 8,
+      "text": {
+        "family": "Zed Mono",
+        "color": "#8b8792",
+        "size": 14
+      }
+    },
+    "hovered_entry": {
+      "height": 22,
+      "background": "#655f6d",
+      "icon_color": "#8b8792",
+      "icon_size": 8,
+      "icon_spacing": 8,
+      "text": {
+        "family": "Zed Mono",
+        "color": "#8b8792",
+        "size": 14
+      }
+    },
+    "selected_entry": {
+      "height": 22,
+      "icon_color": "#8b8792",
+      "icon_size": 8,
+      "icon_spacing": 8,
+      "text": {
+        "family": "Zed Mono",
+        "color": "#e2dfe7",
+        "size": 14
+      }
+    },
+    "hovered_selected_entry": {
+      "height": 22,
+      "background": "#655f6d",
+      "icon_color": "#8b8792",
+      "icon_size": 8,
+      "icon_spacing": 8,
+      "text": {
+        "family": "Zed Mono",
+        "color": "#e2dfe7",
+        "size": 14
+      }
+    }
+  },
+  "chat_panel": {
+    "padding": {
+      "top": 12,
+      "left": 12,
+      "bottom": 12,
+      "right": 12
+    },
+    "channel_name": {
+      "family": "Zed Sans",
+      "color": "#e2dfe7",
+      "weight": "bold",
+      "size": 14
+    },
+    "channel_name_hash": {
+      "family": "Zed Sans",
+      "color": "#8b8792",
+      "size": 14,
+      "padding": {
+        "right": 8
+      }
+    },
+    "channel_select": {
+      "header": {
+        "name": {
+          "family": "Zed Sans",
+          "color": "#e2dfe7",
+          "size": 14
+        },
+        "padding": {
+          "bottom": 4,
+          "left": 0
+        },
+        "hash": {
+          "family": "Zed Sans",
+          "color": "#8b8792",
+          "size": 14,
+          "margin": {
+            "right": 8
+          }
+        },
+        "corner_radius": 0
+      },
+      "item": {
+        "name": {
+          "family": "Zed Sans",
+          "color": "#8b8792",
+          "size": 14
+        },
+        "padding": 4,
+        "hash": {
+          "family": "Zed Sans",
+          "color": "#8b8792",
+          "size": 14,
+          "margin": {
+            "right": 8
+          }
+        },
+        "corner_radius": 0
+      },
+      "hovered_item": {
+        "name": {
+          "family": "Zed Sans",
+          "color": "#8b8792",
+          "size": 14
+        },
+        "padding": 4,
+        "hash": {
+          "family": "Zed Sans",
+          "color": "#8b8792",
+          "size": 14,
+          "margin": {
+            "right": 8
+          }
+        },
+        "background": "#655f6d",
+        "corner_radius": 6
+      },
+      "active_item": {
+        "name": {
+          "family": "Zed Sans",
+          "color": "#e2dfe7",
+          "size": 14
+        },
+        "padding": 4,
+        "hash": {
+          "family": "Zed Sans",
+          "color": "#8b8792",
+          "size": 14,
+          "margin": {
+            "right": 8
+          }
+        },
+        "corner_radius": 0
+      },
+      "hovered_active_item": {
+        "name": {
+          "family": "Zed Sans",
+          "color": "#e2dfe7",
+          "size": 14
+        },
+        "padding": 4,
+        "hash": {
+          "family": "Zed Sans",
+          "color": "#8b8792",
+          "size": 14,
+          "margin": {
+            "right": 8
+          }
+        },
+        "background": "#655f6d",
+        "corner_radius": 6
+      },
+      "menu": {
+        "background": "#19171c",
+        "corner_radius": 6,
+        "padding": 4,
+        "border": {
+          "color": "#19171c",
+          "width": 1
+        },
+        "shadow": {
+          "blur": 16,
+          "color": "#00000052",
+          "offset": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    "sign_in_prompt": {
+      "family": "Zed Sans",
+      "color": "#8b8792",
+      "underline": true,
+      "size": 14
+    },
+    "hovered_sign_in_prompt": {
+      "family": "Zed Sans",
+      "color": "#e2dfe7",
+      "underline": true,
+      "size": 14
+    },
+    "message": {
+      "body": {
+        "family": "Zed Sans",
+        "color": "#8b8792",
+        "size": 14
+      },
+      "timestamp": {
+        "family": "Zed Sans",
+        "color": "#8b8792",
+        "size": 14
+      },
+      "padding": {
+        "bottom": 6
+      },
+      "sender": {
+        "family": "Zed Sans",
+        "color": "#e2dfe7",
+        "weight": "bold",
+        "size": 14,
+        "margin": {
+          "right": 8
+        }
+      }
+    },
+    "pending_message": {
+      "body": {
+        "family": "Zed Sans",
+        "color": "#8b8792",
+        "size": 14
+      },
+      "timestamp": {
+        "family": "Zed Sans",
+        "color": "#8b8792",
+        "size": 14
+      },
+      "padding": {
+        "bottom": 6
+      },
+      "sender": {
+        "family": "Zed Sans",
+        "color": "#8b8792",
+        "weight": "bold",
+        "size": 14,
+        "margin": {
+          "right": 8
+        }
+      }
+    },
+    "input_editor": {
+      "background": "#19171c",
+      "corner_radius": 6,
+      "text": {
+        "family": "Zed Mono",
+        "color": "#e2dfe7",
+        "size": 14
+      },
+      "placeholder_text": {
+        "family": "Zed Mono",
+        "color": "#7e7887",
+        "size": 14
+      },
+      "selection": {
+        "cursor": "#576ddb",
+        "selection": "#576ddb3d"
+      },
+      "border": {
+        "color": "#26232a",
+        "width": 1
+      },
+      "padding": {
+        "bottom": 7,
+        "left": 8,
+        "right": 8,
+        "top": 7
+      }
+    }
+  },
+  "contacts_panel": {
+    "padding": {
+      "top": 12,
+      "left": 12,
+      "bottom": 12,
+      "right": 12
+    },
+    "host_row_height": 28,
+    "tree_branch_color": "#655f6d",
+    "tree_branch_width": 1,
+    "host_avatar": {
+      "corner_radius": 10,
+      "width": 18
+    },
+    "host_username": {
+      "family": "Zed Mono",
+      "color": "#e2dfe7",
+      "size": 14,
+      "padding": {
+        "left": 8
+      }
+    },
+    "project": {
+      "guest_avatar_spacing": 4,
+      "height": 24,
+      "guest_avatar": {
+        "corner_radius": 8,
+        "width": 14
+      },
+      "name": {
+        "family": "Zed Mono",
+        "color": "#7e7887",
+        "size": 14,
+        "margin": {
+          "right": 6
+        }
+      },
+      "padding": {
+        "left": 8
+      }
+    },
+    "shared_project": {
+      "guest_avatar_spacing": 4,
+      "height": 24,
+      "guest_avatar": {
+        "corner_radius": 8,
+        "width": 14
+      },
+      "name": {
+        "family": "Zed Mono",
+        "color": "#8b8792",
+        "size": 14,
+        "margin": {
+          "right": 6
+        }
+      },
+      "padding": {
+        "left": 8
+      },
+      "background": "#26232a",
+      "corner_radius": 6
+    },
+    "hovered_shared_project": {
+      "guest_avatar_spacing": 4,
+      "height": 24,
+      "guest_avatar": {
+        "corner_radius": 8,
+        "width": 14
+      },
+      "name": {
+        "family": "Zed Mono",
+        "color": "#8b8792",
+        "size": 14,
+        "margin": {
+          "right": 6
+        }
+      },
+      "padding": {
+        "left": 8
+      },
+      "background": "#655f6d",
+      "corner_radius": 6
+    },
+    "unshared_project": {
+      "guest_avatar_spacing": 4,
+      "height": 24,
+      "guest_avatar": {
+        "corner_radius": 8,
+        "width": 14
+      },
+      "name": {
+        "family": "Zed Mono",
+        "color": "#7e7887",
+        "size": 14,
+        "margin": {
+          "right": 6
+        }
+      },
+      "padding": {
+        "left": 8
+      }
+    },
+    "hovered_unshared_project": {
+      "guest_avatar_spacing": 4,
+      "height": 24,
+      "guest_avatar": {
+        "corner_radius": 8,
+        "width": 14
+      },
+      "name": {
+        "family": "Zed Mono",
+        "color": "#7e7887",
+        "size": 14,
+        "margin": {
+          "right": 6
+        }
+      },
+      "padding": {
+        "left": 8
+      },
+      "corner_radius": 6
+    }
+  },
+  "search": {
+    "match_background": "#955ae780",
+    "tab_icon_spacing": 8,
+    "tab_icon_width": 14,
+    "active_hovered_option_button": {
+      "family": "Zed Mono",
+      "color": "#efecf4",
+      "size": 14,
+      "background": "#655f6d",
+      "corner_radius": 4,
+      "border": {
+        "color": "#655f6d",
+        "width": 1
+      },
+      "margin": {
+        "left": 2,
+        "right": 2
+      },
+      "padding": {
+        "bottom": 3,
+        "left": 8,
+        "right": 8,
+        "top": 3
+      }
+    },
+    "active_option_button": {
+      "family": "Zed Mono",
+      "color": "#efecf4",
+      "size": 14,
+      "background": "#655f6d",
+      "corner_radius": 4,
+      "border": {
+        "color": "#655f6d",
+        "width": 1
+      },
+      "margin": {
+        "left": 2,
+        "right": 2
+      },
+      "padding": {
+        "bottom": 3,
+        "left": 8,
+        "right": 8,
+        "top": 3
+      }
+    },
+    "editor": {
+      "background": "#19171c",
+      "corner_radius": 8,
+      "min_width": 200,
+      "max_width": 500,
+      "placeholder_text": {
+        "family": "Zed Mono",
+        "color": "#7e7887",
+        "size": 14
+      },
+      "selection": {
+        "cursor": "#576ddb",
+        "selection": "#576ddb3d"
+      },
+      "text": {
+        "family": "Zed Mono",
+        "color": "#efecf4",
+        "size": 14
+      },
+      "border": {
+        "color": "#26232a",
+        "width": 1
+      },
+      "margin": {
+        "right": 6
+      },
+      "padding": {
+        "top": 3,
+        "bottom": 3,
+        "left": 12,
+        "right": 8
+      }
+    },
+    "hovered_option_button": {
+      "family": "Zed Mono",
+      "color": "#efecf4",
+      "size": 14,
+      "background": "#26232a",
+      "corner_radius": 4,
+      "border": {
+        "color": "#655f6d",
+        "width": 1
+      },
+      "margin": {
+        "left": 2,
+        "right": 2
+      },
+      "padding": {
+        "bottom": 3,
+        "left": 8,
+        "right": 8,
+        "top": 3
+      }
+    },
+    "invalid_editor": {
+      "background": "#19171c",
+      "corner_radius": 8,
+      "min_width": 200,
+      "max_width": 500,
+      "placeholder_text": {
+        "family": "Zed Mono",
+        "color": "#7e7887",
+        "size": 14
+      },
+      "selection": {
+        "cursor": "#576ddb",
+        "selection": "#576ddb3d"
+      },
+      "text": {
+        "family": "Zed Mono",
+        "color": "#efecf4",
+        "size": 14
+      },
+      "border": {
+        "color": "#be4678",
+        "width": 1
+      },
+      "margin": {
+        "right": 6
+      },
+      "padding": {
+        "top": 3,
+        "bottom": 3,
+        "left": 12,
+        "right": 8
+      }
+    },
+    "match_index": {
+      "family": "Zed Mono",
+      "color": "#8b8792",
+      "size": 14,
+      "padding": 6
+    },
+    "option_button": {
+      "family": "Zed Mono",
+      "color": "#8b8792",
+      "size": 14,
+      "background": "#26232a",
+      "corner_radius": 4,
+      "border": {
+        "color": "#26232a",
+        "width": 1
+      },
+      "margin": {
+        "left": 2,
+        "right": 2
+      },
+      "padding": {
+        "bottom": 3,
+        "left": 8,
+        "right": 8,
+        "top": 3
+      }
+    },
+    "option_button_group": {
+      "padding": {
+        "left": 4,
+        "right": 4
+      }
+    },
+    "results_status": {
+      "family": "Zed Mono",
+      "color": "#e2dfe7",
+      "size": 18
+    }
+  },
+  "breadcrumbs": {
+    "family": "Zed Sans",
+    "color": "#8b8792",
+    "size": 14,
+    "padding": {
+      "left": 6
+    }
+  }
+}
