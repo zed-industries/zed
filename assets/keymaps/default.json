@@ -210,9 +210,11 @@
             "cmd-shift-F": "project_search::Deploy",
             "cmd-k cmd-t": "theme_selector::Toggle",
             "cmd-k t": "theme_selector::Reload",
+            "cmd-k cmd-s": "zed::OpenKeymap",
             "cmd-t": "project_symbols::Toggle",
             "cmd-p": "file_finder::Toggle",
-            "cmd-shift-P": "command_palette::Toggle"
+            "cmd-shift-P": "command_palette::Toggle",
+            "cmd-shift-M": "diagnostics::Deploy"
         }
     },
     // Bindings from Sublime Text
@@ -244,6 +246,7 @@
             "cmd-k cmd-right": "workspace::ActivateNextPane"
         }
     },
+    // Bindings from Atom
     {
         "context": "Pane",
         "bindings": {
@@ -289,18 +292,13 @@
     {
         "bindings": {
             "ctrl-alt-cmd-f": "workspace::FollowNextCollaborator",
-            "cmd-alt-i": "zed::DebugElements",
-            "alt-cmd-,": "zed::OpenKeymap"
+            "cmd-alt-i": "zed::DebugElements"
         }
     },
     {
         "context": "Editor",
         "bindings": {
-            "ctrl-w": "editor::SelectLargerSyntaxNode",
-            "ctrl-shift-W": "editor::SelectSmallerSyntaxNode",
-            "alt-cmd-f": "editor::FoldSelectedRanges",
-            "alt-enter": "editor::OpenExcerpts",
-            "cmd-f10": "editor::RestartLanguageServer"
+            "alt-enter": "editor::OpenExcerpts"
         }
     },
     {
@@ -312,8 +310,6 @@
     {
         "context": "Workspace",
         "bindings": {
-            "alt-shift-D": "diagnostics::Deploy",
-            "ctrl-alt-cmd-j": "journal::NewJournalEntry",
             "cmd-1": [
                 "workspace::ToggleSidebarItemFocus",
                 {
