@@ -1,20 +1,33 @@
-// use crate::{auth, db::UserId, AppState, Request, RequestExt as _};
-use anyhow::Result;
+use crate::{
+    db::{Db, User, UserId},
+    AppState, Result,
+};
+use anyhow::anyhow;
 use axum::{
     body::Body,
-    http::{Request, Response, StatusCode},
-    routing::get,
-    Router,
+    extract::Path,
+    http::{Request, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, put},
+    Json, Router,
 };
 use serde::Deserialize;
-use serde_json::json;
 use std::sync::Arc;
 
-use crate::AppState;
-// use surf::StatusCode;
-
-pub fn add_routes(router: Router<Body>) -> Router<Body> {
-    router.route("/users", get(get_users))
+pub fn add_routes(router: Router<Body>, app: Arc<AppState>) -> Router<Body> {
+    router
+        .route("/users", {
+            let app = app.clone();
+            get(move |req| get_users(req, app))
+        })
+        .route("/users", {
+            let app = app.clone();
+            get(move |params| create_user(params, app))
+        })
+        .route("/users/:id", {
+            let app = app.clone();
+            put(move |user_id, params| update_user(user_id, params, app))
+        })
 }
 
 // pub fn add_routes(app: &mut tide::Server<Arc<AppState>>) {
@@ -27,65 +40,48 @@ pub fn add_routes(router: Router<Body>) -> Router<Body> {
 //         .post(create_access_token);
 // }
 
-async fn get_users(request: Request<Body>) -> Result<Response<Body>, (StatusCode, String)> {
+async fn get_users(request: Request<Body>, app: Arc<AppState>) -> Result<Json<Vec<User>>> {
     // request.require_token().await?;
 
-    // let users = request.db().get_all_users().await?;
-
-    // Body::from
-
-    // let body = "Hello World";
-    // Ok(Response::builder()
-    //     .header(CONTENT_LENGTH, body.len() as u64)
-    //     .header(CONTENT_TYPE, "text/plain")
-    //     .body(Body::from(body))?)
-
-    // Ok(tide::Response::builder(StatusCode::Ok)
-    //     .body(tide::Body::from_json(&users)?)
-    //     .build())
-    todo!()
+    let users = app.db.get_all_users().await?;
+    Ok(Json(users))
 }
 
-// async fn get_user(request: Request) -> tide::Result {
-//     request.require_token().await?;
+#[derive(Deserialize)]
+struct CreateUser {
+    github_login: String,
+    admin: bool,
+}
 
-//     let user = request
-//         .db()
-//         .get_user_by_github_login(request.param("github_login")?)
-//         .await?
-//         .ok_or_else(|| surf::Error::from_str(404, "user not found"))?;
+async fn create_user(Json(params): Json<CreateUser>, app: Arc<AppState>) -> Result<Json<User>> {
+    let user_id = app
+        .db
+        .create_user(&params.github_login, params.admin)
+        .await?;
 
-//     Ok(tide::Response::builder(StatusCode::Ok)
-//         .body(tide::Body::from_json(&user)?)
-//         .build())
-// }
+    let user = app
+        .db
+        .get_user_by_id(user_id)
+        .await?
+        .ok_or_else(|| anyhow!("couldn't find the user we just created"))?;
 
-// async fn create_user(mut request: Request) -> tide::Result {
-//     request.require_token().await?;
+    Ok(Json(user))
+}
 
-//     #[derive(Deserialize)]
-//     struct Params {
-//         github_login: String,
-//         admin: bool,
-//     }
-//     let params = request.body_json::<Params>().await?;
+#[derive(Deserialize)]
+struct UpdateUser {
+    admin: bool,
+}
 
-//     let user_id = request
-//         .db()
-//         .create_user(&params.github_login, params.admin)
-//         .await?;
-
-//     let user = request.db().get_user_by_id(user_id).await?.ok_or_else(|| {
-//         surf::Error::from_str(
-//             StatusCode::InternalServerError,
-//             "couldn't find the user we just created",
-//         )
-//     })?;
-
-//     Ok(tide::Response::builder(StatusCode::Ok)
-//         .body(tide::Body::from_json(&user)?)
-//         .build())
-// }
+async fn update_user(
+    Path(user_id): Path<i32>,
+    Json(params): Json<UpdateUser>,
+    app: Arc<AppState>,
+) -> Result<impl IntoResponse> {
+    let user_id = UserId(user_id);
+    app.db.set_user_is_admin(user_id, params.admin).await?;
+    Ok(())
+}
 
 // async fn update_user(mut request: Request) -> tide::Result {
 //     request.require_token().await?;
@@ -94,13 +90,6 @@ async fn get_users(request: Request<Body>) -> Result<Response<Body>, (StatusCode
 //     struct Params {
 //         admin: bool,
 //     }
-//     let user_id = UserId(
-//         request
-//             .param("id")?
-//             .parse::<i32>()
-//             .map_err(|error| surf::Error::from_str(StatusCode::BadRequest, error.to_string()))?,
-//     );
-//     let params = request.body_json::<Params>().await?;
 
 //     request
 //         .db()

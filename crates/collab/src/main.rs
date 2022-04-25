@@ -5,8 +5,7 @@ mod env;
 mod rpc;
 
 use ::rpc::Peer;
-use anyhow::Result;
-use axum::{body::Body, http::StatusCode, Router};
+use axum::{body::Body, http::StatusCode, response::IntoResponse, Router};
 use db::{Db, PostgresDb};
 
 use serde::Deserialize;
@@ -76,24 +75,16 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handle_anyhow_error(err: anyhow::Error) -> (StatusCode, String) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("Something went wrong: {}", err),
-    )
-}
-
 pub async fn run_server(
     state: Arc<AppState>,
     peer: Arc<Peer>,
     listener: TcpListener,
 ) -> Result<()> {
     let app = Router::<Body>::new();
-    // TODO: Assign app state to request somehow
     // TODO: Compression on API routes?
     // TODO: Authenticate API routes.
 
-    let app = api::add_routes(app);
+    let app = api::add_routes(app, state);
     // TODO: Add rpc routes
 
     axum::Server::from_tcp(listener)?
@@ -101,4 +92,35 @@ pub async fn run_server(
         .await?;
 
     Ok(())
+}
+
+type Result<T> = std::result::Result<T, Error>;
+
+struct Error(anyhow::Error);
+
+impl<E> From<E> for Error
+where
+    E: Into<anyhow::Error>,
+{
+    fn from(error: E) -> Self {
+        Self(error.into())
+    }
+}
+
+impl IntoResponse for Error {
+    fn into_response(self) -> axum::response::Response {
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &self.0)).into_response()
+    }
+}
+
+impl std::fmt::Debug for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
 }

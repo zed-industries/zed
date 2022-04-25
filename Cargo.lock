@@ -953,6 +953,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "toml",
+ "tower",
  "util",
  "workspace",
 ]
