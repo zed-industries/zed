@@ -94,33 +94,47 @@ pub async fn run_server(
     Ok(())
 }
 
-type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, Error>;
 
-struct Error(anyhow::Error);
+pub enum Error {
+    Http(StatusCode, String),
+    Internal(anyhow::Error),
+}
 
 impl<E> From<E> for Error
 where
     E: Into<anyhow::Error>,
 {
     fn from(error: E) -> Self {
-        Self(error.into())
+        Self::Internal(error.into())
     }
 }
 
 impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &self.0)).into_response()
+        match self {
+            Error::Http(code, message) => (code, message).into_response(),
+            Error::Internal(error) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
+            }
+        }
     }
 }
 
 impl std::fmt::Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        match self {
+            Error::Http(code, message) => (code, message).fmt(f),
+            Error::Internal(error) => error.fmt(f),
+        }
     }
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        match self {
+            Error::Http(code, message) => write!(f, "{code}: {message}"),
+            Error::Internal(error) => error.fmt(f),
+        }
     }
 }
