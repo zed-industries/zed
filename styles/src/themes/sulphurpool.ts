@@ -4,34 +4,34 @@ import Theme, { buildPlayer, Syntax } from "./theme";
 
 // Dark: 0 == Darkest, 3 == Lightest
 const dark = {
-  0: color("#002b36"),
-  1: color("#073642"),
-  2: color("#586e75"),
-  3: color("#657b83"),
+  0: color("#202746"),
+  1: color("#293256"),
+  2: color("#5e6687"),
+  3: color("#6b7394"),
 };
 // Light: 0 == Lightest, 3 == Darkest
 const light = {
-  0: color("#fdf6e3"),
-  1: color("#eee8d5"),
-  2: color("#93a1a1"),
-  3: color("#839496"),
+  0: color("#f5f7ff"),
+  1: color("#dfe2f1"),
+  2: color("#979db4"),
+  3: color("#898ea4"),
 };
 
 const colors = {
-  "red": color("#dc322f"),
-  "orange": color("#cb4b16"),
-  "yellow": color("#b58900"),
-  "green": color("#859900"),
-  "cyan": color("#2aa198"),
-  "blue": color("#268bd2"),
-  "violet": color("#6c71c4"),
-  "magenta": color("#d33682"),
+  "red": color("#c94922"),
+  "orange": color("#c76b29"),
+  "yellow": color("#c08b30"),
+  "green": color("#ac9739"),
+  "cyan": color("#22a2c9"),
+  "blue": color("#3d8fd1"),
+  "violet": color("#6679cc"),
+  "magenta": color("#9c637a"),
 };
 
-export function solarized(darkTheme: boolean): Theme {
+export function sulphurpool(darkTheme: boolean): Theme {
   let fg = darkTheme ? light : dark;
   let bg = darkTheme ? dark : light;
-  let name = darkTheme ? "solarized-dark" : "solarized-light";
+  let name = darkTheme ? "sulphurpool-dark" : "sulphurpool-light";
 
   const backgroundColor = {
     100: {
