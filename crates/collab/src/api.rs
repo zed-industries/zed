@@ -31,7 +31,7 @@ pub fn routes(state: Arc<AppState>) -> Router<Body> {
 }
 
 pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoResponse {
-    let mut auth_header = req
+    let token = req
         .headers()
         .get(http::header::AUTHORIZATION)
         .and_then(|header| header.to_str().ok())
@@ -40,7 +40,23 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
                 StatusCode::BAD_REQUEST,
                 "missing authorization header".to_string(),
             )
+        })?
+        .strip_prefix("token ")
+        .ok_or_else(|| {
+            Error::Http(
+                StatusCode::BAD_REQUEST,
+                "invalid authorization header".to_string(),
+            )
         })?;
+
+    let state = req.extensions().get::<Arc<AppState>>().unwrap();
+
+    if token != state.api_token {
+        Err(Error::Http(
+            StatusCode::UNAUTHORIZED,
+            "invalid authorization token".to_string(),
+        ))?
+    }
 
     Ok::<_, Error>(next.run(req).await)
 }
@@ -163,25 +179,3 @@ async fn create_access_token(
         encrypted_access_token,
     }))
 }
-
-// #[async_trait]
-// pub trait RequestExt {
-//     async fn require_token(&self) -> tide::Result<()>;
-// }
-
-// #[async_trait]
-// impl RequestExt for Request {
-//     async fn require_token(&self) -> tide::Result<()> {
-//         let token = self
-//             .header("Authorization")
-//             .and_then(|header| header.get(0))
-//             .and_then(|header| header.as_str().strip_prefix("token "))
-//             .ok_or_else(|| surf::Error::from_str(403, "invalid authorization header"))?;
-
-//         if token == self.state().config.api_token {
-//             Ok(())
-//         } else {
-//             Err(tide::Error::from_str(403, "invalid authorization token"))
-//         }
-//     }
-// }
