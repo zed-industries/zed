@@ -1475,15 +1475,27 @@ impl Workspace {
     }
 
     fn render_titlebar(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
+        let mut worktree_root_names = String::new();
+        {
+            let mut worktrees = self.project.read(cx).visible_worktrees(cx).peekable();
+            while let Some(worktree) = worktrees.next() {
+                worktree_root_names.push_str(worktree.read(cx).root_name());
+                if worktrees.peek().is_some() {
+                    worktree_root_names.push_str(", ");
+                }
+            }
+        }
+
         ConstrainedBox::new(
             Container::new(
                 Stack::new()
                     .with_child(
-                        Align::new(
-                            Label::new("zed".into(), theme.workspace.titlebar.title.clone())
-                                .boxed(),
-                        )
-                        .boxed(),
+                        Label::new(worktree_root_names, theme.workspace.titlebar.title.clone())
+                            .aligned()
+                            .left()
+                            .contained()
+                            .with_margin_left(80.)
+                            .boxed(),
                     )
                     .with_child(
                         Align::new(
