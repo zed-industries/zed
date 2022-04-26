@@ -258,8 +258,9 @@
       "avatar_width": 18,
       "height": 32,
       "background": "#293256",
-      "share_icon_color": "#979db4",
-      "share_icon_active_color": "#3d8fd1",
+      "padding": {
+        "left": 80
+      },
       "title": {
         "family": "Zed Sans",
         "color": "#dfe2f1",
@@ -324,10 +325,48 @@
           "right": 4
         }
       },
+      "share_icon": {
+        "margin": {
+          "top": 3,
+          "bottom": 2
+        },
+        "corner_radius": 6,
+        "color": "#979db4"
+      },
+      "hovered_share_icon": {
+        "margin": {
+          "top": 3,
+          "bottom": 2
+        },
+        "corner_radius": 6,
+        "background": "#5e668752",
+        "color": "#979db4"
+      },
+      "hovered_active_share_icon": {
+        "margin": {
+          "top": 3,
+          "bottom": 2
+        },
+        "corner_radius": 6,
+        "background": "#5e668752",
+        "color": "#f5f7ff"
+      },
+      "active_share_icon": {
+        "margin": {
+          "top": 3,
+          "bottom": 2
+        },
+        "corner_radius": 6,
+        "background": "#5e66877a",
+        "color": "#f5f7ff"
+      },
       "outdated_warning": {
         "family": "Zed Sans",
         "color": "#c08b30",
-        "size": 13
+        "size": 13,
+        "margin": {
+          "right": 6
+        }
       }
     },
     "toolbar": {
