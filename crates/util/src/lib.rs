@@ -153,33 +153,3 @@ mod tests {
         assert_eq!(vec, &[1000, 101, 21, 19, 17, 13, 9, 8]);
     }
 }
-
-// Allow surf Results to accept context like other Results do when
-// using anyhow.
-pub trait SurfResultExt {
-    fn context<C>(self, cx: C) -> Self
-    where
-        C: std::fmt::Display + Send + Sync + 'static;
-
-    fn with_context<C, F>(self, f: F) -> Self
-    where
-        C: std::fmt::Display + Send + Sync + 'static,
-        F: FnOnce() -> C;
-}
-
-impl<T> SurfResultExt for surf::Result<T> {
-    fn context<C>(self, cx: C) -> Self
-    where
-        C: std::fmt::Display + Send + Sync + 'static,
-    {
-        self.map_err(|e| surf::Error::new(e.status(), e.into_inner().context(cx)))
-    }
-
-    fn with_context<C, F>(self, f: F) -> Self
-    where
-        C: std::fmt::Display + Send + Sync + 'static,
-        F: FnOnce() -> C,
-    {
-        self.map_err(|e| surf::Error::new(e.status(), e.into_inner().context(f())))
-    }
-}

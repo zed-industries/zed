@@ -43,7 +43,7 @@ toml = "0.5.8"
 
 [dependencies.sqlx]
 version = "0.5.2"
-features = ["runtime-async-std-rustls", "postgres", "time", "uuid"]
+features = ["runtime-tokio-rustls", "postgres", "time", "uuid"]
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
