@@ -6,7 +6,6 @@ pub mod test;
 
 use anyhow::{anyhow, Context, Result};
 use breadcrumbs::Breadcrumbs;
-use chat_panel::ChatPanel;
 pub use client;
 pub use contacts_panel;
 use contacts_panel::ContactsPanel;
@@ -147,7 +146,7 @@ pub fn build_workspace(
         user_store: app_state.user_store.clone(),
         channel_list: app_state.channel_list.clone(),
     };
-    let mut workspace = Workspace::new(&workspace_params, cx);
+    let workspace = Workspace::new(&workspace_params, cx);
     let project = workspace.project().clone();
 
     let theme_names = app_state.themes.list().collect();
@@ -171,22 +170,15 @@ pub fn build_workspace(
         }));
     });
 
-    workspace.left_sidebar_mut().add_item(
-        "icons/folder-tree-16.svg",
-        ProjectPanel::new(project, cx).into(),
-    );
-    workspace.right_sidebar_mut().add_item(
-        "icons/user-16.svg",
-        cx.add_view(|cx| ContactsPanel::new(app_state.clone(), cx))
-            .into(),
-    );
-    workspace.right_sidebar_mut().add_item(
-        "icons/comment-16.svg",
-        cx.add_view(|cx| {
-            ChatPanel::new(app_state.client.clone(), app_state.channel_list.clone(), cx)
-        })
-        .into(),
-    );
+    let project_panel = ProjectPanel::new(project, cx);
+    let contact_panel = cx.add_view(|cx| ContactsPanel::new(app_state.clone(), cx));
+
+    workspace.left_sidebar().update(cx, |sidebar, cx| {
+        sidebar.add_item("icons/folder-tree-16.svg", project_panel.into(), cx)
+    });
+    workspace.right_sidebar().update(cx, |sidebar, cx| {
+        sidebar.add_item("icons/user-16.svg", contact_panel.into(), cx)
+    });
 
     let diagnostic_message = cx.add_view(|_| editor::items::DiagnosticMessage::new());
     let diagnostic_summary =
@@ -200,8 +192,8 @@ pub fn build_workspace(
         status_bar.add_left_item(diagnostic_summary, cx);
         status_bar.add_left_item(diagnostic_message, cx);
         status_bar.add_left_item(lsp_status, cx);
-        status_bar.add_right_item(auto_update, cx);
         status_bar.add_right_item(cursor_position, cx);
+        status_bar.add_right_item(auto_update, cx);
     });
 
     workspace
@@ -362,7 +354,7 @@ mod tests {
         let workspace_1 = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
         workspace_1.update(cx, |workspace, cx| {
             assert_eq!(workspace.worktrees(cx).count(), 2);
-            assert!(workspace.left_sidebar_mut().active_item().is_some());
+            assert!(workspace.left_sidebar().read(cx).active_item().is_some());
             assert!(workspace.active_pane().is_focused(cx));
         });
 

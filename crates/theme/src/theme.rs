@@ -38,8 +38,7 @@ pub struct Workspace {
     pub pane_divider: Border,
     pub leader_border_opacity: f32,
     pub leader_border_width: f32,
-    pub left_sidebar: Sidebar,
-    pub right_sidebar: Sidebar,
+    pub sidebar_resize_handle: ContainerStyle,
     pub status_bar: StatusBar,
     pub toolbar: Toolbar,
     pub disconnected_overlay: ContainedText,
@@ -139,16 +138,13 @@ pub struct FindEditor {
 
 #[derive(Deserialize, Default)]
 pub struct Sidebar {
-    #[serde(flatten)]
-    pub container: ContainerStyle,
-    pub width: f32,
-    pub item: SidebarItem,
-    pub active_item: SidebarItem,
     pub resize_handle: ContainerStyle,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Clone, Copy, Deserialize, Default)]
 pub struct SidebarItem {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
     pub icon_color: Color,
     pub icon_size: f32,
     pub height: f32,
@@ -165,6 +161,9 @@ pub struct StatusBar {
     pub lsp_message: TextStyle,
     pub auto_update_progress_message: TextStyle,
     pub auto_update_done_message: TextStyle,
+    pub sidebar_item: SidebarItem,
+    pub sidebar_item_active: SidebarItem,
+    pub sidebar_item_hover: SidebarItem,
 }
 
 #[derive(Deserialize, Default)]

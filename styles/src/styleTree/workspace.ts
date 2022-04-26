@@ -52,22 +52,6 @@ export default function workspace(theme: Theme) {
     iconColor: iconColor(theme, "secondary"),
     iconSize: 18,
   };
-  const sidebar = {
-    width: 30,
-    background: backgroundColor(theme, 300),
-    border: border(theme, "primary", { right: true }),
-    item: sidebarItem,
-    activeItem: {
-      ...sidebarItem,
-      iconColor: iconColor(theme, "active"),
-    },
-    resizeHandle: {
-      background: border(theme, "primary").color,
-      padding: {
-        left: 1,
-      },
-    },
-  };
   const shareIcon = {
     margin: { top: 3, bottom: 2 },
     cornerRadius: 6,
@@ -86,19 +70,17 @@ export default function workspace(theme: Theme) {
       },
       cursor: "Arrow"
     },
-    leftSidebar: {
-      ...sidebar,
-      border: border(theme, "primary", { right: true }),
-    },
-    rightSidebar: {
-      ...sidebar,
-      border: border(theme, "primary", { left: true }),
+    sidebarResizeHandle: {
+      background: border(theme, "primary").color,
+      padding: {
+        left: 1,
+      },
     },
     paneDivider: {
       color: border(theme, "secondary").color,
       width: 1,
     },
-    status_bar: {
+    statusBar: {
       height: 24,
       itemSpacing: 8,
       padding: {
@@ -111,6 +93,16 @@ export default function workspace(theme: Theme) {
       lspMessage: text(theme, "sans", "muted"),
       autoUpdateProgressMessage: text(theme, "sans", "muted"),
       autoUpdateDoneMessage: text(theme, "sans", "muted"),
+      sidebarItem: {
+        ...sidebarItem
+      },
+      sidebarItemHover: {
+        ...sidebarItem
+      },
+      sidebarItemActive: {
+        ...sidebarItem,
+        iconColor: iconColor(theme, "active"),
+      },
     },
     titlebar: {
       avatarWidth: 18,

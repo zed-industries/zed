@@ -31,7 +31,7 @@ pub use pane_group::*;
 use postage::prelude::Stream;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, Worktree};
 use settings::Settings;
-use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus};
+use sidebar::{Side, Sidebar, SidebarButtons, ToggleSidebarItem, ToggleSidebarItemFocus};
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
@@ -678,8 +678,8 @@ pub struct Workspace {
     themes: Arc<ThemeRegistry>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
-    left_sidebar: Sidebar,
-    right_sidebar: Sidebar,
+    left_sidebar: ViewHandle<Sidebar>,
+    right_sidebar: ViewHandle<Sidebar>,
     panes: Vec<ViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
     status_bar: ViewHandle<StatusBar>,
@@ -751,7 +751,6 @@ impl Workspace {
         cx.focus(&pane);
         cx.emit(Event::PaneAdded(pane.clone()));
 
-        let status_bar = cx.add_view(|cx| StatusBar::new(&pane, cx));
         let mut current_user = params.user_store.read(cx).watch_current_user().clone();
         let mut connection_status = params.client.status().clone();
         let _observe_current_user = cx.spawn_weak(|this, mut cx| async move {
@@ -773,6 +772,18 @@ impl Workspace {
 
         cx.emit_global(WorkspaceCreated(weak_self.clone()));
 
+        let left_sidebar = cx.add_view(|_| Sidebar::new(Side::Left));
+        let right_sidebar = cx.add_view(|_| Sidebar::new(Side::Right));
+        let left_sidebar_buttons = cx.add_view(|cx| SidebarButtons::new(left_sidebar.clone(), cx));
+        let right_sidebar_buttons =
+            cx.add_view(|cx| SidebarButtons::new(right_sidebar.clone(), cx));
+        let status_bar = cx.add_view(|cx| {
+            let mut status_bar = StatusBar::new(&pane.clone(), cx);
+            status_bar.add_left_item(left_sidebar_buttons, cx);
+            status_bar.add_right_item(right_sidebar_buttons, cx);
+            status_bar
+        });
+
         let mut this = Workspace {
             modal: None,
             weak_self,
@@ -785,8 +796,8 @@ impl Workspace {
             user_store: params.user_store.clone(),
             fs: params.fs.clone(),
             themes: params.themes.clone(),
-            left_sidebar: Sidebar::new(Side::Left),
-            right_sidebar: Sidebar::new(Side::Right),
+            left_sidebar,
+            right_sidebar,
             project: params.project.clone(),
             leader_state: Default::default(),
             follower_states_by_leader: Default::default(),
@@ -801,12 +812,12 @@ impl Workspace {
         self.weak_self.clone()
     }
 
-    pub fn left_sidebar_mut(&mut self) -> &mut Sidebar {
-        &mut self.left_sidebar
+    pub fn left_sidebar(&self) -> &ViewHandle<Sidebar> {
+        &self.left_sidebar
     }
 
-    pub fn right_sidebar_mut(&mut self) -> &mut Sidebar {
-        &mut self.right_sidebar
+    pub fn right_sidebar(&self) -> &ViewHandle<Sidebar> {
+        &self.right_sidebar
     }
 
     pub fn status_bar(&self) -> &ViewHandle<StatusBar> {
@@ -1028,12 +1039,15 @@ impl Workspace {
     }
 
     pub fn toggle_sidebar_item(&mut self, action: &ToggleSidebarItem, cx: &mut ViewContext<Self>) {
-        let sidebar = match action.0.side {
+        let sidebar = match action.side {
             Side::Left => &mut self.left_sidebar,
             Side::Right => &mut self.right_sidebar,
         };
-        sidebar.toggle_item(action.0.item_index);
-        if let Some(active_item) = sidebar.active_item() {
+        let active_item = sidebar.update(cx, |sidebar, cx| {
+            sidebar.toggle_item(action.item_index, cx);
+            sidebar.active_item().cloned()
+        });
+        if let Some(active_item) = active_item {
             cx.focus(active_item);
         } else {
             cx.focus_self();
@@ -1046,12 +1060,15 @@ impl Workspace {
         action: &ToggleSidebarItemFocus,
         cx: &mut ViewContext<Self>,
     ) {
-        let sidebar = match action.0.side {
+        let sidebar = match action.side {
             Side::Left => &mut self.left_sidebar,
             Side::Right => &mut self.right_sidebar,
         };
-        sidebar.activate_item(action.0.item_index);
-        if let Some(active_item) = sidebar.active_item() {
+        let active_item = sidebar.update(cx, |sidebar, cx| {
+            sidebar.toggle_item(action.item_index, cx);
+            sidebar.active_item().cloned()
+        });
+        if let Some(active_item) = active_item {
             if active_item.is_focused(cx) {
                 cx.focus_self();
             } else {
@@ -1610,7 +1627,7 @@ impl Workspace {
                     .boxed(),
             )
             .constrained()
-            .with_width(theme.workspace.right_sidebar.width)
+            .with_width(theme.workspace.titlebar.avatar_width)
             .contained()
             .with_margin_left(2.)
             .boxed();
@@ -1656,7 +1673,7 @@ impl Workspace {
                         .with_width(24.)
                         .aligned()
                         .constrained()
-                        .with_width(theme.workspace.right_sidebar.width)
+                        .with_width(24.)
                         .aligned()
                         .boxed()
                 })
@@ -1983,37 +2000,39 @@ impl View for Workspace {
                     .with_child(
                         Stack::new()
                             .with_child({
-                                let mut content = Flex::row();
-                                content.add_child(self.left_sidebar.render(&theme, cx));
-                                if let Some(element) =
-                                    self.left_sidebar.render_active_item(&theme, cx)
-                                {
-                                    content
-                                        .add_child(FlexItem::new(element).flex(0.8, false).boxed());
-                                }
-                                content.add_child(
-                                    Flex::column()
-                                        .with_child(
-                                            FlexItem::new(self.center.render(
-                                                &theme,
-                                                &self.follower_states_by_leader,
-                                                self.project.read(cx).collaborators(),
-                                            ))
-                                            .flex(1., true)
-                                            .boxed(),
-                                        )
-                                        .with_child(ChildView::new(&self.status_bar).boxed())
+                                Flex::row()
+                                    .with_children(
+                                        if self.left_sidebar.read(cx).active_item().is_some() {
+                                            Some(
+                                                ChildView::new(&self.left_sidebar)
+                                                    .flex(0.8, false)
+                                                    .boxed(),
+                                            )
+                                        } else {
+                                            None
+                                        },
+                                    )
+                                    .with_child(
+                                        FlexItem::new(self.center.render(
+                                            &theme,
+                                            &self.follower_states_by_leader,
+                                            self.project.read(cx).collaborators(),
+                                        ))
                                         .flex(1., true)
                                         .boxed(),
-                                );
-                                if let Some(element) =
-                                    self.right_sidebar.render_active_item(&theme, cx)
-                                {
-                                    content
-                                        .add_child(FlexItem::new(element).flex(0.8, false).boxed());
-                                }
-                                content.add_child(self.right_sidebar.render(&theme, cx));
-                                content.boxed()
+                                    )
+                                    .with_children(
+                                        if self.right_sidebar.read(cx).active_item().is_some() {
+                                            Some(
+                                                ChildView::new(&self.right_sidebar)
+                                                    .flex(0.8, false)
+                                                    .boxed(),
+                                            )
+                                        } else {
+                                            None
+                                        },
+                                    )
+                                    .boxed()
                             })
                             .with_children(self.modal.as_ref().map(|m| {
                                 ChildView::new(m)
@@ -2026,6 +2045,7 @@ impl View for Workspace {
                             .flex(1.0, true)
                             .boxed(),
                     )
+                    .with_child(ChildView::new(&self.status_bar).boxed())
                     .contained()
                     .with_background_color(theme.workspace.background)
                     .boxed(),
@@ -2202,10 +2222,10 @@ pub fn open_paths(
                 let mut workspace = (app_state.build_workspace)(project, &app_state, cx);
                 if contains_directory {
                     workspace.toggle_sidebar_item(
-                        &ToggleSidebarItem(SidebarItemId {
+                        &ToggleSidebarItem {
                             side: Side::Left,
                             item_index: 0,
-                        }),
+                        },
                         cx,
                     );
                 }
