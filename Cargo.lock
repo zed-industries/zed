@@ -5793,7 +5793,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "zed"
-version = "0.29.0"
+version = "0.30.0"
 dependencies = [
  "anyhow",
  "assets",
