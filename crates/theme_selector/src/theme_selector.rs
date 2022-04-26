@@ -36,7 +36,12 @@ impl ThemeSelector {
         let handle = cx.weak_handle();
         let picker = cx.add_view(|cx| Picker::new(handle, cx));
         let original_theme = cx.global::<Settings>().theme.clone();
-        let theme_names = registry.list().collect::<Vec<_>>();
+        let mut theme_names = registry.list().collect::<Vec<_>>();
+        theme_names.sort_unstable_by(|a, b| {
+            a.ends_with("dark")
+                .cmp(&b.ends_with("dark"))
+                .then_with(|| a.cmp(&b))
+        });
         let matches = theme_names
             .iter()
             .map(|name| StringMatch {
