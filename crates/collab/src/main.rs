@@ -24,7 +24,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    async fn new(config: Config) -> Result<Arc<Self>> {
+    async fn new(config: &Config) -> Result<Arc<Self>> {
         let db = PostgresDb::new(&config.database_url, 5).await?;
         let this = Self {
             db: Arc::new(db),
@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
     }
 
     let config = envy::from_env::<Config>().expect("error loading config");
-    let state = AppState::new(config).await?;
+    let state = AppState::new(&config).await?;
     let rpc = Peer::new();
     run_server(
         state.clone(),
