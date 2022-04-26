@@ -11,8 +11,6 @@ use db::{Db, PostgresDb};
 use serde::Deserialize;
 use std::{net::TcpListener, sync::Arc};
 
-// type Request = tide::Request<Arc<AppState>>;
-
 #[derive(Default, Deserialize)]
 pub struct Config {
     pub http_port: u16,
@@ -22,30 +20,19 @@ pub struct Config {
 
 pub struct AppState {
     db: Arc<dyn Db>,
-    config: Config,
+    api_token: String,
 }
 
 impl AppState {
     async fn new(config: Config) -> Result<Arc<Self>> {
         let db = PostgresDb::new(&config.database_url, 5).await?;
-
         let this = Self {
             db: Arc::new(db),
-            config,
+            api_token: config.api_token.clone(),
         };
         Ok(Arc::new(this))
     }
 }
-
-// trait RequestExt {
-//     fn db(&self) -> &Arc<dyn Db>;
-// }
-
-// impl RequestExt for Request<Body> {
-//     fn db(&self) -> &Arc<dyn Db> {
-//         &self.data::<Arc<AppState>>().unwrap().db
-//     }
-// }
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -68,7 +55,7 @@ async fn main() -> Result<()> {
     run_server(
         state.clone(),
         rpc,
-        TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port))
+        TcpListener::bind(&format!("0.0.0.0:{}", config.http_port))
             .expect("failed to bind TCP listener"),
     )
     .await?;
@@ -80,11 +67,11 @@ pub async fn run_server(
     peer: Arc<Peer>,
     listener: TcpListener,
 ) -> Result<()> {
-    let app = Router::<Body>::new();
     // TODO: Compression on API routes?
     // TODO: Authenticate API routes.
 
-    let app = api::add_routes(app, state);
+    let app = Router::<Body>::new().merge(api::routes(state.clone()));
+
     // TODO: Add rpc routes
 
     axum::Server::from_tcp(listener)?

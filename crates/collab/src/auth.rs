@@ -1,54 +1,64 @@
+use std::sync::Arc;
+
 use super::db::{self, UserId};
+use crate::{AppState, Error};
 use anyhow::{Context, Result};
+use axum::{
+    http::{self, Request, StatusCode},
+    middleware::Next,
+    response::IntoResponse,
+};
 use rand::thread_rng;
 use scrypt::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Scrypt,
 };
 
-// pub async fn process_auth_header(request: &Request) -> tide::Result<UserId> {
-//     let mut auth_header = request
-//         .header("Authorization")
-//         .ok_or_else(|| {
-//             Error::new(
-//                 StatusCode::BadRequest,
-//                 anyhow!("missing authorization header"),
-//             )
-//         })?
-//         .last()
-//         .as_str()
-//         .split_whitespace();
-//     let user_id = UserId(auth_header.next().unwrap_or("").parse().map_err(|_| {
-//         Error::new(
-//             StatusCode::BadRequest,
-//             anyhow!("missing user id in authorization header"),
-//         )
-//     })?);
-//     let access_token = auth_header.next().ok_or_else(|| {
-//         Error::new(
-//             StatusCode::BadRequest,
-//             anyhow!("missing access token in authorization header"),
-//         )
-//     })?;
+pub async fn validate_header<B>(req: Request<B>, next: Next<B>) -> impl IntoResponse {
+    let mut auth_header = req
+        .headers()
+        .get(http::header::AUTHORIZATION)
+        .and_then(|header| header.to_str().ok())
+        .ok_or_else(|| {
+            Error::Http(
+                StatusCode::BAD_REQUEST,
+                "missing authorization header".to_string(),
+            )
+        })?
+        .split_whitespace();
 
-//     let state = request.state().clone();
-//     let mut credentials_valid = false;
-//     for password_hash in state.db.get_access_token_hashes(user_id).await? {
-//         if verify_access_token(&access_token, &password_hash)? {
-//             credentials_valid = true;
-//             break;
-//         }
-//     }
+    let user_id = UserId(auth_header.next().unwrap_or("").parse().map_err(|_| {
+        Error::Http(
+            StatusCode::BAD_REQUEST,
+            "missing user id in authorization header".to_string(),
+        )
+    })?);
 
-//     if !credentials_valid {
-//         Err(Error::new(
-//             StatusCode::Unauthorized,
-//             anyhow!("invalid credentials"),
-//         ))?;
-//     }
+    let access_token = auth_header.next().ok_or_else(|| {
+        Error::Http(
+            StatusCode::BAD_REQUEST,
+            "missing access token in authorization header".to_string(),
+        )
+    })?;
 
-//     Ok(user_id)
-// }
+    let state = req.extensions().get::<Arc<AppState>>().unwrap();
+    let mut credentials_valid = false;
+    for password_hash in state.db.get_access_token_hashes(user_id).await? {
+        if verify_access_token(&access_token, &password_hash)? {
+            credentials_valid = true;
+            break;
+        }
+    }
+
+    if !credentials_valid {
+        Err(Error::Http(
+            StatusCode::UNAUTHORIZED,
+            "invalid credentials".to_string(),
+        ))?;
+    }
+
+    Ok::<_, Error>(next.run(req).await)
+}
 
 const MAX_ACCESS_TOKENS_TO_STORE: usize = 8;
 

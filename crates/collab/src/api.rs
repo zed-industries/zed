@@ -7,42 +7,45 @@ use anyhow::anyhow;
 use axum::{
     body::Body,
     extract::{Path, Query},
-    http::StatusCode,
-    routing::{delete, get, post, put},
-    Json, Router,
+    http::{self, Request, StatusCode},
+    middleware::{self, Next},
+    response::IntoResponse,
+    routing::{get, post, put},
+    Extension, Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tower::ServiceBuilder;
 
-pub fn add_routes(router: Router<Body>, app: Arc<AppState>) -> Router<Body> {
-    router
-        .route("/users", {
-            let app = app.clone();
-            get(move || get_users(app))
-        })
-        .route("/users", {
-            let app = app.clone();
-            post(move |params| create_user(params, app))
-        })
-        .route("/users/:id", {
-            let app = app.clone();
-            put(move |user_id, params| update_user(user_id, params, app))
-        })
-        .route("/users/:id", {
-            let app = app.clone();
-            delete(move |user_id| destroy_user(user_id, app))
-        })
-        .route("/users/:github_login", {
-            let app = app.clone();
-            get(move |github_login| get_user(github_login, app))
-        })
-        .route("/users/:github_login/access_tokens", {
-            let app = app.clone();
-            post(move |github_login, params| create_access_token(github_login, params, app))
-        })
+pub fn routes(state: Arc<AppState>) -> Router<Body> {
+    Router::new()
+        .route("/users", get(get_users).post(create_user))
+        .route("/users/:id", put(update_user).delete(destroy_user))
+        .route("/users/:gh_login", get(get_user))
+        .route("/users/:gh_login/access_tokens", post(create_access_token))
+        .layer(
+            ServiceBuilder::new()
+                .layer(Extension(state))
+                .layer(middleware::from_fn(validate_api_token)),
+        )
 }
 
-async fn get_users(app: Arc<AppState>) -> Result<Json<Vec<User>>> {
+pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoResponse {
+    let mut auth_header = req
+        .headers()
+        .get(http::header::AUTHORIZATION)
+        .and_then(|header| header.to_str().ok())
+        .ok_or_else(|| {
+            Error::Http(
+                StatusCode::BAD_REQUEST,
+                "missing authorization header".to_string(),
+            )
+        })?;
+
+    Ok::<_, Error>(next.run(req).await)
+}
+
+async fn get_users(Extension(app): Extension<Arc<AppState>>) -> Result<Json<Vec<User>>> {
     let users = app.db.get_all_users().await?;
     Ok(Json(users))
 }
@@ -55,7 +58,7 @@ struct CreateUserParams {
 
 async fn create_user(
     Json(params): Json<CreateUserParams>,
-    app: Arc<AppState>,
+    Extension(app): Extension<Arc<AppState>>,
 ) -> Result<Json<User>> {
     let user_id = app
         .db
@@ -79,7 +82,7 @@ struct UpdateUserParams {
 async fn update_user(
     Path(user_id): Path<i32>,
     Json(params): Json<UpdateUserParams>,
-    app: Arc<AppState>,
+    Extension(app): Extension<Arc<AppState>>,
 ) -> Result<()> {
     app.db
         .set_user_is_admin(UserId(user_id), params.admin)
@@ -87,12 +90,18 @@ async fn update_user(
     Ok(())
 }
 
-async fn destroy_user(Path(user_id): Path<i32>, app: Arc<AppState>) -> Result<()> {
+async fn destroy_user(
+    Path(user_id): Path<i32>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<()> {
     app.db.destroy_user(UserId(user_id)).await?;
     Ok(())
 }
 
-async fn get_user(Path(login): Path<String>, app: Arc<AppState>) -> Result<Json<User>> {
+async fn get_user(
+    Path(login): Path<String>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<User>> {
     let user = app
         .db
         .get_user_by_github_login(&login)
@@ -116,7 +125,7 @@ struct CreateAccessTokenResponse {
 async fn create_access_token(
     Path(login): Path<String>,
     Query(params): Query<CreateAccessTokenQueryParams>,
-    app: Arc<AppState>,
+    Extension(app): Extension<Arc<AppState>>,
 ) -> Result<Json<CreateAccessTokenResponse>> {
     //     request.require_token().await?;
 
