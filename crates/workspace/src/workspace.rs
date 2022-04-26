@@ -1297,7 +1297,7 @@ impl Workspace {
             if project.is_local() {
                 if project.is_shared() {
                     project.unshare(cx);
-                } else {
+                } else if project.can_share(cx) {
                     project.share(cx).detach();
                 }
             }
@@ -1493,22 +1493,20 @@ impl Workspace {
                         Label::new(worktree_root_names, theme.workspace.titlebar.title.clone())
                             .aligned()
                             .left()
-                            .contained()
-                            .with_margin_left(80.)
                             .boxed(),
                     )
                     .with_child(
                         Align::new(
                             Flex::row()
-                                .with_children(self.render_share_icon(theme, cx))
                                 .with_children(self.render_collaborators(theme, cx))
-                                .with_child(self.render_current_user(
+                                .with_children(self.render_current_user(
                                     self.user_store.read(cx).current_user().as_ref(),
                                     self.project.read(cx).replica_id(),
                                     theme,
                                     cx,
                                 ))
                                 .with_children(self.render_connection_status(cx))
+                                .with_children(self.render_share_icon(theme, cx))
                                 .boxed(),
                         )
                         .right()
@@ -1552,25 +1550,30 @@ impl Workspace {
         replica_id: ReplicaId,
         theme: &Theme,
         cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
+    ) -> Option<ElementBox> {
+        let status = *self.client.status().borrow();
         if let Some(avatar) = user.and_then(|user| user.avatar.clone()) {
-            self.render_avatar(avatar, replica_id, None, theme, cx)
+            Some(self.render_avatar(avatar, replica_id, None, theme, cx))
+        } else if matches!(status, client::Status::UpgradeRequired) {
+            None
         } else {
-            MouseEventHandler::new::<Authenticate, _, _>(0, cx, |state, _| {
-                let style = if state.hovered {
-                    &theme.workspace.titlebar.hovered_sign_in_prompt
-                } else {
-                    &theme.workspace.titlebar.sign_in_prompt
-                };
-                Label::new("Sign in".to_string(), style.text.clone())
-                    .contained()
-                    .with_style(style.container)
-                    .boxed()
-            })
-            .on_click(|cx| cx.dispatch_action(Authenticate))
-            .with_cursor_style(CursorStyle::PointingHand)
-            .aligned()
-            .boxed()
+            Some(
+                MouseEventHandler::new::<Authenticate, _, _>(0, cx, |state, _| {
+                    let style = if state.hovered {
+                        &theme.workspace.titlebar.hovered_sign_in_prompt
+                    } else {
+                        &theme.workspace.titlebar.sign_in_prompt
+                    };
+                    Label::new("Sign in".to_string(), style.text.clone())
+                        .contained()
+                        .with_style(style.container)
+                        .boxed()
+                })
+                .on_click(|cx| cx.dispatch_action(Authenticate))
+                .with_cursor_style(CursorStyle::PointingHand)
+                .aligned()
+                .boxed(),
+            )
         }
     }
 
@@ -1610,6 +1613,8 @@ impl Workspace {
             )
             .constrained()
             .with_width(theme.workspace.right_sidebar.width)
+            .contained()
+            .with_margin_left(2.)
             .boxed();
 
         if let Some(peer_id) = peer_id {
@@ -1623,22 +1628,39 @@ impl Workspace {
     }
 
     fn render_share_icon(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
-        if self.project().read(cx).is_local() && self.client.user_id().is_some() {
-            let color = if self.project().read(cx).is_shared() {
-                theme.workspace.titlebar.share_icon_active_color
-            } else {
-                theme.workspace.titlebar.share_icon_color
-            };
+        if self.project().read(cx).is_local()
+            && self.client.user_id().is_some()
+            && self.project().read(cx).can_share(cx)
+        {
             Some(
-                MouseEventHandler::new::<ToggleShare, _, _>(0, cx, |_, _| {
-                    Align::new(
-                        Svg::new("icons/broadcast-24.svg")
-                            .with_color(color)
-                            .constrained()
-                            .with_width(24.)
-                            .boxed(),
-                    )
-                    .boxed()
+                MouseEventHandler::new::<ToggleShare, _, _>(0, cx, |state, cx| {
+                    let style = if self.project().read(cx).is_shared() {
+                        if state.hovered {
+                            &theme.workspace.titlebar.hovered_active_share_icon
+                        } else {
+                            &theme.workspace.titlebar.active_share_icon
+                        }
+                    } else {
+                        if state.hovered {
+                            &theme.workspace.titlebar.hovered_share_icon
+                        } else {
+                            &theme.workspace.titlebar.share_icon
+                        }
+                    };
+                    Svg::new("icons/share.svg")
+                        .with_color(style.color)
+                        .constrained()
+                        .with_height(14.)
+                        .aligned()
+                        .contained()
+                        .with_style(style.container)
+                        .constrained()
+                        .with_width(24.)
+                        .aligned()
+                        .constrained()
+                        .with_width(theme.workspace.right_sidebar.width)
+                        .aligned()
+                        .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(|cx| cx.dispatch_action(ToggleShare))

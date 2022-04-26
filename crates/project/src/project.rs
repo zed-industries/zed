@@ -669,6 +669,10 @@ impl Project {
             .map(|worktree| worktree.read(cx).id())
     }
 
+    pub fn can_share(&self, cx: &AppContext) -> bool {
+        self.is_local() && self.visible_worktrees(cx).next().is_some()
+    }
+
     pub fn share(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let rpc = self.client.clone();
         cx.spawn(|this, mut cx| async move {
