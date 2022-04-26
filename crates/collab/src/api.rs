@@ -1,179 +1,184 @@
-use crate::{auth, db::UserId, AppState, Request, RequestExt as _};
-use async_trait::async_trait;
-use serde::Deserialize;
-use serde_json::json;
+use crate::{
+    auth,
+    db::{User, UserId},
+    AppState, Error, Result,
+};
+use anyhow::anyhow;
+use axum::{
+    body::Body,
+    extract::{Path, Query},
+    http::{self, Request, StatusCode},
+    middleware::{self, Next},
+    response::IntoResponse,
+    routing::{get, post, put},
+    Extension, Json, Router,
+};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use surf::StatusCode;
+use tower::ServiceBuilder;
 
-pub fn add_routes(app: &mut tide::Server<Arc<AppState>>) {
-    app.at("/users").get(get_users);
-    app.at("/users").post(create_user);
-    app.at("/users/:id").put(update_user);
-    app.at("/users/:id").delete(destroy_user);
-    app.at("/users/:github_login").get(get_user);
-    app.at("/users/:github_login/access_tokens")
-        .post(create_access_token);
+pub fn routes(state: Arc<AppState>) -> Router<Body> {
+    Router::new()
+        .route("/users", get(get_users).post(create_user))
+        .route(
+            "/users/:id",
+            put(update_user).delete(destroy_user).get(get_user),
+        )
+        .route("/users/:id/access_tokens", post(create_access_token))
+        .layer(
+            ServiceBuilder::new()
+                .layer(Extension(state))
+                .layer(middleware::from_fn(validate_api_token)),
+        )
+    // TODO: Compression on API routes?
 }
 
-async fn get_user(request: Request) -> tide::Result {
-    request.require_token().await?;
+pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoResponse {
+    let token = req
+        .headers()
+        .get(http::header::AUTHORIZATION)
+        .and_then(|header| header.to_str().ok())
+        .ok_or_else(|| {
+            Error::Http(
+                StatusCode::BAD_REQUEST,
+                "missing authorization header".to_string(),
+            )
+        })?
+        .strip_prefix("token ")
+        .ok_or_else(|| {
+            Error::Http(
+                StatusCode::BAD_REQUEST,
+                "invalid authorization header".to_string(),
+            )
+        })?;
 
-    let user = request
-        .db()
-        .get_user_by_github_login(request.param("github_login")?)
-        .await?
-        .ok_or_else(|| surf::Error::from_str(404, "user not found"))?;
+    let state = req.extensions().get::<Arc<AppState>>().unwrap();
 
-    Ok(tide::Response::builder(StatusCode::Ok)
-        .body(tide::Body::from_json(&user)?)
-        .build())
-}
-
-async fn get_users(request: Request) -> tide::Result {
-    request.require_token().await?;
-
-    let users = request.db().get_all_users().await?;
-
-    Ok(tide::Response::builder(StatusCode::Ok)
-        .body(tide::Body::from_json(&users)?)
-        .build())
-}
-
-async fn create_user(mut request: Request) -> tide::Result {
-    request.require_token().await?;
-
-    #[derive(Deserialize)]
-    struct Params {
-        github_login: String,
-        admin: bool,
+    if token != state.api_token {
+        Err(Error::Http(
+            StatusCode::UNAUTHORIZED,
+            "invalid authorization token".to_string(),
+        ))?
     }
-    let params = request.body_json::<Params>().await?;
 
-    let user_id = request
-        .db()
+    Ok::<_, Error>(next.run(req).await)
+}
+
+async fn get_users(Extension(app): Extension<Arc<AppState>>) -> Result<Json<Vec<User>>> {
+    let users = app.db.get_all_users().await?;
+    Ok(Json(users))
+}
+
+#[derive(Deserialize)]
+struct CreateUserParams {
+    github_login: String,
+    admin: bool,
+}
+
+async fn create_user(
+    Json(params): Json<CreateUserParams>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<User>> {
+    let user_id = app
+        .db
         .create_user(&params.github_login, params.admin)
         .await?;
 
-    let user = request.db().get_user_by_id(user_id).await?.ok_or_else(|| {
-        surf::Error::from_str(
-            StatusCode::InternalServerError,
-            "couldn't find the user we just created",
-        )
-    })?;
-
-    Ok(tide::Response::builder(StatusCode::Ok)
-        .body(tide::Body::from_json(&user)?)
-        .build())
-}
-
-async fn update_user(mut request: Request) -> tide::Result {
-    request.require_token().await?;
-
-    #[derive(Deserialize)]
-    struct Params {
-        admin: bool,
-    }
-    let user_id = UserId(
-        request
-            .param("id")?
-            .parse::<i32>()
-            .map_err(|error| surf::Error::from_str(StatusCode::BadRequest, error.to_string()))?,
-    );
-    let params = request.body_json::<Params>().await?;
-
-    request
-        .db()
-        .set_user_is_admin(user_id, params.admin)
-        .await?;
-
-    Ok(tide::Response::builder(StatusCode::Ok).build())
-}
-
-async fn destroy_user(request: Request) -> tide::Result {
-    request.require_token().await?;
-    let user_id = UserId(
-        request
-            .param("id")?
-            .parse::<i32>()
-            .map_err(|error| surf::Error::from_str(StatusCode::BadRequest, error.to_string()))?,
-    );
-
-    request.db().destroy_user(user_id).await?;
-
-    Ok(tide::Response::builder(StatusCode::Ok).build())
-}
-
-async fn create_access_token(request: Request) -> tide::Result {
-    request.require_token().await?;
-
-    let user = request
-        .db()
-        .get_user_by_github_login(request.param("github_login")?)
+    let user = app
+        .db
+        .get_user_by_id(user_id)
         .await?
-        .ok_or_else(|| surf::Error::from_str(StatusCode::NotFound, "user not found"))?;
+        .ok_or_else(|| anyhow!("couldn't find the user we just created"))?;
 
-    #[derive(Deserialize)]
-    struct QueryParams {
-        public_key: String,
-        impersonate: Option<String>,
-    }
+    Ok(Json(user))
+}
 
-    let query_params: QueryParams = request.query().map_err(|_| {
-        surf::Error::from_str(StatusCode::UnprocessableEntity, "invalid query params")
-    })?;
+#[derive(Deserialize)]
+struct UpdateUserParams {
+    admin: bool,
+}
+
+async fn update_user(
+    Path(user_id): Path<i32>,
+    Json(params): Json<UpdateUserParams>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<()> {
+    app.db
+        .set_user_is_admin(UserId(user_id), params.admin)
+        .await?;
+    Ok(())
+}
+
+async fn destroy_user(
+    Path(user_id): Path<i32>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<()> {
+    app.db.destroy_user(UserId(user_id)).await?;
+    Ok(())
+}
+
+async fn get_user(
+    Path(login): Path<String>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<User>> {
+    let user = app
+        .db
+        .get_user_by_github_login(&login)
+        .await?
+        .ok_or_else(|| anyhow!("user not found"))?;
+    Ok(Json(user))
+}
+
+#[derive(Deserialize)]
+struct CreateAccessTokenQueryParams {
+    public_key: String,
+    impersonate: Option<String>,
+}
+
+#[derive(Serialize)]
+struct CreateAccessTokenResponse {
+    user_id: UserId,
+    encrypted_access_token: String,
+}
+
+async fn create_access_token(
+    Path(login): Path<String>,
+    Query(params): Query<CreateAccessTokenQueryParams>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<CreateAccessTokenResponse>> {
+    //     request.require_token().await?;
+
+    let user = app
+        .db
+        .get_user_by_github_login(&login)
+        .await?
+        .ok_or_else(|| anyhow!("user not found"))?;
 
     let mut user_id = user.id;
-    if let Some(impersonate) = query_params.impersonate {
+    if let Some(impersonate) = params.impersonate {
         if user.admin {
-            if let Some(impersonated_user) =
-                request.db().get_user_by_github_login(&impersonate).await?
-            {
+            if let Some(impersonated_user) = app.db.get_user_by_github_login(&impersonate).await? {
                 user_id = impersonated_user.id;
             } else {
-                return Ok(tide::Response::builder(StatusCode::UnprocessableEntity)
-                    .body(format!(
-                        "Can't impersonate non-existent user {}",
-                        impersonate
-                    ))
-                    .build());
+                return Err(Error::Http(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    format!("user {impersonate} does not exist"),
+                ));
             }
         } else {
-            return Ok(tide::Response::builder(StatusCode::Unauthorized)
-                .body(format!(
-                    "Can't impersonate user {} because the real user isn't an admin",
-                    impersonate
-                ))
-                .build());
+            return Err(Error::Http(
+                StatusCode::UNAUTHORIZED,
+                format!("you do not have permission to impersonate other users"),
+            ));
         }
     }
 
-    let access_token = auth::create_access_token(request.db().as_ref(), user_id).await?;
+    let access_token = auth::create_access_token(app.db.as_ref(), user_id).await?;
     let encrypted_access_token =
-        auth::encrypt_access_token(&access_token, query_params.public_key.clone())?;
+        auth::encrypt_access_token(&access_token, params.public_key.clone())?;
 
-    Ok(tide::Response::builder(StatusCode::Ok)
-        .body(json!({"user_id": user_id, "encrypted_access_token": encrypted_access_token}))
-        .build())
-}
-
-#[async_trait]
-pub trait RequestExt {
-    async fn require_token(&self) -> tide::Result<()>;
-}
-
-#[async_trait]
-impl RequestExt for Request {
-    async fn require_token(&self) -> tide::Result<()> {
-        let token = self
-            .header("Authorization")
-            .and_then(|header| header.get(0))
-            .and_then(|header| header.as_str().strip_prefix("token "))
-            .ok_or_else(|| surf::Error::from_str(403, "invalid authorization header"))?;
-
-        if token == self.state().config.api_token {
-            Ok(())
-        } else {
-            Err(tide::Error::from_str(403, "invalid authorization token"))
-        }
-    }
+    Ok(Json(CreateAccessTokenResponse {
+        user_id,
+        encrypted_access_token,
+    }))
 }

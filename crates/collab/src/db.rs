@@ -1,25 +1,10 @@
 use anyhow::Context;
 use anyhow::Result;
-use async_std::task::{block_on, yield_now};
 use async_trait::async_trait;
 use serde::Serialize;
 pub use sqlx::postgres::PgPoolOptions as DbOptions;
 use sqlx::{types::Uuid, FromRow};
 use time::OffsetDateTime;
-
-macro_rules! test_support {
-    ($self:ident, { $($token:tt)* }) => {{
-        let body = async {
-            $($token)*
-        };
-        if $self.test_mode {
-            yield_now().await;
-            block_on(body)
-        } else {
-            body.await
-        }
-    }};
-}
 
 #[async_trait]
 pub trait Db: Send + Sync {
@@ -77,20 +62,16 @@ pub trait Db: Send + Sync {
 
 pub struct PostgresDb {
     pool: sqlx::PgPool,
-    test_mode: bool,
 }
 
 impl PostgresDb {
-    pub async fn new(url: &str, max_connections: u32) -> tide::Result<Self> {
+    pub async fn new(url: &str, max_connections: u32) -> Result<Self> {
         let pool = DbOptions::new()
             .max_connections(max_connections)
             .connect(url)
             .await
             .context("failed to connect to postgres database")?;
-        Ok(Self {
-            pool,
-            test_mode: false,
-        })
+        Ok(Self { pool })
     }
 }
 
@@ -99,27 +80,23 @@ impl Db for PostgresDb {
     // users
 
     async fn create_user(&self, github_login: &str, admin: bool) -> Result<UserId> {
-        test_support!(self, {
-            let query = "
+        let query = "
                 INSERT INTO users (github_login, admin)
                 VALUES ($1, $2)
                 ON CONFLICT (github_login) DO UPDATE SET github_login = excluded.github_login
                 RETURNING id
             ";
-            Ok(sqlx::query_scalar(query)
-                .bind(github_login)
-                .bind(admin)
-                .fetch_one(&self.pool)
-                .await
-                .map(UserId)?)
-        })
+        Ok(sqlx::query_scalar(query)
+            .bind(github_login)
+            .bind(admin)
+            .fetch_one(&self.pool)
+            .await
+            .map(UserId)?)
     }
 
     async fn get_all_users(&self) -> Result<Vec<User>> {
-        test_support!(self, {
-            let query = "SELECT * FROM users ORDER BY github_login ASC";
-            Ok(sqlx::query_as(query).fetch_all(&self.pool).await?)
-        })
+        let query = "SELECT * FROM users ORDER BY github_login ASC";
+        Ok(sqlx::query_as(query).fetch_all(&self.pool).await?)
     }
 
     async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>> {
@@ -129,57 +106,49 @@ impl Db for PostgresDb {
 
     async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
         let ids = ids.into_iter().map(|id| id.0).collect::<Vec<_>>();
-        test_support!(self, {
-            let query = "
+        let query = "
                 SELECT users.*
                 FROM users
                 WHERE users.id = ANY ($1)
             ";
 
-            Ok(sqlx::query_as(query)
-                .bind(&ids)
-                .fetch_all(&self.pool)
-                .await?)
-        })
+        Ok(sqlx::query_as(query)
+            .bind(&ids)
+            .fetch_all(&self.pool)
+            .await?)
     }
 
     async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
-        test_support!(self, {
-            let query = "SELECT * FROM users WHERE github_login = $1 LIMIT 1";
-            Ok(sqlx::query_as(query)
-                .bind(github_login)
-                .fetch_optional(&self.pool)
-                .await?)
-        })
+        let query = "SELECT * FROM users WHERE github_login = $1 LIMIT 1";
+        Ok(sqlx::query_as(query)
+            .bind(github_login)
+            .fetch_optional(&self.pool)
+            .await?)
     }
 
     async fn set_user_is_admin(&self, id: UserId, is_admin: bool) -> Result<()> {
-        test_support!(self, {
-            let query = "UPDATE users SET admin = $1 WHERE id = $2";
-            Ok(sqlx::query(query)
-                .bind(is_admin)
-                .bind(id.0)
-                .execute(&self.pool)
-                .await
-                .map(drop)?)
-        })
+        let query = "UPDATE users SET admin = $1 WHERE id = $2";
+        Ok(sqlx::query(query)
+            .bind(is_admin)
+            .bind(id.0)
+            .execute(&self.pool)
+            .await
+            .map(drop)?)
     }
 
     async fn destroy_user(&self, id: UserId) -> Result<()> {
-        test_support!(self, {
-            let query = "DELETE FROM access_tokens WHERE user_id = $1;";
-            sqlx::query(query)
-                .bind(id.0)
-                .execute(&self.pool)
-                .await
-                .map(drop)?;
-            let query = "DELETE FROM users WHERE id = $1;";
-            Ok(sqlx::query(query)
-                .bind(id.0)
-                .execute(&self.pool)
-                .await
-                .map(drop)?)
-        })
+        let query = "DELETE FROM access_tokens WHERE user_id = $1;";
+        sqlx::query(query)
+            .bind(id.0)
+            .execute(&self.pool)
+            .await
+            .map(drop)?;
+        let query = "DELETE FROM users WHERE id = $1;";
+        Ok(sqlx::query(query)
+            .bind(id.0)
+            .execute(&self.pool)
+            .await
+            .map(drop)?)
     }
 
     // access tokens
@@ -190,12 +159,11 @@ impl Db for PostgresDb {
         access_token_hash: &str,
         max_access_token_count: usize,
     ) -> Result<()> {
-        test_support!(self, {
-            let insert_query = "
+        let insert_query = "
                 INSERT INTO access_tokens (user_id, hash)
                 VALUES ($1, $2);
             ";
-            let cleanup_query = "
+        let cleanup_query = "
                 DELETE FROM access_tokens
                 WHERE id IN (
                     SELECT id from access_tokens
@@ -205,35 +173,32 @@ impl Db for PostgresDb {
                 )
             ";
 
-            let mut tx = self.pool.begin().await?;
-            sqlx::query(insert_query)
-                .bind(user_id.0)
-                .bind(access_token_hash)
-                .execute(&mut tx)
-                .await?;
-            sqlx::query(cleanup_query)
-                .bind(user_id.0)
-                .bind(access_token_hash)
-                .bind(max_access_token_count as u32)
-                .execute(&mut tx)
-                .await?;
-            Ok(tx.commit().await?)
-        })
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(insert_query)
+            .bind(user_id.0)
+            .bind(access_token_hash)
+            .execute(&mut tx)
+            .await?;
+        sqlx::query(cleanup_query)
+            .bind(user_id.0)
+            .bind(access_token_hash)
+            .bind(max_access_token_count as u32)
+            .execute(&mut tx)
+            .await?;
+        Ok(tx.commit().await?)
     }
 
     async fn get_access_token_hashes(&self, user_id: UserId) -> Result<Vec<String>> {
-        test_support!(self, {
-            let query = "
+        let query = "
                 SELECT hash
                 FROM access_tokens
                 WHERE user_id = $1
                 ORDER BY id DESC
             ";
-            Ok(sqlx::query_scalar(query)
-                .bind(user_id.0)
-                .fetch_all(&self.pool)
-                .await?)
-        })
+        Ok(sqlx::query_scalar(query)
+            .bind(user_id.0)
+            .fetch_all(&self.pool)
+            .await?)
     }
 
     // orgs
@@ -241,94 +206,83 @@ impl Db for PostgresDb {
     #[allow(unused)] // Help rust-analyzer
     #[cfg(any(test, feature = "seed-support"))]
     async fn find_org_by_slug(&self, slug: &str) -> Result<Option<Org>> {
-        test_support!(self, {
-            let query = "
+        let query = "
                 SELECT *
                 FROM orgs
                 WHERE slug = $1
             ";
-            Ok(sqlx::query_as(query)
-                .bind(slug)
-                .fetch_optional(&self.pool)
-                .await?)
-        })
+        Ok(sqlx::query_as(query)
+            .bind(slug)
+            .fetch_optional(&self.pool)
+            .await?)
     }
 
     #[cfg(any(test, feature = "seed-support"))]
     async fn create_org(&self, name: &str, slug: &str) -> Result<OrgId> {
-        test_support!(self, {
-            let query = "
+        let query = "
                 INSERT INTO orgs (name, slug)
                 VALUES ($1, $2)
                 RETURNING id
             ";
-            Ok(sqlx::query_scalar(query)
-                .bind(name)
-                .bind(slug)
-                .fetch_one(&self.pool)
-                .await
-                .map(OrgId)?)
-        })
+        Ok(sqlx::query_scalar(query)
+            .bind(name)
+            .bind(slug)
+            .fetch_one(&self.pool)
+            .await
+            .map(OrgId)?)
     }
 
     #[cfg(any(test, feature = "seed-support"))]
     async fn add_org_member(&self, org_id: OrgId, user_id: UserId, is_admin: bool) -> Result<()> {
-        test_support!(self, {
-            let query = "
+        let query = "
                 INSERT INTO org_memberships (org_id, user_id, admin)
                 VALUES ($1, $2, $3)
                 ON CONFLICT DO NOTHING
             ";
-            Ok(sqlx::query(query)
-                .bind(org_id.0)
-                .bind(user_id.0)
-                .bind(is_admin)
-                .execute(&self.pool)
-                .await
-                .map(drop)?)
-        })
+        Ok(sqlx::query(query)
+            .bind(org_id.0)
+            .bind(user_id.0)
+            .bind(is_admin)
+            .execute(&self.pool)
+            .await
+            .map(drop)?)
     }
 
     // channels
 
     #[cfg(any(test, feature = "seed-support"))]
     async fn create_org_channel(&self, org_id: OrgId, name: &str) -> Result<ChannelId> {
-        test_support!(self, {
-            let query = "
+        let query = "
                 INSERT INTO channels (owner_id, owner_is_user, name)
                 VALUES ($1, false, $2)
                 RETURNING id
             ";
-            Ok(sqlx::query_scalar(query)
-                .bind(org_id.0)
-                .bind(name)
-                .fetch_one(&self.pool)
-                .await
-                .map(ChannelId)?)
-        })
+        Ok(sqlx::query_scalar(query)
+            .bind(org_id.0)
+            .bind(name)
+            .fetch_one(&self.pool)
+            .await
+            .map(ChannelId)?)
     }
 
     #[allow(unused)] // Help rust-analyzer
     #[cfg(any(test, feature = "seed-support"))]
     async fn get_org_channels(&self, org_id: OrgId) -> Result<Vec<Channel>> {
-        test_support!(self, {
-            let query = "
+        let query = "
                 SELECT *
                 FROM channels
                 WHERE
                     channels.owner_is_user = false AND
                     channels.owner_id = $1
             ";
-            Ok(sqlx::query_as(query)
-                .bind(org_id.0)
-                .fetch_all(&self.pool)
-                .await?)
-        })
+        Ok(sqlx::query_as(query)
+            .bind(org_id.0)
+            .fetch_all(&self.pool)
+            .await?)
     }
 
     async fn get_accessible_channels(&self, user_id: UserId) -> Result<Vec<Channel>> {
-        test_support!(self, {
-            let query = "
+        let query = "
                 SELECT
                     channels.*
                 FROM
@@ -337,11 +291,10 @@ impl Db for PostgresDb {
                     channel_memberships.user_id = $1 AND
                     channel_memberships.channel_id = channels.id
             ";
-            Ok(sqlx::query_as(query)
-                .bind(user_id.0)
-                .fetch_all(&self.pool)
-                .await?)
-        })
+        Ok(sqlx::query_as(query)
+            .bind(user_id.0)
+            .fetch_all(&self.pool)
+            .await?)
     }
 
     async fn can_user_access_channel(
@@ -349,20 +302,18 @@ impl Db for PostgresDb {
         user_id: UserId,
         channel_id: ChannelId,
     ) -> Result<bool> {
-        test_support!(self, {
-            let query = "
+        let query = "
                 SELECT id
                 FROM channel_memberships
                 WHERE user_id = $1 AND channel_id = $2
                 LIMIT 1
             ";
-            Ok(sqlx::query_scalar::<_, i32>(query)
-                .bind(user_id.0)
-                .bind(channel_id.0)
-                .fetch_optional(&self.pool)
-                .await
-                .map(|e| e.is_some())?)
-        })
+        Ok(sqlx::query_scalar::<_, i32>(query)
+            .bind(user_id.0)
+            .bind(channel_id.0)
+            .fetch_optional(&self.pool)
+            .await
+            .map(|e| e.is_some())?)
     }
 
     #[cfg(any(test, feature = "seed-support"))]
@@ -372,20 +323,18 @@ impl Db for PostgresDb {
         user_id: UserId,
         is_admin: bool,
     ) -> Result<()> {
-        test_support!(self, {
-            let query = "
+        let query = "
                 INSERT INTO channel_memberships (channel_id, user_id, admin)
                 VALUES ($1, $2, $3)
                 ON CONFLICT DO NOTHING
             ";
-            Ok(sqlx::query(query)
-                .bind(channel_id.0)
-                .bind(user_id.0)
-                .bind(is_admin)
-                .execute(&self.pool)
-                .await
-                .map(drop)?)
-        })
+        Ok(sqlx::query(query)
+            .bind(channel_id.0)
+            .bind(user_id.0)
+            .bind(is_admin)
+            .execute(&self.pool)
+            .await
+            .map(drop)?)
     }
 
     // messages
@@ -398,23 +347,21 @@ impl Db for PostgresDb {
         timestamp: OffsetDateTime,
         nonce: u128,
     ) -> Result<MessageId> {
-        test_support!(self, {
-            let query = "
+        let query = "
                 INSERT INTO channel_messages (channel_id, sender_id, body, sent_at, nonce)
                 VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (nonce) DO UPDATE SET nonce = excluded.nonce
                 RETURNING id
             ";
-            Ok(sqlx::query_scalar(query)
-                .bind(channel_id.0)
-                .bind(sender_id.0)
-                .bind(body)
-                .bind(timestamp)
-                .bind(Uuid::from_u128(nonce))
-                .fetch_one(&self.pool)
-                .await
-                .map(MessageId)?)
-        })
+        Ok(sqlx::query_scalar(query)
+            .bind(channel_id.0)
+            .bind(sender_id.0)
+            .bind(body)
+            .bind(timestamp)
+            .bind(Uuid::from_u128(nonce))
+            .fetch_one(&self.pool)
+            .await
+            .map(MessageId)?)
     }
 
     async fn get_channel_messages(
@@ -423,8 +370,7 @@ impl Db for PostgresDb {
         count: usize,
         before_id: Option<MessageId>,
     ) -> Result<Vec<ChannelMessage>> {
-        test_support!(self, {
-            let query = r#"
+        let query = r#"
                 SELECT * FROM (
                     SELECT
                         id, channel_id, sender_id, body, sent_at AT TIME ZONE 'UTC' as sent_at, nonce
@@ -438,35 +384,32 @@ impl Db for PostgresDb {
                 ) as recent_messages
                 ORDER BY id ASC
             "#;
-            Ok(sqlx::query_as(query)
-                .bind(channel_id.0)
-                .bind(before_id.unwrap_or(MessageId::MAX))
-                .bind(count as i64)
-                .fetch_all(&self.pool)
-                .await?)
-        })
+        Ok(sqlx::query_as(query)
+            .bind(channel_id.0)
+            .bind(before_id.unwrap_or(MessageId::MAX))
+            .bind(count as i64)
+            .fetch_all(&self.pool)
+            .await?)
     }
 
     #[cfg(test)]
     async fn teardown(&self, name: &str, url: &str) {
         use util::ResultExt;
 
-        test_support!(self, {
-            let query = "
+        let query = "
                 SELECT pg_terminate_backend(pg_stat_activity.pid)
                 FROM pg_stat_activity
                 WHERE pg_stat_activity.datname = '{}' AND pid <> pg_backend_pid();
             ";
-            sqlx::query(query)
-                .bind(name)
-                .execute(&self.pool)
-                .await
-                .log_err();
-            self.pool.close().await;
-            <sqlx::Postgres as sqlx::migrate::MigrateDatabase>::drop_database(url)
-                .await
-                .log_err();
-        })
+        sqlx::query(query)
+            .bind(name)
+            .execute(&self.pool)
+            .await
+            .log_err();
+        self.pool.close().await;
+        <sqlx::Postgres as sqlx::migrate::MigrateDatabase>::drop_database(url)
+            .await
+            .log_err();
     }
 }
 
@@ -704,12 +647,11 @@ pub mod tests {
             let name = format!("zed-test-{}", rng.gen::<u128>());
             let url = format!("postgres://postgres@localhost/{}", name);
             let migrations_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"));
-            let db = block_on(async {
+            let db = futures::executor::block_on(async {
                 Postgres::create_database(&url)
                     .await
                     .expect("failed to create test db");
-                let mut db = PostgresDb::new(&url, 5).await.unwrap();
-                db.test_mode = true;
+                let db = PostgresDb::new(&url, 5).await.unwrap();
                 let migrator = Migrator::new(migrations_path).await.unwrap();
                 migrator.run(&db.pool).await.unwrap();
                 db
@@ -737,7 +679,7 @@ pub mod tests {
     impl Drop for TestDb {
         fn drop(&mut self) {
             if let Some(db) = self.db.take() {
-                block_on(db.teardown(&self.name, &self.url));
+                futures::executor::block_on(db.teardown(&self.name, &self.url));
             }
         }
     }

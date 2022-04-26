@@ -1,47 +1,56 @@
 mod store;
 
-use super::{
-    auth::process_auth_header,
+use crate::{
+    auth,
     db::{ChannelId, MessageId, UserId},
-    AppState,
+    AppState, Result,
 };
 use anyhow::anyhow;
-use async_io::Timer;
-use async_std::{
-    sync::{RwLock, RwLockReadGuard, RwLockWriteGuard},
-    task,
+use async_tungstenite::tungstenite::{
+    protocol::CloseFrame as TungsteniteCloseFrame, Message as TungsteniteMessage,
 };
-use async_tungstenite::{tungstenite::protocol::Role, WebSocketStream};
+use axum::{
+    body::Body,
+    extract::{
+        ws::{CloseFrame as AxumCloseFrame, Message as AxumMessage},
+        ConnectInfo, WebSocketUpgrade,
+    },
+    headers::{Header, HeaderName},
+    http::StatusCode,
+    middleware,
+    response::{IntoResponse, Response},
+    routing::get,
+    Extension, Router, TypedHeader,
+};
 use collections::{HashMap, HashSet};
-use futures::{channel::mpsc, future::BoxFuture, FutureExt, SinkExt, StreamExt};
+use futures::{channel::mpsc, future::BoxFuture, FutureExt, SinkExt, StreamExt, TryStreamExt};
+use lazy_static::lazy_static;
 use log::{as_debug, as_display};
 use rpc::{
     proto::{self, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},
     Connection, ConnectionId, Peer, TypedEnvelope,
 };
-use sha1::{Digest as _, Sha1};
 use std::{
     any::TypeId,
     future::Future,
     marker::PhantomData,
+    net::SocketAddr,
     ops::{Deref, DerefMut},
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
 use store::{Store, Worktree};
-use surf::StatusCode;
-use tide::{
-    http::headers::{HeaderName, CONNECTION, UPGRADE},
-    Request, Response,
-};
 use time::OffsetDateTime;
+use tokio::{
+    sync::{RwLock, RwLockReadGuard, RwLockWriteGuard},
+    time::Sleep,
+};
+use tower::ServiceBuilder;
 use util::ResultExt;
 
 type MessageHandler = Box<
-    dyn Send
-        + Sync
-        + Fn(Arc<Server>, Box<dyn AnyTypedEnvelope>) -> BoxFuture<'static, tide::Result<()>>,
+    dyn Send + Sync + Fn(Arc<Server>, Box<dyn AnyTypedEnvelope>) -> BoxFuture<'static, Result<()>>,
 >;
 
 pub struct Server {
@@ -53,9 +62,9 @@ pub struct Server {
 }
 
 pub trait Executor: Send + Clone {
-    type Timer: Send + Future;
+    type Sleep: Send + Future;
     fn spawn_detached<F: 'static + Send + Future<Output = ()>>(&self, future: F);
-    fn timer(&self, duration: Duration) -> Self::Timer;
+    fn sleep(&self, duration: Duration) -> Self::Sleep;
 }
 
 #[derive(Clone)]
@@ -77,11 +86,10 @@ struct StoreWriteGuard<'a> {
 impl Server {
     pub fn new(
         app_state: Arc<AppState>,
-        peer: Arc<Peer>,
         notifications: Option<mpsc::UnboundedSender<()>>,
     ) -> Arc<Self> {
         let mut server = Self {
-            peer,
+            peer: Peer::new(),
             app_state,
             store: Default::default(),
             handlers: Default::default(),
@@ -141,7 +149,7 @@ impl Server {
     fn add_message_handler<F, Fut, M>(&mut self, handler: F) -> &mut Self
     where
         F: 'static + Send + Sync + Fn(Arc<Self>, TypedEnvelope<M>) -> Fut,
-        Fut: 'static + Send + Future<Output = tide::Result<()>>,
+        Fut: 'static + Send + Future<Output = Result<()>>,
         M: EnvelopedMessage,
     {
         let prev_handler = self.handlers.insert(
@@ -160,7 +168,7 @@ impl Server {
     fn add_request_handler<F, Fut, M>(&mut self, handler: F) -> &mut Self
     where
         F: 'static + Send + Sync + Fn(Arc<Self>, TypedEnvelope<M>) -> Fut,
-        Fut: 'static + Send + Future<Output = tide::Result<M::Response>>,
+        Fut: 'static + Send + Future<Output = Result<M::Response>>,
         M: RequestMessage,
     {
         self.add_message_handler(move |server, envelope| {
@@ -193,7 +201,7 @@ impl Server {
         F: 'static
             + Send
             + Sync
-            + Fn(Arc<Self>, &mut Store, TypedEnvelope<M>) -> tide::Result<M::Response>,
+            + Fn(Arc<Self>, &mut Store, TypedEnvelope<M>) -> Result<M::Response>,
         M: RequestMessage,
     {
         let handler = Arc::new(handler);
@@ -237,7 +245,7 @@ impl Server {
                 .add_connection(connection, {
                     let executor = executor.clone();
                     move |duration| {
-                        let timer = executor.timer(duration);
+                        let timer = executor.sleep(duration);
                         async move {
                             timer.await;
                         }
@@ -308,7 +316,7 @@ impl Server {
         }
     }
 
-    async fn sign_out(self: &mut Arc<Self>, connection_id: ConnectionId) -> tide::Result<()> {
+    async fn sign_out(self: &mut Arc<Self>, connection_id: ConnectionId) -> Result<()> {
         self.peer.disconnect(connection_id);
         let mut state = self.state_mut().await;
         let removed_connection = state.remove_connection(connection_id)?;
@@ -342,14 +350,14 @@ impl Server {
         Ok(())
     }
 
-    async fn ping(self: Arc<Server>, _: TypedEnvelope<proto::Ping>) -> tide::Result<proto::Ack> {
+    async fn ping(self: Arc<Server>, _: TypedEnvelope<proto::Ping>) -> Result<proto::Ack> {
         Ok(proto::Ack {})
     }
 
     async fn register_project(
         self: Arc<Server>,
         request: TypedEnvelope<proto::RegisterProject>,
-    ) -> tide::Result<proto::RegisterProjectResponse> {
+    ) -> Result<proto::RegisterProjectResponse> {
         let project_id = {
             let mut state = self.state_mut().await;
             let user_id = state.user_id_for_connection(request.sender_id)?;
@@ -361,7 +369,7 @@ impl Server {
     async fn unregister_project(
         self: Arc<Server>,
         request: TypedEnvelope<proto::UnregisterProject>,
-    ) -> tide::Result<()> {
+    ) -> Result<()> {
         let mut state = self.state_mut().await;
         let project = state.unregister_project(request.payload.project_id, request.sender_id)?;
         self.update_contacts_for_users(&*state, &project.authorized_user_ids());
@@ -371,7 +379,7 @@ impl Server {
     async fn share_project(
         self: Arc<Server>,
         request: TypedEnvelope<proto::ShareProject>,
-    ) -> tide::Result<proto::Ack> {
+    ) -> Result<proto::Ack> {
         let mut state = self.state_mut().await;
         let project = state.share_project(request.payload.project_id, request.sender_id)?;
         self.update_contacts_for_users(&mut *state, &project.authorized_user_ids);
@@ -381,7 +389,7 @@ impl Server {
     async fn unshare_project(
         self: Arc<Server>,
         request: TypedEnvelope<proto::UnshareProject>,
-    ) -> tide::Result<()> {
+    ) -> Result<()> {
         let project_id = request.payload.project_id;
         let mut state = self.state_mut().await;
         let project = state.unshare_project(project_id, request.sender_id)?;
@@ -397,7 +405,7 @@ impl Server {
         self: Arc<Server>,
         state: &mut Store,
         request: TypedEnvelope<proto::JoinProject>,
-    ) -> tide::Result<proto::JoinProjectResponse> {
+    ) -> Result<proto::JoinProjectResponse> {
         let project_id = request.payload.project_id;
 
         let user_id = state.user_id_for_connection(request.sender_id)?;
@@ -470,7 +478,7 @@ impl Server {
     async fn leave_project(
         self: Arc<Server>,
         request: TypedEnvelope<proto::LeaveProject>,
-    ) -> tide::Result<()> {
+    ) -> Result<()> {
         let sender_id = request.sender_id;
         let project_id = request.payload.project_id;
         let mut state = self.state_mut().await;
@@ -491,7 +499,7 @@ impl Server {
     async fn register_worktree(
         self: Arc<Server>,
         request: TypedEnvelope<proto::RegisterWorktree>,
-    ) -> tide::Result<proto::Ack> {
+    ) -> Result<proto::Ack> {
         let mut contact_user_ids = HashSet::default();
         for github_login in &request.payload.authorized_logins {
             let contact_user_id = self.app_state.db.create_user(github_login, false).await?;
@@ -528,7 +536,7 @@ impl Server {
     async fn unregister_worktree(
         self: Arc<Server>,
         request: TypedEnvelope<proto::UnregisterWorktree>,
-    ) -> tide::Result<()> {
+    ) -> Result<()> {
         let project_id = request.payload.project_id;
         let worktree_id = request.payload.worktree_id;
         let mut state = self.state_mut().await;
@@ -550,7 +558,7 @@ impl Server {
     async fn update_worktree(
         self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateWorktree>,
-    ) -> tide::Result<proto::Ack> {
+    ) -> Result<proto::Ack> {
         let connection_ids = self.state_mut().await.update_worktree(
             request.sender_id,
             request.payload.project_id,
@@ -570,7 +578,7 @@ impl Server {
     async fn update_diagnostic_summary(
         self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateDiagnosticSummary>,
-    ) -> tide::Result<()> {
+    ) -> Result<()> {
         let summary = request
             .payload
             .summary
@@ -593,7 +601,7 @@ impl Server {
     async fn start_language_server(
         self: Arc<Server>,
         request: TypedEnvelope<proto::StartLanguageServer>,
-    ) -> tide::Result<()> {
+    ) -> Result<()> {
         let receiver_ids = self.state_mut().await.start_language_server(
             request.payload.project_id,
             request.sender_id,
@@ -613,7 +621,7 @@ impl Server {
     async fn update_language_server(
         self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateLanguageServer>,
-    ) -> tide::Result<()> {
+    ) -> Result<()> {
         let receiver_ids = self
             .state()
             .await
@@ -628,7 +636,7 @@ impl Server {
     async fn forward_project_request<T>(
         self: Arc<Server>,
         request: TypedEnvelope<T>,
-    ) -> tide::Result<T::Response>
+    ) -> Result<T::Response>
     where
         T: EntityMessage + RequestMessage,
     {
@@ -646,7 +654,7 @@ impl Server {
     async fn save_buffer(
         self: Arc<Server>,
         request: TypedEnvelope<proto::SaveBuffer>,
-    ) -> tide::Result<proto::BufferSaved> {
+    ) -> Result<proto::BufferSaved> {
         let host = self
             .state()
             .await
@@ -673,7 +681,7 @@ impl Server {
     async fn update_buffer(
         self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateBuffer>,
-    ) -> tide::Result<proto::Ack> {
+    ) -> Result<proto::Ack> {
         let receiver_ids = self
             .state()
             .await
@@ -688,7 +696,7 @@ impl Server {
     async fn update_buffer_file(
         self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateBufferFile>,
-    ) -> tide::Result<()> {
+    ) -> Result<()> {
         let receiver_ids = self
             .state()
             .await
@@ -703,7 +711,7 @@ impl Server {
     async fn buffer_reloaded(
         self: Arc<Server>,
         request: TypedEnvelope<proto::BufferReloaded>,
-    ) -> tide::Result<()> {
+    ) -> Result<()> {
         let receiver_ids = self
             .state()
             .await
@@ -718,7 +726,7 @@ impl Server {
     async fn buffer_saved(
         self: Arc<Server>,
         request: TypedEnvelope<proto::BufferSaved>,
-    ) -> tide::Result<()> {
+    ) -> Result<()> {
         let receiver_ids = self
             .state()
             .await
@@ -733,7 +741,7 @@ impl Server {
     async fn follow(
         self: Arc<Self>,
         request: TypedEnvelope<proto::Follow>,
-    ) -> tide::Result<proto::FollowResponse> {
+    ) -> Result<proto::FollowResponse> {
         let leader_id = ConnectionId(request.payload.leader_id);
         let follower_id = request.sender_id;
         if !self
@@ -754,10 +762,7 @@ impl Server {
         Ok(response)
     }
 
-    async fn unfollow(
-        self: Arc<Self>,
-        request: TypedEnvelope<proto::Unfollow>,
-    ) -> tide::Result<()> {
+    async fn unfollow(self: Arc<Self>, request: TypedEnvelope<proto::Unfollow>) -> Result<()> {
         let leader_id = ConnectionId(request.payload.leader_id);
         if !self
             .state()
@@ -775,7 +780,7 @@ impl Server {
     async fn update_followers(
         self: Arc<Self>,
         request: TypedEnvelope<proto::UpdateFollowers>,
-    ) -> tide::Result<()> {
+    ) -> Result<()> {
         let connection_ids = self
             .state()
             .await
@@ -802,7 +807,7 @@ impl Server {
     async fn get_channels(
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetChannels>,
-    ) -> tide::Result<proto::GetChannelsResponse> {
+    ) -> Result<proto::GetChannelsResponse> {
         let user_id = self
             .state()
             .await
@@ -822,7 +827,7 @@ impl Server {
     async fn get_users(
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetUsers>,
-    ) -> tide::Result<proto::GetUsersResponse> {
+    ) -> Result<proto::GetUsersResponse> {
         let user_ids = request
             .payload
             .user_ids
@@ -867,7 +872,7 @@ impl Server {
     async fn join_channel(
         self: Arc<Self>,
         request: TypedEnvelope<proto::JoinChannel>,
-    ) -> tide::Result<proto::JoinChannelResponse> {
+    ) -> Result<proto::JoinChannelResponse> {
         let user_id = self
             .state()
             .await
@@ -908,7 +913,7 @@ impl Server {
     async fn leave_channel(
         self: Arc<Self>,
         request: TypedEnvelope<proto::LeaveChannel>,
-    ) -> tide::Result<()> {
+    ) -> Result<()> {
         let user_id = self
             .state()
             .await
@@ -933,7 +938,7 @@ impl Server {
     async fn send_channel_message(
         self: Arc<Self>,
         request: TypedEnvelope<proto::SendChannelMessage>,
-    ) -> tide::Result<proto::SendChannelMessageResponse> {
+    ) -> Result<proto::SendChannelMessageResponse> {
         let channel_id = ChannelId::from_proto(request.payload.channel_id);
         let user_id;
         let connection_ids;
@@ -988,7 +993,7 @@ impl Server {
     async fn get_channel_messages(
         self: Arc<Self>,
         request: TypedEnvelope<proto::GetChannelMessages>,
-    ) -> tide::Result<proto::GetChannelMessagesResponse> {
+    ) -> Result<proto::GetChannelMessagesResponse> {
         let user_id = self
             .state()
             .await
@@ -1030,10 +1035,10 @@ impl Server {
 
     async fn state<'a>(self: &'a Arc<Self>) -> StoreReadGuard<'a> {
         #[cfg(test)]
-        async_std::task::yield_now().await;
+        tokio::task::yield_now().await;
         let guard = self.store.read().await;
         #[cfg(test)]
-        async_std::task::yield_now().await;
+        tokio::task::yield_now().await;
         StoreReadGuard {
             guard,
             _not_send: PhantomData,
@@ -1042,10 +1047,10 @@ impl Server {
 
     async fn state_mut<'a>(self: &'a Arc<Self>) -> StoreWriteGuard<'a> {
         #[cfg(test)]
-        async_std::task::yield_now().await;
+        tokio::task::yield_now().await;
         let guard = self.store.write().await;
         #[cfg(test)]
-        async_std::task::yield_now().await;
+        tokio::task::yield_now().await;
         StoreWriteGuard {
             guard,
             _not_send: PhantomData,
@@ -1083,14 +1088,14 @@ impl<'a> Drop for StoreWriteGuard<'a> {
 }
 
 impl Executor for RealExecutor {
-    type Timer = Timer;
+    type Sleep = Sleep;
 
     fn spawn_detached<F: 'static + Send + Future<Output = ()>>(&self, future: F) {
-        task::spawn(future);
+        tokio::task::spawn(future);
     }
 
-    fn timer(&self, duration: Duration) -> Self::Timer {
-        Timer::after(duration)
+    fn sleep(&self, duration: Duration) -> Self::Sleep {
+        tokio::time::sleep(duration)
     }
 }
 
@@ -1105,75 +1110,100 @@ where
     }
 }
 
-pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
-    let server = Server::new(app.state().clone(), rpc.clone(), None);
-    app.at("/rpc").get(move |request: Request<Arc<AppState>>| {
-        let server = server.clone();
-        async move {
-            const WEBSOCKET_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-
-            let connection_upgrade = header_contains_ignore_case(&request, CONNECTION, "upgrade");
-            let upgrade_to_websocket = header_contains_ignore_case(&request, UPGRADE, "websocket");
-            let upgrade_requested = connection_upgrade && upgrade_to_websocket;
-            let client_protocol_version: Option<u32> = request
-                .header("X-Zed-Protocol-Version")
-                .and_then(|v| v.as_str().parse().ok());
-
-            if !upgrade_requested || client_protocol_version != Some(rpc::PROTOCOL_VERSION) {
-                return Ok(Response::new(StatusCode::UpgradeRequired));
-            }
-
-            let header = match request.header("Sec-Websocket-Key") {
-                Some(h) => h.as_str(),
-                None => return Err(anyhow!("expected sec-websocket-key"))?,
-            };
-
-            let user_id = process_auth_header(&request).await?;
-
-            let mut response = Response::new(StatusCode::SwitchingProtocols);
-            response.insert_header(UPGRADE, "websocket");
-            response.insert_header(CONNECTION, "Upgrade");
-            let hash = Sha1::new().chain(header).chain(WEBSOCKET_GUID).finalize();
-            response.insert_header("Sec-Websocket-Accept", base64::encode(&hash[..]));
-            response.insert_header("Sec-Websocket-Version", "13");
-
-            let http_res: &mut tide::http::Response = response.as_mut();
-            let upgrade_receiver = http_res.recv_upgrade().await;
-            let addr = request.remote().unwrap_or("unknown").to_string();
-            task::spawn(async move {
-                if let Some(stream) = upgrade_receiver.await {
-                    server
-                        .handle_connection(
-                            Connection::new(
-                                WebSocketStream::from_raw_socket(stream, Role::Server, None).await,
-                            ),
-                            addr,
-                            user_id,
-                            None,
-                            RealExecutor,
-                        )
-                        .await;
-                }
-            });
-
-            Ok(response)
-        }
-    });
+lazy_static! {
+    static ref ZED_PROTOCOL_VERSION: HeaderName = HeaderName::from_static("x-zed-protocol-version");
 }
 
-fn header_contains_ignore_case<T>(
-    request: &tide::Request<T>,
-    header_name: HeaderName,
-    value: &str,
-) -> bool {
-    request
-        .header(header_name)
-        .map(|h| {
-            h.as_str()
-                .split(',')
-                .any(|s| s.trim().eq_ignore_ascii_case(value.trim()))
-        })
-        .unwrap_or(false)
+pub struct ProtocolVersion(u32);
+
+impl Header for ProtocolVersion {
+    fn name() -> &'static HeaderName {
+        &ZED_PROTOCOL_VERSION
+    }
+
+    fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
+    where
+        Self: Sized,
+        I: Iterator<Item = &'i axum::http::HeaderValue>,
+    {
+        let version = values
+            .next()
+            .ok_or_else(|| axum::headers::Error::invalid())?
+            .to_str()
+            .map_err(|_| axum::headers::Error::invalid())?
+            .parse()
+            .map_err(|_| axum::headers::Error::invalid())?;
+        Ok(Self(version))
+    }
+
+    fn encode<E: Extend<axum::http::HeaderValue>>(&self, values: &mut E) {
+        values.extend([self.0.to_string().parse().unwrap()]);
+    }
+}
+
+pub fn routes(app_state: Arc<AppState>) -> Router<Body> {
+    let server = Server::new(app_state.clone(), None);
+    Router::new()
+        .route("/rpc", get(handle_websocket_request))
+        .layer(
+            ServiceBuilder::new()
+                .layer(Extension(app_state))
+                .layer(middleware::from_fn(auth::validate_header))
+                .layer(Extension(server)),
+        )
+}
+
+pub async fn handle_websocket_request(
+    TypedHeader(ProtocolVersion(protocol_version)): TypedHeader<ProtocolVersion>,
+    ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
+    Extension(server): Extension<Arc<Server>>,
+    Extension(user_id): Extension<UserId>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    if protocol_version != rpc::PROTOCOL_VERSION {
+        return (
+            StatusCode::UPGRADE_REQUIRED,
+            "client must be upgraded".to_string(),
+        )
+            .into_response();
+    }
+    let socket_address = socket_address.to_string();
+    ws.on_upgrade(move |socket| {
+        let socket = socket
+            .map_ok(to_tungstenite_message)
+            .err_into()
+            .with(|message| async move { Ok(to_axum_message(message)) });
+        let connection = Connection::new(Box::pin(socket));
+        server.handle_connection(connection, socket_address, user_id, None, RealExecutor)
+    })
+}
+
+fn to_axum_message(message: TungsteniteMessage) -> AxumMessage {
+    match message {
+        TungsteniteMessage::Text(payload) => AxumMessage::Text(payload),
+        TungsteniteMessage::Binary(payload) => AxumMessage::Binary(payload),
+        TungsteniteMessage::Ping(payload) => AxumMessage::Ping(payload),
+        TungsteniteMessage::Pong(payload) => AxumMessage::Pong(payload),
+        TungsteniteMessage::Close(frame) => AxumMessage::Close(frame.map(|frame| AxumCloseFrame {
+            code: frame.code.into(),
+            reason: frame.reason,
+        })),
+    }
+}
+
+fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
+    match message {
+        AxumMessage::Text(payload) => TungsteniteMessage::Text(payload),
+        AxumMessage::Binary(payload) => TungsteniteMessage::Binary(payload),
+        AxumMessage::Ping(payload) => TungsteniteMessage::Ping(payload),
+        AxumMessage::Pong(payload) => TungsteniteMessage::Pong(payload),
+        AxumMessage::Close(frame) => {
+            TungsteniteMessage::Close(frame.map(|frame| TungsteniteCloseFrame {
+                code: frame.code.into(),
+                reason: frame.reason,
+            }))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1181,7 +1211,7 @@ mod tests {
     use super::*;
     use crate::{
         db::{tests::TestDb, UserId},
-        AppState, Config,
+        AppState,
     };
     use ::rpc::Peer;
     use client::{
@@ -5621,7 +5651,7 @@ mod tests {
             let app_state = Self::build_app_state(&test_db).await;
             let peer = Peer::new();
             let notifications = mpsc::unbounded();
-            let server = Server::new(app_state.clone(), peer.clone(), Some(notifications.0));
+            let server = Server::new(app_state.clone(), Some(notifications.0));
             Self {
                 peer,
                 app_state,
@@ -5736,11 +5766,9 @@ mod tests {
         }
 
         async fn build_app_state(test_db: &TestDb) -> Arc<AppState> {
-            let mut config = Config::default();
-            config.database_url = test_db.url.clone();
             Arc::new(AppState {
                 db: test_db.db().clone(),
-                config,
+                api_token: Default::default(),
             })
         }
 
@@ -5752,15 +5780,15 @@ mod tests {
         where
             F: FnMut(&Store) -> bool,
         {
-            async_std::future::timeout(Duration::from_millis(500), async {
-                while !(predicate)(&*self.server.store.read().await) {
-                    self.foreground.start_waiting();
-                    self.notifications.next().await;
-                    self.foreground.finish_waiting();
-                }
-            })
-            .await
-            .expect("condition timed out");
+            assert!(
+                self.foreground.parking_forbidden(),
+                "you must call forbid_parking to use server conditions so we don't block indefinitely"
+            );
+            while !(predicate)(&*self.server.store.read().await) {
+                self.foreground.start_waiting();
+                self.notifications.next().await;
+                self.foreground.finish_waiting();
+            }
         }
     }
 
@@ -6325,13 +6353,13 @@ mod tests {
     }
 
     impl Executor for Arc<gpui::executor::Background> {
-        type Timer = gpui::executor::Timer;
+        type Sleep = gpui::executor::Timer;
 
         fn spawn_detached<F: 'static + Send + Future<Output = ()>>(&self, future: F) {
             self.spawn(future).detach();
         }
 
-        fn timer(&self, duration: Duration) -> Self::Timer {
+        fn sleep(&self, duration: Duration) -> Self::Sleep {
             self.as_ref().timer(duration)
         }
     }

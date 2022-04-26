@@ -11,7 +11,7 @@ use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
     http::{Request, StatusCode},
 };
-use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
+use futures::{future::LocalBoxFuture, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use gpui::{
     actions, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AsyncAppContext,
     Entity, ModelContext, ModelHandle, MutableAppContext, Task, View, ViewContext, ViewHandle,
@@ -774,7 +774,7 @@ impl Client {
                 "Authorization",
                 format!("{} {}", credentials.user_id, credentials.access_token),
             )
-            .header("X-Zed-Protocol-Version", rpc::PROTOCOL_VERSION);
+            .header("x-zed-protocol-version", rpc::PROTOCOL_VERSION);
 
         let http = self.http.clone();
         cx.background().spawn(async move {
@@ -817,13 +817,21 @@ impl Client {
                     let request = request.uri(rpc_url.as_str()).body(())?;
                     let (stream, _) =
                         async_tungstenite::async_tls::client_async_tls(request, stream).await?;
-                    Ok(Connection::new(stream))
+                    Ok(Connection::new(
+                        stream
+                            .map_err(|error| anyhow!(error))
+                            .sink_map_err(|error| anyhow!(error)),
+                    ))
                 }
                 "http" => {
                     rpc_url.set_scheme("ws").unwrap();
                     let request = request.uri(rpc_url.as_str()).body(())?;
                     let (stream, _) = async_tungstenite::client_async(request, stream).await?;
-                    Ok(Connection::new(stream))
+                    Ok(Connection::new(
+                        stream
+                            .map_err(|error| anyhow!(error))
+                            .sink_map_err(|error| anyhow!(error)),
+                    ))
                 }
                 _ => Err(anyhow!("invalid rpc url: {}", rpc_url))?,
             }

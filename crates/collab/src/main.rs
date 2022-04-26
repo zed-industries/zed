@@ -2,18 +2,16 @@ mod api;
 mod auth;
 mod db;
 mod env;
-mod errors;
 mod rpc;
 
-use ::rpc::Peer;
-use async_std::net::TcpListener;
-use async_trait::async_trait;
+use axum::{body::Body, http::StatusCode, response::IntoResponse, Router};
 use db::{Db, PostgresDb};
-use serde::Deserialize;
-use std::sync::Arc;
-use tide_compress::CompressMiddleware;
 
-type Request = tide::Request<Arc<AppState>>;
+use serde::Deserialize;
+use std::{
+    net::{SocketAddr, TcpListener},
+    sync::Arc,
+};
 
 #[derive(Default, Deserialize)]
 pub struct Config {
@@ -24,39 +22,26 @@ pub struct Config {
 
 pub struct AppState {
     db: Arc<dyn Db>,
-    config: Config,
+    api_token: String,
 }
 
 impl AppState {
-    async fn new(config: Config) -> tide::Result<Arc<Self>> {
+    async fn new(config: &Config) -> Result<Arc<Self>> {
         let db = PostgresDb::new(&config.database_url, 5).await?;
-
         let this = Self {
             db: Arc::new(db),
-            config,
+            api_token: config.api_token.clone(),
         };
         Ok(Arc::new(this))
     }
 }
 
-#[async_trait]
-trait RequestExt {
-    fn db(&self) -> &Arc<dyn Db>;
-}
-
-#[async_trait]
-impl RequestExt for Request {
-    fn db(&self) -> &Arc<dyn Db> {
-        &self.state().db
-    }
-}
-
-#[async_std::main]
-async fn main() -> tide::Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     if std::env::var("LOG_JSON").is_ok() {
         json_env_logger::init();
     } else {
-        tide::log::start();
+        env_logger::init();
     }
 
     if let Err(error) = env::load_dotenv() {
@@ -67,32 +52,63 @@ async fn main() -> tide::Result<()> {
     }
 
     let config = envy::from_env::<Config>().expect("error loading config");
-    let state = AppState::new(config).await?;
-    let rpc = Peer::new();
-    run_server(
-        state.clone(),
-        rpc,
-        TcpListener::bind(&format!("0.0.0.0:{}", state.config.http_port)).await?,
-    )
-    .await?;
+    let state = AppState::new(&config).await?;
+
+    let listener = TcpListener::bind(&format!("0.0.0.0:{}", config.http_port))
+        .expect("failed to bind TCP listener");
+
+    let app = Router::<Body>::new()
+        .merge(api::routes(state.clone()))
+        .merge(rpc::routes(state));
+
+    axum::Server::from_tcp(listener)?
+        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+        .await?;
+
     Ok(())
 }
 
-pub async fn run_server(
-    state: Arc<AppState>,
-    rpc: Arc<Peer>,
-    listener: TcpListener,
-) -> tide::Result<()> {
-    let mut app = tide::with_state(state.clone());
-    rpc::add_routes(&mut app, &rpc);
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-    let mut web = tide::with_state(state.clone());
-    web.with(CompressMiddleware::new());
-    api::add_routes(&mut web);
+pub enum Error {
+    Http(StatusCode, String),
+    Internal(anyhow::Error),
+}
 
-    app.at("/").nest(web);
+impl<E> From<E> for Error
+where
+    E: Into<anyhow::Error>,
+{
+    fn from(error: E) -> Self {
+        Self::Internal(error.into())
+    }
+}
 
-    app.listen(listener).await?;
+impl IntoResponse for Error {
+    fn into_response(self) -> axum::response::Response {
+        match self {
+            Error::Http(code, message) => (code, message).into_response(),
+            Error::Internal(error) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
+            }
+        }
+    }
+}
 
-    Ok(())
+impl std::fmt::Debug for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::Http(code, message) => (code, message).fmt(f),
+            Error::Internal(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::Http(code, message) => write!(f, "{code}: {message}"),
+            Error::Internal(error) => error.fmt(f),
+        }
+    }
 }

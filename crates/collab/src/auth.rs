@@ -1,45 +1,47 @@
-use super::{
-    db::{self, UserId},
-    errors::TideResultExt,
+use std::sync::Arc;
+
+use super::db::{self, UserId};
+use crate::{AppState, Error};
+use anyhow::{Context, Result};
+use axum::{
+    http::{self, Request, StatusCode},
+    middleware::Next,
+    response::IntoResponse,
 };
-use crate::Request;
-use anyhow::{anyhow, Context};
 use rand::thread_rng;
-use rpc::auth as zed_auth;
 use scrypt::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Scrypt,
 };
-use std::convert::TryFrom;
-use surf::StatusCode;
-use tide::Error;
 
-pub async fn process_auth_header(request: &Request) -> tide::Result<UserId> {
-    let mut auth_header = request
-        .header("Authorization")
+pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl IntoResponse {
+    let mut auth_header = req
+        .headers()
+        .get(http::header::AUTHORIZATION)
+        .and_then(|header| header.to_str().ok())
         .ok_or_else(|| {
-            Error::new(
-                StatusCode::BadRequest,
-                anyhow!("missing authorization header"),
+            Error::Http(
+                StatusCode::BAD_REQUEST,
+                "missing authorization header".to_string(),
             )
         })?
-        .last()
-        .as_str()
         .split_whitespace();
+
     let user_id = UserId(auth_header.next().unwrap_or("").parse().map_err(|_| {
-        Error::new(
-            StatusCode::BadRequest,
-            anyhow!("missing user id in authorization header"),
+        Error::Http(
+            StatusCode::BAD_REQUEST,
+            "missing user id in authorization header".to_string(),
         )
     })?);
+
     let access_token = auth_header.next().ok_or_else(|| {
-        Error::new(
-            StatusCode::BadRequest,
-            anyhow!("missing access token in authorization header"),
+        Error::Http(
+            StatusCode::BAD_REQUEST,
+            "missing access token in authorization header".to_string(),
         )
     })?;
 
-    let state = request.state().clone();
+    let state = req.extensions().get::<Arc<AppState>>().unwrap();
     let mut credentials_valid = false;
     for password_hash in state.db.get_access_token_hashes(user_id).await? {
         if verify_access_token(&access_token, &password_hash)? {
@@ -48,20 +50,21 @@ pub async fn process_auth_header(request: &Request) -> tide::Result<UserId> {
         }
     }
 
-    if !credentials_valid {
-        Err(Error::new(
-            StatusCode::Unauthorized,
-            anyhow!("invalid credentials"),
-        ))?;
+    if credentials_valid {
+        req.extensions_mut().insert(user_id);
+        Ok::<_, Error>(next.run(req).await)
+    } else {
+        Err(Error::Http(
+            StatusCode::UNAUTHORIZED,
+            "invalid credentials".to_string(),
+        ))
     }
-
-    Ok(user_id)
 }
 
 const MAX_ACCESS_TOKENS_TO_STORE: usize = 8;
 
-pub async fn create_access_token(db: &dyn db::Db, user_id: UserId) -> tide::Result<String> {
-    let access_token = zed_auth::random_token();
+pub async fn create_access_token(db: &dyn db::Db, user_id: UserId) -> Result<String> {
+    let access_token = rpc::auth::random_token();
     let access_token_hash =
         hash_access_token(&access_token).context("failed to hash access token")?;
     db.create_access_token_hash(user_id, &access_token_hash, MAX_ACCESS_TOKENS_TO_STORE)
@@ -69,7 +72,7 @@ pub async fn create_access_token(db: &dyn db::Db, user_id: UserId) -> tide::Resu
     Ok(access_token)
 }
 
-fn hash_access_token(token: &str) -> tide::Result<String> {
+fn hash_access_token(token: &str) -> Result<String> {
     // Avoid slow hashing in debug mode.
     let params = if cfg!(debug_assertions) {
         scrypt::Params::new(1, 1, 1).unwrap()
@@ -87,16 +90,16 @@ fn hash_access_token(token: &str) -> tide::Result<String> {
         .to_string())
 }
 
-pub fn encrypt_access_token(access_token: &str, public_key: String) -> tide::Result<String> {
+pub fn encrypt_access_token(access_token: &str, public_key: String) -> Result<String> {
     let native_app_public_key =
-        zed_auth::PublicKey::try_from(public_key).context("failed to parse app public key")?;
+        rpc::auth::PublicKey::try_from(public_key).context("failed to parse app public key")?;
     let encrypted_access_token = native_app_public_key
         .encrypt_string(&access_token)
         .context("failed to encrypt access token with public key")?;
     Ok(encrypted_access_token)
 }
 
-pub fn verify_access_token(token: &str, hash: &str) -> tide::Result<bool> {
+pub fn verify_access_token(token: &str, hash: &str) -> Result<bool> {
     let hash = PasswordHash::new(hash)?;
     Ok(Scrypt.verify_password(token.as_bytes(), &hash).is_ok())
 }
