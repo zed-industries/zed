@@ -169,11 +169,19 @@ fn main() {
         .detach();
 
         languages.set_language_server_download_dir(zed::ROOT_PATH.clone());
-        languages.set_theme(&settings.theme.editor.syntax);
+        let languages = Arc::new(languages);
+
+        cx.observe_global::<Settings, _>({
+            let languages = languages.clone();
+            move |settings, _| {
+                languages.set_theme(&settings.theme.editor.syntax);
+            }
+        })
+        .detach();
         cx.set_global(settings);
 
         let app_state = Arc::new(AppState {
-            languages: Arc::new(languages),
+            languages,
             themes,
             channel_list,
             client,

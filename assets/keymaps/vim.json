@@ -75,35 +75,11 @@
     {
         "context": "Editor && vim_operator == c",
         "bindings": {
-            "w": [
-                "vim::NextWordEnd",
-                {
-                    "ignorePunctuation": false
-                }
-            ],
+            "w": "vim::ChangeWord",
             "shift-W": [
-                "vim::NextWordEnd",
+                "vim::ChangeWord",
                 {
                     "ignorePunctuation": true
-                }
-            ]
-        }
-    },
-    {
-        "context": "Editor && vim_operator == d",
-        "bindings": {
-            "w": [
-                "vim::NextWordStart",
-                {
-                    "ignorePunctuation": false,
-                    "stopAtNewline": true
-                }
-            ],
-            "shift-W": [
-                "vim::NextWordStart",
-                {
-                    "ignorePunctuation": true,
-                    "stopAtNewline": true
                 }
             ]
         }

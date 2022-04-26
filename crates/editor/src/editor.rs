@@ -1134,8 +1134,10 @@ impl Editor {
     }
 
     pub fn set_clip_at_line_ends(&mut self, clip: bool, cx: &mut ViewContext<Self>) {
-        self.display_map
-            .update(cx, |map, _| map.clip_at_line_ends = clip);
+        if self.display_map.read(cx).clip_at_line_ends != clip {
+            self.display_map
+                .update(cx, |map, _| map.clip_at_line_ends = clip);
+        }
     }
 
     pub fn set_keymap_context_layer<Tag: 'static>(&mut self, context: gpui::keymap::Context) {
@@ -3579,13 +3581,13 @@ impl Editor {
             if !selection.is_empty() {
                 selection.goal = SelectionGoal::None;
             }
-            let (cursor, goal) = movement::up(&map, selection.start, selection.goal);
+            let (cursor, goal) = movement::up(&map, selection.start, selection.goal, false);
             selection.collapse_to(cursor, goal);
         });
     }
 
     pub fn select_up(&mut self, _: &SelectUp, cx: &mut ViewContext<Self>) {
-        self.move_selection_heads(cx, movement::up)
+        self.move_selection_heads(cx, |map, head, goal| movement::up(map, head, goal, false))
     }
 
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
@@ -3606,13 +3608,13 @@ impl Editor {
             if !selection.is_empty() {
                 selection.goal = SelectionGoal::None;
             }
-            let (cursor, goal) = movement::down(&map, selection.end, selection.goal);
+            let (cursor, goal) = movement::down(&map, selection.end, selection.goal, false);
             selection.collapse_to(cursor, goal);
         });
     }
 
     pub fn select_down(&mut self, _: &SelectDown, cx: &mut ViewContext<Self>) {
-        self.move_selection_heads(cx, movement::down)
+        self.move_selection_heads(cx, |map, head, goal| movement::down(map, head, goal, false))
     }
 
     pub fn move_to_previous_word_start(

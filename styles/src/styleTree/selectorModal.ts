@@ -50,10 +50,6 @@ export default function selectorModal(theme: Theme): Object {
         top: 7,
       },
     },
-    margin: {
-      bottom: 52,
-      top: 52,
-    },
     shadow: shadow(theme),
   };
 }

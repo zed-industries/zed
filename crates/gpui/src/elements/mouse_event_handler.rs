@@ -5,8 +5,8 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     platform::CursorStyle,
-    CursorStyleHandle, DebugContext, Element, ElementBox, ElementStateContext, ElementStateHandle,
-    Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
+    DebugContext, Element, ElementBox, ElementStateContext, ElementStateHandle, Event,
+    EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
 use serde_json::json;
 
@@ -25,7 +25,6 @@ pub struct MouseState {
     pub hovered: bool,
     pub clicked: bool,
     prev_drag_position: Option<Vector2F>,
-    cursor_style_handle: Option<CursorStyleHandle>,
 }
 
 impl MouseEventHandler {
@@ -72,6 +71,14 @@ impl MouseEventHandler {
         self.padding = padding;
         self
     }
+
+    fn hit_bounds(&self, bounds: RectF) -> RectF {
+        RectF::from_points(
+            bounds.origin() - vec2f(self.padding.left, self.padding.top),
+            bounds.lower_right() + vec2f(self.padding.right, self.padding.bottom),
+        )
+        .round_out()
+    }
 }
 
 impl Element for MouseEventHandler {
@@ -93,6 +100,10 @@ impl Element for MouseEventHandler {
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
+        if let Some(cursor_style) = self.cursor_style {
+            cx.scene
+                .push_cursor_style(self.hit_bounds(bounds), cursor_style);
+        }
         self.child.paint(bounds.origin(), visible_bounds, cx);
     }
 
@@ -105,18 +116,12 @@ impl Element for MouseEventHandler {
         _: &mut Self::PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        let cursor_style = self.cursor_style;
+        let hit_bounds = self.hit_bounds(visible_bounds);
         let mouse_down_handler = self.mouse_down_handler.as_mut();
         let click_handler = self.click_handler.as_mut();
         let drag_handler = self.drag_handler.as_mut();
 
         let handled_in_child = self.child.dispatch_event(event, cx);
-
-        let hit_bounds = RectF::from_points(
-            visible_bounds.origin() - vec2f(self.padding.left, self.padding.top),
-            visible_bounds.lower_right() + vec2f(self.padding.right, self.padding.bottom),
-        )
-        .round_out();
 
         self.state.update(cx, |state, cx| match event {
             Event::MouseMoved {
@@ -127,16 +132,6 @@ impl Element for MouseEventHandler {
                     let mouse_in = hit_bounds.contains_point(*position);
                     if state.hovered != mouse_in {
                         state.hovered = mouse_in;
-                        if let Some(cursor_style) = cursor_style {
-                            if !state.clicked {
-                                if state.hovered {
-                                    state.cursor_style_handle =
-                                        Some(cx.set_cursor_style(cursor_style));
-                                } else {
-                                    state.cursor_style_handle = None;
-                                }
-                            }
-                        }
                         cx.notify();
                         return true;
                     }
@@ -160,9 +155,6 @@ impl Element for MouseEventHandler {
                 state.prev_drag_position = None;
                 if !handled_in_child && state.clicked {
                     state.clicked = false;
-                    if !state.hovered {
-                        state.cursor_style_handle = None;
-                    }
                     cx.notify();
                     if let Some(handler) = click_handler {
                         if hit_bounds.contains_point(*position) {

@@ -21,6 +21,7 @@ use anyhow::{anyhow, Result};
 use async_task::Runnable;
 pub use event::{Event, NavigationDirection};
 use postage::oneshot;
+use serde::Deserialize;
 use std::{
     any::Any,
     path::{Path, PathBuf},
@@ -86,6 +87,7 @@ pub trait Dispatcher: Send + Sync {
 pub trait Window: WindowContext {
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn on_event(&mut self, callback: Box<dyn FnMut(Event)>);
+    fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&mut self, callback: Box<dyn FnMut()>);
     fn on_close(&mut self, callback: Box<dyn FnOnce()>);
     fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize>;
@@ -125,11 +127,12 @@ pub enum PromptLevel {
     Critical,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Deserialize)]
 pub enum CursorStyle {
     Arrow,
     ResizeLeftRight,
     PointingHand,
+    IBeam,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]

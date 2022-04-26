@@ -43,6 +43,7 @@ pub struct Workspace {
     pub status_bar: StatusBar,
     pub toolbar: Toolbar,
     pub disconnected_overlay: ContainedText,
+    pub modal: ContainerStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -54,8 +55,10 @@ pub struct Titlebar {
     pub avatar_width: f32,
     pub avatar_ribbon: AvatarRibbon,
     pub offline_icon: OfflineIcon,
-    pub share_icon_color: Color,
-    pub share_icon_active_color: Color,
+    pub share_icon: ShareIcon,
+    pub hovered_share_icon: ShareIcon,
+    pub active_share_icon: ShareIcon,
+    pub hovered_active_share_icon: ShareIcon,
     pub avatar: ImageStyle,
     pub sign_in_prompt: ContainedText,
     pub hovered_sign_in_prompt: ContainedText,
@@ -75,6 +78,13 @@ pub struct OfflineIcon {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub width: f32,
+    pub color: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct ShareIcon {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
     pub color: Color,
 }
 

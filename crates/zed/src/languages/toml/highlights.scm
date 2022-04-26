@@ -20,14 +20,18 @@
 ; Punctuation
 ;------------
 
-"." @punctuation.delimiter
-"," @punctuation.delimiter
+[
+  "."
+  ","
+] @punctuation.delimiter
 
 "=" @operator
 
-"[" @punctuation.bracket
-"]" @punctuation.bracket
-"[[" @punctuation.bracket
-"]]" @punctuation.bracket
-"{" @punctuation.bracket
-"}" @punctuation.bracket
+[
+  "["
+  "]"
+  "[["
+  "]]"
+  "{"
+  "}"
+]  @punctuation.bracket

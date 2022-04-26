@@ -38,7 +38,7 @@ use tree_sitter::{InputEdit, QueryCursor, Tree};
 use util::TryFutureExt as _;
 
 #[cfg(any(test, feature = "test-support"))]
-pub use tree_sitter_rust;
+pub use {tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
 
@@ -1638,6 +1638,34 @@ impl BufferSnapshot {
             .and_then(|language| language.grammar.as_ref())
     }
 
+    pub fn range_for_word_token_at<T: ToOffset + ToPoint>(
+        &self,
+        position: T,
+    ) -> Option<Range<usize>> {
+        let offset = position.to_offset(self);
+
+        // Find the first leaf node that touches the position.
+        let tree = self.tree.as_ref()?;
+        let mut cursor = tree.root_node().walk();
+        while cursor.goto_first_child_for_byte(offset).is_some() {}
+        let node = cursor.node();
+        if node.child_count() > 0 {
+            return None;
+        }
+
+        // Check that the leaf node contains word characters.
+        let range = node.byte_range();
+        if self
+            .text_for_range(range.clone())
+            .flat_map(str::chars)
+            .any(|c| c.is_alphanumeric())
+        {
+            return Some(range);
+        } else {
+            None
+        }
+    }
+
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
         let tree = self.tree.as_ref()?;
         let range = range.start.to_offset(self)..range.end.to_offset(self);
@@ -1730,7 +1758,7 @@ impl BufferSnapshot {
             .and_then(|language| language.grammar.as_ref())?;
 
         let mut cursor = QueryCursorHandle::new();
-        cursor.set_byte_range(range);
+        cursor.set_byte_range(range.clone());
         let matches = cursor.matches(
             &grammar.outline_query,
             tree.root_node(),
@@ -1750,7 +1778,10 @@ impl BufferSnapshot {
         let items = matches
             .filter_map(|mat| {
                 let item_node = mat.nodes_for_capture_index(item_capture_ix).next()?;
-                let range = item_node.start_byte()..item_node.end_byte();
+                let item_range = item_node.start_byte()..item_node.end_byte();
+                if item_range.end < range.start || item_range.start > range.end {
+                    return None;
+                }
                 let mut text = String::new();
                 let mut name_ranges = Vec::new();
                 let mut highlight_ranges = Vec::new();
@@ -1808,15 +1839,15 @@ impl BufferSnapshot {
                 }
 
                 while stack.last().map_or(false, |prev_range| {
-                    !prev_range.contains(&range.start) || !prev_range.contains(&range.end)
+                    !prev_range.contains(&item_range.start) || !prev_range.contains(&item_range.end)
                 }) {
                     stack.pop();
                 }
-                stack.push(range.clone());
+                stack.push(item_range.clone());
 
                 Some(OutlineItem {
                     depth: stack.len() - 1,
-                    range: self.anchor_after(range.start)..self.anchor_before(range.end),
+                    range: self.anchor_after(item_range.start)..self.anchor_before(item_range.end),
                     text,
                     highlight_ranges,
                     name_ranges,

@@ -56,7 +56,16 @@
 [
   "."
   ";"
-] @delimiter
+] @punctuation.delimiter
+
+[
+  "{"
+  "}"
+  "("
+  ")"
+  "["
+  "]"
+] @punctuation.bracket
 
 [
   (string_literal)

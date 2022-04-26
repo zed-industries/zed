@@ -68,6 +68,10 @@ export default function workspace(theme: Theme) {
       },
     },
   };
+  const shareIcon = {
+    margin: { top: 3, bottom: 2 },
+    cornerRadius: 6,
+  };
 
   return {
     background: backgroundColor(theme, 300),
@@ -75,6 +79,13 @@ export default function workspace(theme: Theme) {
     leaderBorderWidth: 2.0,
     tab,
     activeTab,
+    modal: {
+      margin: {
+        bottom: 52,
+        top: 52,
+      },
+      cursor: "Arrow"
+    },
     leftSidebar: {
       ...sidebar,
       border: border(theme, "primary", { right: true }),
@@ -105,8 +116,9 @@ export default function workspace(theme: Theme) {
       avatarWidth: 18,
       height: 32,
       background: backgroundColor(theme, 100),
-      shareIconColor: iconColor(theme, "secondary"),
-      shareIconActiveColor: iconColor(theme, "feature"),
+      padding: {
+        left: 80,
+      },
       title: text(theme, "sans", "primary"),
       avatar: {
         cornerRadius: 10,
@@ -134,9 +146,29 @@ export default function workspace(theme: Theme) {
           right: 4,
         },
       },
+      shareIcon: {
+        ...shareIcon,
+        color: iconColor(theme, "secondary")
+      },
+      hoveredShareIcon: {
+        ...shareIcon,
+        background: backgroundColor(theme, 100, "hovered"),
+        color: iconColor(theme, "secondary"),
+      },
+      hoveredActiveShareIcon: {
+        ...shareIcon,
+        background: backgroundColor(theme, 100, "hovered"),
+        color: iconColor(theme, "active"),
+      },
+      activeShareIcon: {
+        ...shareIcon,
+        background: backgroundColor(theme, 100, "active"),
+        color: iconColor(theme, "active"),
+      },
       outdatedWarning: {
         ...text(theme, "sans", "warning"),
         size: 13,
+        margin: { right: 6 }
       },
     },
     toolbar: {

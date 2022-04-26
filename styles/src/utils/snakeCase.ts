@@ -17,7 +17,7 @@ type SnakeCased<Type> = {
 export default function snakeCaseTree<T>(object: T): SnakeCased<T> {
   const snakeObject: any = {};
   for (const key in object) {
-    snakeObject[snakeCase(key)] = snakeCaseValue(object[key]);
+    snakeObject[snakeCase(key, { keepSpecialCharacters: true })] = snakeCaseValue(object[key]);
   }
   return snakeObject;
 }

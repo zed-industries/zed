@@ -3,7 +3,9 @@ import { withOpacity } from "../utils/color";
 
 export interface SyntaxHighlightStyle {
   color: ColorToken;
-  weight: FontWeightToken;
+  weight?: FontWeightToken;
+  underline?: boolean,
+  italic?: boolean,
 }
 
 export interface Player {
@@ -49,21 +51,30 @@ export interface Syntax {
   number: SyntaxHighlightStyle;
   boolean: SyntaxHighlightStyle;
   predictive: SyntaxHighlightStyle;
-  // TODO: Either move the following or rename
   title: SyntaxHighlightStyle;
   emphasis: SyntaxHighlightStyle;
-  emphasisStrong: SyntaxHighlightStyle;
-  linkUrl: SyntaxHighlightStyle;
+  linkUri: SyntaxHighlightStyle;
   linkText: SyntaxHighlightStyle;
+
+  [key: string]: SyntaxHighlightStyle;
 };
 
 export default interface Theme {
   name: string;
   backgroundColor: {
+    // Basically just Title Bar
+    // Lowest background level
     100: BackgroundColorSet;
+    // Tab bars, panels, popovers
+    // Mid-ground
     300: BackgroundColorSet;
+    // The editor
+    // Foreground
     500: BackgroundColorSet;
+    // Hacks for elements on top of the midground
+    // Buttons in a panel, tab bar, or panel
     on300: BackgroundColorSet;
+    // Hacks for elements on top of the editor
     on500: BackgroundColorSet;
     ok: BackgroundColorSet;
     error: BackgroundColorSet;

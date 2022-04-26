@@ -12,7 +12,7 @@
   (list_marker_star)
   (list_marker_dot)
   (list_marker_parenthesis)
-] @list_marker
+] @punctuation.list_marker
 
 [
   (indented_code_block)

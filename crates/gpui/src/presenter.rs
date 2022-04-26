@@ -4,7 +4,7 @@ use crate::{
     font_cache::FontCache,
     geometry::rect::RectF,
     json::{self, ToJson},
-    platform::Event,
+    platform::{CursorStyle, Event},
     text_layout::TextLayoutCache,
     Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox,
     ElementStateContext, Entity, FontSystem, ModelHandle, ReadModel, ReadView, Scene,
@@ -22,6 +22,7 @@ pub struct Presenter {
     window_id: usize,
     pub(crate) rendered_views: HashMap<usize, ElementBox>,
     parents: HashMap<usize, usize>,
+    cursor_styles: Vec<(RectF, CursorStyle)>,
     font_cache: Arc<FontCache>,
     text_layout_cache: TextLayoutCache,
     asset_cache: Arc<AssetCache>,
@@ -42,6 +43,7 @@ impl Presenter {
             window_id,
             rendered_views: cx.render_views(window_id, titlebar_height),
             parents: HashMap::new(),
+            cursor_styles: Default::default(),
             font_cache,
             text_layout_cache,
             asset_cache,
@@ -118,6 +120,7 @@ impl Presenter {
                 RectF::new(Vector2F::zero(), window_size),
             );
             self.text_layout_cache.finish_frame();
+            self.cursor_styles = scene.cursor_styles();
 
             if let Some(event) = self.last_mouse_moved_event.clone() {
                 self.dispatch_event(event, cx)
@@ -171,8 +174,22 @@ impl Presenter {
     pub fn dispatch_event(&mut self, event: Event, cx: &mut MutableAppContext) {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             match event {
-                Event::MouseMoved { .. } => {
+                Event::MouseMoved {
+                    position,
+                    left_mouse_down,
+                } => {
                     self.last_mouse_moved_event = Some(event.clone());
+
+                    if !left_mouse_down {
+                        let mut style_to_assign = CursorStyle::Arrow;
+                        for (bounds, style) in self.cursor_styles.iter().rev() {
+                            if bounds.contains_point(position) {
+                                style_to_assign = *style;
+                                break;
+                            }
+                        }
+                        cx.platform().set_cursor_style(style_to_assign);
+                    }
                 }
                 Event::LeftMouseDragged { position } => {
                     self.last_mouse_moved_event = Some(Event::MouseMoved {

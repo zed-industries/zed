@@ -4,7 +4,7 @@ use crate::{
     elements::ElementBox,
     executor::{self, Task},
     keymap::{self, Binding, Keystroke},
-    platform::{self, CursorStyle, Platform, PromptLevel, WindowOptions},
+    platform::{self, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::post_inc,
     AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
@@ -31,10 +31,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     rc::{self, Rc},
-    sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
-        Arc, Weak,
-    },
+    sync::{Arc, Weak},
     time::Duration,
 };
 
@@ -766,7 +763,6 @@ pub struct MutableAppContext {
     pending_global_notifications: HashSet<TypeId>,
     pending_flushes: usize,
     flushing_effects: bool,
-    next_cursor_style_handle_id: Arc<AtomicUsize>,
     halt_action_dispatch: bool,
 }
 
@@ -818,7 +814,6 @@ impl MutableAppContext {
             pending_global_notifications: HashSet::new(),
             pending_flushes: 0,
             flushing_effects: false,
-            next_cursor_style_handle_id: Default::default(),
             halt_action_dispatch: false,
         }
     }
@@ -1596,6 +1591,7 @@ impl MutableAppContext {
                 Window {
                     root_view: root_view.clone().into(),
                     focused_view_id: Some(root_view.id()),
+                    is_active: true,
                     invalidation: None,
                 },
             );
@@ -1645,8 +1641,15 @@ impl MutableAppContext {
 
         {
             let mut app = self.upgrade();
+            window.on_active_status_change(Box::new(move |is_active| {
+                app.update(|cx| cx.window_changed_active_status(window_id, is_active))
+            }));
+        }
+
+        {
+            let mut app = self.upgrade();
             window.on_resize(Box::new(move || {
-                app.update(|cx| cx.resize_window(window_id))
+                app.update(|cx| cx.window_was_resized(window_id))
             }));
         }
 
@@ -1861,6 +1864,10 @@ impl MutableAppContext {
                                     .get_or_insert(WindowInvalidation::default());
                             }
                         }
+                        Effect::ActivateWindow {
+                            window_id,
+                            is_active,
+                        } => self.handle_activation_effect(window_id, is_active),
                         Effect::RefreshWindows => {
                             refreshing = true;
                         }
@@ -1919,9 +1926,16 @@ impl MutableAppContext {
         }
     }
 
-    fn resize_window(&mut self, window_id: usize) {
+    fn window_was_resized(&mut self, window_id: usize) {
         self.pending_effects
             .push_back(Effect::ResizeWindow { window_id });
+    }
+
+    fn window_changed_active_status(&mut self, window_id: usize, is_active: bool) {
+        self.pending_effects.push_back(Effect::ActivateWindow {
+            window_id,
+            is_active,
+        });
     }
 
     pub fn refresh_windows(&mut self) {
@@ -1947,16 +1961,6 @@ impl MutableAppContext {
             window.present_scene(scene);
         }
         self.presenters_and_platform_windows = presenters;
-    }
-
-    pub fn set_cursor_style(&mut self, style: CursorStyle) -> CursorStyleHandle {
-        self.platform.set_cursor_style(style);
-        let id = self.next_cursor_style_handle_id.fetch_add(1, SeqCst);
-        CursorStyleHandle {
-            id,
-            next_cursor_style_handle_id: self.next_cursor_style_handle_id.clone(),
-            platform: self.platform(),
-        }
     }
 
     fn handle_subscription_effect(
@@ -2217,6 +2221,34 @@ impl MutableAppContext {
                 callback(entity, self);
             }
         }
+    }
+
+    fn handle_activation_effect(&mut self, window_id: usize, active: bool) {
+        if self
+            .cx
+            .windows
+            .get(&window_id)
+            .map(|w| w.is_active)
+            .map_or(false, |cur_active| cur_active == active)
+        {
+            return;
+        }
+
+        self.update(|this| {
+            let window = this.cx.windows.get_mut(&window_id)?;
+            window.is_active = active;
+            let view_id = window.focused_view_id?;
+            if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
+                if active {
+                    view.on_focus(this, window_id, view_id);
+                } else {
+                    view.on_blur(this, window_id, view_id);
+                }
+                this.cx.views.insert((window_id, view_id), view);
+            }
+
+            Some(())
+        });
     }
 
     fn handle_focus_effect(&mut self, window_id: usize, focused_id: Option<usize>) {
@@ -2582,6 +2614,7 @@ impl ReadView for AppContext {
 struct Window {
     root_view: AnyViewHandle,
     focused_view_id: Option<usize>,
+    is_active: bool,
     invalidation: Option<WindowInvalidation>,
 }
 
@@ -2647,6 +2680,10 @@ pub enum Effect {
     },
     ResizeWindow {
         window_id: usize,
+    },
+    ActivateWindow {
+        window_id: usize,
+        is_active: bool,
     },
     RefreshWindows,
 }
@@ -2728,6 +2765,14 @@ impl Debug for Effect {
             Effect::ResizeWindow { window_id } => f
                 .debug_struct("Effect::RefreshWindow")
                 .field("window_id", window_id)
+                .finish(),
+            Effect::ActivateWindow {
+                window_id,
+                is_active,
+            } => f
+                .debug_struct("Effect::ActivateWindow")
+                .field("window_id", window_id)
+                .field("is_active", is_active)
                 .finish(),
             Effect::RefreshWindows => f.debug_struct("Effect::FullViewRefresh").finish(),
         }
@@ -4448,20 +4493,6 @@ impl<T> Drop for ElementStateHandle<T> {
     fn drop(&mut self) {
         if let Some(ref_counts) = self.ref_counts.upgrade() {
             ref_counts.lock().dec_element_state(self.id);
-        }
-    }
-}
-
-pub struct CursorStyleHandle {
-    id: usize,
-    next_cursor_style_handle_id: Arc<AtomicUsize>,
-    platform: Arc<dyn Platform>,
-}
-
-impl Drop for CursorStyleHandle {
-    fn drop(&mut self) {
-        if self.id + 1 == self.next_cursor_style_handle_id.load(SeqCst) {
-            self.platform.set_cursor_style(CursorStyle::Arrow);
         }
     }
 }

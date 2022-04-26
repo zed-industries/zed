@@ -814,14 +814,20 @@ pub mod tests {
             DisplayPoint::new(0, 7)
         );
         assert_eq!(
-            movement::up(&snapshot, DisplayPoint::new(1, 10), SelectionGoal::None),
+            movement::up(
+                &snapshot,
+                DisplayPoint::new(1, 10),
+                SelectionGoal::None,
+                false
+            ),
             (DisplayPoint::new(0, 7), SelectionGoal::Column(10))
         );
         assert_eq!(
             movement::down(
                 &snapshot,
                 DisplayPoint::new(0, 7),
-                SelectionGoal::Column(10)
+                SelectionGoal::Column(10),
+                false
             ),
             (DisplayPoint::new(1, 10), SelectionGoal::Column(10))
         );
@@ -829,7 +835,8 @@ pub mod tests {
             movement::down(
                 &snapshot,
                 DisplayPoint::new(1, 10),
-                SelectionGoal::Column(10)
+                SelectionGoal::Column(10),
+                false
             ),
             (DisplayPoint::new(2, 4), SelectionGoal::Column(10))
         );

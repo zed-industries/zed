@@ -1,10 +1,11 @@
+#[cfg(test)]
+mod vim_test_context;
+
 mod editor_events;
 mod insert;
 mod motion;
 mod normal;
 mod state;
-#[cfg(test)]
-mod vim_test_context;
 
 use collections::HashMap;
 use editor::{CursorShape, Editor};
@@ -25,6 +26,7 @@ impl_actions!(vim, [SwitchMode, PushOperator]);
 
 pub fn init(cx: &mut MutableAppContext) {
     editor_events::init(cx);
+    normal::init(cx);
     insert::init(cx);
     motion::init(cx);
 
@@ -142,14 +144,14 @@ mod test {
 
     #[gpui::test]
     async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, false, "").await;
+        let mut cx = VimTestContext::new(cx, false).await;
         cx.simulate_keystrokes(["h", "j", "k", "l"]);
         cx.assert_editor_state("hjkl|");
     }
 
     #[gpui::test]
     async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true, "").await;
+        let mut cx = VimTestContext::new(cx, true).await;
 
         cx.simulate_keystroke("i");
         assert_eq!(cx.mode(), Mode::Insert);

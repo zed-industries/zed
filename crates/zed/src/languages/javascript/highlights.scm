@@ -86,6 +86,7 @@
   "?."
   "."
   ","
+  ":"
 ] @punctuation.delimiter
 
 [

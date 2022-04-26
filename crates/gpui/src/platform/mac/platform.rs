@@ -583,6 +583,7 @@ impl platform::Platform for MacPlatform {
                 CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
                 CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
                 CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
+                CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
             };
             let _: () = msg_send![cursor, set];
         }

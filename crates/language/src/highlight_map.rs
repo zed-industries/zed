@@ -51,6 +51,10 @@ impl HighlightMap {
 }
 
 impl HighlightId {
+    pub fn is_default(&self) -> bool {
+        *self == DEFAULT_SYNTAX_HIGHLIGHT_ID
+    }
+
     pub fn style(&self, theme: &SyntaxTheme) -> Option<HighlightStyle> {
         theme
             .highlights
