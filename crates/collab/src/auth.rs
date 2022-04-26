@@ -14,7 +14,7 @@ use scrypt::{
     Scrypt,
 };
 
-pub async fn validate_header<B>(req: Request<B>, next: Next<B>) -> impl IntoResponse {
+pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl IntoResponse {
     let mut auth_header = req
         .headers()
         .get(http::header::AUTHORIZATION)
@@ -50,14 +50,15 @@ pub async fn validate_header<B>(req: Request<B>, next: Next<B>) -> impl IntoResp
         }
     }
 
-    if !credentials_valid {
+    if credentials_valid {
+        req.extensions_mut().insert(user_id);
+        Ok::<_, Error>(next.run(req).await)
+    } else {
         Err(Error::Http(
             StatusCode::UNAUTHORIZED,
             "invalid credentials".to_string(),
-        ))?;
+        ))
     }
-
-    Ok::<_, Error>(next.run(req).await)
 }
 
 const MAX_ACCESS_TOKENS_TO_STORE: usize = 8;

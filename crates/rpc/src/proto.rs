@@ -1,6 +1,6 @@
 use super::{ConnectionId, PeerId, TypedEnvelope};
-use anyhow::Result;
-use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
+use anyhow::{anyhow, Result};
+use async_tungstenite::tungstenite::Message as WebSocketMessage;
 use futures::{SinkExt as _, StreamExt as _};
 use prost::Message as _;
 use std::any::{Any, TypeId};
@@ -318,9 +318,9 @@ impl<S> MessageStream<S> {
 
 impl<S> MessageStream<S>
 where
-    S: futures::Sink<WebSocketMessage, Error = WebSocketError> + Unpin,
+    S: futures::Sink<WebSocketMessage, Error = anyhow::Error> + Unpin,
 {
-    pub async fn write(&mut self, message: Message) -> Result<(), WebSocketError> {
+    pub async fn write(&mut self, message: Message) -> Result<(), anyhow::Error> {
         #[cfg(any(test, feature = "test-support"))]
         const COMPRESSION_LEVEL: i32 = -7;
 
@@ -357,9 +357,9 @@ where
 
 impl<S> MessageStream<S>
 where
-    S: futures::Stream<Item = Result<WebSocketMessage, WebSocketError>> + Unpin,
+    S: futures::Stream<Item = Result<WebSocketMessage, anyhow::Error>> + Unpin,
 {
-    pub async fn read(&mut self) -> Result<Message, WebSocketError> {
+    pub async fn read(&mut self) -> Result<Message, anyhow::Error> {
         while let Some(bytes) = self.stream.next().await {
             match bytes? {
                 WebSocketMessage::Binary(bytes) => {
@@ -375,7 +375,7 @@ where
                 _ => {}
             }
         }
-        Err(WebSocketError::ConnectionClosed)
+        Err(anyhow!("connection closed"))
     }
 }
 

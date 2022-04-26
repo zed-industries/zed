@@ -20,9 +20,11 @@ use tower::ServiceBuilder;
 pub fn routes(state: Arc<AppState>) -> Router<Body> {
     Router::new()
         .route("/users", get(get_users).post(create_user))
-        .route("/users/:id", put(update_user).delete(destroy_user))
-        .route("/users/:gh_login", get(get_user))
-        .route("/users/:gh_login/access_tokens", post(create_access_token))
+        .route(
+            "/users/:id",
+            put(update_user).delete(destroy_user).get(get_user),
+        )
+        .route("/users/:id/access_tokens", post(create_access_token))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(state))

@@ -4,12 +4,14 @@ mod db;
 mod env;
 mod rpc;
 
-use ::rpc::Peer;
 use axum::{body::Body, http::StatusCode, response::IntoResponse, Router};
 use db::{Db, PostgresDb};
 
 use serde::Deserialize;
-use std::{net::TcpListener, sync::Arc};
+use std::{
+    net::{SocketAddr, TcpListener},
+    sync::Arc,
+};
 
 #[derive(Default, Deserialize)]
 pub struct Config {
@@ -56,17 +58,17 @@ async fn main() -> Result<()> {
         .expect("failed to bind TCP listener");
 
     let app = Router::<Body>::new()
-        .merge(api::routes(state))
-        .merge(rpc::routes(Peer::new()));
+        .merge(api::routes(state.clone()))
+        .merge(rpc::routes(state));
 
     axum::Server::from_tcp(listener)?
-        .serve(app.into_make_service())
+        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .await?;
 
     Ok(())
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub enum Error {
     Http(StatusCode, String),
