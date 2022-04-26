@@ -28,6 +28,7 @@ pub fn routes(state: Arc<AppState>) -> Router<Body> {
                 .layer(Extension(state))
                 .layer(middleware::from_fn(validate_api_token)),
         )
+    // TODO: Compression on API routes?
 }
 
 pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoResponse {

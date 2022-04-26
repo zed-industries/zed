@@ -1099,6 +1099,10 @@
 //     }
 // }
 
+pub fn routes(peer: Arc<Peer>) -> Router<Body> {
+    Router::new()
+}
+
 // pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
 //     let server = Server::new(app.state().clone(), rpc.clone(), None);
 //     app.at("/rpc").get(move |request: Request<Arc<AppState>>| {
@@ -6360,3 +6364,6 @@
 //         }
 //     }
 // }
+
+use axum::{body::Body, Router};
+use client::Peer;

@@ -51,28 +51,13 @@ async fn main() -> Result<()> {
 
     let config = envy::from_env::<Config>().expect("error loading config");
     let state = AppState::new(&config).await?;
-    let rpc = Peer::new();
-    run_server(
-        state.clone(),
-        rpc,
-        TcpListener::bind(&format!("0.0.0.0:{}", config.http_port))
-            .expect("failed to bind TCP listener"),
-    )
-    .await?;
-    Ok(())
-}
 
-pub async fn run_server(
-    state: Arc<AppState>,
-    peer: Arc<Peer>,
-    listener: TcpListener,
-) -> Result<()> {
-    // TODO: Compression on API routes?
-    // TODO: Authenticate API routes.
+    let listener = TcpListener::bind(&format!("0.0.0.0:{}", config.http_port))
+        .expect("failed to bind TCP listener");
 
-    let app = Router::<Body>::new().merge(api::routes(state.clone()));
-
-    // TODO: Add rpc routes
+    let app = Router::<Body>::new()
+        .merge(api::routes(state))
+        .merge(rpc::routes(Peer::new()));
 
     axum::Server::from_tcp(listener)?
         .serve(app.into_make_service())
