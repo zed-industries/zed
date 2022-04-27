@@ -250,7 +250,7 @@ impl Item for Editor {
             let offset = if buffer.can_resolve(&data.cursor_anchor) {
                 data.cursor_anchor.to_point(&buffer)
             } else {
-                buffer.clip_point(data.cursor_point, Bias::Left)
+                buffer.clip_point(data.cursor_position, Bias::Left)
             };
             let newest_selection = self.newest_selection_with_snapshot::<Point>(&buffer);
 

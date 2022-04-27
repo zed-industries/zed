@@ -852,7 +852,7 @@ pub struct NavigationData {
     // Matching offsets for anchor and scroll_top_anchor allows us to recreate the anchor if the buffer
     // has since been closed
     cursor_anchor: Anchor,
-    cursor_point: Point,
+    cursor_position: Point,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
     scroll_top_row: u32,
@@ -3920,7 +3920,7 @@ impl Editor {
 
             nav_history.push(Some(NavigationData {
                 cursor_anchor: position,
-                cursor_point: point,
+                cursor_position: point,
                 scroll_position: self.scroll_position,
                 scroll_top_anchor: self.scroll_top_anchor.clone(),
                 scroll_top_row,
@@ -6821,6 +6821,29 @@ mod tests {
             editor.navigate(nav_entry.data.unwrap(), cx);
             assert_eq!(editor.scroll_position, original_scroll_position);
             assert_eq!(editor.scroll_top_anchor, original_scroll_top_anchor);
+
+            // Ensure we don't panic when navigation data contains invalid anchors *and* points.
+            let mut invalid_anchor = editor.scroll_top_anchor.clone();
+            invalid_anchor.text_anchor.buffer_id = Some(999);
+            let invalid_point = Point::new(9999, 0);
+            editor.navigate(
+                Box::new(NavigationData {
+                    cursor_anchor: invalid_anchor.clone(),
+                    cursor_position: invalid_point,
+                    scroll_top_anchor: invalid_anchor.clone(),
+                    scroll_top_row: invalid_point.row,
+                    scroll_position: Default::default(),
+                }),
+                cx,
+            );
+            assert_eq!(
+                editor.selected_display_ranges(cx),
+                &[editor.max_point(cx)..editor.max_point(cx)]
+            );
+            assert_eq!(
+                editor.scroll_position(cx),
+                vec2f(0., editor.max_point(cx).row() as f32)
+            );
 
             editor
         });
