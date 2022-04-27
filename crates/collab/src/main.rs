@@ -6,10 +6,6 @@ mod rpc;
 
 use axum::{body::Body, http::StatusCode, response::IntoResponse, Router};
 use db::{Db, PostgresDb};
-use opentelemetry::{
-    trace::{get_active_span, Tracer},
-    KeyValue,
-};
 use serde::Deserialize;
 use std::{
     net::{SocketAddr, TcpListener},
@@ -60,13 +56,11 @@ async fn main() -> Result<()> {
     init_tracing(&config);
     let state = AppState::new(&config).await?;
 
-    let tracer = opentelemetry::global::tracer("");
-    tracer.in_span("testing", |_| {
-        get_active_span(|span| {
-            span.set_attribute(KeyValue::new("foo", "bar"));
-        });
-        log::info!("testing in span");
-    });
+    {
+        let root = tracing::span!(tracing::Level::TRACE, "testing_1", work_units = 2_i32);
+        let _enter = root.enter();
+        tracing::error!("test_error_1");
+    }
 
     let listener = TcpListener::bind(&format!("0.0.0.0:{}", config.http_port))
         .expect("failed to bind TCP listener");
@@ -128,7 +122,11 @@ impl std::fmt::Display for Error {
 }
 
 pub fn init_tracing(config: &Config) -> Option<()> {
+    use opentelemetry::KeyValue;
     use opentelemetry_otlp::WithExportConfig;
+    use tracing_opentelemetry::OpenTelemetryLayer;
+    use tracing_subscriber::layer::SubscriberExt;
+
     let (honeycomb_api_key, honeycomb_dataset) = config
         .honeycomb_api_key
         .clone()
@@ -136,8 +134,7 @@ pub fn init_tracing(config: &Config) -> Option<()> {
 
     let mut metadata = tonic::metadata::MetadataMap::new();
     metadata.insert("x-honeycomb-team", honeycomb_api_key.parse().unwrap());
-    metadata.insert("x-honeycomb-dataset", honeycomb_dataset.parse().unwrap());
-    opentelemetry_otlp::new_pipeline()
+    let tracer = opentelemetry_otlp::new_pipeline()
         .tracing()
         .with_exporter(
             opentelemetry_otlp::new_exporter()
@@ -146,10 +143,19 @@ pub fn init_tracing(config: &Config) -> Option<()> {
                 .with_metadata(metadata),
         )
         .with_trace_config(opentelemetry::sdk::trace::config().with_resource(
-            opentelemetry::sdk::Resource::new(vec![KeyValue::new("service.name", "collab")]),
+            opentelemetry::sdk::Resource::new(vec![KeyValue::new(
+                "service.name",
+                honeycomb_dataset,
+            )]),
         ))
         .install_batch(opentelemetry::runtime::Tokio)
         .expect("failed to initialize tracing");
+
+    let subscriber = tracing_subscriber::Registry::default()
+        .with(OpenTelemetryLayer::new(tracer))
+        .with(tracing_subscriber::fmt::layer());
+
+    tracing::subscriber::set_global_default(subscriber).unwrap();
 
     None
 }

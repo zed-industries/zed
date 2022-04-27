@@ -37,12 +37,15 @@ scrypt = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha-1 = "0.9"
+time = "0.2"
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.17"
 tonic = "0.6"
 tower = "0.4"
-time = "0.2"
 toml = "0.5.8"
+tracing = "0.1"
+tracing-opentelemetry = "0.17"
+tracing-subscriber = "0.3"
 
 [dependencies.sqlx]
 version = "0.5.2"
