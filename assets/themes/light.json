@@ -212,17 +212,43 @@
       "sidebar_item": {
         "height": 32,
         "icon_color": "#717171",
-        "icon_size": 18
+        "icon_size": 18,
+        "padding": {
+          "left": 5,
+          "right": 5
+        },
+        "corner_radius": 5
       },
       "sidebar_item_hover": {
         "height": 32,
         "icon_color": "#717171",
-        "icon_size": 18
+        "icon_size": 18,
+        "padding": {
+          "left": 5,
+          "right": 5
+        },
+        "corner_radius": 5
       },
       "sidebar_item_active": {
         "height": 32,
         "icon_color": "#000000",
-        "icon_size": 18
+        "icon_size": 18,
+        "padding": {
+          "left": 5,
+          "right": 5
+        },
+        "corner_radius": 5,
+        "background": "#e3e3e3"
+      },
+      "sidebar_items_left": {
+        "margin": {
+          "right": 20
+        }
+      },
+      "sidebar_items_right": {
+        "margin": {
+          "left": 20
+        }
       }
     },
     "titlebar": {

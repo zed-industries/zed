@@ -176,22 +176,26 @@ impl View for SidebarButtons {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &cx.global::<Settings>().theme.workspace.status_bar;
-        let style = theme.sidebar_item;
-        let hover_style = theme.sidebar_item_hover;
-        let active_style = theme.sidebar_item_active;
         let sidebar = self.sidebar.read(cx);
+        let item_style = theme.sidebar_item;
+        let hover_item_style = theme.sidebar_item_hover;
+        let active_item_style = theme.sidebar_item_active;
         let active_ix = sidebar.active_item_ix;
         let side = sidebar.side;
+        let group_style = match side {
+            Side::Left => theme.sidebar_items_left,
+            Side::Right => theme.sidebar_items_right,
+        };
         let items = sidebar.items.clone();
         Flex::row()
             .with_children(items.iter().enumerate().map(|(ix, item)| {
                 MouseEventHandler::new::<Self, _, _>(ix, cx, move |state, _| {
                     let style = if Some(ix) == active_ix {
-                        active_style
+                        active_item_style
                     } else if state.hovered {
-                        hover_style
+                        hover_item_style
                     } else {
-                        style
+                        item_style
                     };
                     Svg::new(item.icon_path)
                         .with_color(style.icon_color)
@@ -210,6 +214,8 @@ impl View for SidebarButtons {
                 })
                 .boxed()
             }))
+            .contained()
+            .with_style(group_style)
             .boxed()
     }
 }

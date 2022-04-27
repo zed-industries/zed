@@ -137,6 +137,24 @@ pub struct FindEditor {
 }
 
 #[derive(Deserialize, Default)]
+pub struct StatusBar {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub height: f32,
+    pub item_spacing: f32,
+    pub cursor_position: TextStyle,
+    pub diagnostic_message: TextStyle,
+    pub lsp_message: TextStyle,
+    pub auto_update_progress_message: TextStyle,
+    pub auto_update_done_message: TextStyle,
+    pub sidebar_items_left: ContainerStyle,
+    pub sidebar_items_right: ContainerStyle,
+    pub sidebar_item: SidebarItem,
+    pub sidebar_item_active: SidebarItem,
+    pub sidebar_item_hover: SidebarItem,
+}
+
+#[derive(Deserialize, Default)]
 pub struct Sidebar {
     pub resize_handle: ContainerStyle,
 }
@@ -148,22 +166,6 @@ pub struct SidebarItem {
     pub icon_color: Color,
     pub icon_size: f32,
     pub height: f32,
-}
-
-#[derive(Deserialize, Default)]
-pub struct StatusBar {
-    #[serde(flatten)]
-    pub container: ContainerStyle,
-    pub height: f32,
-    pub item_spacing: f32,
-    pub cursor_position: TextStyle,
-    pub diagnostic_message: TextStyle,
-    pub lsp_message: TextStyle,
-    pub auto_update_progress_message: TextStyle,
-    pub auto_update_done_message: TextStyle,
-    pub sidebar_item: SidebarItem,
-    pub sidebar_item_active: SidebarItem,
-    pub sidebar_item_hover: SidebarItem,
 }
 
 #[derive(Deserialize, Default)]

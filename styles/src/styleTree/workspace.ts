@@ -51,6 +51,8 @@ export default function workspace(theme: Theme) {
     height: 32,
     iconColor: iconColor(theme, "secondary"),
     iconSize: 18,
+    padding: { left: 5, right: 5 },
+    cornerRadius: 5,
   };
   const shareIcon = {
     margin: { top: 3, bottom: 2 },
@@ -102,7 +104,14 @@ export default function workspace(theme: Theme) {
       sidebarItemActive: {
         ...sidebarItem,
         iconColor: iconColor(theme, "active"),
+        background: backgroundColor(theme, 300, "active"),
       },
+      sidebarItemsLeft: {
+        margin: { right: 20 }
+      },
+      sidebarItemsRight: {
+        margin: { left: 20 }
+      }
     },
     titlebar: {
       avatarWidth: 18,
