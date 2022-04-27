@@ -1,4 +1,4 @@
-use db::{Db, UserId};
+use db::{Db, PostgresDb, UserId};
 use rand::prelude::*;
 use time::{Duration, OffsetDateTime};
 
@@ -6,11 +6,11 @@ use time::{Duration, OffsetDateTime};
 #[path = "../db.rs"]
 mod db;
 
-#[async_std::main]
+#[tokio::main]
 async fn main() {
     let mut rng = StdRng::from_entropy();
     let database_url = std::env::var("DATABASE_URL").expect("missing DATABASE_URL env var");
-    let db = Db::new(&database_url, 5)
+    let db = PostgresDb::new(&database_url, 5)
         .await
         .expect("failed to connect to postgres database");
 

@@ -1,11 +1,13 @@
 use anyhow::{anyhow, Context, Result};
-use client::http::{self, HttpClient, Method};
+use client::http::HttpClient;
+
 use serde::Deserialize;
+use smol::io::AsyncReadExt;
 use std::{path::Path, sync::Arc};
 
 pub struct GitHubLspBinaryVersion {
     pub name: String,
-    pub url: http::Url,
+    pub url: String,
 }
 
 #[derive(Deserialize)]
@@ -30,7 +32,7 @@ pub(crate) struct GithubRelease {
 #[derive(Deserialize)]
 pub(crate) struct GithubReleaseAsset {
     name: String,
-    browser_download_url: http::Url,
+    browser_download_url: String,
 }
 
 pub async fn npm_package_latest_version(name: &str) -> Result<String> {
@@ -81,23 +83,24 @@ pub async fn latest_github_release(
     http: Arc<dyn HttpClient>,
     asset_name: impl Fn(&str) -> String,
 ) -> Result<GitHubLspBinaryVersion> {
-    let release = http
-        .send(
-            surf::RequestBuilder::new(
-                Method::Get,
-                http::Url::parse(&format!(
-                    "https://api.github.com/repos/{repo_name_with_owner}/releases/latest"
-                ))
-                .unwrap(),
-            )
-            .middleware(surf::middleware::Redirect::default())
-            .build(),
+    let mut response = http
+        .get(
+            &format!("https://api.github.com/repos/{repo_name_with_owner}/releases/latest"),
+            Default::default(),
+            true,
         )
         .await
-        .map_err(|err| anyhow!("error fetching latest release: {}", err))?
-        .body_json::<GithubRelease>()
+        .context("error fetching latest release")?;
+
+    let mut body = Vec::new();
+    response
+        .body_mut()
+        .read_to_end(&mut body)
         .await
-        .map_err(|err| anyhow!("error parsing latest release: {}", err))?;
+        .context("error reading latest release")?;
+
+    let release: GithubRelease =
+        serde_json::from_slice(body.as_slice()).context("error deserializing latest release")?;
     let asset_name = asset_name(&release.name);
     let asset = release
         .assets

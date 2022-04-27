@@ -1,6 +1,6 @@
 use super::installation::{latest_github_release, GitHubLspBinaryVersion};
-use anyhow::{anyhow, Result};
-use client::http::{HttpClient, Method};
+use anyhow::{anyhow, Context, Result};
+use client::http::HttpClient;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 pub use language::*;
 use smol::fs::{self, File};
@@ -41,14 +41,10 @@ impl super::LspAdapter for CLspAdapter {
             let binary_path = version_dir.join("bin/clangd");
 
             if fs::metadata(&binary_path).await.is_err() {
-                let response = http
-                    .send(
-                        surf::RequestBuilder::new(Method::Get, version.url)
-                            .middleware(surf::middleware::Redirect::default())
-                            .build(),
-                    )
+                let mut response = http
+                    .get(&version.url, Default::default(), true)
                     .await
-                    .map_err(|err| anyhow!("error downloading release: {}", err))?;
+                    .context("error downloading release")?;
                 let mut file = File::create(&zip_path).await?;
                 if !response.status().is_success() {
                     Err(anyhow!(
@@ -56,7 +52,7 @@ impl super::LspAdapter for CLspAdapter {
                         response.status().to_string()
                     ))?;
                 }
-                futures::io::copy(response, &mut file).await?;
+                futures::io::copy(response.body_mut(), &mut file).await?;
 
                 let unzip_status = smol::process::Command::new("unzip")
                     .current_dir(&container_dir)

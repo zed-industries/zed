@@ -62,6 +62,7 @@ http-auth-basic = "0.1.3"
 ignore = "0.4"
 image = "0.23"
 indexmap = "1.6.2"
+isahc = "1.7"
 lazy_static = "1.4.0"
 libc = "0.2"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
@@ -79,7 +80,6 @@ serde_path_to_error = "0.1.4"
 simplelog = "0.9"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2.5"
-surf = "2.2"
 tempdir = { version = "0.3.7" }
 thiserror = "1.0.29"
 tiny_http = "0.8"

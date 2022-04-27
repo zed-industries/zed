@@ -57,7 +57,7 @@ pub trait Db: Send + Sync {
         before_id: Option<MessageId>,
     ) -> Result<Vec<ChannelMessage>>;
     #[cfg(test)]
-    async fn teardown(&self, name: &str, url: &str);
+    async fn teardown(&self, url: &str);
 }
 
 pub struct PostgresDb {
@@ -68,7 +68,7 @@ impl PostgresDb {
     pub async fn new(url: &str, max_connections: u32) -> Result<Self> {
         let pool = DbOptions::new()
             .max_connections(max_connections)
-            .connect(url)
+            .connect(&url)
             .await
             .context("failed to connect to postgres database")?;
         Ok(Self { pool })
@@ -81,11 +81,11 @@ impl Db for PostgresDb {
 
     async fn create_user(&self, github_login: &str, admin: bool) -> Result<UserId> {
         let query = "
-                INSERT INTO users (github_login, admin)
-                VALUES ($1, $2)
-                ON CONFLICT (github_login) DO UPDATE SET github_login = excluded.github_login
-                RETURNING id
-            ";
+            INSERT INTO users (github_login, admin)
+            VALUES ($1, $2)
+            ON CONFLICT (github_login) DO UPDATE SET github_login = excluded.github_login
+            RETURNING id
+        ";
         Ok(sqlx::query_scalar(query)
             .bind(github_login)
             .bind(admin)
@@ -107,11 +107,10 @@ impl Db for PostgresDb {
     async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
         let ids = ids.into_iter().map(|id| id.0).collect::<Vec<_>>();
         let query = "
-                SELECT users.*
-                FROM users
-                WHERE users.id = ANY ($1)
-            ";
-
+            SELECT users.*
+            FROM users
+            WHERE users.id = ANY ($1)
+        ";
         Ok(sqlx::query_as(query)
             .bind(&ids)
             .fetch_all(&self.pool)
@@ -160,18 +159,18 @@ impl Db for PostgresDb {
         max_access_token_count: usize,
     ) -> Result<()> {
         let insert_query = "
-                INSERT INTO access_tokens (user_id, hash)
-                VALUES ($1, $2);
-            ";
+            INSERT INTO access_tokens (user_id, hash)
+            VALUES ($1, $2);
+        ";
         let cleanup_query = "
-                DELETE FROM access_tokens
-                WHERE id IN (
-                    SELECT id from access_tokens
-                    WHERE user_id = $1
-                    ORDER BY id DESC
-                    OFFSET $3
-                )
-            ";
+            DELETE FROM access_tokens
+            WHERE id IN (
+                SELECT id from access_tokens
+                WHERE user_id = $1
+                ORDER BY id DESC
+                OFFSET $3
+            )
+        ";
 
         let mut tx = self.pool.begin().await?;
         sqlx::query(insert_query)
@@ -190,11 +189,11 @@ impl Db for PostgresDb {
 
     async fn get_access_token_hashes(&self, user_id: UserId) -> Result<Vec<String>> {
         let query = "
-                SELECT hash
-                FROM access_tokens
-                WHERE user_id = $1
-                ORDER BY id DESC
-            ";
+            SELECT hash
+            FROM access_tokens
+            WHERE user_id = $1
+            ORDER BY id DESC
+        ";
         Ok(sqlx::query_scalar(query)
             .bind(user_id.0)
             .fetch_all(&self.pool)
@@ -207,10 +206,10 @@ impl Db for PostgresDb {
     #[cfg(any(test, feature = "seed-support"))]
     async fn find_org_by_slug(&self, slug: &str) -> Result<Option<Org>> {
         let query = "
-                SELECT *
-                FROM orgs
-                WHERE slug = $1
-            ";
+            SELECT *
+            FROM orgs
+            WHERE slug = $1
+        ";
         Ok(sqlx::query_as(query)
             .bind(slug)
             .fetch_optional(&self.pool)
@@ -220,10 +219,10 @@ impl Db for PostgresDb {
     #[cfg(any(test, feature = "seed-support"))]
     async fn create_org(&self, name: &str, slug: &str) -> Result<OrgId> {
         let query = "
-                INSERT INTO orgs (name, slug)
-                VALUES ($1, $2)
-                RETURNING id
-            ";
+            INSERT INTO orgs (name, slug)
+            VALUES ($1, $2)
+            RETURNING id
+        ";
         Ok(sqlx::query_scalar(query)
             .bind(name)
             .bind(slug)
@@ -235,10 +234,10 @@ impl Db for PostgresDb {
     #[cfg(any(test, feature = "seed-support"))]
     async fn add_org_member(&self, org_id: OrgId, user_id: UserId, is_admin: bool) -> Result<()> {
         let query = "
-                INSERT INTO org_memberships (org_id, user_id, admin)
-                VALUES ($1, $2, $3)
-                ON CONFLICT DO NOTHING
-            ";
+            INSERT INTO org_memberships (org_id, user_id, admin)
+            VALUES ($1, $2, $3)
+            ON CONFLICT DO NOTHING
+        ";
         Ok(sqlx::query(query)
             .bind(org_id.0)
             .bind(user_id.0)
@@ -253,10 +252,10 @@ impl Db for PostgresDb {
     #[cfg(any(test, feature = "seed-support"))]
     async fn create_org_channel(&self, org_id: OrgId, name: &str) -> Result<ChannelId> {
         let query = "
-                INSERT INTO channels (owner_id, owner_is_user, name)
-                VALUES ($1, false, $2)
-                RETURNING id
-            ";
+            INSERT INTO channels (owner_id, owner_is_user, name)
+            VALUES ($1, false, $2)
+            RETURNING id
+        ";
         Ok(sqlx::query_scalar(query)
             .bind(org_id.0)
             .bind(name)
@@ -269,12 +268,12 @@ impl Db for PostgresDb {
     #[cfg(any(test, feature = "seed-support"))]
     async fn get_org_channels(&self, org_id: OrgId) -> Result<Vec<Channel>> {
         let query = "
-                SELECT *
-                FROM channels
-                WHERE
-                    channels.owner_is_user = false AND
-                    channels.owner_id = $1
-            ";
+            SELECT *
+            FROM channels
+            WHERE
+                channels.owner_is_user = false AND
+                channels.owner_id = $1
+        ";
         Ok(sqlx::query_as(query)
             .bind(org_id.0)
             .fetch_all(&self.pool)
@@ -283,14 +282,14 @@ impl Db for PostgresDb {
 
     async fn get_accessible_channels(&self, user_id: UserId) -> Result<Vec<Channel>> {
         let query = "
-                SELECT
-                    channels.*
-                FROM
-                    channel_memberships, channels
-                WHERE
-                    channel_memberships.user_id = $1 AND
-                    channel_memberships.channel_id = channels.id
-            ";
+            SELECT
+                channels.*
+            FROM
+                channel_memberships, channels
+            WHERE
+                channel_memberships.user_id = $1 AND
+                channel_memberships.channel_id = channels.id
+        ";
         Ok(sqlx::query_as(query)
             .bind(user_id.0)
             .fetch_all(&self.pool)
@@ -303,11 +302,11 @@ impl Db for PostgresDb {
         channel_id: ChannelId,
     ) -> Result<bool> {
         let query = "
-                SELECT id
-                FROM channel_memberships
-                WHERE user_id = $1 AND channel_id = $2
-                LIMIT 1
-            ";
+            SELECT id
+            FROM channel_memberships
+            WHERE user_id = $1 AND channel_id = $2
+            LIMIT 1
+        ";
         Ok(sqlx::query_scalar::<_, i32>(query)
             .bind(user_id.0)
             .bind(channel_id.0)
@@ -324,10 +323,10 @@ impl Db for PostgresDb {
         is_admin: bool,
     ) -> Result<()> {
         let query = "
-                INSERT INTO channel_memberships (channel_id, user_id, admin)
-                VALUES ($1, $2, $3)
-                ON CONFLICT DO NOTHING
-            ";
+            INSERT INTO channel_memberships (channel_id, user_id, admin)
+            VALUES ($1, $2, $3)
+            ON CONFLICT DO NOTHING
+        ";
         Ok(sqlx::query(query)
             .bind(channel_id.0)
             .bind(user_id.0)
@@ -348,11 +347,11 @@ impl Db for PostgresDb {
         nonce: u128,
     ) -> Result<MessageId> {
         let query = "
-                INSERT INTO channel_messages (channel_id, sender_id, body, sent_at, nonce)
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (nonce) DO UPDATE SET nonce = excluded.nonce
-                RETURNING id
-            ";
+            INSERT INTO channel_messages (channel_id, sender_id, body, sent_at, nonce)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (nonce) DO UPDATE SET nonce = excluded.nonce
+            RETURNING id
+        ";
         Ok(sqlx::query_scalar(query)
             .bind(channel_id.0)
             .bind(sender_id.0)
@@ -371,19 +370,19 @@ impl Db for PostgresDb {
         before_id: Option<MessageId>,
     ) -> Result<Vec<ChannelMessage>> {
         let query = r#"
-                SELECT * FROM (
-                    SELECT
-                        id, channel_id, sender_id, body, sent_at AT TIME ZONE 'UTC' as sent_at, nonce
-                    FROM
-                        channel_messages
-                    WHERE
-                        channel_id = $1 AND
-                        id < $2
-                    ORDER BY id DESC
-                    LIMIT $3
-                ) as recent_messages
-                ORDER BY id ASC
-            "#;
+            SELECT * FROM (
+                SELECT
+                    id, channel_id, sender_id, body, sent_at AT TIME ZONE 'UTC' as sent_at, nonce
+                FROM
+                    channel_messages
+                WHERE
+                    channel_id = $1 AND
+                    id < $2
+                ORDER BY id DESC
+                LIMIT $3
+            ) as recent_messages
+            ORDER BY id ASC
+        "#;
         Ok(sqlx::query_as(query)
             .bind(channel_id.0)
             .bind(before_id.unwrap_or(MessageId::MAX))
@@ -393,19 +392,15 @@ impl Db for PostgresDb {
     }
 
     #[cfg(test)]
-    async fn teardown(&self, name: &str, url: &str) {
+    async fn teardown(&self, url: &str) {
         use util::ResultExt;
 
         let query = "
-                SELECT pg_terminate_backend(pg_stat_activity.pid)
-                FROM pg_stat_activity
-                WHERE pg_stat_activity.datname = '{}' AND pid <> pg_backend_pid();
-            ";
-        sqlx::query(query)
-            .bind(name)
-            .execute(&self.pool)
-            .await
-            .log_err();
+            SELECT pg_terminate_backend(pg_stat_activity.pid)
+            FROM pg_stat_activity
+            WHERE pg_stat_activity.datname = current_database() AND pid <> pg_backend_pid();
+        ";
+        sqlx::query(query).execute(&self.pool).await.log_err();
         self.pool.close().await;
         <sqlx::Postgres as sqlx::migrate::MigrateDatabase>::drop_database(url)
             .await
@@ -480,7 +475,7 @@ pub mod tests {
     use super::*;
     use anyhow::anyhow;
     use collections::BTreeMap;
-    use gpui::{executor::Background, TestAppContext};
+    use gpui::executor::Background;
     use lazy_static::lazy_static;
     use parking_lot::Mutex;
     use rand::prelude::*;
@@ -491,9 +486,12 @@ pub mod tests {
     use std::{path::Path, sync::Arc};
     use util::post_inc;
 
-    #[gpui::test]
-    async fn test_get_users_by_ids(cx: &mut TestAppContext) {
-        for test_db in [TestDb::postgres(), TestDb::fake(cx.background())] {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_get_users_by_ids() {
+        for test_db in [
+            TestDb::postgres().await,
+            TestDb::fake(Arc::new(gpui::executor::Background::new())),
+        ] {
             let db = test_db.db();
 
             let user = db.create_user("user", false).await.unwrap();
@@ -531,9 +529,12 @@ pub mod tests {
         }
     }
 
-    #[gpui::test]
-    async fn test_recent_channel_messages(cx: &mut TestAppContext) {
-        for test_db in [TestDb::postgres(), TestDb::fake(cx.background())] {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_recent_channel_messages() {
+        for test_db in [
+            TestDb::postgres().await,
+            TestDb::fake(Arc::new(gpui::executor::Background::new())),
+        ] {
             let db = test_db.db();
             let user = db.create_user("user", false).await.unwrap();
             let org = db.create_org("org", "org").await.unwrap();
@@ -567,9 +568,12 @@ pub mod tests {
         }
     }
 
-    #[gpui::test]
-    async fn test_channel_message_nonces(cx: &mut TestAppContext) {
-        for test_db in [TestDb::postgres(), TestDb::fake(cx.background())] {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_channel_message_nonces() {
+        for test_db in [
+            TestDb::postgres().await,
+            TestDb::fake(Arc::new(gpui::executor::Background::new())),
+        ] {
             let db = test_db.db();
             let user = db.create_user("user", false).await.unwrap();
             let org = db.create_org("org", "org").await.unwrap();
@@ -598,9 +602,9 @@ pub mod tests {
         }
     }
 
-    #[gpui::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_create_access_tokens() {
-        let test_db = TestDb::postgres();
+        let test_db = TestDb::postgres().await;
         let db = test_db.db();
         let user = db.create_user("the-user", false).await.unwrap();
 
@@ -632,12 +636,11 @@ pub mod tests {
 
     pub struct TestDb {
         pub db: Option<Arc<dyn Db>>,
-        pub name: String,
         pub url: String,
     }
 
     impl TestDb {
-        pub fn postgres() -> Self {
+        pub async fn postgres() -> Self {
             lazy_static! {
                 static ref LOCK: Mutex<()> = Mutex::new(());
             }
@@ -647,18 +650,14 @@ pub mod tests {
             let name = format!("zed-test-{}", rng.gen::<u128>());
             let url = format!("postgres://postgres@localhost/{}", name);
             let migrations_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"));
-            let db = futures::executor::block_on(async {
-                Postgres::create_database(&url)
-                    .await
-                    .expect("failed to create test db");
-                let db = PostgresDb::new(&url, 5).await.unwrap();
-                let migrator = Migrator::new(migrations_path).await.unwrap();
-                migrator.run(&db.pool).await.unwrap();
-                db
-            });
+            Postgres::create_database(&url)
+                .await
+                .expect("failed to create test db");
+            let db = PostgresDb::new(&url, 5).await.unwrap();
+            let migrator = Migrator::new(migrations_path).await.unwrap();
+            migrator.run(&db.pool).await.unwrap();
             Self {
                 db: Some(Arc::new(db)),
-                name,
                 url,
             }
         }
@@ -666,8 +665,7 @@ pub mod tests {
         pub fn fake(background: Arc<Background>) -> Self {
             Self {
                 db: Some(Arc::new(FakeDb::new(background))),
-                name: "fake".to_string(),
-                url: "fake".to_string(),
+                url: Default::default(),
             }
         }
 
@@ -679,7 +677,7 @@ pub mod tests {
     impl Drop for TestDb {
         fn drop(&mut self) {
             if let Some(db) = self.db.take() {
-                futures::executor::block_on(db.teardown(&self.name, &self.url));
+                futures::executor::block_on(db.teardown(&self.url));
             }
         }
     }
@@ -960,6 +958,6 @@ pub mod tests {
             Ok(messages)
         }
 
-        async fn teardown(&self, _name: &str, _url: &str) {}
+        async fn teardown(&self, _: &str) {}
     }
 }
