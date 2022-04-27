@@ -6,11 +6,11 @@ resolver = "2"
 [patch.crates-io]
 async-task = { git = "https://github.com/zed-industries/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e" }
 # TODO - Remove when a version is released with this PR: https://github.com/servo/core-foundation-rs/pull/457
-cocoa = { git = "https://github.com/servo/core-foundation-rs", rev = "025dcb3c0d1ef01530f57ef65f3b1deb948f5737" }
-cocoa-foundation = { git = "https://github.com/servo/core-foundation-rs", rev = "025dcb3c0d1ef01530f57ef65f3b1deb948f5737" }
-core-foundation = { git = "https://github.com/servo/core-foundation-rs", rev = "025dcb3c0d1ef01530f57ef65f3b1deb948f5737" }
-core-foundation-sys = { git = "https://github.com/servo/core-foundation-rs", rev = "025dcb3c0d1ef01530f57ef65f3b1deb948f5737" }
-core-graphics = { git = "https://github.com/servo/core-foundation-rs", rev = "025dcb3c0d1ef01530f57ef65f3b1deb948f5737" }
+cocoa = { git = "https://github.com/servo/core-foundation-rs", rev = "079665882507dd5e2ff77db3de5070c1f6c0fb85" }
+cocoa-foundation = { git = "https://github.com/servo/core-foundation-rs", rev = "079665882507dd5e2ff77db3de5070c1f6c0fb85" }
+core-foundation = { git = "https://github.com/servo/core-foundation-rs", rev = "079665882507dd5e2ff77db3de5070c1f6c0fb85" }
+core-foundation-sys = { git = "https://github.com/servo/core-foundation-rs", rev = "079665882507dd5e2ff77db3de5070c1f6c0fb85" }
+core-graphics = { git = "https://github.com/servo/core-foundation-rs", rev = "079665882507dd5e2ff77db3de5070c1f6c0fb85" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

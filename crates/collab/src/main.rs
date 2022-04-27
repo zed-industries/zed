@@ -142,9 +142,12 @@ pub fn init_tracing(config: &Config) -> Option<()> {
         .with_exporter(
             opentelemetry_otlp::new_exporter()
                 .tonic()
-                .with_endpoint("api.honeycomb.io:443")
+                .with_endpoint("https://api.honeycomb.io")
                 .with_metadata(metadata),
         )
+        .with_trace_config(opentelemetry::sdk::trace::config().with_resource(
+            opentelemetry::sdk::Resource::new(vec![KeyValue::new("service.name", "collab")]),
+        ))
         .install_batch(opentelemetry::runtime::Tokio)
         .expect("failed to initialize tracing");
 

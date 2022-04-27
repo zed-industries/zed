@@ -115,9 +115,9 @@ dependencies = [
 
 [[package]]
 name = "async-compression"
-version = "0.3.8"
+version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5443ccbb270374a2b1055fc72da40e1f237809cd6bb0e97e66d264cd138473a6"
+checksum = "f2bf394cfbbe876f0ac67b13b6ca819f9c9f2fb9ec67223cceb1555fbab1c31a"
 dependencies = [
  "flate2",
  "futures-core",
@@ -701,16 +701,16 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "3.1.8"
+version = "3.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71c47df61d9e16dc010b55dba1952a57d8c215dbb533fd13cdd13369aac73b1c"
+checksum = "7c167e37342afc5f33fd87bbc870cedd020d2a6dffa05d45ccd9241fbdd146db"
 dependencies = [
  "atty",
  "bitflags",
  "clap_derive",
+ "clap_lex",
  "indexmap",
  "lazy_static",
- "os_str_bytes",
  "strsim 0.10.0",
  "termcolor",
  "textwrap 0.15.0",
@@ -730,11 +730,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "clap_lex"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "189ddd3b5d32a70b35e7686054371742a937b0d99128e76dde6340210e966669"
+dependencies = [
+ "os_str_bytes",
+]
+
+[[package]]
 name = "cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap 3.1.8",
+ "clap 3.1.12",
  "core-foundation",
  "core-services",
  "dirs 3.0.1",
@@ -788,7 +797,7 @@ dependencies = [
 [[package]]
 name = "cocoa"
 version = "0.24.0"
-source = "git+https://github.com/servo/core-foundation-rs?rev=025dcb3c0d1ef01530f57ef65f3b1deb948f5737#025dcb3c0d1ef01530f57ef65f3b1deb948f5737"
+source = "git+https://github.com/servo/core-foundation-rs?rev=079665882507dd5e2ff77db3de5070c1f6c0fb85#079665882507dd5e2ff77db3de5070c1f6c0fb85"
 dependencies = [
  "bitflags",
  "block",
@@ -802,8 +811,8 @@ dependencies = [
 
 [[package]]
 name = "cocoa-foundation"
-version = "0.1.0"
-source = "git+https://github.com/servo/core-foundation-rs?rev=025dcb3c0d1ef01530f57ef65f3b1deb948f5737#025dcb3c0d1ef01530f57ef65f3b1deb948f5737"
+version = "0.1.1"
+source = "git+https://github.com/servo/core-foundation-rs?rev=079665882507dd5e2ff77db3de5070c1f6c0fb85#079665882507dd5e2ff77db3de5070c1f6c0fb85"
 dependencies = [
  "bitflags",
  "block",
@@ -919,8 +928,8 @@ dependencies = [
 
 [[package]]
 name = "core-foundation"
-version = "0.9.1"
-source = "git+https://github.com/servo/core-foundation-rs?rev=025dcb3c0d1ef01530f57ef65f3b1deb948f5737#025dcb3c0d1ef01530f57ef65f3b1deb948f5737"
+version = "0.9.3"
+source = "git+https://github.com/servo/core-foundation-rs?rev=079665882507dd5e2ff77db3de5070c1f6c0fb85#079665882507dd5e2ff77db3de5070c1f6c0fb85"
 dependencies = [
  "core-foundation-sys",
  "libc",
@@ -928,13 +937,13 @@ dependencies = [
 
 [[package]]
 name = "core-foundation-sys"
-version = "0.8.2"
-source = "git+https://github.com/servo/core-foundation-rs?rev=025dcb3c0d1ef01530f57ef65f3b1deb948f5737#025dcb3c0d1ef01530f57ef65f3b1deb948f5737"
+version = "0.8.3"
+source = "git+https://github.com/servo/core-foundation-rs?rev=079665882507dd5e2ff77db3de5070c1f6c0fb85#079665882507dd5e2ff77db3de5070c1f6c0fb85"
 
 [[package]]
 name = "core-graphics"
-version = "0.22.2"
-source = "git+https://github.com/servo/core-foundation-rs?rev=025dcb3c0d1ef01530f57ef65f3b1deb948f5737#025dcb3c0d1ef01530f57ef65f3b1deb948f5737"
+version = "0.22.3"
+source = "git+https://github.com/servo/core-foundation-rs?rev=079665882507dd5e2ff77db3de5070c1f6c0fb85#079665882507dd5e2ff77db3de5070c1f6c0fb85"
 dependencies = [
  "bitflags",
  "core-foundation",
@@ -946,7 +955,7 @@ dependencies = [
 [[package]]
 name = "core-graphics-types"
 version = "0.1.1"
-source = "git+https://github.com/servo/core-foundation-rs?rev=025dcb3c0d1ef01530f57ef65f3b1deb948f5737#025dcb3c0d1ef01530f57ef65f3b1deb948f5737"
+source = "git+https://github.com/servo/core-foundation-rs?rev=079665882507dd5e2ff77db3de5070c1f6c0fb85#079665882507dd5e2ff77db3de5070c1f6c0fb85"
 dependencies = [
  "bitflags",
  "core-foundation",
@@ -2995,9 +3004,6 @@ name = "os_str_bytes"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e22443d1643a904602595ba1cd8f7d896afe56d26712531c5ff73a15b2fbf64"
-dependencies = [
- "memchr",
-]
 
 [[package]]
 name = "outline"
@@ -3862,6 +3868,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustls-native-certs"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a07b7c1885bd8ed3831c289b7870b13ef46fe0e856d288c30d9cc17d75a2092"
+dependencies = [
+ "openssl-probe",
+ "rustls",
+ "schannel",
+ "security-framework",
+]
+
+[[package]]
 name = "rustybuzz"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4017,6 +4035,29 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "security-framework"
+version = "2.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "525bc1abfda2e1998d152c45cf13e696f76d0a4972310b22fac1658b05df7c87"
+dependencies = [
+ "bitflags",
+ "core-foundation",
+ "core-foundation-sys",
+ "libc",
+ "security-framework-sys",
+]
+
+[[package]]
+name = "security-framework-sys"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0160a13a177a45bfb43ce71c01580998474f556ad854dcbca936dd2841a5c556"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
 ]
 
 [[package]]
@@ -5025,7 +5066,9 @@ dependencies = [
  "pin-project",
  "prost 0.9.0",
  "prost-derive 0.9.0",
+ "rustls-native-certs",
  "tokio",
+ "tokio-rustls",
  "tokio-stream",
  "tokio-util 0.6.9",
  "tower",

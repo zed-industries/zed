@@ -30,7 +30,7 @@ lazy_static = "1.4"
 lipsum = { version = "0.8", optional = true }
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 opentelemetry = { version = "0.17", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.10" }
+opentelemetry-otlp = { version = "0.10", features = ["tls-roots"] }
 parking_lot = "0.11.1"
 rand = "0.8"
 scrypt = "0.7"
