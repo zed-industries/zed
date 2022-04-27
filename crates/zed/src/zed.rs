@@ -174,10 +174,10 @@ pub fn build_workspace(
     let contact_panel = cx.add_view(|cx| ContactsPanel::new(app_state.clone(), cx));
 
     workspace.left_sidebar().update(cx, |sidebar, cx| {
-        sidebar.add_item("icons/folder-tree-16.svg", project_panel.into(), cx)
+        sidebar.add_item("icons/folder-tree-solid-14.svg", project_panel.into(), cx)
     });
     workspace.right_sidebar().update(cx, |sidebar, cx| {
-        sidebar.add_item("icons/user-16.svg", contact_panel.into(), cx)
+        sidebar.add_item("icons/contacts-solid-14.svg", contact_panel.into(), cx)
     });
 
     let diagnostic_message = cx.add_view(|_| editor::items::DiagnosticMessage::new());
