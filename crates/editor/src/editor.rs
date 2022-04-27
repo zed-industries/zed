@@ -2499,11 +2499,16 @@ impl Editor {
     ) -> Result<()> {
         let replica_id = this.read_with(&cx, |this, cx| this.replica_id(cx));
 
+        let mut entries = transaction.0.into_iter().collect::<Vec<_>>();
+        entries.sort_unstable_by_key(|(buffer, _)| {
+            buffer.read_with(&cx, |buffer, _| buffer.file().map(|f| f.path().clone()))
+        });
+
         // If the project transaction's edits are all contained within this editor, then
         // avoid opening a new editor to display them.
-        let mut entries = transaction.0.iter();
-        if let Some((buffer, transaction)) = entries.next() {
-            if entries.next().is_none() {
+
+        if let Some((buffer, transaction)) = entries.first() {
+            if entries.len() == 1 {
                 let excerpt = this.read_with(&cx, |editor, cx| {
                     editor
                         .buffer()
@@ -2532,7 +2537,7 @@ impl Editor {
         let mut ranges_to_highlight = Vec::new();
         let excerpt_buffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(replica_id).with_title(title);
-            for (buffer, transaction) in &transaction.0 {
+            for (buffer, transaction) in &entries {
                 let snapshot = buffer.read(cx).snapshot();
                 ranges_to_highlight.extend(
                     multibuffer.push_excerpts_with_context_lines(
@@ -2545,7 +2550,7 @@ impl Editor {
                     ),
                 );
             }
-            multibuffer.push_transaction(&transaction.0);
+            multibuffer.push_transaction(entries.iter().map(|(b, t)| (b, t)));
             multibuffer
         });
 

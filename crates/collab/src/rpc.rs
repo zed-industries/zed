@@ -3832,14 +3832,14 @@ mod tests {
                 .unwrap()
         });
         code_action_editor.update(cx_b, |editor, cx| {
-            assert_eq!(editor.text(cx), "\nmod other;\nfn main() { let foo = 4; }");
+            assert_eq!(editor.text(cx), "mod other;\nfn main() { let foo = 4; }\n");
             editor.undo(&Undo, cx);
             assert_eq!(
                 editor.text(cx),
-                "pub fn foo() -> usize { 4 }\nmod other;\nfn main() { let foo = other::foo(); }"
+                "mod other;\nfn main() { let foo = other::foo(); }\npub fn foo() -> usize { 4 }"
             );
             editor.redo(&Redo, cx);
-            assert_eq!(editor.text(cx), "\nmod other;\nfn main() { let foo = 4; }");
+            assert_eq!(editor.text(cx), "mod other;\nfn main() { let foo = 4; }\n");
         });
     }
 
@@ -4037,17 +4037,17 @@ mod tests {
         rename_editor.update(cx_b, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "const TWO: usize = one::THREE + one::THREE;\nconst THREE: usize = 1;"
+                "const THREE: usize = 1;\nconst TWO: usize = one::THREE + one::THREE;"
             );
             editor.undo(&Undo, cx);
             assert_eq!(
                 editor.text(cx),
-                "const TWO: usize = one::ONE + one::ONE;\nconst ONE: usize = 1;"
+                "const ONE: usize = 1;\nconst TWO: usize = one::ONE + one::ONE;"
             );
             editor.redo(&Redo, cx);
             assert_eq!(
                 editor.text(cx),
-                "const TWO: usize = one::THREE + one::THREE;\nconst THREE: usize = 1;"
+                "const THREE: usize = 1;\nconst TWO: usize = one::THREE + one::THREE;"
             );
         });
 
