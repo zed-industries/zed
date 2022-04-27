@@ -47,6 +47,7 @@ use tokio::{
     time::Sleep,
 };
 use tower::ServiceBuilder;
+use tracing::info_span;
 use util::ResultExt;
 
 type MessageHandler = Box<
@@ -156,7 +157,11 @@ impl Server {
             TypeId::of::<M>(),
             Box::new(move |server, envelope| {
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
-                (handler)(server, *envelope).boxed()
+                let span = info_span!(
+                    "handle message",
+                    payload_type = envelope.payload_type_name()
+                );
+                span.in_scope(|| (handler)(server, *envelope).boxed())
             }),
         );
         if prev_handler.is_some() {
