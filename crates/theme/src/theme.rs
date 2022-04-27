@@ -147,11 +147,35 @@ pub struct StatusBar {
     pub lsp_message: TextStyle,
     pub auto_update_progress_message: TextStyle,
     pub auto_update_done_message: TextStyle,
-    pub sidebar_items_left: ContainerStyle,
-    pub sidebar_items_right: ContainerStyle,
-    pub sidebar_item: SidebarItem,
-    pub sidebar_item_active: SidebarItem,
-    pub sidebar_item_hover: SidebarItem,
+    pub sidebar_buttons: StatusBarSidebarButtons,
+    pub diagnostics: StatusBarDiagnostics,
+}
+
+#[derive(Deserialize, Default)]
+pub struct StatusBarSidebarButtons {
+    pub group_left: ContainerStyle,
+    pub group_right: ContainerStyle,
+    pub item: SidebarItem,
+    pub item_active: SidebarItem,
+    pub item_hover: SidebarItem,
+}
+
+#[derive(Deserialize, Default)]
+pub struct StatusBarDiagnostics {
+    pub message: ContainedText,
+    pub summary_ok: ContainedText,
+    pub summary_ok_hover: ContainedText,
+    pub summary_warning: ContainedText,
+    pub summary_warning_hover: ContainedText,
+    pub summary_error: ContainedText,
+    pub summary_error_hover: ContainedText,
+    pub icon_color_ok: Color,
+    pub icon_color_error: Color,
+    pub icon_color_warning: Color,
+    pub height: f32,
+    pub icon_width: f32,
+    pub icon_spacing: f32,
+    pub summary_spacing: f32,
 }
 
 #[derive(Deserialize, Default)]
@@ -165,7 +189,6 @@ pub struct SidebarItem {
     pub container: ContainerStyle,
     pub icon_color: Color,
     pub icon_size: f32,
-    pub height: f32,
 }
 
 #[derive(Deserialize, Default)]

@@ -175,16 +175,21 @@ impl View for SidebarButtons {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &cx.global::<Settings>().theme.workspace.status_bar;
+        let theme = &cx
+            .global::<Settings>()
+            .theme
+            .workspace
+            .status_bar
+            .sidebar_buttons;
         let sidebar = self.sidebar.read(cx);
-        let item_style = theme.sidebar_item;
-        let hover_item_style = theme.sidebar_item_hover;
-        let active_item_style = theme.sidebar_item_active;
+        let item_style = theme.item;
+        let hover_item_style = theme.item_hover;
+        let active_item_style = theme.item_active;
         let active_ix = sidebar.active_item_ix;
         let side = sidebar.side;
         let group_style = match side {
-            Side::Left => theme.sidebar_items_left,
-            Side::Right => theme.sidebar_items_right,
+            Side::Left => theme.group_left,
+            Side::Right => theme.group_right,
         };
         let items = sidebar.items.clone();
         Flex::row()

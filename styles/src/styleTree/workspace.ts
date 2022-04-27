@@ -1,4 +1,5 @@
 import Theme from "../themes/theme";
+import { color } from "../tokens";
 import { backgroundColor, border, iconColor, text } from "./components";
 
 export default function workspace(theme: Theme) {
@@ -47,16 +48,20 @@ export default function workspace(theme: Theme) {
     },
   };
 
-  const sidebarItem = {
-    height: 32,
+  const diagnosticSummary = {
+    cornerRadius: 5,
+    padding: { left: 5, right: 5 },
+    ...text(theme, "sans", "primary", { size: "sm" }),
+  };
+  const sidebarButton = {
     iconColor: iconColor(theme, "secondary"),
     iconSize: 18,
     padding: { left: 5, right: 5 },
     cornerRadius: 5,
   };
   const shareIcon = {
-    margin: { top: 3, bottom: 2 },
     cornerRadius: 6,
+    margin: { top: 3, bottom: 2 },
   };
 
   return {
@@ -95,23 +100,57 @@ export default function workspace(theme: Theme) {
       lspMessage: text(theme, "sans", "muted"),
       autoUpdateProgressMessage: text(theme, "sans", "muted"),
       autoUpdateDoneMessage: text(theme, "sans", "muted"),
-      sidebarItem: {
-        ...sidebarItem
+      diagnostics: {
+        height: 16,
+        summaryOk: {
+          ...diagnosticSummary,
+        },
+        summaryOkHover: {
+          ...diagnosticSummary,
+        },
+        summaryWarning: {
+          ...diagnosticSummary,
+          background: backgroundColor(theme, "warning"),
+          border: border(theme, "warning"),
+        },
+        summaryWarningHover: {
+          ...diagnosticSummary,
+          background: backgroundColor(theme, "warning"),
+          border: border(theme, "warning"),
+        },
+        summaryError: {
+          ...diagnosticSummary,
+          background: backgroundColor(theme, "error"),
+          border: border(theme, "error"),
+        },
+        summaryErrorHover: {
+          ...diagnosticSummary,
+          background: backgroundColor(theme, "error"),
+          border: border(theme, "error"),
+        },
+        message: text(theme, "sans", "muted"),
+        iconColorOk: iconColor(theme, "ok"),
+        iconColorWarning: iconColor(theme, "warning"),
+        iconColorError: iconColor(theme, "error"),
+        iconWidth: 14,
+        iconSpacing: 4,
+        summarySpacing: 8,
       },
-      sidebarItemHover: {
-        ...sidebarItem
+      sidebarButtons: {
+        groupLeft: {
+          margin: { right: 20 }
+        },
+        groupRight: {
+          margin: { left: 20 }
+        },
+        item: { ...sidebarButton },
+        itemHover: { ...sidebarButton },
+        itemActive: {
+          ...sidebarButton,
+          iconColor: iconColor(theme, "active"),
+          background: backgroundColor(theme, 300, "active"),
+        },
       },
-      sidebarItemActive: {
-        ...sidebarItem,
-        iconColor: iconColor(theme, "active"),
-        background: backgroundColor(theme, 300, "active"),
-      },
-      sidebarItemsLeft: {
-        margin: { right: 20 }
-      },
-      sidebarItemsRight: {
-        margin: { left: 20 }
-      }
     },
     titlebar: {
       avatarWidth: 18,
