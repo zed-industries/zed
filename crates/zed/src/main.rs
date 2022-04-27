@@ -130,22 +130,6 @@ fn main() {
         diagnostics::init(cx);
         search::init(cx);
         vim::init(cx);
-        cx.spawn({
-            let client = client.clone();
-            |cx| async move {
-                if stdout_is_a_pty() {
-                    if client::IMPERSONATE_LOGIN.is_some() {
-                        client.authenticate_and_connect(false, &cx).await?;
-                    }
-                } else {
-                    if client.has_keychain_credentials(&cx) {
-                        client.authenticate_and_connect(true, &cx).await?;
-                    }
-                }
-                Ok::<_, anyhow::Error>(())
-            }
-        })
-        .detach_and_log_err(cx);
 
         let (settings_file, keymap_file) = cx.background().block(config_files).unwrap();
         let mut settings_rx = settings_from_files(
@@ -184,7 +168,7 @@ fn main() {
             languages,
             themes,
             channel_list,
-            client,
+            client: client.clone(),
             user_store,
             fs,
             build_window_options,
@@ -218,6 +202,20 @@ fn main() {
             })
             .detach();
         }
+
+        cx.spawn(|cx| async move {
+            if stdout_is_a_pty() {
+                if client::IMPERSONATE_LOGIN.is_some() {
+                    client.authenticate_and_connect(false, &cx).await?;
+                }
+            } else {
+                if client.has_keychain_credentials(&cx) {
+                    client.authenticate_and_connect(true, &cx).await?;
+                }
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
     });
 }
 
