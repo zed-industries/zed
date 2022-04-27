@@ -173,7 +173,7 @@
     },
     "status_bar": {
       "height": 24,
-      "item_spacing": 8,
+      "item_spacing": 12,
       "padding": {
         "left": 6,
         "right": 6
@@ -212,30 +212,30 @@
       "diagnostics": {
         "height": 16,
         "summary_ok": {
-          "corner_radius": 5,
+          "corner_radius": 6,
           "padding": {
-            "left": 5,
-            "right": 5
+            "left": 6,
+            "right": 6
           },
           "family": "Zed Sans",
           "color": "#293256",
           "size": 14
         },
         "summary_ok_hover": {
-          "corner_radius": 5,
+          "corner_radius": 6,
           "padding": {
-            "left": 5,
-            "right": 5
+            "left": 6,
+            "right": 6
           },
           "family": "Zed Sans",
           "color": "#293256",
           "size": 14
         },
         "summary_warning": {
-          "corner_radius": 5,
+          "corner_radius": 6,
           "padding": {
-            "left": 5,
-            "right": 5
+            "left": 6,
+            "right": 6
           },
           "family": "Zed Sans",
           "color": "#293256",
@@ -247,10 +247,10 @@
           }
         },
         "summary_warning_hover": {
-          "corner_radius": 5,
+          "corner_radius": 6,
           "padding": {
-            "left": 5,
-            "right": 5
+            "left": 6,
+            "right": 6
           },
           "family": "Zed Sans",
           "color": "#293256",
@@ -262,10 +262,10 @@
           }
         },
         "summary_error": {
-          "corner_radius": 5,
+          "corner_radius": 6,
           "padding": {
-            "left": 5,
-            "right": 5
+            "left": 6,
+            "right": 6
           },
           "family": "Zed Sans",
           "color": "#293256",
@@ -277,10 +277,10 @@
           }
         },
         "summary_error_hover": {
-          "corner_radius": 5,
+          "corner_radius": 6,
           "padding": {
-            "left": 5,
-            "right": 5
+            "left": 6,
+            "right": 6
           },
           "family": "Zed Sans",
           "color": "#293256",
@@ -296,7 +296,7 @@
           "color": "#5e6687",
           "size": 14
         },
-        "icon_color_ok": "#ac9739",
+        "icon_color_ok": "#5e6687",
         "icon_color_warning": "#c08b30",
         "icon_color_error": "#c94922",
         "icon_width": 14,
@@ -304,16 +304,8 @@
         "summary_spacing": 8
       },
       "sidebar_buttons": {
-        "group_left": {
-          "margin": {
-            "right": 20
-          }
-        },
-        "group_right": {
-          "margin": {
-            "left": 20
-          }
-        },
+        "group_left": {},
+        "group_right": {},
         "item": {
           "icon_color": "#5e6687",
           "icon_size": 18,
@@ -330,7 +322,8 @@
             "left": 5,
             "right": 5
           },
-          "corner_radius": 5
+          "corner_radius": 5,
+          "background": "#979db41f"
         },
         "item_active": {
           "icon_color": "#202746",

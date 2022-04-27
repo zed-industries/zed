@@ -49,8 +49,8 @@ export default function workspace(theme: Theme) {
   };
 
   const diagnosticSummary = {
-    cornerRadius: 5,
-    padding: { left: 5, right: 5 },
+    cornerRadius: 6,
+    padding: { left: 6, right: 6 },
     ...text(theme, "sans", "primary", { size: "sm" }),
   };
   const sidebarButton = {
@@ -89,7 +89,7 @@ export default function workspace(theme: Theme) {
     },
     statusBar: {
       height: 24,
-      itemSpacing: 8,
+      itemSpacing: 12,
       padding: {
         left: 6,
         right: 6,
@@ -129,7 +129,7 @@ export default function workspace(theme: Theme) {
           border: border(theme, "error"),
         },
         message: text(theme, "sans", "muted"),
-        iconColorOk: iconColor(theme, "ok"),
+        iconColorOk: iconColor(theme, "secondary"),
         iconColorWarning: iconColor(theme, "warning"),
         iconColorError: iconColor(theme, "error"),
         iconWidth: 14,
@@ -137,14 +137,17 @@ export default function workspace(theme: Theme) {
         summarySpacing: 8,
       },
       sidebarButtons: {
-        groupLeft: {
-          margin: { right: 20 }
+        groupLeft: {},
+        groupRight: {},
+        item: {
+          iconColor: iconColor(theme, "muted"),
+          ...sidebarButton
         },
-        groupRight: {
-          margin: { left: 20 }
+        itemHover: {
+          ...sidebarButton,
+          iconColor: iconColor(theme, "secondary"),
+          background: backgroundColor(theme, 300, "hovered"),
         },
-        item: { ...sidebarButton },
-        itemHover: { ...sidebarButton },
         itemActive: {
           ...sidebarButton,
           iconColor: iconColor(theme, "active"),

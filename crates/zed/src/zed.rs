@@ -180,9 +180,8 @@ pub fn build_workspace(
         sidebar.add_item("icons/contacts-solid-14.svg", contact_panel.into(), cx)
     });
 
-    let diagnostic_message = cx.add_view(|_| editor::items::DiagnosticMessage::new());
     let diagnostic_summary =
-        cx.add_view(|cx| diagnostics::items::DiagnosticSummary::new(workspace.project(), cx));
+        cx.add_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace.project(), cx));
     let lsp_status = cx.add_view(|cx| {
         workspace::lsp_status::LspStatus::new(workspace.project(), app_state.languages.clone(), cx)
     });
@@ -190,7 +189,6 @@ pub fn build_workspace(
     let auto_update = cx.add_view(|cx| auto_update::AutoUpdateIndicator::new(cx));
     workspace.status_bar().update(cx, |status_bar, cx| {
         status_bar.add_left_item(diagnostic_summary, cx);
-        status_bar.add_left_item(diagnostic_message, cx);
         status_bar.add_left_item(lsp_status, cx);
         status_bar.add_right_item(cursor_position, cx);
         status_bar.add_right_item(auto_update, cx);
