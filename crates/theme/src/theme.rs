@@ -143,10 +143,9 @@ pub struct StatusBar {
     pub height: f32,
     pub item_spacing: f32,
     pub cursor_position: TextStyle,
-    pub diagnostic_message: TextStyle,
-    pub lsp_message: TextStyle,
     pub auto_update_progress_message: TextStyle,
     pub auto_update_done_message: TextStyle,
+    pub lsp_status: StatusBarLspStatus,
     pub sidebar_buttons: StatusBarSidebarButtons,
     pub diagnostics: StatusBarDiagnostics,
 }
@@ -176,6 +175,20 @@ pub struct StatusBarDiagnostics {
     pub icon_width: f32,
     pub icon_spacing: f32,
     pub summary_spacing: f32,
+}
+
+#[derive(Deserialize, Default)]
+pub struct StatusBarLspStatus {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub height: f32,
+    pub container_hover: ContainerStyle,
+    pub icon_spacing: f32,
+    pub icon_color: Color,
+    pub icon_color_hover: Color,
+    pub icon_width: f32,
+    pub message: TextStyle,
+    pub message_hover: TextStyle,
 }
 
 #[derive(Deserialize, Default)]

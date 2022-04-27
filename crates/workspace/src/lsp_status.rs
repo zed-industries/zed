@@ -1,6 +1,6 @@
 use crate::{ItemHandle, StatusItemView};
 use futures::StreamExt;
-use gpui::{actions, AppContext};
+use gpui::{actions, AppContext, EventContext};
 use gpui::{
     elements::*, platform::CursorStyle, Entity, ModelHandle, MutableAppContext, RenderContext,
     View, ViewContext,
@@ -117,11 +117,13 @@ impl View for LspStatus {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &cx.global::<Settings>().theme;
+        let mut message;
+        let mut icon = None;
+        let mut handler = None;
 
         let mut pending_work = self.pending_language_server_work(cx);
         if let Some((lang_server_name, progress_token, progress)) = pending_work.next() {
-            let mut message = lang_server_name.to_string();
+            message = lang_server_name.to_string();
 
             message.push_str(": ");
             if let Some(progress_message) = progress.message.as_ref() {
@@ -138,21 +140,19 @@ impl View for LspStatus {
             if additional_work_count > 0 {
                 write!(&mut message, " + {} more", additional_work_count).unwrap();
             }
+        } else {
+            drop(pending_work);
 
-            Label::new(message, theme.workspace.status_bar.lsp_message.clone()).boxed()
-        } else if !self.downloading.is_empty() {
-            Label::new(
-                format!(
+            if !self.downloading.is_empty() {
+                icon = Some("icons/download-solid-14.svg");
+                message = format!(
                     "Downloading {} language server{}...",
                     self.downloading.join(", "),
                     if self.downloading.len() > 1 { "s" } else { "" }
-                ),
-                theme.workspace.status_bar.lsp_message.clone(),
-            )
-            .boxed()
-        } else if !self.checking_for_update.is_empty() {
-            Label::new(
-                format!(
+                );
+            } else if !self.checking_for_update.is_empty() {
+                icon = Some("icons/download-solid-14.svg");
+                message = format!(
                     "Checking for updates to {} language server{}...",
                     self.checking_for_update.join(", "),
                     if self.checking_for_update.len() > 1 {
@@ -160,30 +160,70 @@ impl View for LspStatus {
                     } else {
                         ""
                     }
-                ),
-                theme.workspace.status_bar.lsp_message.clone(),
-            )
-            .boxed()
-        } else if !self.failed.is_empty() {
-            drop(pending_work);
-            MouseEventHandler::new::<Self, _, _>(0, cx, |_, cx| {
-                let theme = &cx.global::<Settings>().theme;
-                Label::new(
-                    format!(
-                        "Failed to download {} language server{}. Click to dismiss.",
-                        self.failed.join(", "),
-                        if self.failed.len() > 1 { "s" } else { "" }
-                    ),
-                    theme.workspace.status_bar.lsp_message.clone(),
-                )
-                .boxed()
-            })
-            .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(|cx| cx.dispatch_action(DismissErrorMessage))
-            .boxed()
-        } else {
-            Empty::new().boxed()
+                );
+            } else if !self.failed.is_empty() {
+                icon = Some("icons/warning-solid-14.svg");
+                message = format!(
+                    "Failed to download {} language server{}. Click to dismiss.",
+                    self.failed.join(", "),
+                    if self.failed.len() > 1 { "s" } else { "" }
+                );
+                handler = Some(|cx: &mut EventContext| cx.dispatch_action(DismissErrorMessage));
+            } else {
+                return Empty::new().boxed();
+            }
         }
+
+        let mut element = MouseEventHandler::new::<Self, _, _>(0, cx, |state, cx| {
+            let hovered = state.hovered && handler.is_some();
+            let theme = &cx.global::<Settings>().theme;
+            let style = &theme.workspace.status_bar.lsp_status;
+            Flex::row()
+                .with_children(icon.map(|path| {
+                    Svg::new(path)
+                        .with_color(if hovered {
+                            style.icon_color_hover
+                        } else {
+                            style.icon_color
+                        })
+                        .constrained()
+                        .with_width(style.icon_width)
+                        .contained()
+                        .with_margin_right(style.icon_spacing)
+                        .aligned()
+                        .named("warning-icon")
+                }))
+                .with_child(
+                    Label::new(
+                        message,
+                        if hovered {
+                            style.message_hover.clone()
+                        } else {
+                            style.message.clone()
+                        },
+                    )
+                    .aligned()
+                    .boxed(),
+                )
+                .constrained()
+                .with_height(style.height)
+                .contained()
+                .with_style(if hovered {
+                    style.container_hover
+                } else {
+                    style.container
+                })
+                .aligned()
+                .boxed()
+        });
+
+        if let Some(handler) = handler {
+            element = element
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(handler);
+        }
+
+        element.boxed()
     }
 }
 

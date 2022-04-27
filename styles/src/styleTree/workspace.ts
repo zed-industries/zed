@@ -1,5 +1,4 @@
 import Theme from "../themes/theme";
-import { color } from "../tokens";
 import { backgroundColor, border, iconColor, text } from "./components";
 
 export default function workspace(theme: Theme) {
@@ -97,9 +96,24 @@ export default function workspace(theme: Theme) {
       border: border(theme, "primary", { top: true, overlay: true }),
       cursorPosition: text(theme, "sans", "muted"),
       diagnosticMessage: text(theme, "sans", "muted"),
-      lspMessage: text(theme, "sans", "muted"),
       autoUpdateProgressMessage: text(theme, "sans", "muted"),
       autoUpdateDoneMessage: text(theme, "sans", "muted"),
+      lspStatus: {
+        iconSpacing: 4,
+        iconWidth: 14,
+        height: 18,
+        message: text(theme, "sans", "muted"),
+        messageHover: text(theme, "sans", "primary"),
+        iconColor: iconColor(theme, "muted"),
+        iconColorHover: iconColor(theme, "primary"),
+        cornerRadius: 6,
+        padding: { left: 6, right: 6 },
+        containerHover: {
+          cornerRadius: 6,
+          padding: { left: 6, right: 6 },
+          background: backgroundColor(theme, 300, "hovered"),
+        }
+      },
       diagnostics: {
         height: 16,
         summaryOk: {
@@ -133,8 +147,8 @@ export default function workspace(theme: Theme) {
         iconColorWarning: iconColor(theme, "warning"),
         iconColorError: iconColor(theme, "error"),
         iconWidth: 14,
-        iconSpacing: 4,
-        summarySpacing: 8,
+        iconSpacing: 2,
+        summarySpacing: 6,
       },
       sidebarButtons: {
         groupLeft: {},
