@@ -1,5 +1,6 @@
-use anyhow::{anyhow, Result};
-use client::http::{self, HttpClient};
+use anyhow::{anyhow, Context, Result};
+use client::http::HttpClient;
+
 use gpui::{
     actions,
     elements::{Empty, MouseEventHandler, Text},
@@ -12,7 +13,6 @@ use serde::Deserialize;
 use settings::Settings;
 use smol::{fs::File, io::AsyncReadExt, process::Command};
 use std::{env, ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
-use surf::Request;
 use workspace::{ItemHandle, StatusItemView};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
@@ -52,7 +52,7 @@ pub struct AutoUpdateIndicator {
 #[derive(Deserialize)]
 struct JsonRelease {
     version: String,
-    url: http::Url,
+    url: String,
 }
 
 impl Entity for AutoUpdater {
@@ -134,17 +134,21 @@ impl AutoUpdater {
             )
         });
         let mut response = client
-            .send(Request::new(
-                http::Method::Get,
-                http::Url::parse(&format!(
-                    "{server_url}/api/releases/latest?token={ACCESS_TOKEN}&asset=Zed.dmg"
-                ))?,
-            ))
+            .get(
+                &format!("{server_url}/api/releases/latest?token={ACCESS_TOKEN}&asset=Zed.dmg"),
+                Default::default(),
+            )
             .await?;
-        let release = response
-            .body_json::<JsonRelease>()
+
+        let mut body = Vec::new();
+        response
+            .body_mut()
+            .read_to_end(&mut body)
             .await
-            .map_err(|err| anyhow!("error deserializing release {:?}", err))?;
+            .context("error reading release")?;
+        let release: JsonRelease =
+            serde_json::from_slice(body.as_slice()).context("error deserializing release")?;
+
         let latest_version = release.version.parse::<AppVersion>()?;
         if latest_version <= current_version {
             this.update(&mut cx, |this, cx| {
@@ -169,10 +173,8 @@ impl AutoUpdater {
             .map_or_else(|| cx.platform().app_path(), Ok)?;
 
         let mut dmg_file = File::create(&dmg_path).await?;
-        let response = client
-            .send(Request::new(http::Method::Get, release.url))
-            .await?;
-        smol::io::copy(response.bytes(), &mut dmg_file).await?;
+        let mut response = client.get(&release.url, Default::default()).await?;
+        smol::io::copy(response.body_mut(), &mut dmg_file).await?;
         log::info!("downloaded update. path:{:?}", dmg_path);
 
         this.update(&mut cx, |this, cx| {

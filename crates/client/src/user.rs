@@ -1,9 +1,6 @@
-use super::{
-    http::{HttpClient, Method, Request, Url},
-    proto, Client, Status, TypedEnvelope,
-};
-use anyhow::{anyhow, Context, Result};
-use futures::future;
+use super::{http::HttpClient, proto, Client, Status, TypedEnvelope};
+use anyhow::{anyhow, Result};
+use futures::{future, AsyncReadExt};
 use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{prelude::Stream, sink::Sink, watch};
 use std::{
@@ -255,22 +252,22 @@ impl Contact {
 }
 
 async fn fetch_avatar(http: &dyn HttpClient, url: &str) -> Result<Arc<ImageData>> {
-    let url = Url::parse(url).with_context(|| format!("failed to parse avatar url {:?}", url))?;
-    let mut request = Request::new(Method::Get, url);
-    request.middleware(surf::middleware::Redirect::default());
-
     let mut response = http
-        .send(request)
+        .get(url, Default::default())
         .await
         .map_err(|e| anyhow!("failed to send user avatar request: {}", e))?;
+
     if !response.status().is_success() {
         return Err(anyhow!("avatar request failed {:?}", response.status()));
     }
-    let bytes = response
-        .body_bytes()
+
+    let mut body = Vec::new();
+    response
+        .body_mut()
+        .read_to_end(&mut body)
         .await
         .map_err(|e| anyhow!("failed to read user avatar response body: {}", e))?;
-    let format = image::guess_format(&bytes)?;
-    let image = image::load_from_memory_with_format(&bytes, format)?.into_bgra8();
+    let format = image::guess_format(&body)?;
+    let image = image::load_from_memory_with_format(&body, format)?.into_bgra8();
     Ok(ImageData::new(image))
 }

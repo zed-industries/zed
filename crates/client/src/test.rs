@@ -1,5 +1,5 @@
 use crate::{
-    http::{HttpClient, Request, Response, ServerResponse},
+    http::{self, HttpClient, Request, Response},
     Client, Connection, Credentials, EstablishConnectionError, UserStore,
 };
 use anyhow::{anyhow, Result};
@@ -176,14 +176,18 @@ impl FakeServer {
 }
 
 pub struct FakeHttpClient {
-    handler:
-        Box<dyn 'static + Send + Sync + Fn(Request) -> BoxFuture<'static, Result<ServerResponse>>>,
+    handler: Box<
+        dyn 'static
+            + Send
+            + Sync
+            + Fn(Request) -> BoxFuture<'static, Result<Response, http::Error>>,
+    >,
 }
 
 impl FakeHttpClient {
     pub fn new<Fut, F>(handler: F) -> Arc<dyn HttpClient>
     where
-        Fut: 'static + Send + Future<Output = Result<ServerResponse>>,
+        Fut: 'static + Send + Future<Output = Result<Response, http::Error>>,
         F: 'static + Send + Sync + Fn(Request) -> Fut,
     {
         Arc::new(Self {
@@ -192,7 +196,12 @@ impl FakeHttpClient {
     }
 
     pub fn with_404_response() -> Arc<dyn HttpClient> {
-        Self::new(|_| async move { Ok(ServerResponse::new(404)) })
+        Self::new(|_| async move {
+            Ok(isahc::Response::builder()
+                .status(404)
+                .body(Default::default())
+                .unwrap())
+        })
     }
 }
 
@@ -203,7 +212,7 @@ impl fmt::Debug for FakeHttpClient {
 }
 
 impl HttpClient for FakeHttpClient {
-    fn send<'a>(&'a self, req: Request) -> BoxFuture<'a, Result<Response>> {
+    fn send<'a>(&'a self, req: Request) -> BoxFuture<'a, Result<Response, crate::http::Error>> {
         let future = (self.handler)(req);
         Box::pin(async move { future.await.map(Into::into) })
     }

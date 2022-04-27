@@ -1,8 +1,8 @@
 use super::installation::{latest_github_release, GitHubLspBinaryVersion};
 use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
-use client::http::{HttpClient, Method};
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use client::http::HttpClient;
+use futures::{future::BoxFuture, io::BufReader, FutureExt, StreamExt};
 pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -42,15 +42,11 @@ impl LspAdapter for RustLspAdapter {
             let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
 
             if fs::metadata(&destination_path).await.is_err() {
-                let response = http
-                    .send(
-                        surf::RequestBuilder::new(Method::Get, version.url)
-                            .middleware(surf::middleware::Redirect::default())
-                            .build(),
-                    )
+                let mut response = http
+                    .get(&version.url, Default::default())
                     .await
                     .map_err(|err| anyhow!("error downloading release: {}", err))?;
-                let decompressed_bytes = GzipDecoder::new(response);
+                let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
                 let mut file = File::create(&destination_path).await?;
                 futures::io::copy(decompressed_bytes, &mut file).await?;
                 fs::set_permissions(

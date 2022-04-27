@@ -623,9 +623,7 @@ impl WorkspaceParams {
 
         let fs = project::FakeFs::new(cx.background().clone());
         let languages = Arc::new(LanguageRegistry::test());
-        let http_client = client::test::FakeHttpClient::new(|_| async move {
-            Ok(client::http::ServerResponse::new(404))
-        });
+        let http_client = client::test::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let project = Project::local(

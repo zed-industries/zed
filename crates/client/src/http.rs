@@ -1,26 +1,45 @@
-pub use anyhow::{anyhow, Result};
 use futures::future::BoxFuture;
-use std::sync::Arc;
-pub use surf::{
-    http::{Method, Response as ServerResponse},
-    Request, Response, Url,
+use isahc::{
+    config::{Configurable, RedirectPolicy},
+    AsyncBody,
 };
+use std::sync::Arc;
+
+pub use anyhow::{anyhow, Result};
+pub use isahc::{
+    http::{Method, Uri},
+    Error,
+};
+pub use url::Url;
+
+pub type Request = isahc::Request<AsyncBody>;
+pub type Response = isahc::Response<AsyncBody>;
 
 pub trait HttpClient: Send + Sync {
-    fn send<'a>(&'a self, req: Request) -> BoxFuture<'a, Result<Response>>;
+    fn send<'a>(&'a self, req: Request) -> BoxFuture<'a, Result<Response, Error>>;
+
+    fn get<'a>(&'a self, uri: &str, body: AsyncBody) -> BoxFuture<'a, Result<Response, Error>> {
+        self.send(
+            isahc::Request::builder()
+                .method(Method::GET)
+                .uri(uri)
+                .body(body)
+                .unwrap(),
+        )
+    }
 }
 
 pub fn client() -> Arc<dyn HttpClient> {
-    Arc::new(surf::client())
+    Arc::new(
+        isahc::HttpClient::builder()
+            .redirect_policy(RedirectPolicy::Follow)
+            .build()
+            .unwrap(),
+    )
 }
 
-impl HttpClient for surf::Client {
-    fn send<'a>(&'a self, req: Request) -> BoxFuture<'a, Result<Response>> {
-        Box::pin(async move {
-            Ok(self
-                .send(req)
-                .await
-                .map_err(|e| anyhow!("http request failed: {}", e))?)
-        })
+impl HttpClient for isahc::HttpClient {
+    fn send<'a>(&'a self, req: Request) -> BoxFuture<'a, Result<Response, Error>> {
+        Box::pin(async move { self.send_async(req).await })
     }
 }

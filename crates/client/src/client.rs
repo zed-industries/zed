@@ -34,8 +34,8 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use surf::{http::Method, Url};
 use thiserror::Error;
+use url::Url;
 use util::{ResultExt, TryFutureExt};
 
 pub use channel::*;
@@ -89,9 +89,11 @@ pub enum EstablishConnectionError {
     #[error("{0}")]
     Other(#[from] anyhow::Error),
     #[error("{0}")]
+    Http(#[from] http::Error),
+    #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
-    Http(#[from] async_tungstenite::tungstenite::http::Error),
+    Websocket(#[from] async_tungstenite::tungstenite::http::Error),
 }
 
 impl From<WebsocketError> for EstablishConnectionError {
@@ -779,30 +781,27 @@ impl Client {
         let http = self.http.clone();
         cx.background().spawn(async move {
             let mut rpc_url = format!("{}/rpc", *ZED_SERVER_URL);
-            let rpc_request = surf::Request::new(
-                Method::Get,
-                surf::Url::parse(&rpc_url).context("invalid ZED_SERVER_URL")?,
-            );
-            let rpc_response = http.send(rpc_request).await?;
-
+            let rpc_response = http.get(&rpc_url, Default::default()).await?;
             if rpc_response.status().is_redirection() {
                 rpc_url = rpc_response
-                    .header("Location")
+                    .headers()
+                    .get("Location")
                     .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
-                    .as_str()
+                    .to_str()
+                    .map_err(|error| EstablishConnectionError::other(error))?
                     .to_string();
             }
             // Until we switch the zed.dev domain to point to the new Next.js app, there
             // will be no redirect required, and the app will connect directly to
             // wss://zed.dev/rpc.
-            else if rpc_response.status() != surf::StatusCode::UpgradeRequired {
+            else if rpc_response.status() != StatusCode::UPGRADE_REQUIRED {
                 Err(anyhow!(
                     "unexpected /rpc response status {}",
                     rpc_response.status()
                 ))?
             }
 
-            let mut rpc_url = surf::Url::parse(&rpc_url).context("invalid rpc url")?;
+            let mut rpc_url = Url::parse(&rpc_url).context("invalid rpc url")?;
             let rpc_host = rpc_url
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
