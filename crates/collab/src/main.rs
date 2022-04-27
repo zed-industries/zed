@@ -11,6 +11,7 @@ use std::{
     net::{SocketAddr, TcpListener},
     sync::Arc,
 };
+use tracing::metadata::LevelFilter;
 
 #[derive(Default, Deserialize)]
 pub struct Config {
@@ -19,6 +20,7 @@ pub struct Config {
     pub api_token: String,
     pub honeycomb_api_key: Option<String>,
     pub honeycomb_dataset: Option<String>,
+    pub trace_level: Option<String>,
 }
 
 pub struct AppState {
@@ -55,12 +57,6 @@ async fn main() -> Result<()> {
     let config = envy::from_env::<Config>().expect("error loading config");
     init_tracing(&config);
     let state = AppState::new(&config).await?;
-
-    {
-        let root = tracing::span!(tracing::Level::TRACE, "testing_1", work_units = 2_i32);
-        let _enter = root.enter();
-        tracing::error!("test_error_1");
-    }
 
     let listener = TcpListener::bind(&format!("0.0.0.0:{}", config.http_port))
         .expect("failed to bind TCP listener");
@@ -124,6 +120,7 @@ impl std::fmt::Display for Error {
 pub fn init_tracing(config: &Config) -> Option<()> {
     use opentelemetry::KeyValue;
     use opentelemetry_otlp::WithExportConfig;
+    use std::str::FromStr;
     use tracing_opentelemetry::OpenTelemetryLayer;
     use tracing_subscriber::layer::SubscriberExt;
 
@@ -153,7 +150,15 @@ pub fn init_tracing(config: &Config) -> Option<()> {
 
     let subscriber = tracing_subscriber::Registry::default()
         .with(OpenTelemetryLayer::new(tracer))
-        .with(tracing_subscriber::fmt::layer());
+        .with(tracing_subscriber::fmt::layer())
+        .with(
+            config
+                .trace_level
+                .as_ref()
+                .map_or(LevelFilter::INFO, |level| {
+                    LevelFilter::from_str(level).unwrap()
+                }),
+        );
 
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
