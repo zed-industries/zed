@@ -402,8 +402,8 @@
     "background": "#202746",
     "active_line_background": "#f5f7ff12",
     "code_actions_indicator": "#979db4",
-    "diff_background_deleted": "#c94922",
-    "diff_background_inserted": "#ac9739",
+    "diff_background_deleted": "#c9492226",
+    "diff_background_inserted": "#ac973926",
     "document_highlight_read_background": "#2027461f",
     "document_highlight_write_background": "#20274629",
     "error_color": "#c94922",
@@ -1369,7 +1369,7 @@
         "size": 14
       },
       "border": {
-        "color": "#c94922",
+        "color": "#c9492226",
         "width": 1
       },
       "margin": {
