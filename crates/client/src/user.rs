@@ -253,7 +253,7 @@ impl Contact {
 
 async fn fetch_avatar(http: &dyn HttpClient, url: &str) -> Result<Arc<ImageData>> {
     let mut response = http
-        .get(url, Default::default())
+        .get(url, Default::default(), true)
         .await
         .map_err(|e| anyhow!("failed to send user avatar request: {}", e))?;
 

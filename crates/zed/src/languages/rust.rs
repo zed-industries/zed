@@ -43,7 +43,7 @@ impl LspAdapter for RustLspAdapter {
 
             if fs::metadata(&destination_path).await.is_err() {
                 let mut response = http
-                    .get(&version.url, Default::default())
+                    .get(&version.url, Default::default(), true)
                     .await
                     .map_err(|err| anyhow!("error downloading release: {}", err))?;
                 let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));

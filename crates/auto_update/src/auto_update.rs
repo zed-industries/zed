@@ -137,6 +137,7 @@ impl AutoUpdater {
             .get(
                 &format!("{server_url}/api/releases/latest?token={ACCESS_TOKEN}&asset=Zed.dmg"),
                 Default::default(),
+                true,
             )
             .await?;
 
@@ -173,7 +174,7 @@ impl AutoUpdater {
             .map_or_else(|| cx.platform().app_path(), Ok)?;
 
         let mut dmg_file = File::create(&dmg_path).await?;
-        let mut response = client.get(&release.url, Default::default()).await?;
+        let mut response = client.get(&release.url, Default::default(), true).await?;
         smol::io::copy(response.body_mut(), &mut dmg_file).await?;
         log::info!("downloaded update. path:{:?}", dmg_path);
 

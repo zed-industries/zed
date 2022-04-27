@@ -87,6 +87,7 @@ pub async fn latest_github_release(
         .get(
             &format!("https://api.github.com/repos/{repo_name_with_owner}/releases/latest"),
             Default::default(),
+            true,
         )
         .await
         .context("error fetching latest release")?;

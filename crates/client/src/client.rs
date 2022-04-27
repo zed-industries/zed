@@ -781,7 +781,7 @@ impl Client {
         let http = self.http.clone();
         cx.background().spawn(async move {
             let mut rpc_url = format!("{}/rpc", *ZED_SERVER_URL);
-            let rpc_response = http.get(&rpc_url, Default::default()).await?;
+            let rpc_response = http.get(&rpc_url, Default::default(), false).await?;
             if rpc_response.status().is_redirection() {
                 rpc_url = rpc_response
                     .headers()

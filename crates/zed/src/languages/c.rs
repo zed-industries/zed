@@ -42,7 +42,7 @@ impl super::LspAdapter for CLspAdapter {
 
             if fs::metadata(&binary_path).await.is_err() {
                 let mut response = http
-                    .get(&version.url, Default::default())
+                    .get(&version.url, Default::default(), true)
                     .await
                     .context("error downloading release")?;
                 let mut file = File::create(&zip_path).await?;
