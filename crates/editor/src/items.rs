@@ -1,4 +1,4 @@
-use crate::{Anchor, Autoscroll, Editor, Event, ExcerptId, NavigationData, ToOffset, ToPoint as _};
+use crate::{Anchor, Autoscroll, Editor, Event, ExcerptId, NavigationData, ToPoint as _};
 use anyhow::{anyhow, Result};
 use futures::FutureExt;
 use gpui::{
@@ -245,19 +245,21 @@ fn deserialize_selection(
 
 impl Item for Editor {
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
-        if let Some(data) = data.downcast_ref::<NavigationData>() {
+        if let Ok(data) = data.downcast::<NavigationData>() {
             let buffer = self.buffer.read(cx).read(cx);
             let offset = if buffer.can_resolve(&data.cursor_anchor) {
-                data.cursor_anchor.to_offset(&buffer)
+                data.cursor_anchor.to_point(&buffer)
             } else {
-                buffer.clip_offset(data.cursor_offset, Bias::Left)
+                buffer.clip_point(data.cursor_point, Bias::Left)
             };
-            let newest_selection = self.newest_selection_with_snapshot::<usize>(&buffer);
+            let newest_selection = self.newest_selection_with_snapshot::<Point>(&buffer);
 
             let scroll_top_anchor = if buffer.can_resolve(&data.scroll_top_anchor) {
-                data.scroll_top_anchor.clone()
+                data.scroll_top_anchor
             } else {
-                buffer.anchor_at(data.scroll_top_offset, Bias::Left)
+                buffer.anchor_before(
+                    buffer.clip_point(Point::new(data.scroll_top_row, 0), Bias::Left),
+                )
             };
 
             drop(buffer);

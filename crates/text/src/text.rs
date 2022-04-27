@@ -50,7 +50,6 @@ pub struct Buffer {
     deferred_ops: OperationQueue<Operation>,
     deferred_replicas: HashSet<ReplicaId>,
     replica_id: ReplicaId,
-    remote_id: u64,
     local_clock: clock::Local,
     pub lamport_clock: clock::Lamport,
     subscriptions: Topic,
@@ -61,6 +60,7 @@ pub struct Buffer {
 #[derive(Clone, Debug)]
 pub struct BufferSnapshot {
     replica_id: ReplicaId,
+    remote_id: u64,
     visible_text: Rope,
     deleted_text: Rope,
     undo_map: UndoMap,
@@ -562,6 +562,7 @@ impl Buffer {
         Buffer {
             snapshot: BufferSnapshot {
                 replica_id,
+                remote_id,
                 visible_text,
                 deleted_text: Rope::new(),
                 fragments,
@@ -573,7 +574,6 @@ impl Buffer {
             deferred_ops: OperationQueue::new(),
             deferred_replicas: HashSet::default(),
             replica_id,
-            remote_id,
             local_clock,
             lamport_clock,
             subscriptions: Default::default(),
@@ -1795,12 +1795,15 @@ impl BufferSnapshot {
                 timestamp: fragment.insertion_timestamp.local(),
                 offset: fragment.insertion_offset + overshoot,
                 bias,
+                buffer_id: Some(self.remote_id),
             }
         }
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
-        *anchor == Anchor::MIN || *anchor == Anchor::MAX || self.version.observed(anchor.timestamp)
+        *anchor == Anchor::MIN
+            || *anchor == Anchor::MAX
+            || (Some(self.remote_id) == anchor.buffer_id && self.version.observed(anchor.timestamp))
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {

@@ -976,12 +976,27 @@ mod tests {
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
+
+        editor3
+            .update(cx, |editor, cx| {
+                editor.select_display_ranges(
+                    &[DisplayPoint::new(12, 0)..DisplayPoint::new(12, 0)],
+                    cx,
+                );
+                editor.newline(&Default::default(), cx);
+                editor.newline(&Default::default(), cx);
+                editor.move_down(&Default::default(), cx);
+                editor.move_down(&Default::default(), cx);
+                editor.save(params.project.clone(), cx)
+            })
+            .await
+            .unwrap();
         editor3.update(cx, |editor, cx| {
-            editor.select_display_ranges(&[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)], cx);
+            editor.set_scroll_position(vec2f(0., 12.5), cx)
         });
         assert_eq!(
             active_location(&workspace, cx),
-            (file3.clone(), DisplayPoint::new(15, 0))
+            (file3.clone(), DisplayPoint::new(16, 0), 12.5)
         );
 
         workspace
@@ -989,7 +1004,7 @@ mod tests {
             .await;
         assert_eq!(
             active_location(&workspace, cx),
-            (file3.clone(), DisplayPoint::new(0, 0))
+            (file3.clone(), DisplayPoint::new(0, 0), 0.)
         );
 
         workspace
@@ -997,7 +1012,7 @@ mod tests {
             .await;
         assert_eq!(
             active_location(&workspace, cx),
-            (file2.clone(), DisplayPoint::new(0, 0))
+            (file2.clone(), DisplayPoint::new(0, 0), 0.)
         );
 
         workspace
@@ -1005,7 +1020,7 @@ mod tests {
             .await;
         assert_eq!(
             active_location(&workspace, cx),
-            (file1.clone(), DisplayPoint::new(10, 0))
+            (file1.clone(), DisplayPoint::new(10, 0), 0.)
         );
 
         workspace
@@ -1013,7 +1028,7 @@ mod tests {
             .await;
         assert_eq!(
             active_location(&workspace, cx),
-            (file1.clone(), DisplayPoint::new(0, 0))
+            (file1.clone(), DisplayPoint::new(0, 0), 0.)
         );
 
         // Go back one more time and ensure we don't navigate past the first item in the history.
@@ -1022,7 +1037,7 @@ mod tests {
             .await;
         assert_eq!(
             active_location(&workspace, cx),
-            (file1.clone(), DisplayPoint::new(0, 0))
+            (file1.clone(), DisplayPoint::new(0, 0), 0.)
         );
 
         workspace
@@ -1030,7 +1045,7 @@ mod tests {
             .await;
         assert_eq!(
             active_location(&workspace, cx),
-            (file1.clone(), DisplayPoint::new(10, 0))
+            (file1.clone(), DisplayPoint::new(10, 0), 0.)
         );
 
         workspace
@@ -1038,7 +1053,7 @@ mod tests {
             .await;
         assert_eq!(
             active_location(&workspace, cx),
-            (file2.clone(), DisplayPoint::new(0, 0))
+            (file2.clone(), DisplayPoint::new(0, 0), 0.)
         );
 
         // Go forward to an item that has been closed, ensuring it gets re-opened at the same
@@ -1056,7 +1071,23 @@ mod tests {
             .await;
         assert_eq!(
             active_location(&workspace, cx),
-            (file3.clone(), DisplayPoint::new(0, 0))
+            (file3.clone(), DisplayPoint::new(0, 0), 0.)
+        );
+
+        workspace
+            .update(cx, |w, cx| Pane::go_forward(w, None, cx))
+            .await;
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file3.clone(), DisplayPoint::new(16, 0), 12.5)
+        );
+
+        workspace
+            .update(cx, |w, cx| Pane::go_back(w, None, cx))
+            .await;
+        assert_eq!(
+            active_location(&workspace, cx),
+            (file3.clone(), DisplayPoint::new(0, 0), 0.)
         );
 
         // Go back to an item that has been closed and removed from disk, ensuring it gets skipped.
@@ -1079,17 +1110,18 @@ mod tests {
             .await;
         assert_eq!(
             active_location(&workspace, cx),
-            (file1.clone(), DisplayPoint::new(10, 0))
+            (file1.clone(), DisplayPoint::new(10, 0), 0.)
         );
         workspace
             .update(cx, |w, cx| Pane::go_forward(w, None, cx))
             .await;
         assert_eq!(
             active_location(&workspace, cx),
-            (file3.clone(), DisplayPoint::new(0, 0))
+            (file3.clone(), DisplayPoint::new(0, 0), 0.)
         );
 
-        // Modify file to remove nav history location, and ensure duplicates are skipped
+        // Modify file to collapse multiple nav history entries into the same location.
+        // Ensure we don't visit the same location twice when navigating.
         editor1.update(cx, |editor, cx| {
             editor.select_display_ranges(&[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)], cx)
         });
@@ -1125,25 +1157,34 @@ mod tests {
             .await;
         assert_eq!(
             active_location(&workspace, cx),
-            (file1.clone(), DisplayPoint::new(2, 0))
+            (file1.clone(), DisplayPoint::new(2, 0), 0.)
         );
         workspace
             .update(cx, |w, cx| Pane::go_back(w, None, cx))
             .await;
         assert_eq!(
             active_location(&workspace, cx),
-            (file1.clone(), DisplayPoint::new(3, 0))
+            (file1.clone(), DisplayPoint::new(3, 0), 0.)
         );
 
         fn active_location(
             workspace: &ViewHandle<Workspace>,
             cx: &mut TestAppContext,
-        ) -> (ProjectPath, DisplayPoint) {
+        ) -> (ProjectPath, DisplayPoint, f32) {
             workspace.update(cx, |workspace, cx| {
                 let item = workspace.active_item(cx).unwrap();
                 let editor = item.downcast::<Editor>().unwrap();
-                let selections = editor.update(cx, |editor, cx| editor.selected_display_ranges(cx));
-                (item.project_path(cx).unwrap(), selections[0].start)
+                let (selections, scroll_position) = editor.update(cx, |editor, cx| {
+                    (
+                        editor.selected_display_ranges(cx),
+                        editor.scroll_position(cx),
+                    )
+                });
+                (
+                    item.project_path(cx).unwrap(),
+                    selections[0].start,
+                    scroll_position.y(),
+                )
             })
         }
     }

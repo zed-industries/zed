@@ -847,14 +847,15 @@ struct ClipboardSelection {
     is_entire_line: bool,
 }
 
+#[derive(Debug)]
 pub struct NavigationData {
     // Matching offsets for anchor and scroll_top_anchor allows us to recreate the anchor if the buffer
     // has since been closed
     cursor_anchor: Anchor,
-    cursor_offset: usize,
+    cursor_point: Point,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
-    scroll_top_offset: usize,
+    scroll_top_row: u32,
 }
 
 pub struct EditorCreated(pub ViewHandle<Editor>);
@@ -1112,6 +1113,7 @@ impl Editor {
             self.scroll_top_anchor = anchor;
         }
 
+        self.autoscroll_request.take();
         cx.emit(Event::ScrollPositionChanged { local });
         cx.notify();
     }
@@ -3905,9 +3907,8 @@ impl Editor {
     ) {
         if let Some(nav_history) = &self.nav_history {
             let buffer = self.buffer.read(cx).read(cx);
-            let offset = position.to_offset(&buffer);
             let point = position.to_point(&buffer);
-            let scroll_top_offset = self.scroll_top_anchor.to_offset(&buffer);
+            let scroll_top_row = self.scroll_top_anchor.to_point(&buffer).row;
             drop(buffer);
 
             if let Some(new_position) = new_position {
@@ -3919,10 +3920,10 @@ impl Editor {
 
             nav_history.push(Some(NavigationData {
                 cursor_anchor: position,
-                cursor_offset: offset,
+                cursor_point: point,
                 scroll_position: self.scroll_position,
                 scroll_top_anchor: self.scroll_top_anchor.clone(),
-                scroll_top_offset,
+                scroll_top_row,
             }));
         }
     }
