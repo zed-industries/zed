@@ -58,6 +58,7 @@ lazy_static! {
 }
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
+    cx.add_action(about);
     cx.add_global_action(quit);
     cx.add_global_action(move |_: &IncreaseBufferFontSize, cx| {
         cx.update_global::<Settings, _, _>(|settings, cx| {
@@ -208,6 +209,14 @@ pub fn build_window_options() -> WindowOptions<'static> {
 
 fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
     cx.platform().quit();
+}
+
+fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
+    cx.prompt(
+        gpui::PromptLevel::Info,
+        &format!("Zed {}", env!("CARGO_PKG_VERSION")),
+        &["OK"],
+    );
 }
 
 async fn install_cli(cx: &AsyncAppContext) -> Result<()> {
