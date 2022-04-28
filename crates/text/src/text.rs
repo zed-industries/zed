@@ -615,15 +615,7 @@ impl Buffer {
         self.history.group_interval
     }
 
-    pub fn edit<S, T>(&mut self, range: Range<S>, new_text: T) -> Operation
-    where
-        S: ToOffset,
-        T: Into<Arc<str>>,
-    {
-        self.edit_batched([(range, new_text)])
-    }
-
-    pub fn edit_batched<R, I, S, T>(&mut self, edits: R) -> Operation
+    pub fn edit<R, I, S, T>(&mut self, edits: R) -> Operation
     where
         R: IntoIterator<IntoIter = I>,
         I: ExactSizeIterator<Item = (Range<S>, T)>,
@@ -1457,7 +1449,7 @@ impl Buffer {
         }
 
         log::info!("mutating buffer {} with {:?}", self.replica_id, edits);
-        let op = self.edit_batched(edits.iter().cloned());
+        let op = self.edit(edits.iter().cloned());
         (edits, op)
     }
 

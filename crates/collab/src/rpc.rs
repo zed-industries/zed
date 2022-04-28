@@ -1635,8 +1635,8 @@ mod tests {
             .update(cx_c, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
             .await
             .unwrap();
-        buffer_b.update(cx_b, |buf, cx| buf.edit(0..0, "i-am-b, ", cx));
-        buffer_c.update(cx_c, |buf, cx| buf.edit(0..0, "i-am-c, ", cx));
+        buffer_b.update(cx_b, |buf, cx| buf.edit([(0..0, "i-am-b, ")], cx));
+        buffer_c.update(cx_c, |buf, cx| buf.edit([(0..0, "i-am-c, ")], cx));
 
         // Open and edit that buffer as the host.
         let buffer_a = project_a
@@ -1647,7 +1647,9 @@ mod tests {
         buffer_a
             .condition(cx_a, |buf, _| buf.text() == "i-am-c, i-am-b, ")
             .await;
-        buffer_a.update(cx_a, |buf, cx| buf.edit(buf.len()..buf.len(), "i-am-a", cx));
+        buffer_a.update(cx_a, |buf, cx| {
+            buf.edit([(buf.len()..buf.len(), "i-am-a")], cx)
+        });
 
         // Wait for edits to propagate
         buffer_a
@@ -1662,7 +1664,7 @@ mod tests {
 
         // Edit the buffer as the host and concurrently save as guest B.
         let save_b = buffer_b.update(cx_b, |buf, cx| buf.save(cx));
-        buffer_a.update(cx_a, |buf, cx| buf.edit(0..0, "hi-a, ", cx));
+        buffer_a.update(cx_a, |buf, cx| buf.edit([(0..0, "hi-a, ")], cx));
         save_b.await.unwrap();
         assert_eq!(
             fs.load("/a/file1".as_ref()).await.unwrap(),
@@ -1792,7 +1794,7 @@ mod tests {
             .await
             .unwrap();
 
-        buffer_b.update(cx_b, |buf, cx| buf.edit(0..0, "world ", cx));
+        buffer_b.update(cx_b, |buf, cx| buf.edit([(0..0, "world ")], cx));
         buffer_b.read_with(cx_b, |buf, _| {
             assert!(buf.is_dirty());
             assert!(!buf.has_conflict());
@@ -1806,7 +1808,7 @@ mod tests {
             assert!(!buf.has_conflict());
         });
 
-        buffer_b.update(cx_b, |buf, cx| buf.edit(0..0, "hello ", cx));
+        buffer_b.update(cx_b, |buf, cx| buf.edit([(0..0, "hello ")], cx));
         buffer_b.read_with(cx_b, |buf, _| {
             assert!(buf.is_dirty());
             assert!(!buf.has_conflict());
@@ -1962,9 +1964,9 @@ mod tests {
 
         // Edit the buffer as client A while client B is still opening it.
         cx_b.background().simulate_random_delay().await;
-        buffer_a.update(cx_a, |buf, cx| buf.edit(0..0, "X", cx));
+        buffer_a.update(cx_a, |buf, cx| buf.edit([(0..0, "X")], cx));
         cx_b.background().simulate_random_delay().await;
-        buffer_a.update(cx_a, |buf, cx| buf.edit(1..1, "Y", cx));
+        buffer_a.update(cx_a, |buf, cx| buf.edit([(1..1, "Y")], cx));
 
         let text = buffer_a.read_with(cx_a, |buf, _| buf.text());
         let buffer_b = buffer_b.await.unwrap();
@@ -2650,8 +2652,8 @@ mod tests {
             .await
             .unwrap();
         buffer_b.update(cx_b, |buffer, cx| {
-            buffer.edit(4..7, "six", cx);
-            buffer.edit(10..11, "6", cx);
+            buffer.edit([(4..7, "six")], cx);
+            buffer.edit([(10..11, "6")], cx);
             assert_eq!(buffer.text(), "let six = 6;");
             assert!(buffer.is_dirty());
             assert!(!buffer.has_conflict());
@@ -3932,7 +3934,7 @@ mod tests {
             );
             rename.editor.update(cx, |rename_editor, cx| {
                 rename_editor.buffer().update(cx, |rename_buffer, cx| {
-                    rename_buffer.edit(0..3, "THREE", cx);
+                    rename_buffer.edit([(0..3, "THREE")], cx);
                 });
             });
         });

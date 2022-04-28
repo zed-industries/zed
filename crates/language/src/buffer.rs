@@ -880,14 +880,18 @@ impl Buffer {
         if column > current_column {
             let offset = Point::new(row, 0).to_offset(&*self);
             self.edit(
-                offset..offset,
-                " ".repeat((column - current_column) as usize),
+                [(
+                    offset..offset,
+                    " ".repeat((column - current_column) as usize),
+                )],
                 cx,
             );
         } else if column < current_column {
             self.edit(
-                Point::new(row, 0)..Point::new(row, current_column - column),
-                "",
+                [(
+                    Point::new(row, 0)..Point::new(row, current_column - column),
+                    "",
+                )],
                 cx,
             );
         }
@@ -925,13 +929,15 @@ impl Buffer {
                 match tag {
                     ChangeTag::Equal => offset += len,
                     ChangeTag::Delete => {
-                        self.edit(range, "", cx);
+                        self.edit([(range, "")], cx);
                     }
                     ChangeTag::Insert => {
                         self.edit(
-                            offset..offset,
-                            &diff.new_text
-                                [range.start - diff.start_offset..range.end - diff.start_offset],
+                            [(
+                                offset..offset,
+                                &diff.new_text[range.start - diff.start_offset
+                                    ..range.end - diff.start_offset],
+                            )],
                             cx,
                         );
                         offset += len;
@@ -1054,20 +1060,7 @@ impl Buffer {
         self.edit_internal([(0..self.len(), text)], None, cx)
     }
 
-    pub fn edit<S, T>(
-        &mut self,
-        range: Range<S>,
-        new_text: T,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<clock::Local>
-    where
-        S: ToOffset,
-        T: Into<Arc<str>>,
-    {
-        self.edit_batched([(range, new_text)], cx)
-    }
-
-    pub fn edit_batched<I, S, T>(
+    pub fn edit<I, S, T>(
         &mut self,
         edits_iter: I,
         cx: &mut ModelContext<Self>,
@@ -1080,21 +1073,7 @@ impl Buffer {
         self.edit_internal(edits_iter, None, cx)
     }
 
-    pub fn edit_with_autoindent<S, T>(
-        &mut self,
-        range: Range<S>,
-        new_text: T,
-        indent_size: u32,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<clock::Local>
-    where
-        S: ToOffset,
-        T: Into<Arc<str>>,
-    {
-        self.edit_with_autoindent_batched([(range, new_text)], indent_size, cx)
-    }
-
-    pub fn edit_with_autoindent_batched<I, S, T>(
+    pub fn edit_with_autoindent<I, S, T>(
         &mut self,
         edits_iter: I,
         indent_size: u32,
@@ -1165,7 +1144,7 @@ impl Buffer {
                     (before_edit, edited, autoindent_size)
                 });
 
-        let edit_operation = self.text.edit_batched(edits.iter().cloned());
+        let edit_operation = self.text.edit(edits.iter().cloned());
         let edit_id = edit_operation.local_timestamp();
 
         if let Some((before_edit, edited, size)) = autoindent_request {
@@ -1475,7 +1454,7 @@ impl Buffer {
             edits.push((range, new_text));
         }
         log::info!("mutating buffer {} with {:?}", self.replica_id(), edits);
-        self.edit_batched(edits, cx);
+        self.edit(edits, cx);
     }
 
     pub fn randomly_undo_redo(&mut self, rng: &mut impl rand::Rng, cx: &mut ModelContext<Self>) {

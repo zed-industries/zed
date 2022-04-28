@@ -843,7 +843,7 @@ pub mod tests {
 
         let ix = snapshot.buffer_snapshot.text().find("seven").unwrap();
         buffer.update(cx, |buffer, cx| {
-            buffer.edit(ix..ix, "and ", cx);
+            buffer.edit([(ix..ix, "and ")], cx);
         });
 
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
@@ -876,7 +876,7 @@ pub mod tests {
         let map =
             cx.add_model(|cx| DisplayMap::new(buffer.clone(), font_id, font_size, None, 1, 1, cx));
         buffer.update(cx, |buffer, cx| {
-            buffer.edit_batched(
+            buffer.edit(
                 vec![
                     (Point::new(1, 0)..Point::new(1, 0), "\t"),
                     (Point::new(1, 1)..Point::new(1, 1), "\t"),

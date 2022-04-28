@@ -1154,7 +1154,7 @@ mod tests {
 
         // Insert a line break, separating two block decorations into separate lines.
         let buffer_snapshot = buffer.update(cx, |buffer, cx| {
-            buffer.edit(Point::new(1, 1)..Point::new(1, 1), "!!!\n", cx);
+            buffer.edit([(Point::new(1, 1)..Point::new(1, 1), "!!!\n")], cx);
             buffer.snapshot(cx)
         });
 
