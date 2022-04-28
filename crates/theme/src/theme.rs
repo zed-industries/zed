@@ -6,7 +6,8 @@ use gpui::{
     fonts::{HighlightStyle, TextStyle},
     Border,
 };
-use serde::Deserialize;
+use serde::{de::DeserializeOwned, Deserialize};
+use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
 pub use theme_registry::*;
@@ -145,7 +146,7 @@ pub struct StatusBar {
     pub cursor_position: TextStyle,
     pub auto_update_progress_message: TextStyle,
     pub auto_update_done_message: TextStyle,
-    pub lsp_status: StatusBarLspStatus,
+    pub lsp_status: Interactive<StatusBarLspStatus>,
     pub sidebar_buttons: StatusBarSidebarButtons,
     pub diagnostics: StatusBarDiagnostics,
 }
@@ -154,20 +155,15 @@ pub struct StatusBar {
 pub struct StatusBarSidebarButtons {
     pub group_left: ContainerStyle,
     pub group_right: ContainerStyle,
-    pub item: SidebarItem,
-    pub item_active: SidebarItem,
-    pub item_hover: SidebarItem,
+    pub item: Interactive<SidebarItem>,
 }
 
 #[derive(Deserialize, Default)]
 pub struct StatusBarDiagnostics {
-    pub message: ContainedText,
-    pub summary_ok: ContainedText,
-    pub summary_ok_hover: ContainedText,
-    pub summary_warning: ContainedText,
-    pub summary_warning_hover: ContainedText,
-    pub summary_error: ContainedText,
-    pub summary_error_hover: ContainedText,
+    pub message: Interactive<ContainedText>,
+    pub summary_ok: Interactive<ContainedText>,
+    pub summary_warning: Interactive<ContainedText>,
+    pub summary_error: Interactive<ContainedText>,
     pub icon_color_ok: Color,
     pub icon_color_error: Color,
     pub icon_color_warning: Color,
@@ -182,13 +178,10 @@ pub struct StatusBarLspStatus {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub height: f32,
-    pub container_hover: ContainerStyle,
     pub icon_spacing: f32,
     pub icon_color: Color,
-    pub icon_color_hover: Color,
     pub icon_width: f32,
     pub message: TextStyle,
-    pub message_hover: TextStyle,
 }
 
 #[derive(Deserialize, Default)]
@@ -419,6 +412,78 @@ pub struct FieldEditor {
     #[serde(default)]
     pub placeholder_text: Option<TextStyle>,
     pub selection: SelectionStyle,
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct Interactive<T> {
+    pub default: T,
+    pub hover: Option<T>,
+    pub active: Option<T>,
+}
+
+impl<T> Interactive<T> {
+    pub fn active(&self) -> &T {
+        self.active.as_ref().unwrap_or(&self.default)
+    }
+
+    pub fn hover(&self) -> &T {
+        self.hover.as_ref().unwrap_or(&self.default)
+    }
+}
+
+impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Helper {
+            #[serde(flatten)]
+            default: Value,
+            hover: Option<Value>,
+            active: Option<Value>,
+        }
+
+        let json = Helper::deserialize(deserializer)?;
+
+        let hover = if let Some(mut hovered) = json.hover {
+            if let Value::Object(hovered) = &mut hovered {
+                if let Value::Object(default) = &json.default {
+                    for (key, value) in default {
+                        if !hovered.contains_key(key) {
+                            hovered.insert(key.clone(), value.clone());
+                        }
+                    }
+                }
+            }
+            Some(serde_json::from_value::<T>(hovered).map_err(serde::de::Error::custom)?)
+        } else {
+            None
+        };
+
+        let active = if let Some(mut active) = json.active {
+            if let Value::Object(active) = &mut active {
+                if let Value::Object(default) = &json.default {
+                    for (key, value) in default {
+                        if !active.contains_key(key) {
+                            active.insert(key.clone(), value.clone());
+                        }
+                    }
+                }
+            }
+            Some(serde_json::from_value::<T>(active).map_err(serde::de::Error::custom)?)
+        } else {
+            None
+        };
+
+        let default = serde_json::from_value(json.default).map_err(serde::de::Error::custom)?;
+
+        Ok(Interactive {
+            default,
+            hover,
+            active,
+        })
+    }
 }
 
 impl Editor {

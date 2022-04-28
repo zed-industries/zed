@@ -1,7 +1,7 @@
-use editor::Editor;
+use editor::{Editor, GoToNextDiagnostic};
 use gpui::{
-    elements::*, platform::CursorStyle, serde_json, Entity, ModelHandle, RenderContext,
-    Subscription, View, ViewContext, ViewHandle,
+    elements::*, platform::CursorStyle, serde_json, Entity, ModelHandle, MutableAppContext,
+    RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::Diagnostic;
 use project::Project;
@@ -10,9 +10,14 @@ use workspace::StatusItemView;
 
 pub struct DiagnosticIndicator {
     summary: project::DiagnosticSummary,
+    active_editor: Option<WeakViewHandle<Editor>>,
     current_diagnostic: Option<Diagnostic>,
     check_in_progress: bool,
     _observe_active_editor: Option<Subscription>,
+}
+
+pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action(DiagnosticIndicator::go_to_next_diagnostic);
 }
 
 impl DiagnosticIndicator {
@@ -36,8 +41,17 @@ impl DiagnosticIndicator {
         Self {
             summary: project.read(cx).diagnostic_summary(cx),
             check_in_progress: project.read(cx).is_running_disk_based_diagnostics(),
+            active_editor: None,
             current_diagnostic: None,
             _observe_active_editor: None,
+        }
+    }
+
+    fn go_to_next_diagnostic(&mut self, _: &GoToNextDiagnostic, cx: &mut ViewContext<Self>) {
+        if let Some(editor) = self.active_editor.as_ref().and_then(|e| e.upgrade(cx)) {
+            editor.update(cx, |editor, cx| {
+                editor.go_to_diagnostic(editor::Direction::Next, cx);
+            })
         }
     }
 
@@ -70,11 +84,12 @@ impl View for DiagnosticIndicator {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        enum Tag {}
+        enum Summary {}
+        enum Message {}
 
         let in_progress = self.check_in_progress;
         let mut element = Flex::row().with_child(
-            MouseEventHandler::new::<Tag, _, _>(0, cx, |state, cx| {
+            MouseEventHandler::new::<Summary, _, _>(0, cx, |state, cx| {
                 let style = &cx
                     .global::<Settings>()
                     .theme
@@ -83,21 +98,17 @@ impl View for DiagnosticIndicator {
                     .diagnostics;
 
                 let summary_style = if self.summary.error_count > 0 {
-                    if state.hovered {
-                        &style.summary_error_hover
-                    } else {
-                        &style.summary_error
-                    }
+                    &style.summary_error
                 } else if self.summary.warning_count > 0 {
-                    if state.hovered {
-                        &style.summary_warning_hover
-                    } else {
-                        &style.summary_warning
-                    }
-                } else if state.hovered {
-                    &style.summary_ok_hover
+                    &style.summary_warning
                 } else {
                     &style.summary_ok
+                };
+
+                let summary_style = if state.hovered {
+                    summary_style.hover()
+                } else {
+                    &summary_style.default
                 };
 
                 let mut summary_row = Flex::row();
@@ -169,24 +180,36 @@ impl View for DiagnosticIndicator {
         );
 
         let style = &cx.global::<Settings>().theme.workspace.status_bar;
+        let item_spacing = style.item_spacing;
+        let message_style = &style.diagnostics.message;
 
         if in_progress {
             element.add_child(
-                Label::new("checking…".into(), style.diagnostics.message.text.clone())
+                Label::new("checking…".into(), message_style.default.text.clone())
                     .aligned()
                     .contained()
-                    .with_margin_left(style.item_spacing)
+                    .with_margin_left(item_spacing)
                     .boxed(),
             );
         } else if let Some(diagnostic) = &self.current_diagnostic {
+            let message_style = message_style.clone();
             element.add_child(
-                Label::new(
-                    diagnostic.message.split('\n').next().unwrap().to_string(),
-                    style.diagnostics.message.text.clone(),
-                )
-                .aligned()
-                .contained()
-                .with_margin_left(style.item_spacing)
+                MouseEventHandler::new::<Message, _, _>(0, cx, |state, _| {
+                    Label::new(
+                        diagnostic.message.split('\n').next().unwrap().to_string(),
+                        if state.hovered {
+                            message_style.hover().text.clone()
+                        } else {
+                            message_style.default.text.clone()
+                        },
+                    )
+                    .aligned()
+                    .contained()
+                    .with_margin_left(item_spacing)
+                    .boxed()
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(|cx| cx.dispatch_action(GoToNextDiagnostic))
                 .boxed(),
             );
         }
@@ -206,9 +229,11 @@ impl StatusItemView for DiagnosticIndicator {
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
+            self.active_editor = Some(editor.downgrade());
             self._observe_active_editor = Some(cx.observe(&editor, Self::update));
             self.update(editor, cx);
         } else {
+            self.active_editor = None;
             self.current_diagnostic = None;
             self._observe_active_editor = None;
         }

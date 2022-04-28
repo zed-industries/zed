@@ -35,6 +35,7 @@ const CONTEXT_LINE_COUNT: u32 = 1;
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectDiagnosticsEditor::deploy);
+    items::init(cx);
 }
 
 type Event = editor::Event;

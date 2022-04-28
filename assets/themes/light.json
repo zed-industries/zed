@@ -189,11 +189,6 @@
         "color": "#636363",
         "size": 14
       },
-      "diagnostic_message": {
-        "family": "Zed Sans",
-        "color": "#636363",
-        "size": 14
-      },
       "auto_update_progress_message": {
         "family": "Zed Sans",
         "color": "#636363",
@@ -208,29 +203,24 @@
         "icon_spacing": 4,
         "icon_width": 14,
         "height": 18,
-        "message": {
-          "family": "Zed Sans",
-          "color": "#636363",
-          "size": 14
-        },
-        "message_hover": {
-          "family": "Zed Sans",
-          "color": "#2b2b2b",
-          "size": 14
-        },
-        "icon_color": "#9c9c9c",
-        "icon_color_hover": "#393939",
         "corner_radius": 6,
         "padding": {
           "left": 6,
           "right": 6
         },
-        "container_hover": {
-          "corner_radius": 6,
-          "padding": {
-            "left": 6,
-            "right": 6
+        "message": {
+          "family": "Zed Sans",
+          "color": "#636363",
+          "size": 14
+        },
+        "icon_color": "#9c9c9c",
+        "hover": {
+          "message": {
+            "family": "Zed Sans",
+            "color": "#2b2b2b",
+            "size": 14
           },
+          "icon_color": "#393939",
           "background": "#eaeaea"
         }
       },
@@ -244,17 +234,8 @@
           },
           "family": "Zed Sans",
           "color": "#2b2b2b",
-          "size": 14
-        },
-        "summary_ok_hover": {
-          "corner_radius": 6,
-          "padding": {
-            "left": 6,
-            "right": 6
-          },
-          "family": "Zed Sans",
-          "color": "#2b2b2b",
-          "size": 14
+          "size": 14,
+          "hover": {}
         },
         "summary_warning": {
           "corner_radius": 6,
@@ -269,21 +250,9 @@
           "border": {
             "color": "#f6a72426",
             "width": 1
-          }
-        },
-        "summary_warning_hover": {
-          "corner_radius": 6,
-          "padding": {
-            "left": 6,
-            "right": 6
           },
-          "family": "Zed Sans",
-          "color": "#2b2b2b",
-          "size": 14,
-          "background": "#f6a72426",
-          "border": {
-            "color": "#f6a72426",
-            "width": 1
+          "hover": {
+            "background": "#f6a72433"
           }
         },
         "summary_error": {
@@ -299,27 +268,20 @@
           "border": {
             "color": "#eb2d2d26",
             "width": 1
-          }
-        },
-        "summary_error_hover": {
-          "corner_radius": 6,
-          "padding": {
-            "left": 6,
-            "right": 6
           },
-          "family": "Zed Sans",
-          "color": "#2b2b2b",
-          "size": 14,
-          "background": "#c9181826",
-          "border": {
-            "color": "#eb2d2d26",
-            "width": 1
+          "hover": {
+            "background": "#c9181833"
           }
         },
         "message": {
           "family": "Zed Sans",
           "color": "#636363",
-          "size": 14
+          "size": 14,
+          "hover": {
+            "family": "Zed Sans",
+            "color": "#474747",
+            "size": 14
+          }
         },
         "icon_color_ok": "#717171",
         "icon_color_warning": "#f7bf17",
@@ -332,33 +294,21 @@
         "group_left": {},
         "group_right": {},
         "item": {
-          "icon_color": "#717171",
-          "icon_size": 18,
-          "padding": {
-            "left": 5,
-            "right": 5
-          },
-          "corner_radius": 5
-        },
-        "item_hover": {
-          "icon_color": "#717171",
           "icon_size": 18,
           "padding": {
             "left": 5,
             "right": 5
           },
           "corner_radius": 5,
-          "background": "#eaeaea"
-        },
-        "item_active": {
-          "icon_color": "#000000",
-          "icon_size": 18,
-          "padding": {
-            "left": 5,
-            "right": 5
+          "icon_color": "#9c9c9c",
+          "hover": {
+            "icon_color": "#717171",
+            "background": "#eaeaea"
           },
-          "corner_radius": 5,
-          "background": "#e3e3e3"
+          "active": {
+            "icon_color": "#000000",
+            "background": "#e3e3e3"
+          }
         }
       }
     },

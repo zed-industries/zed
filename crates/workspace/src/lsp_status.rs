@@ -175,17 +175,21 @@ impl View for LspStatus {
         }
 
         let mut element = MouseEventHandler::new::<Self, _, _>(0, cx, |state, cx| {
-            let hovered = state.hovered && handler.is_some();
-            let theme = &cx.global::<Settings>().theme;
-            let style = &theme.workspace.status_bar.lsp_status;
+            let theme = &cx
+                .global::<Settings>()
+                .theme
+                .workspace
+                .status_bar
+                .lsp_status;
+            let style = if state.hovered && handler.is_some() {
+                theme.hover.as_ref().unwrap_or(&theme.default)
+            } else {
+                &theme.default
+            };
             Flex::row()
                 .with_children(icon.map(|path| {
                     Svg::new(path)
-                        .with_color(if hovered {
-                            style.icon_color_hover
-                        } else {
-                            style.icon_color
-                        })
+                        .with_color(style.icon_color)
                         .constrained()
                         .with_width(style.icon_width)
                         .contained()
@@ -193,26 +197,11 @@ impl View for LspStatus {
                         .aligned()
                         .named("warning-icon")
                 }))
-                .with_child(
-                    Label::new(
-                        message,
-                        if hovered {
-                            style.message_hover.clone()
-                        } else {
-                            style.message.clone()
-                        },
-                    )
-                    .aligned()
-                    .boxed(),
-                )
+                .with_child(Label::new(message, style.message.clone()).aligned().boxed())
                 .constrained()
                 .with_height(style.height)
                 .contained()
-                .with_style(if hovered {
-                    style.container_hover
-                } else {
-                    style.container
-                })
+                .with_style(style.container)
                 .aligned()
                 .boxed()
         });

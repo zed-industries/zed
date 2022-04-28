@@ -183,8 +183,6 @@ impl View for SidebarButtons {
             .sidebar_buttons;
         let sidebar = self.sidebar.read(cx);
         let item_style = theme.item;
-        let hover_item_style = theme.item_hover;
-        let active_item_style = theme.item_active;
         let active_ix = sidebar.active_item_ix;
         let side = sidebar.side;
         let group_style = match side {
@@ -196,11 +194,11 @@ impl View for SidebarButtons {
             .with_children(items.iter().enumerate().map(|(ix, item)| {
                 MouseEventHandler::new::<Self, _, _>(ix, cx, move |state, _| {
                     let style = if Some(ix) == active_ix {
-                        active_item_style
+                        item_style.active()
                     } else if state.hovered {
-                        hover_item_style
+                        item_style.hover()
                     } else {
-                        item_style
+                        &item_style.default
                     };
                     Svg::new(item.icon_path)
                         .with_color(style.icon_color)

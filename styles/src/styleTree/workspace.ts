@@ -52,12 +52,6 @@ export default function workspace(theme: Theme) {
     padding: { left: 6, right: 6 },
     ...text(theme, "sans", "primary", { size: "sm" }),
   };
-  const sidebarButton = {
-    iconColor: iconColor(theme, "secondary"),
-    iconSize: 18,
-    padding: { left: 5, right: 5 },
-    cornerRadius: 5,
-  };
   const shareIcon = {
     cornerRadius: 6,
     margin: { top: 3, bottom: 2 },
@@ -95,22 +89,19 @@ export default function workspace(theme: Theme) {
       },
       border: border(theme, "primary", { top: true, overlay: true }),
       cursorPosition: text(theme, "sans", "muted"),
-      diagnosticMessage: text(theme, "sans", "muted"),
       autoUpdateProgressMessage: text(theme, "sans", "muted"),
       autoUpdateDoneMessage: text(theme, "sans", "muted"),
       lspStatus: {
         iconSpacing: 4,
         iconWidth: 14,
         height: 18,
-        message: text(theme, "sans", "muted"),
-        messageHover: text(theme, "sans", "primary"),
-        iconColor: iconColor(theme, "muted"),
-        iconColorHover: iconColor(theme, "primary"),
         cornerRadius: 6,
         padding: { left: 6, right: 6 },
-        containerHover: {
-          cornerRadius: 6,
-          padding: { left: 6, right: 6 },
+        message: text(theme, "sans", "muted"),
+        iconColor: iconColor(theme, "muted"),
+        hover: {
+          message: text(theme, "sans", "primary"),
+          iconColor: iconColor(theme, "primary"),
           background: backgroundColor(theme, 300, "hovered"),
         }
       },
@@ -118,31 +109,28 @@ export default function workspace(theme: Theme) {
         height: 16,
         summaryOk: {
           ...diagnosticSummary,
-        },
-        summaryOkHover: {
-          ...diagnosticSummary,
+          hover: {}
         },
         summaryWarning: {
           ...diagnosticSummary,
           background: backgroundColor(theme, "warning"),
           border: border(theme, "warning"),
-        },
-        summaryWarningHover: {
-          ...diagnosticSummary,
-          background: backgroundColor(theme, "warning"),
-          border: border(theme, "warning"),
+          hover: {
+            background: backgroundColor(theme, "warning", "hovered"),
+          }
         },
         summaryError: {
           ...diagnosticSummary,
           background: backgroundColor(theme, "error"),
           border: border(theme, "error"),
+          hover: {
+            background: backgroundColor(theme, "error", "hovered"),
+          }
         },
-        summaryErrorHover: {
-          ...diagnosticSummary,
-          background: backgroundColor(theme, "error"),
-          border: border(theme, "error"),
+        message: {
+          ...text(theme, "sans", "muted"),
+          hover: text(theme, "sans", "secondary"),
         },
-        message: text(theme, "sans", "muted"),
         iconColorOk: iconColor(theme, "secondary"),
         iconColorWarning: iconColor(theme, "warning"),
         iconColorError: iconColor(theme, "error"),
@@ -154,18 +142,18 @@ export default function workspace(theme: Theme) {
         groupLeft: {},
         groupRight: {},
         item: {
+          iconSize: 18,
+          padding: { left: 5, right: 5 },
+          cornerRadius: 5,
           iconColor: iconColor(theme, "muted"),
-          ...sidebarButton
-        },
-        itemHover: {
-          ...sidebarButton,
-          iconColor: iconColor(theme, "secondary"),
-          background: backgroundColor(theme, 300, "hovered"),
-        },
-        itemActive: {
-          ...sidebarButton,
-          iconColor: iconColor(theme, "active"),
-          background: backgroundColor(theme, 300, "active"),
+          hover: {
+            iconColor: iconColor(theme, "secondary"),
+            background: backgroundColor(theme, 300, "hovered"),
+          },
+          active: {
+            iconColor: iconColor(theme, "active"),
+            background: backgroundColor(theme, 300, "active"),
+          }
         },
       },
     },
