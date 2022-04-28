@@ -25,6 +25,7 @@ pub struct Settings {
     pub tab_size: u32,
     pub soft_wrap: SoftWrap,
     pub preferred_line_length: u32,
+    pub format_on_save: bool,
     pub language_overrides: HashMap<Arc<str>, LanguageOverride>,
     pub theme: Arc<Theme>,
 }
@@ -34,6 +35,7 @@ pub struct LanguageOverride {
     pub tab_size: Option<u32>,
     pub soft_wrap: Option<SoftWrap>,
     pub preferred_line_length: Option<u32>,
+    pub format_on_save: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -52,6 +54,8 @@ pub struct SettingsFileContent {
     pub buffer_font_size: Option<f32>,
     #[serde(default)]
     pub vim_mode: Option<bool>,
+    #[serde(default)]
+    pub format_on_save: Option<bool>,
     #[serde(flatten)]
     pub editor: LanguageOverride,
     #[serde(default)]
@@ -74,6 +78,7 @@ impl Settings {
             soft_wrap: SoftWrap::None,
             preferred_line_length: 80,
             language_overrides: Default::default(),
+            format_on_save: true,
             theme,
         })
     }
@@ -109,6 +114,13 @@ impl Settings {
             .unwrap_or(self.preferred_line_length)
     }
 
+    pub fn format_on_save(&self, language: Option<&str>) -> bool {
+        language
+            .and_then(|language| self.language_overrides.get(language))
+            .and_then(|settings| settings.format_on_save)
+            .unwrap_or(self.format_on_save)
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &gpui::AppContext) -> Settings {
         Settings {
@@ -118,6 +130,7 @@ impl Settings {
             tab_size: 4,
             soft_wrap: SoftWrap::None,
             preferred_line_length: 80,
+            format_on_save: true,
             language_overrides: Default::default(),
             theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), || Default::default()),
         }
@@ -142,6 +155,7 @@ impl Settings {
 
         merge(&mut self.buffer_font_size, data.buffer_font_size);
         merge(&mut self.vim_mode, data.vim_mode);
+        merge(&mut self.format_on_save, data.format_on_save);
         merge(&mut self.soft_wrap, data.editor.soft_wrap);
         merge(&mut self.tab_size, data.editor.tab_size);
         merge(
@@ -157,6 +171,7 @@ impl Settings {
 
             merge_option(&mut target.tab_size, settings.tab_size);
             merge_option(&mut target.soft_wrap, settings.soft_wrap);
+            merge_option(&mut target.format_on_save, settings.format_on_save);
             merge_option(
                 &mut target.preferred_line_length,
                 settings.preferred_line_length,
