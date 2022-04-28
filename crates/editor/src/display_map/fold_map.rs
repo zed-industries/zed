@@ -1246,12 +1246,11 @@ mod tests {
         );
 
         let buffer_snapshot = buffer.update(cx, |buffer, cx| {
-            buffer.edit(
+            buffer.edit_batched(
                 vec![
-                    Point::new(0, 0)..Point::new(0, 1),
-                    Point::new(2, 3)..Point::new(2, 3),
+                    (Point::new(0, 0)..Point::new(0, 1), "123"),
+                    (Point::new(2, 3)..Point::new(2, 3), "123"),
                 ],
-                "123",
                 cx,
             );
             buffer.snapshot(cx)
@@ -1274,7 +1273,7 @@ mod tests {
         );
 
         let buffer_snapshot = buffer.update(cx, |buffer, cx| {
-            buffer.edit(vec![Point::new(2, 6)..Point::new(4, 3)], "456", cx);
+            buffer.edit(Point::new(2, 6)..Point::new(4, 3), "456", cx);
             buffer.snapshot(cx)
         });
         let (snapshot4, _) = map.read(buffer_snapshot.clone(), subscription.consume().into_inner());
@@ -1330,7 +1329,7 @@ mod tests {
 
             // Edit within one of the folds.
             let buffer_snapshot = buffer.update(cx, |buffer, cx| {
-                buffer.edit(vec![0..1], "12345", cx);
+                buffer.edit(0..1, "12345", cx);
                 buffer.snapshot(cx)
             });
             let (snapshot, _) =
@@ -1372,7 +1371,7 @@ mod tests {
         assert_eq!(snapshot.text(), "aa…cccc\nd…eeeee");
 
         let buffer_snapshot = buffer.update(cx, |buffer, cx| {
-            buffer.edit(Some(Point::new(2, 2)..Point::new(3, 1)), "", cx);
+            buffer.edit(Point::new(2, 2)..Point::new(3, 1), "", cx);
             buffer.snapshot(cx)
         });
         let (snapshot, _) = map.read(buffer_snapshot.clone(), subscription.consume().into_inner());

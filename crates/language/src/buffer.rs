@@ -880,13 +880,13 @@ impl Buffer {
         if column > current_column {
             let offset = Point::new(row, 0).to_offset(&*self);
             self.edit(
-                [offset..offset],
+                offset..offset,
                 " ".repeat((column - current_column) as usize),
                 cx,
             );
         } else if column < current_column {
             self.edit(
-                [Point::new(row, 0)..Point::new(row, current_column - column)],
+                Point::new(row, 0)..Point::new(row, current_column - column),
                 "",
                 cx,
             );
@@ -925,11 +925,11 @@ impl Buffer {
                 match tag {
                     ChangeTag::Equal => offset += len,
                     ChangeTag::Delete => {
-                        self.edit([range], "", cx);
+                        self.edit(range, "", cx);
                     }
                     ChangeTag::Insert => {
                         self.edit(
-                            [offset..offset],
+                            offset..offset,
                             &diff.new_text
                                 [range.start - diff.start_offset..range.end - diff.start_offset],
                             cx,
@@ -1049,71 +1049,95 @@ impl Buffer {
 
     pub fn set_text<T>(&mut self, text: T, cx: &mut ModelContext<Self>) -> Option<clock::Local>
     where
-        T: Into<String>,
+        T: Into<Arc<str>>,
     {
-        self.edit_internal([0..self.len()], text, None, cx)
+        self.edit_internal([(0..self.len(), text)], None, cx)
     }
 
-    pub fn edit<I, S, T>(
+    pub fn edit<S, T>(
         &mut self,
-        ranges_iter: I,
+        range: Range<S>,
         new_text: T,
         cx: &mut ModelContext<Self>,
     ) -> Option<clock::Local>
     where
-        I: IntoIterator<Item = Range<S>>,
         S: ToOffset,
-        T: Into<String>,
+        T: Into<Arc<str>>,
     {
-        self.edit_internal(ranges_iter, new_text, None, cx)
+        self.edit_batched([(range, new_text)], cx)
     }
 
-    pub fn edit_with_autoindent<I, S, T>(
+    pub fn edit_batched<I, S, T>(
         &mut self,
-        ranges_iter: I,
+        edits_iter: I,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<clock::Local>
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        self.edit_internal(edits_iter, None, cx)
+    }
+
+    pub fn edit_with_autoindent<S, T>(
+        &mut self,
+        range: Range<S>,
         new_text: T,
         indent_size: u32,
         cx: &mut ModelContext<Self>,
     ) -> Option<clock::Local>
     where
-        I: IntoIterator<Item = Range<S>>,
         S: ToOffset,
-        T: Into<String>,
+        T: Into<Arc<str>>,
     {
-        self.edit_internal(ranges_iter, new_text, Some(indent_size), cx)
+        self.edit_with_autoindent_batched([(range, new_text)], indent_size, cx)
+    }
+
+    pub fn edit_with_autoindent_batched<I, S, T>(
+        &mut self,
+        edits_iter: I,
+        indent_size: u32,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<clock::Local>
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        self.edit_internal(edits_iter, Some(indent_size), cx)
     }
 
     pub fn edit_internal<I, S, T>(
         &mut self,
-        ranges_iter: I,
-        new_text: T,
+        edits_iter: I,
         autoindent_size: Option<u32>,
         cx: &mut ModelContext<Self>,
     ) -> Option<clock::Local>
     where
-        I: IntoIterator<Item = Range<S>>,
+        I: IntoIterator<Item = (Range<S>, T)>,
         S: ToOffset,
-        T: Into<String>,
+        T: Into<Arc<str>>,
     {
-        let new_text = new_text.into();
-
-        // Skip invalid ranges and coalesce contiguous ones.
-        let mut ranges: Vec<Range<usize>> = Vec::new();
-        for range in ranges_iter {
+        // Skip invalid edits and coalesce contiguous ones.
+        let mut edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
+        for (range, new_text) in edits_iter {
             let range = range.start.to_offset(self)..range.end.to_offset(self);
+            let new_text = new_text.into();
             if !new_text.is_empty() || !range.is_empty() {
-                if let Some(prev_range) = ranges.last_mut() {
+                if let Some((prev_range, prev_text)) = edits.last_mut() {
                     if prev_range.end >= range.start {
                         prev_range.end = cmp::max(prev_range.end, range.end);
+                        *prev_text = format!("{prev_text}{new_text}").into();
                     } else {
-                        ranges.push(range);
+                        edits.push((range, new_text));
                     }
                 } else {
-                    ranges.push(range);
+                    edits.push((range, new_text));
                 }
             }
         }
-        if ranges.is_empty() {
+        if edits.is_empty() {
             return None;
         }
 
@@ -1125,9 +1149,9 @@ impl Buffer {
                 .and_then(|_| autoindent_size)
                 .map(|autoindent_size| {
                     let before_edit = self.snapshot();
-                    let edited = ranges
+                    let edited = edits
                         .iter()
-                        .filter_map(|range| {
+                        .filter_map(|(range, new_text)| {
                             let start = range.start.to_point(self);
                             if new_text.starts_with('\n')
                                 && start.column == self.line_len(start.row)
@@ -1141,30 +1165,30 @@ impl Buffer {
                     (before_edit, edited, autoindent_size)
                 });
 
-        let first_newline_ix = new_text.find('\n');
-        let new_text_len = new_text.len();
-
-        let edit = self.text.edit(ranges.iter().cloned(), new_text);
-        let edit_id = edit.local_timestamp();
+        let edit_operation = self.text.edit_batched(edits.iter().cloned());
+        let edit_id = edit_operation.local_timestamp();
 
         if let Some((before_edit, edited, size)) = autoindent_request {
-            let mut inserted = None;
-            if let Some(first_newline_ix) = first_newline_ix {
-                let mut delta = 0isize;
-                inserted = Some(
-                    ranges
-                        .iter()
-                        .map(|range| {
-                            let start =
-                                (delta + range.start as isize) as usize + first_newline_ix + 1;
-                            let end = (delta + range.start as isize) as usize + new_text_len;
-                            delta +=
-                                (range.end as isize - range.start as isize) + new_text_len as isize;
-                            self.anchor_before(start)..self.anchor_after(end)
-                        })
-                        .collect(),
-                );
-            }
+            let mut delta = 0isize;
+
+            let inserted_ranges = edits
+                .into_iter()
+                .filter_map(|(range, new_text)| {
+                    let first_newline_ix = new_text.find('\n')?;
+                    let new_text_len = new_text.len();
+                    let start = (delta + range.start as isize) as usize + first_newline_ix + 1;
+                    let end = (delta + range.start as isize) as usize + new_text_len;
+                    delta += new_text_len as isize - (range.end as isize - range.start as isize);
+                    dbg!(&range, new_text, start, end, delta);
+                    Some(self.anchor_before(start)..self.anchor_after(end))
+                })
+                .collect::<Vec<Range<Anchor>>>();
+
+            let inserted = if inserted_ranges.is_empty() {
+                None
+            } else {
+                Some(inserted_ranges)
+            };
 
             self.autoindent_requests.push(Arc::new(AutoindentRequest {
                 before_edit,
@@ -1175,7 +1199,7 @@ impl Buffer {
         }
 
         self.end_transaction(cx);
-        self.send_operation(Operation::Buffer(edit), cx);
+        self.send_operation(Operation::Buffer(edit_operation), cx);
         Some(edit_id)
     }
 
@@ -1433,25 +1457,26 @@ impl Buffer {
     ) where
         T: rand::Rng,
     {
-        let mut old_ranges: Vec<Range<usize>> = Vec::new();
+        let mut edits: Vec<(Range<usize>, String)> = Vec::new();
+        let mut last_end = None;
         for _ in 0..old_range_count {
-            let last_end = old_ranges.last().map_or(0, |last_range| last_range.end + 1);
-            if last_end > self.len() {
+            if last_end.map_or(false, |last_end| last_end >= self.len()) {
                 break;
             }
-            old_ranges.push(self.text.random_byte_range(last_end, rng));
+
+            let new_start = last_end.map_or(0, |last_end| last_end + 1);
+            let range = self.random_byte_range(new_start, rng);
+            last_end = Some(range.end);
+
+            let new_text_len = rng.gen_range(0..10);
+            let new_text: String = crate::random_char_iter::RandomCharIter::new(&mut *rng)
+                .take(new_text_len)
+                .collect();
+
+            edits.push((range, new_text));
         }
-        let new_text_len = rng.gen_range(0..10);
-        let new_text: String = crate::random_char_iter::RandomCharIter::new(&mut *rng)
-            .take(new_text_len)
-            .collect();
-        log::info!(
-            "mutating buffer {} at {:?}: {:?}",
-            self.replica_id(),
-            old_ranges,
-            new_text
-        );
-        self.edit(old_ranges.iter().cloned(), new_text.as_str(), cx);
+        log::info!("mutating buffer {} with {:?}", self.replica_id(), edits);
+        self.edit_batched(edits, cx);
     }
 
     pub fn randomly_undo_redo(&mut self, rng: &mut impl rand::Rng, cx: &mut ModelContext<Self>) {

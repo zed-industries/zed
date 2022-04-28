@@ -78,7 +78,14 @@ pub fn serialize_edit_operation(operation: &EditOperation) -> proto::operation::
         lamport_timestamp: operation.timestamp.lamport,
         version: serialize_version(&operation.version),
         ranges: operation.ranges.iter().map(serialize_range).collect(),
-        new_text: operation.new_text.clone(),
+        new_text: operation
+            .new_text
+            .iter()
+            .map(|text| {
+                text.as_ref()
+                    .map_or_else(String::new, |text| text.to_string())
+            })
+            .collect(),
     }
 }
 
@@ -243,7 +250,7 @@ pub fn deserialize_edit_operation(edit: proto::operation::Edit) -> EditOperation
         },
         version: deserialize_version(edit.version),
         ranges: edit.ranges.into_iter().map(deserialize_range).collect(),
-        new_text: edit.new_text,
+        new_text: edit.new_text.into_iter().map(|t| Some(t.into())).collect(),
     }
 }
 

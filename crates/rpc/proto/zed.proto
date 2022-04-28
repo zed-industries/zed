@@ -728,7 +728,7 @@ message Operation {
         uint32 lamport_timestamp = 3;
         repeated VectorClockEntry version = 4;
         repeated Range ranges = 5;
-        optional string new_text = 6;
+        repeated string new_text = 6;
     }
 
     message Undo {

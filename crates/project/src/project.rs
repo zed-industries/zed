@@ -2230,7 +2230,7 @@ impl Project {
                         buffer.finalize_last_transaction();
                         buffer.start_transaction();
                         for (range, text) in edits {
-                            buffer.edit([range], text, cx);
+                            buffer.edit(range, text, cx);
                         }
                         if buffer.end_transaction(cx).is_some() {
                             let transaction = buffer.finalize_last_transaction().unwrap().clone();
@@ -2604,7 +2604,7 @@ impl Project {
                         buffer.finalize_last_transaction();
                         buffer.start_transaction();
                         for (range, text) in edits {
-                            buffer.edit([range], text, cx);
+                            buffer.edit(range, text, cx);
                         }
                         let transaction = if buffer.end_transaction(cx).is_some() {
                             let transaction = buffer.finalize_last_transaction().unwrap().clone();
@@ -2960,7 +2960,7 @@ impl Project {
                         buffer.finalize_last_transaction();
                         buffer.start_transaction();
                         for (range, text) in edits {
-                            buffer.edit([range], text, cx);
+                            buffer.edit(range, text, cx);
                         }
                         let transaction = if buffer.end_transaction(cx).is_some() {
                             let transaction = buffer.finalize_last_transaction().unwrap().clone();
@@ -5075,7 +5075,7 @@ mod tests {
         });
 
         // Edit a buffer. The changes are reported to the language server.
-        rust_buffer.update(cx, |buffer, cx| buffer.edit([16..16], "2", cx));
+        rust_buffer.update(cx, |buffer, cx| buffer.edit(16..16, "2", cx));
         assert_eq!(
             fake_rust_server
                 .receive_notification::<lsp::notification::DidChangeTextDocument>()
@@ -5132,8 +5132,8 @@ mod tests {
         });
 
         // Changes are reported only to servers matching the buffer's language.
-        toml_buffer.update(cx, |buffer, cx| buffer.edit([5..5], "23", cx));
-        rust_buffer2.update(cx, |buffer, cx| buffer.edit([0..0], "let x = 1;", cx));
+        toml_buffer.update(cx, |buffer, cx| buffer.edit(5..5, "23", cx));
+        rust_buffer2.update(cx, |buffer, cx| buffer.edit(0..0, "let x = 1;", cx));
         assert_eq!(
             fake_rust_server
                 .receive_notification::<lsp::notification::DidChangeTextDocument>()
@@ -5261,7 +5261,7 @@ mod tests {
         });
 
         // The renamed file's version resets after changing language server.
-        rust_buffer2.update(cx, |buffer, cx| buffer.edit([0..0], "// ", cx));
+        rust_buffer2.update(cx, |buffer, cx| buffer.edit(0..0, "// ", cx));
         assert_eq!(
             fake_json_server
                 .receive_notification::<lsp::notification::DidChangeTextDocument>()
@@ -5730,7 +5730,7 @@ mod tests {
             .await;
 
         // Edit the buffer, moving the content down
-        buffer.update(cx, |buffer, cx| buffer.edit([0..0], "\n\n", cx));
+        buffer.update(cx, |buffer, cx| buffer.edit(0..0, "\n\n", cx));
         let change_notification_1 = fake_server
             .receive_notification::<lsp::notification::DidChangeTextDocument>()
             .await;
@@ -5901,9 +5901,9 @@ mod tests {
         // Keep editing the buffer and ensure disk-based diagnostics get translated according to the
         // changes since the last save.
         buffer.update(cx, |buffer, cx| {
-            buffer.edit(Some(Point::new(2, 0)..Point::new(2, 0)), "    ", cx);
-            buffer.edit(Some(Point::new(2, 8)..Point::new(2, 10)), "(x: usize)", cx);
-            buffer.edit(Some(Point::new(3, 10)..Point::new(3, 10)), "xxx", cx);
+            buffer.edit(Point::new(2, 0)..Point::new(2, 0), "    ", cx);
+            buffer.edit(Point::new(2, 8)..Point::new(2, 10), "(x: usize)", cx);
+            buffer.edit(Point::new(3, 10)..Point::new(3, 10), "xxx", cx);
         });
         let change_notification_2 = fake_server
             .receive_notification::<lsp::notification::DidChangeTextDocument>()
@@ -6116,17 +6116,17 @@ mod tests {
         // Simulate editing the buffer after the language server computes some edits.
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
-                [Point::new(0, 0)..Point::new(0, 0)],
+                Point::new(0, 0)..Point::new(0, 0),
                 "// above first function\n",
                 cx,
             );
             buffer.edit(
-                [Point::new(2, 0)..Point::new(2, 0)],
+                Point::new(2, 0)..Point::new(2, 0),
                 "    // inside first function\n",
                 cx,
             );
             buffer.edit(
-                [Point::new(6, 4)..Point::new(6, 4)],
+                Point::new(6, 4)..Point::new(6, 4),
                 "// inside second function ",
                 cx,
             );
@@ -6201,7 +6201,7 @@ mod tests {
 
         buffer.update(cx, |buffer, cx| {
             for (range, new_text) in edits {
-                buffer.edit([range], new_text, cx);
+                buffer.edit(range, new_text, cx);
             }
             assert_eq!(
                 buffer.text(),
@@ -6336,7 +6336,7 @@ mod tests {
             );
 
             for (range, new_text) in edits {
-                buffer.edit([range], new_text, cx);
+                buffer.edit(range, new_text, cx);
             }
             assert_eq!(
                 buffer.text(),
@@ -6662,7 +6662,7 @@ mod tests {
         buffer
             .update(cx, |buffer, cx| {
                 assert_eq!(buffer.text(), "the old contents");
-                buffer.edit(Some(0..0), "a line of text.\n".repeat(10 * 1024), cx);
+                buffer.edit(0..0, "a line of text.\n".repeat(10 * 1024), cx);
                 buffer.save(cx)
             })
             .await
@@ -6699,7 +6699,7 @@ mod tests {
             .unwrap();
         buffer
             .update(cx, |buffer, cx| {
-                buffer.edit(Some(0..0), "a line of text.\n".repeat(10 * 1024), cx);
+                buffer.edit(0..0, "a line of text.\n".repeat(10 * 1024), cx);
                 buffer.save(cx)
             })
             .await
@@ -6727,7 +6727,7 @@ mod tests {
             project.create_buffer("", None, cx).unwrap()
         });
         buffer.update(cx, |buffer, cx| {
-            buffer.edit([0..0], "abc", cx);
+            buffer.edit(0..0, "abc", cx);
             assert!(buffer.is_dirty());
             assert!(!buffer.has_conflict());
         });
@@ -7001,7 +7001,7 @@ mod tests {
             assert!(!buffer.is_dirty());
             assert!(events.borrow().is_empty());
 
-            buffer.edit(vec![1..2], "", cx);
+            buffer.edit(1..2, "", cx);
         });
 
         // after the first edit, the buffer is dirty, and emits a dirtied event.
@@ -7022,8 +7022,8 @@ mod tests {
             assert_eq!(*events.borrow(), &[language::Event::Saved]);
             events.borrow_mut().clear();
 
-            buffer.edit(vec![1..1], "B", cx);
-            buffer.edit(vec![2..2], "D", cx);
+            buffer.edit(1..1, "B", cx);
+            buffer.edit(2..2, "D", cx);
         });
 
         // after editing again, the buffer is dirty, and emits another dirty event.
@@ -7042,7 +7042,7 @@ mod tests {
 
             // TODO - currently, after restoring the buffer to its
             // previously-saved state, the is still considered dirty.
-            buffer.edit([1..3], "", cx);
+            buffer.edit(1..3, "", cx);
             assert!(buffer.text() == "ac");
             assert!(buffer.is_dirty());
         });
@@ -7086,7 +7086,7 @@ mod tests {
 
         worktree.flush_fs_events(&cx).await;
         buffer3.update(cx, |buffer, cx| {
-            buffer.edit(Some(0..0), "x", cx);
+            buffer.edit(0..0, "x", cx);
         });
         events.borrow_mut().clear();
         fs::remove_file(dir.path().join("file3")).unwrap();
@@ -7180,7 +7180,7 @@ mod tests {
 
         // Modify the buffer
         buffer.update(cx, |buffer, cx| {
-            buffer.edit(vec![0..0], " ", cx);
+            buffer.edit(0..0, " ", cx);
             assert!(buffer.is_dirty());
             assert!(!buffer.has_conflict());
         });
@@ -7645,7 +7645,8 @@ mod tests {
             .await
             .unwrap();
         buffer_4.update(cx, |buffer, cx| {
-            buffer.edit([20..28, 31..43], "two::TWO", cx);
+            let text = "two::TWO";
+            buffer.edit_batched([(20..28, text), (31..43, text)], cx);
         });
 
         assert_eq!(

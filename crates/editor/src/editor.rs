@@ -549,7 +549,7 @@ struct SnippetState {
 
 pub struct RenameState {
     pub range: Range<Anchor>,
-    pub old_name: String,
+    pub old_name: Arc<str>,
     pub editor: ViewHandle<Editor>,
     block_id: BlockId,
 }
@@ -1912,46 +1912,19 @@ impl Editor {
             }
 
             this.buffer.update(cx, |buffer, cx| {
-                let mut delta = 0_isize;
-                let mut pending_edit: Option<PendingEdit> = None;
-                for (_, _, range, indent, insert_extra_newline) in &old_selections {
-                    if pending_edit.as_ref().map_or(false, |pending| {
-                        pending.indent != *indent
-                            || pending.insert_extra_newline != *insert_extra_newline
-                    }) {
-                        let pending = pending_edit.take().unwrap();
-                        let mut new_text = String::with_capacity(1 + pending.indent as usize);
-                        new_text.push('\n');
-                        new_text.extend(iter::repeat(' ').take(pending.indent as usize));
-                        if pending.insert_extra_newline {
-                            new_text = new_text.repeat(2);
-                        }
-                        buffer.edit_with_autoindent(pending.ranges, new_text, cx);
-                        delta += pending.delta;
-                    }
-
-                    let start = (range.start as isize + delta) as usize;
-                    let end = (range.end as isize + delta) as usize;
-                    let mut text_len = *indent as usize + 1;
-                    if *insert_extra_newline {
-                        text_len *= 2;
-                    }
-
-                    let pending = pending_edit.get_or_insert_with(Default::default);
-                    pending.delta += text_len as isize - (end - start) as isize;
-                    pending.indent = *indent;
-                    pending.insert_extra_newline = *insert_extra_newline;
-                    pending.ranges.push(start..end);
-                }
-
-                let pending = pending_edit.unwrap();
-                let mut new_text = String::with_capacity(1 + pending.indent as usize);
-                new_text.push('\n');
-                new_text.extend(iter::repeat(' ').take(pending.indent as usize));
-                if pending.insert_extra_newline {
-                    new_text = new_text.repeat(2);
-                }
-                buffer.edit_with_autoindent(pending.ranges, new_text, cx);
+                let edits =
+                    old_selections
+                        .iter()
+                        .map(|(_, _, range, indent, insert_extra_newline)| {
+                            let mut new_text = String::with_capacity(1 + *indent as usize);
+                            new_text.push('\n');
+                            new_text.extend(iter::repeat(' ').take(*indent as usize));
+                            if *insert_extra_newline {
+                                new_text = new_text.repeat(2);
+                            }
+                            (range.clone(), new_text)
+                        });
+                buffer.edit_with_autoindent_batched(edits, cx);
 
                 let buffer = buffer.read(cx);
                 this.selections = this
@@ -1977,14 +1950,6 @@ impl Editor {
 
             this.request_autoscroll(Autoscroll::Fit, cx);
         });
-
-        #[derive(Default)]
-        struct PendingEdit {
-            indent: u32,
-            insert_extra_newline: bool,
-            delta: isize,
-            ranges: SmallVec<[Range<usize>; 32]>,
-        }
     }
 
     pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
@@ -1998,8 +1963,10 @@ impl Editor {
                         .map(|s| (s.id, s.goal, snapshot.anchor_after(s.end)))
                         .collect::<Vec<_>>()
                 };
-                let edit_ranges = old_selections.iter().map(|s| s.start..s.end);
-                buffer.edit_with_autoindent(edit_ranges, text, cx);
+                buffer.edit_with_autoindent_batched(
+                    old_selections.iter().map(|s| (s.start..s.end, text)),
+                    cx,
+                );
                 anchors
             });
 
@@ -2057,14 +2024,18 @@ impl Editor {
                 drop(snapshot);
 
                 self.buffer.update(cx, |buffer, cx| {
-                    buffer.edit(
-                        selections.iter().map(|s| s.start.clone()..s.start.clone()),
-                        &pair.start,
+                    let pair_start: Arc<str> = pair.start.clone().into();
+                    buffer.edit_batched(
+                        selections
+                            .iter()
+                            .map(|s| (s.start.clone()..s.start.clone(), pair_start.clone())),
                         cx,
                     );
-                    buffer.edit(
-                        selections.iter().map(|s| s.end.clone()..s.end.clone()),
-                        &pair.end,
+                    let pair_end: Arc<str> = pair.end.clone().into();
+                    buffer.edit_batched(
+                        selections
+                            .iter()
+                            .map(|s| (s.end.clone()..s.end.clone(), pair_end.clone())),
                         cx,
                     );
                 });
@@ -2141,7 +2112,13 @@ impl Editor {
                     })
                     .collect::<SmallVec<[_; 32]>>();
 
-                buffer.edit(selection_ranges, &pair.end, cx);
+                let pair_end: Arc<str> = pair.end.clone().into();
+                buffer.edit_batched(
+                    selection_ranges
+                        .iter()
+                        .map(|range| (range.clone(), pair_end.clone())),
+                    cx,
+                );
                 snapshot = buffer.snapshot(cx);
 
                 new_selections = Some(
@@ -2400,7 +2377,10 @@ impl Editor {
                 this.insert_snippet(&ranges, snippet, cx).log_err();
             } else {
                 this.buffer.update(cx, |buffer, cx| {
-                    buffer.edit_with_autoindent(ranges, text, cx);
+                    buffer.edit_with_autoindent_batched(
+                        ranges.iter().map(|range| (range.clone(), text)),
+                        cx,
+                    );
                 });
             }
         });
@@ -2752,7 +2732,14 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Result<()> {
         let tabstops = self.buffer.update(cx, |buffer, cx| {
-            buffer.edit_with_autoindent(insertion_ranges.iter().cloned(), &snippet.text, cx);
+            let snippet_text: Arc<str> = snippet.text.clone().into();
+            buffer.edit_with_autoindent_batched(
+                insertion_ranges
+                    .iter()
+                    .cloned()
+                    .map(|range| (range, snippet_text.clone())),
+                cx,
+            );
 
             let snapshot = &*buffer.read(cx);
             let snippet = &snippet;
@@ -2933,7 +2920,7 @@ impl Editor {
                             .count();
                         let chars_to_next_tab_stop = tab_size - (char_column as u32 % tab_size);
                         buffer.edit(
-                            [selection.start..selection.start],
+                            selection.start..selection.start,
                             " ".repeat(chars_to_next_tab_stop as usize),
                             cx,
                         );
@@ -2984,7 +2971,7 @@ impl Editor {
                         let columns_to_next_tab_stop = tab_size - (indent_column % tab_size);
                         let row_start = Point::new(row, 0);
                         buffer.edit(
-                            [row_start..row_start],
+                            row_start..row_start,
                             " ".repeat(columns_to_next_tab_stop as usize),
                             cx,
                         );
@@ -3043,7 +3030,7 @@ impl Editor {
 
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(deletion_ranges, "", cx);
+                buffer.edit_batched(deletion_ranges.into_iter().map(|range| (range, "")), cx);
             });
             this.update_selections(
                 this.local_selections::<usize>(cx),
@@ -3105,7 +3092,7 @@ impl Editor {
 
         self.transact(cx, |this, cx| {
             let buffer = this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edit_ranges, "", cx);
+                buffer.edit_batched(edit_ranges.into_iter().map(|range| (range, "")), cx);
                 buffer.snapshot(cx)
             });
             let new_selections = new_cursors
@@ -3159,7 +3146,7 @@ impl Editor {
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |buffer, cx| {
                 for (point, text, _) in edits.into_iter().rev() {
-                    buffer.edit(Some(point..point), text, cx);
+                    buffer.edit(point..point, text, cx);
                 }
             });
 
@@ -3269,7 +3256,7 @@ impl Editor {
             this.unfold_ranges(unfold_ranges, true, cx);
             this.buffer.update(cx, |buffer, cx| {
                 for (range, text) in edits {
-                    buffer.edit([range], text, cx);
+                    buffer.edit(range, text, cx);
                 }
             });
             this.fold_ranges(refold_ranges, cx);
@@ -3372,7 +3359,7 @@ impl Editor {
             this.unfold_ranges(unfold_ranges, true, cx);
             this.buffer.update(cx, |buffer, cx| {
                 for (range, text) in edits {
-                    buffer.edit([range], text, cx);
+                    buffer.edit(range, text, cx);
                 }
             });
             this.fold_ranges(refold_ranges, cx);
@@ -3488,7 +3475,7 @@ impl Editor {
                             };
 
                             delta += to_insert.len() as isize - range.len() as isize;
-                            buffer.edit([range], to_insert, cx);
+                            buffer.edit(range, to_insert, cx);
                             selection.start += to_insert.len();
                             selection.end = selection.start;
                         });
@@ -4204,11 +4191,11 @@ impl Editor {
                 for selection in &mut selections {
                     // Get the line comment prefix. Split its trailing whitespace into a separate string,
                     // as that portion won't be used for detecting if a line is a comment.
-                    let full_comment_prefix = if let Some(prefix) = buffer
+                    let full_comment_prefix: Arc<str> = if let Some(prefix) = buffer
                         .language_at(selection.start, cx)
                         .and_then(|l| l.line_comment_prefix())
                     {
-                        prefix.to_string()
+                        prefix.into()
                     } else {
                         return;
                     };
@@ -4275,15 +4262,18 @@ impl Editor {
 
                     if !edit_ranges.is_empty() {
                         if all_selection_lines_are_comments {
-                            buffer.edit(edit_ranges.iter().cloned(), "", cx);
+                            buffer.edit_batched(
+                                edit_ranges.iter().cloned().map(|range| (range, "")),
+                                cx,
+                            );
                         } else {
                             let min_column =
                                 edit_ranges.iter().map(|r| r.start.column).min().unwrap();
-                            let edit_ranges = edit_ranges.iter().map(|range| {
+                            let edits = edit_ranges.iter().map(|range| {
                                 let position = Point::new(range.start.row, min_column);
-                                position..position
+                                (position..position, full_comment_prefix.clone())
                             });
-                            buffer.edit(edit_ranges, &full_comment_prefix, cx);
+                            buffer.edit_batched(edits, cx);
                         }
                     }
                 }
@@ -4664,7 +4654,7 @@ impl Editor {
                     let rename_end = rename_start + rename_buffer_range.len();
                     let range = buffer.anchor_before(rename_start)..buffer.anchor_after(rename_end);
                     let mut old_highlight_id = None;
-                    let old_name = buffer
+                    let old_name: Arc<str> = buffer
                         .chunks(rename_start..rename_end, true)
                         .map(|chunk| {
                             if old_highlight_id.is_none() {
@@ -4672,7 +4662,8 @@ impl Editor {
                             }
                             chunk.text
                         })
-                        .collect();
+                        .collect::<String>()
+                        .into();
 
                     drop(buffer);
 
@@ -4686,7 +4677,7 @@ impl Editor {
                         }
                         editor
                             .buffer
-                            .update(cx, |buffer, cx| buffer.edit([0..0], &old_name, cx));
+                            .update(cx, |buffer, cx| buffer.edit(0..0, old_name.clone(), cx));
                         editor.select_all(&SelectAll, cx);
                         editor
                     });
@@ -5608,7 +5599,7 @@ impl Editor {
         self.buffer.read(cx).read(cx).text()
     }
 
-    pub fn set_text(&mut self, text: impl Into<String>, cx: &mut ViewContext<Self>) {
+    pub fn set_text(&mut self, text: impl Into<Arc<str>>, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             this.buffer
                 .read(cx)
@@ -6613,8 +6604,8 @@ mod tests {
             // Simulate an edit in another editor
             buffer.update(cx, |buffer, cx| {
                 buffer.start_transaction_at(now, cx);
-                buffer.edit([0..1], "a", cx);
-                buffer.edit([1..1], "b", cx);
+                buffer.edit(0..1, "a", cx);
+                buffer.edit(1..1, "b", cx);
                 buffer.end_transaction_at(now, cx);
             });
 
@@ -6957,12 +6948,11 @@ mod tests {
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
         buffer.update(cx, |buffer, cx| {
-            buffer.edit(
+            buffer.edit_batched(
                 vec![
-                    Point::new(1, 0)..Point::new(1, 0),
-                    Point::new(1, 1)..Point::new(1, 1),
+                    (Point::new(1, 0)..Point::new(1, 0), "\t"),
+                    (Point::new(1, 1)..Point::new(1, 1), "\t"),
                 ],
-                "\t",
                 cx,
             );
         });
@@ -7595,12 +7585,11 @@ mod tests {
 
         // Edit the buffer directly, deleting ranges surrounding the editor's selections
         buffer.update(cx, |buffer, cx| {
-            buffer.edit(
+            buffer.edit_batched(
                 [
-                    Point::new(1, 2)..Point::new(3, 0),
-                    Point::new(4, 2)..Point::new(6, 0),
+                    (Point::new(1, 2)..Point::new(3, 0), ""),
+                    (Point::new(4, 2)..Point::new(6, 0), ""),
                 ],
-                "",
                 cx,
             );
             assert_eq!(
@@ -7659,7 +7648,7 @@ mod tests {
 
         // Edit the buffer directly, deleting ranges surrounding the editor's selections
         buffer.update(cx, |buffer, cx| {
-            buffer.edit([2..5, 10..13, 18..21], "", cx);
+            buffer.edit_batched([(2..5, ""), (10..13, ""), (18..21, "")], cx);
             assert_eq!(buffer.read(cx).text(), "a(), b(), c()".unindent());
         });
 

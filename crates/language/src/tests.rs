@@ -93,7 +93,7 @@ fn test_edit_events(cx: &mut gpui::MutableAppContext) {
 
             // An edit emits an edited event, followed by a dirtied event,
             // since the buffer was previously in a clean state.
-            buffer.edit(Some(2..4), "XYZ", cx);
+            buffer.edit(2..4, "XYZ", cx);
 
             // An empty transaction does not emit any events.
             buffer.start_transaction();
@@ -102,8 +102,8 @@ fn test_edit_events(cx: &mut gpui::MutableAppContext) {
             // A transaction containing two edits emits one edited event.
             now += Duration::from_secs(1);
             buffer.start_transaction_at(now);
-            buffer.edit(Some(5..5), "u", cx);
-            buffer.edit(Some(6..6), "w", cx);
+            buffer.edit(5..5, "u", cx);
+            buffer.edit(6..6, "w", cx);
             buffer.end_transaction_at(now, cx);
 
             // Undoing a transaction emits one edited event.
@@ -178,11 +178,11 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         buf.start_transaction();
 
         let offset = buf.text().find(")").unwrap();
-        buf.edit(vec![offset..offset], "b: C", cx);
+        buf.edit(offset..offset, "b: C", cx);
         assert!(!buf.is_parsing());
 
         let offset = buf.text().find("}").unwrap();
-        buf.edit(vec![offset..offset], " d; ", cx);
+        buf.edit(offset..offset, " d; ", cx);
         assert!(!buf.is_parsing());
 
         buf.end_transaction(cx);
@@ -207,19 +207,19 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
     // * add a turbofish to the method call
     buffer.update(cx, |buf, cx| {
         let offset = buf.text().find(";").unwrap();
-        buf.edit(vec![offset..offset], ".e", cx);
+        buf.edit(offset..offset, ".e", cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e; }");
         assert!(buf.is_parsing());
     });
     buffer.update(cx, |buf, cx| {
         let offset = buf.text().find(";").unwrap();
-        buf.edit(vec![offset..offset], "(f)", cx);
+        buf.edit(offset..offset, "(f)", cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e(f); }");
         assert!(buf.is_parsing());
     });
     buffer.update(cx, |buf, cx| {
         let offset = buf.text().find("(f)").unwrap();
-        buf.edit(vec![offset..offset], "::<G>", cx);
+        buf.edit(offset..offset, "::<G>", cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
         assert!(buf.is_parsing());
     });
@@ -576,13 +576,13 @@ fn test_edit_with_autoindent(cx: &mut MutableAppContext) {
         let text = "fn a() {}";
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
 
-        buffer.edit_with_autoindent([8..8], "\n\n", 4, cx);
+        buffer.edit_with_autoindent(8..8, "\n\n", 4, cx);
         assert_eq!(buffer.text(), "fn a() {\n    \n}");
 
-        buffer.edit_with_autoindent([Point::new(1, 4)..Point::new(1, 4)], "b()\n", 4, cx);
+        buffer.edit_with_autoindent(Point::new(1, 4)..Point::new(1, 4), "b()\n", 4, cx);
         assert_eq!(buffer.text(), "fn a() {\n    b()\n    \n}");
 
-        buffer.edit_with_autoindent([Point::new(2, 4)..Point::new(2, 4)], ".c", 4, cx);
+        buffer.edit_with_autoindent(Point::new(2, 4)..Point::new(2, 4), ".c", 4, cx);
         assert_eq!(buffer.text(), "fn a() {\n    b()\n        .c\n}");
 
         buffer
@@ -604,9 +604,11 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
 
         // Lines 2 and 3 don't match the indentation suggestion. When editing these lines,
         // their indentation is not adjusted.
-        buffer.edit_with_autoindent(
-            [empty(Point::new(1, 1)), empty(Point::new(2, 1))],
-            "()",
+        buffer.edit_with_autoindent_batched(
+            [
+                (empty(Point::new(1, 1)), "()"),
+                (empty(Point::new(2, 1)), "()"),
+            ],
             4,
             cx,
         );
@@ -623,9 +625,11 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
 
         // When appending new content after these lines, the indentation is based on the
         // preceding lines' actual indentation.
-        buffer.edit_with_autoindent(
-            [empty(Point::new(1, 1)), empty(Point::new(2, 1))],
-            "\n.f\n.g",
+        buffer.edit_with_autoindent_batched(
+            [
+                (empty(Point::new(1, 1)), "\n.f\n.g"),
+                (empty(Point::new(2, 1)), "\n.f\n.g"),
+            ],
             4,
             cx,
         );
@@ -657,7 +661,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
 
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
 
-        buffer.edit_with_autoindent([5..5], "\nb", 4, cx);
+        buffer.edit_with_autoindent(5..5, "\nb", 4, cx);
         assert_eq!(
             buffer.text(),
             "
@@ -669,7 +673,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
 
         // The indentation suggestion changed because `@end` node (a close paren)
         // is now at the beginning of the line.
-        buffer.edit_with_autoindent([Point::new(1, 4)..Point::new(1, 5)], "", 4, cx);
+        buffer.edit_with_autoindent(Point::new(1, 4)..Point::new(1, 5), "", 4, cx);
         assert_eq!(
             buffer.text(),
             "
@@ -684,23 +688,34 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
 }
 
 #[gpui::test]
+fn test_autoindent_with_edit_at_end_of_buffer(cx: &mut MutableAppContext) {
+    cx.add_model(|cx| {
+        let text = "a\nb";
+        let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
+        buffer.edit_with_autoindent_batched([(0..1, "\n"), (2..3, "\n")], 4, cx);
+        assert_eq!(buffer.text(), "\n\n\n");
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_serialization(cx: &mut gpui::MutableAppContext) {
     let mut now = Instant::now();
 
     let buffer1 = cx.add_model(|cx| {
         let mut buffer = Buffer::new(0, "abc", cx);
-        buffer.edit([3..3], "D", cx);
+        buffer.edit(3..3, "D", cx);
 
         now += Duration::from_secs(1);
         buffer.start_transaction_at(now);
-        buffer.edit([4..4], "E", cx);
+        buffer.edit(4..4, "E", cx);
         buffer.end_transaction_at(now, cx);
         assert_eq!(buffer.text(), "abcDE");
 
         buffer.undo(cx);
         assert_eq!(buffer.text(), "abcD");
 
-        buffer.edit([4..4], "F", cx);
+        buffer.edit(4..4, "F", cx);
         assert_eq!(buffer.text(), "abcDF");
         buffer
     });
