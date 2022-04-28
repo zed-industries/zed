@@ -685,6 +685,7 @@ message Anchor {
     uint32 local_timestamp = 2;
     uint64 offset = 3;
     Bias bias = 4;
+    optional uint64 buffer_id = 5;
 }
 
 enum Bias {

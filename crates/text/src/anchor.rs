@@ -9,6 +9,7 @@ pub struct Anchor {
     pub timestamp: clock::Local,
     pub offset: usize,
     pub bias: Bias,
+    pub buffer_id: Option<u64>,
 }
 
 impl Anchor {
@@ -16,12 +17,14 @@ impl Anchor {
         timestamp: clock::Local::MIN,
         offset: usize::MIN,
         bias: Bias::Left,
+        buffer_id: None,
     };
 
     pub const MAX: Self = Self {
         timestamp: clock::Local::MAX,
         offset: usize::MAX,
         bias: Bias::Right,
+        buffer_id: None,
     };
 
     pub fn cmp(&self, other: &Anchor, buffer: &BufferSnapshot) -> Ordering {

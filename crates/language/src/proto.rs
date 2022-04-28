@@ -147,6 +147,7 @@ pub fn serialize_anchor(anchor: &Anchor) -> proto::Anchor {
             Bias::Left => proto::Bias::Left as i32,
             Bias::Right => proto::Bias::Right as i32,
         },
+        buffer_id: anchor.buffer_id,
     }
 }
 
@@ -330,6 +331,7 @@ pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
             proto::Bias::Left => Bias::Left,
             proto::Bias::Right => Bias::Right,
         },
+        buffer_id: anchor.buffer_id,
     })
 }
 

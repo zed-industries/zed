@@ -730,10 +730,13 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
     let mut replica_ids = Vec::new();
     let mut buffers = Vec::new();
     let network = Rc::new(RefCell::new(Network::new(rng.clone())));
+    let base_buffer = cx.add_model(|cx| Buffer::new(0, base_text.as_str(), cx));
 
     for i in 0..rng.gen_range(min_peers..=max_peers) {
         let buffer = cx.add_model(|cx| {
-            let mut buffer = Buffer::new(i as ReplicaId, base_text.as_str(), cx);
+            let mut buffer =
+                Buffer::from_proto(i as ReplicaId, base_buffer.read(cx).to_proto(), None, cx)
+                    .unwrap();
             buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
             let network = network.clone();
             cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
