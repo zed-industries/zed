@@ -1,7 +1,7 @@
 import Theme from "../themes/theme";
 import { backgroundColor, border, player, shadow, text } from "./components";
 
-export default function selectorModal(theme: Theme): Object {
+export default function picker(theme: Theme) {
   const item = {
     padding: {
       bottom: 4,

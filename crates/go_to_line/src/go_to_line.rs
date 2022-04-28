@@ -33,7 +33,7 @@ pub enum Event {
 impl GoToLine {
     pub fn new(active_editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) -> Self {
         let line_editor = cx.add_view(|cx| {
-            Editor::single_line(Some(|theme| theme.selector.input_editor.clone()), cx)
+            Editor::single_line(Some(|theme| theme.picker.input_editor.clone()), cx)
         });
         cx.subscribe(&line_editor, Self::on_line_editor_event)
             .detach();
@@ -152,7 +152,7 @@ impl View for GoToLine {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &cx.global::<Settings>().theme.selector;
+        let theme = &cx.global::<Settings>().theme.picker;
 
         let label = format!(
             "{},{} of {} lines",

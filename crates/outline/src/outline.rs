@@ -232,9 +232,9 @@ impl PickerDelegate for OutlineView {
         let settings = cx.global::<Settings>();
         let string_match = &self.matches[ix];
         let style = if selected {
-            &settings.theme.selector.active_item
+            &settings.theme.picker.active_item
         } else {
-            &settings.theme.selector.item
+            &settings.theme.picker.item
         };
         let outline_item = &self.outline.items[string_match.candidate_id];
 

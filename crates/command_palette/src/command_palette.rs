@@ -206,9 +206,9 @@ impl PickerDelegate for CommandPalette {
         let settings = cx.global::<Settings>();
         let theme = &settings.theme;
         let style = if selected {
-            &theme.selector.active_item
+            &theme.picker.active_item
         } else {
-            &theme.selector.item
+            &theme.picker.item
         };
         let key_style = &theme.command_palette.key;
         let keystroke_spacing = theme.command_palette.keystroke_spacing;

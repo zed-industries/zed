@@ -208,9 +208,9 @@ impl PickerDelegate for ThemeSelector {
         let theme = &settings.theme;
         let theme_match = &self.matches[ix];
         let style = if selected {
-            &theme.selector.active_item
+            &theme.picker.active_item
         } else {
-            &theme.selector.item
+            &theme.picker.item
         };
 
         Label::new(theme_match.string.clone(), style.label.clone())

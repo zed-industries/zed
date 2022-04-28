@@ -23,7 +23,7 @@ pub struct Theme {
     pub contacts_panel: ContactsPanel,
     pub project_panel: ProjectPanel,
     pub command_palette: CommandPalette,
-    pub selector: Selector,
+    pub picker: Picker,
     pub editor: Editor,
     pub search: Search,
     pub project_diagnostics: ProjectDiagnostics,
@@ -288,7 +288,7 @@ pub struct ChannelName {
 }
 
 #[derive(Deserialize, Default)]
-pub struct Selector {
+pub struct Picker {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub empty: ContainedLabel,
@@ -410,7 +410,7 @@ pub struct FieldEditor {
     pub selection: SelectionStyle,
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Interactive<T> {
     pub default: T,
     pub hover: Option<T>,

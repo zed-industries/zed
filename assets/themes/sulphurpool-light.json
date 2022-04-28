@@ -1,5 +1,5 @@
 {
-  "selector": {
+  "picker": {
     "background": "#dfe2f1",
     "corner_radius": 8,
     "padding": 8,

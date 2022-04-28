@@ -224,9 +224,9 @@ impl PickerDelegate for ProjectSymbolsView {
         let string_match = &self.matches[ix];
         let settings = cx.global::<Settings>();
         let style = if selected {
-            &settings.theme.selector.active_item
+            &settings.theme.picker.active_item
         } else {
-            &settings.theme.selector.item
+            &settings.theme.picker.item
         };
         let symbol = &self.symbols[string_match.candidate_id];
         let syntax_runs = styled_runs_for_code_label(&symbol.label, &settings.theme.editor.syntax);
@@ -259,7 +259,7 @@ impl PickerDelegate for ProjectSymbolsView {
             .with_child(
                 // Avoid styling the path differently when it is selected, since
                 // the symbol's syntax highlighting doesn't change when selected.
-                Label::new(path.to_string(), settings.theme.selector.item.label.clone()).boxed(),
+                Label::new(path.to_string(), settings.theme.picker.item.label.clone()).boxed(),
             )
             .contained()
             .with_style(style.container)

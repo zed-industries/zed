@@ -227,9 +227,9 @@ impl PickerDelegate for FileFinder {
         let path_match = &self.matches[ix];
         let settings = cx.global::<Settings>();
         let style = if selected {
-            &settings.theme.selector.active_item
+            &settings.theme.picker.active_item
         } else {
-            &settings.theme.selector.item
+            &settings.theme.picker.item
         };
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match);
