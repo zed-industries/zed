@@ -84,7 +84,7 @@ spec:
             - name: LOG_JSON
               value: "1"
             - name: RUST_LOG
-              value: "trace"
+              value: ${RUST_LOG}
             - name: TRACE_LEVEL
               value: ${TRACE_LEVEL}
             - name: HONEYCOMB_DATASET
