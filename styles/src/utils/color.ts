@@ -2,7 +2,7 @@ import chroma, { Scale } from "chroma-js";
 import { ColorToken } from "../tokens";
 
 export type Color = string;
-export type ColorRampStep = { value: Color; type: "color"; step: number };
+export type ColorRampStep = { value: Color; type: "color"; description: string };
 export type ColorRamp = {
   [index: number]: ColorRampStep;
 };
@@ -36,7 +36,7 @@ export function colorRamp(
     const step = ix * increment;
     ramp[step] = {
       value: color,
-      step,
+      description: `Step: ${step}`,
       type: "color",
     };
   });

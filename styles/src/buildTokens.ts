@@ -2,8 +2,9 @@ import * as fs from "fs";
 import * as path from "path";
 import dark from "./themes/dark";
 import light from "./themes/light";
+import { light as solarizedLight, dark as solarizedDark } from "./themes/solarized";
 import Theme from "./themes/theme";
-import { colors, fontFamilies, fontSizes, fontWeights } from "./tokens";
+import { colors, fontFamilies, fontSizes, fontWeights, sizes } from "./tokens";
 
 // Organize theme tokens
 function themeTokens(theme: Theme) {
@@ -17,54 +18,18 @@ function themeTokens(theme: Theme) {
     border: theme.borderColor,
     editor: theme.editor,
     syntax: {
-      primary: {
-        value: theme.syntax.primary.color.value,
-        type: "color",
-      },
-      comment: {
-        value: theme.syntax.comment.color.value,
-        type: "color",
-      },
-      keyword: {
-        value: theme.syntax.keyword.color.value,
-        type: "color",
-      },
-      function: {
-        value: theme.syntax.function.color.value,
-        type: "color",
-      },
-      type: {
-        value: theme.syntax.type.color.value,
-        type: "color",
-      },
-      variant: {
-        value: theme.syntax.variant.color.value,
-        type: "color",
-      },
-      property: {
-        value: theme.syntax.property.color.value,
-        type: "color",
-      },
-      enum: {
-        value: theme.syntax.enum.color.value,
-        type: "color",
-      },
-      operator: {
-        value: theme.syntax.operator.color.value,
-        type: "color",
-      },
-      string: {
-        value: theme.syntax.string.color.value,
-        type: "color",
-      },
-      number: {
-        value: theme.syntax.number.color.value,
-        type: "color",
-      },
-      boolean: {
-        value: theme.syntax.boolean.color.value,
-        type: "color",
-      },
+      primary: theme.syntax.primary.color,
+      comment: theme.syntax.comment.color,
+      keyword: theme.syntax.keyword.color,
+      function: theme.syntax.function.color,
+      type: theme.syntax.type.color,
+      variant: theme.syntax.variant.color,
+      property: theme.syntax.property.color,
+      enum: theme.syntax.enum.color,
+      operator: theme.syntax.operator.color,
+      string: theme.syntax.string.color,
+      number: theme.syntax.number.color,
+      boolean: theme.syntax.boolean.color,
     },
     player: theme.player,
     shadowAlpha: theme.shadowAlpha,
@@ -73,14 +38,13 @@ function themeTokens(theme: Theme) {
 
 // Organize core tokens
 const coreTokens = {
-  color: {
-    ...colors,
-  },
+  color: colors,
   text: {
     family: fontFamilies,
     weight: fontWeights,
   },
-  size: fontSizes,
+  size: sizes,
+  fontSize: fontSizes,
 };
 
 const combinedTokens: any = {};
@@ -96,7 +60,7 @@ combinedTokens.core = coreTokens;
 
 // Add each theme to the combined tokens and write ${theme}.json.
 // We write `${theme}.json` as a separate file for the design team's convenience, but it isn't consumed by Figma Tokens directly.
-let themes = [dark, light];
+let themes = [dark, light, solarizedDark, solarizedLight];
 themes.forEach((theme) => {
   const themePath = `${distPath}/${theme.name}.json`
   fs.writeFileSync(themePath, JSON.stringify(themeTokens(theme), null, 2));
