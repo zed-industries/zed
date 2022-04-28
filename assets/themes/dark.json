@@ -21,28 +21,18 @@
         "color": "#4f8ff7",
         "weight": "bold",
         "size": 14
+      },
+      "active": {
+        "background": "#2b2b2b",
+        "text": {
+          "family": "Zed Sans",
+          "color": "#f1f1f1",
+          "size": 14
+        }
+      },
+      "hover": {
+        "background": "#232323"
       }
-    },
-    "active_item": {
-      "padding": {
-        "bottom": 4,
-        "left": 12,
-        "right": 12,
-        "top": 4
-      },
-      "corner_radius": 8,
-      "text": {
-        "family": "Zed Sans",
-        "color": "#f1f1f1",
-        "size": 14
-      },
-      "highlight_text": {
-        "family": "Zed Sans",
-        "color": "#4f8ff7",
-        "weight": "bold",
-        "size": 14
-      },
-      "background": "#2b2b2b"
     },
     "border": {
       "color": "#070707",
@@ -906,6 +896,13 @@
       },
       "margin": {
         "left": 2
+      },
+      "active": {
+        "text": {
+          "family": "Zed Mono",
+          "color": "#ffffff",
+          "size": 12
+        }
       }
     }
   },

@@ -2,7 +2,7 @@ mod theme_registry;
 
 use gpui::{
     color::Color,
-    elements::{ContainerStyle, ImageStyle, LabelStyle},
+    elements::{ContainerStyle, ImageStyle, LabelStyle, MouseState},
     fonts::{HighlightStyle, TextStyle},
     Border,
 };
@@ -229,7 +229,7 @@ pub struct ProjectPanelEntry {
 
 #[derive(Debug, Deserialize, Default)]
 pub struct CommandPalette {
-    pub key: ContainedLabel,
+    pub key: Interactive<ContainedLabel>,
     pub keystroke_spacing: f32,
 }
 
@@ -293,8 +293,7 @@ pub struct Picker {
     pub container: ContainerStyle,
     pub empty: ContainedLabel,
     pub input_editor: FieldEditor,
-    pub item: ContainedLabel,
-    pub active_item: ContainedLabel,
+    pub item: Interactive<ContainedLabel>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]
@@ -419,16 +418,23 @@ pub struct Interactive<T> {
 }
 
 impl<T> Interactive<T> {
-    pub fn active(&self) -> &T {
-        self.active.as_ref().unwrap_or(&self.default)
-    }
-
-    pub fn hover(&self) -> &T {
-        self.hover.as_ref().unwrap_or(&self.default)
-    }
-
-    pub fn active_hover(&self) -> &T {
-        self.active_hover.as_ref().unwrap_or(self.active())
+    pub fn style_for(&self, state: &MouseState, active: bool) -> &T {
+        if active {
+            if state.hovered {
+                self.active_hover
+                    .as_ref()
+                    .or(self.active.as_ref())
+                    .unwrap_or(&self.default)
+            } else {
+                self.active.as_ref().unwrap_or(&self.default)
+            }
+        } else {
+            if state.hovered {
+                self.hover.as_ref().unwrap_or(&self.default)
+            } else {
+                &self.default
+            }
+        }
     }
 }
 

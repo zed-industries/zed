@@ -2,30 +2,28 @@ import Theme from "../themes/theme";
 import { backgroundColor, border, player, shadow, text } from "./components";
 
 export default function picker(theme: Theme) {
-  const item = {
-    padding: {
-      bottom: 4,
-      left: 12,
-      right: 12,
-      top: 4,
-    },
-    cornerRadius: 8,
-    text: text(theme, "sans", "secondary"),
-    highlightText: text(theme, "sans", "feature", { weight: "bold" }),
-  };
-
-  const activeItem = {
-    ...item,
-    background: backgroundColor(theme, 300, "active"),
-    text: text(theme, "sans", "primary"),
-  };
-
   return {
     background: backgroundColor(theme, 300),
     cornerRadius: 8,
     padding: 8,
-    item,
-    activeItem,
+    item: {
+      padding: {
+        bottom: 4,
+        left: 12,
+        right: 12,
+        top: 4,
+      },
+      cornerRadius: 8,
+      text: text(theme, "sans", "secondary"),
+      highlightText: text(theme, "sans", "feature", { weight: "bold" }),
+      active: {
+        background: backgroundColor(theme, 300, "active"),
+        text: text(theme, "sans", "primary"),
+      },
+      hover: {
+        background: backgroundColor(theme, 300, "hovered"),
+      }
+    },
     border: border(theme, "primary"),
     empty: {
       text: text(theme, "sans", "placeholder"),

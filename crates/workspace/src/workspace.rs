@@ -1574,11 +1574,11 @@ impl Workspace {
         } else {
             Some(
                 MouseEventHandler::new::<Authenticate, _, _>(0, cx, |state, _| {
-                    let style = if state.hovered {
-                        &theme.workspace.titlebar.sign_in_prompt.hover()
-                    } else {
-                        &theme.workspace.titlebar.sign_in_prompt.default
-                    };
+                    let style = theme
+                        .workspace
+                        .titlebar
+                        .sign_in_prompt
+                        .style_for(state, false);
                     Label::new("Sign in".to_string(), style.text.clone())
                         .contained()
                         .with_style(style.container)
@@ -1649,18 +1649,11 @@ impl Workspace {
         {
             Some(
                 MouseEventHandler::new::<ToggleShare, _, _>(0, cx, |state, cx| {
-                    let style = &theme.workspace.titlebar.share_icon;
-                    let style = if self.project().read(cx).is_shared() {
-                        if state.hovered {
-                            style.active_hover()
-                        } else {
-                            &style.active()
-                        }
-                    } else if state.hovered {
-                        &style.active()
-                    } else {
-                        &style.default
-                    };
+                    let style = &theme
+                        .workspace
+                        .titlebar
+                        .share_icon
+                        .style_for(state, self.project().read(cx).is_shared());
                     Svg::new("icons/share.svg")
                         .with_color(style.color)
                         .constrained()

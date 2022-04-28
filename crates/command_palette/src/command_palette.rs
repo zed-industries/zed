@@ -1,7 +1,7 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
-    elements::{ChildView, Flex, Label, ParentElement},
+    elements::{ChildView, Flex, Label, MouseState, ParentElement},
     keymap::Keystroke,
     Action, Element, Entity, MutableAppContext, View, ViewContext, ViewHandle,
 };
@@ -200,17 +200,19 @@ impl PickerDelegate for CommandPalette {
         }
     }
 
-    fn render_match(&self, ix: usize, selected: bool, cx: &gpui::AppContext) -> gpui::ElementBox {
+    fn render_match(
+        &self,
+        ix: usize,
+        mouse_state: &MouseState,
+        selected: bool,
+        cx: &gpui::AppContext,
+    ) -> gpui::ElementBox {
         let mat = &self.matches[ix];
         let command = &self.actions[mat.candidate_id];
         let settings = cx.global::<Settings>();
         let theme = &settings.theme;
-        let style = if selected {
-            &theme.picker.active_item
-        } else {
-            &theme.picker.item
-        };
-        let key_style = &theme.command_palette.key;
+        let style = theme.picker.item.style_for(mouse_state, selected);
+        let key_style = &theme.command_palette.key.style_for(mouse_state, selected);
         let keystroke_spacing = theme.command_palette.keystroke_spacing;
 
         Flex::row()

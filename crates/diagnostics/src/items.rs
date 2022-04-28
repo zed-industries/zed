@@ -95,12 +95,8 @@ impl View for DiagnosticIndicator {
                     .theme
                     .workspace
                     .status_bar
-                    .diagnostic_summary;
-                let style = if state.hovered {
-                    style.hover()
-                } else {
-                    &style.default
-                };
+                    .diagnostic_summary
+                    .style_for(state, false);
 
                 let mut summary_row = Flex::row();
                 if self.summary.error_count > 0 {
@@ -190,11 +186,7 @@ impl View for DiagnosticIndicator {
                 MouseEventHandler::new::<Message, _, _>(1, cx, |state, _| {
                     Label::new(
                         diagnostic.message.split('\n').next().unwrap().to_string(),
-                        if state.hovered {
-                            message_style.hover().text.clone()
-                        } else {
-                            message_style.default.text.clone()
-                        },
+                        message_style.style_for(state, false).text.clone(),
                     )
                     .aligned()
                     .contained()

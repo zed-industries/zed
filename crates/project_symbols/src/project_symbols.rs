@@ -220,14 +220,17 @@ impl PickerDelegate for ProjectSymbolsView {
         Task::ready(())
     }
 
-    fn render_match(&self, ix: usize, selected: bool, cx: &AppContext) -> ElementBox {
+    fn render_match(
+        &self,
+        ix: usize,
+        mouse_state: &MouseState,
+        selected: bool,
+        cx: &AppContext,
+    ) -> ElementBox {
         let string_match = &self.matches[ix];
         let settings = cx.global::<Settings>();
-        let style = if selected {
-            &settings.theme.picker.active_item
-        } else {
-            &settings.theme.picker.item
-        };
+        let style = &settings.theme.picker.item;
+        let current_style = style.style_for(mouse_state, selected);
         let symbol = &self.symbols[string_match.candidate_id];
         let syntax_runs = styled_runs_for_code_label(&symbol.label, &settings.theme.editor.syntax);
 
@@ -246,11 +249,11 @@ impl PickerDelegate for ProjectSymbolsView {
 
         Flex::column()
             .with_child(
-                Text::new(symbol.label.text.clone(), style.label.text.clone())
+                Text::new(symbol.label.text.clone(), current_style.label.text.clone())
                     .with_soft_wrap(false)
                     .with_highlights(combine_syntax_and_fuzzy_match_highlights(
                         &symbol.label.text,
-                        style.label.text.clone().into(),
+                        current_style.label.text.clone().into(),
                         syntax_runs,
                         &string_match.positions,
                     ))
@@ -259,10 +262,10 @@ impl PickerDelegate for ProjectSymbolsView {
             .with_child(
                 // Avoid styling the path differently when it is selected, since
                 // the symbol's syntax highlighting doesn't change when selected.
-                Label::new(path.to_string(), settings.theme.picker.item.label.clone()).boxed(),
+                Label::new(path.to_string(), style.default.label.clone()).boxed(),
             )
             .contained()
-            .with_style(style.container)
+            .with_style(current_style.container)
             .boxed()
     }
 }
