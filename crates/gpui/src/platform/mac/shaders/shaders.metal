@@ -71,11 +71,16 @@ float4 quad_sdf(QuadFragmentInput input) {
         color = input.background_color;
     } else {
         float inset_distance = distance + border_width;
-        float4 border_color = float4(
-            mix(input.background_color.rgb, input.border_color.rgb, input.border_color.a),
-            saturate(input.background_color.a + input.border_color.a)
-        );
-        color = mix(border_color, input.background_color, saturate(0.5 - inset_distance));
+
+        // Decrease border's opacity as we move inside the background.
+        input.border_color.a *= 1. - saturate(0.5 - inset_distance);
+
+        // Alpha-blend the border and the background.
+        float output_alpha = input.border_color.a + input.background_color.a * (1. - input.border_color.a);
+        float3 premultiplied_border_rgb = input.border_color.rgb * input.border_color.a;
+        float3 premultiplied_background_rgb = input.background_color.rgb * input.background_color.a;
+        float3 premultiplied_output_rgb = premultiplied_border_rgb + premultiplied_background_rgb * (1. - input.border_color.a);
+        color = float4(premultiplied_output_rgb / output_alpha, output_alpha);
     }
 
     return color * float4(1., 1., 1., saturate(0.5 - distance));
