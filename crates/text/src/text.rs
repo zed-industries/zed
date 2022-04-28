@@ -112,7 +112,7 @@ impl HistoryEntry {
             self_range.end += delta;
 
             while let Some((other_range, new_text)) = edits.peek() {
-                let insertion_len = new_text.as_ref().map_or(0, |t| t.len());
+                let insertion_len = new_text.len();
                 let mut other_range = (*other_range).clone();
                 other_range.start += delta;
                 other_range.end += delta;
@@ -138,7 +138,7 @@ impl HistoryEntry {
         }
 
         for (other_range, new_text) in edits {
-            let insertion_len = new_text.as_ref().map_or(0, |t| t.len());
+            let insertion_len = new_text.len();
             new_ranges.push(other_range.start + delta..other_range.end + delta + insertion_len);
             delta += insertion_len;
         }
@@ -524,7 +524,7 @@ pub struct EditOperation {
     pub timestamp: InsertionTimestamp,
     pub version: clock::Global,
     pub ranges: Vec<Range<FullOffset>>,
-    pub new_text: Vec<Option<Arc<str>>>,
+    pub new_text: Vec<Arc<str>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -630,15 +630,9 @@ impl Buffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        let edits = edits.into_iter().map(|(range, new_text)| {
-            let possibly_empty_arc_str = new_text.into();
-            let non_empty_text = if possibly_empty_arc_str.len() > 0 {
-                Some(possibly_empty_arc_str)
-            } else {
-                None
-            };
-            (range, non_empty_text)
-        });
+        let edits = edits
+            .into_iter()
+            .map(|(range, new_text)| (range, new_text.into()));
 
         self.start_transaction();
         let timestamp = InsertionTimestamp {
@@ -657,7 +651,7 @@ impl Buffer {
 
     fn apply_local_edit<S: ToOffset, T: Into<Arc<str>>>(
         &mut self,
-        edits: impl ExactSizeIterator<Item = (Range<S>, Option<T>)>,
+        edits: impl ExactSizeIterator<Item = (Range<S>, T)>,
         timestamp: InsertionTimestamp,
     ) -> EditOperation {
         let mut edits_patch = Patch::default();
@@ -683,7 +677,7 @@ impl Buffer {
 
         let mut fragment_start = old_fragments.start().visible;
         for (range, new_text) in ranges {
-            let new_text = new_text.map(|t| t.into());
+            let new_text = new_text.into();
             let fragment_end = old_fragments.end(&None).visible;
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
@@ -724,7 +718,7 @@ impl Buffer {
             }
 
             // Insert the new text before any existing fragments within the range.
-            if let Some(new_text) = new_text.as_deref() {
+            if !new_text.is_empty() {
                 let new_start = new_fragments.summary().text.visible;
                 edits_patch.push(Edit {
                     old: fragment_start..fragment_start,
@@ -745,7 +739,7 @@ impl Buffer {
                     visible: true,
                 };
                 new_insertions.push(InsertionFragment::insert_new(&fragment));
-                new_ropes.push_str(new_text);
+                new_ropes.push_str(new_text.as_ref());
                 new_fragments.push(fragment, &None);
                 insertion_offset += new_text.len();
             }
@@ -870,7 +864,7 @@ impl Buffer {
         &mut self,
         version: &clock::Global,
         ranges: &[Range<FullOffset>],
-        new_text: &[Option<Arc<str>>],
+        new_text: &[Arc<str>],
         timestamp: InsertionTimestamp,
     ) {
         if ranges.is_empty() {
@@ -963,7 +957,7 @@ impl Buffer {
             }
 
             // Insert the new text before any existing fragments within the range.
-            if let Some(new_text) = new_text {
+            if !new_text.is_empty() {
                 let mut old_start = old_fragments.start().1;
                 if old_fragments.item().map_or(false, |f| f.visible) {
                     old_start += fragment_start.0 - old_fragments.start().0.full_offset().0;
@@ -1055,7 +1049,7 @@ impl Buffer {
         self.snapshot.visible_text = visible_text;
         self.snapshot.deleted_text = deleted_text;
         self.snapshot.insertions.edit(new_insertions, &());
-        self.subscriptions.publish_mut(&edits_patch);
+        self.subscriptions.publish_mut(&edits_patch)
     }
 
     fn apply_undo(&mut self, undo: &UndoOperation) -> Result<()> {
@@ -1400,7 +1394,11 @@ impl Buffer {
                     &(),
                 )
                 .unwrap();
-            assert_eq!(insertion_fragment.fragment_id, fragment.id);
+            assert_eq!(
+                insertion_fragment.fragment_id, fragment.id,
+                "fragment: {:?}\ninsertion: {:?}",
+                fragment, insertion_fragment
+            );
         }
 
         let mut cursor = self.snapshot.fragments.cursor::<Option<&Locator>>();
