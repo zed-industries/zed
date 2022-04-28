@@ -81,8 +81,6 @@ spec:
                 secretKeyRef:
                   name: api
                   key: token
-            - name: LOG_JSON
-              value: "1"
             - name: RUST_LOG
               value: ${RUST_LOG}
             - name: TRACE_LEVEL

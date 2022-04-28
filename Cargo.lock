@@ -474,7 +474,7 @@ dependencies = [
  "cexpr",
  "clang-sys",
  "clap 2.33.3",
- "env_logger 0.8.3",
+ "env_logger",
  "lazy_static",
  "lazycell",
  "log",
@@ -845,11 +845,10 @@ dependencies = [
  "collections",
  "ctor",
  "editor",
- "env_logger 0.8.3",
+ "env_logger",
  "envy",
  "futures",
  "gpui",
- "json_env_logger",
  "language",
  "lazy_static",
  "lipsum",
@@ -900,7 +899,7 @@ version = "0.1.0"
 dependencies = [
  "ctor",
  "editor",
- "env_logger 0.8.3",
+ "env_logger",
  "fuzzy",
  "gpui",
  "picker",
@@ -1349,7 +1348,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "env_logger 0.8.3",
+ "env_logger",
  "futures",
  "fuzzy",
  "gpui",
@@ -1393,15 +1392,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "80df024fbc5ac80f87dfef0d9f5209a252f2a497f7f42944cff24d8253cac065"
 dependencies = [
  "cfg-if 1.0.0",
-]
-
-[[package]]
-name = "env_logger"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44533bbbb3bb3c1fa17d9f2e4e38bbbaf8396ba82193c4cb1b6445d711445d36"
-dependencies = [
- "log",
 ]
 
 [[package]]
@@ -1485,7 +1475,7 @@ version = "0.1.0"
 dependencies = [
  "ctor",
  "editor",
- "env_logger 0.8.3",
+ "env_logger",
  "fuzzy",
  "gpui",
  "picker",
@@ -1889,7 +1879,7 @@ dependencies = [
  "core-text",
  "ctor",
  "dhat",
- "env_logger 0.8.3",
+ "env_logger",
  "etagere",
  "font-kit",
  "foreign-types",
@@ -2342,18 +2332,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41ee439ee368ba4a77ac70d04f14015415af8600d6c894dc1f11bd79758c57d5"
 
 [[package]]
-name = "json_env_logger"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e2ec540ea0448b187d3a8b4a9f13e75527d06ef76b3a2baa1cd982aecb62ce2"
-dependencies = [
- "env_logger 0.7.1",
- "kv-log-macro",
- "log",
- "serde_json",
-]
-
-[[package]]
 name = "kernel32-sys"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2373,15 +2351,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kv-log-macro"
-version = "1.0.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0de8b303297635ad57c9f5059fd9cee7a47f8e8daa09df0fcd07dd39fb22977f"
-dependencies = [
- "log",
-]
-
-[[package]]
 name = "language"
 version = "0.1.0"
 dependencies = [
@@ -2392,7 +2361,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "env_logger 0.8.3",
+ "env_logger",
  "futures",
  "fuzzy",
  "gpui",
@@ -2559,7 +2528,7 @@ dependencies = [
  "async-pipe",
  "collections",
  "ctor",
- "env_logger 0.8.3",
+ "env_logger",
  "futures",
  "gpui",
  "log",
@@ -3162,7 +3131,7 @@ version = "0.1.0"
 dependencies = [
  "ctor",
  "editor",
- "env_logger 0.8.3",
+ "env_logger",
  "gpui",
  "serde_json",
  "settings",
@@ -4632,7 +4601,7 @@ version = "0.1.0"
 dependencies = [
  "arrayvec 0.7.1",
  "ctor",
- "env_logger 0.8.3",
+ "env_logger",
  "log",
  "rand 0.8.3",
 ]
@@ -4749,7 +4718,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "env_logger 0.8.3",
+ "env_logger",
  "gpui",
  "lazy_static",
  "log",
@@ -5903,7 +5872,7 @@ dependencies = [
  "dirs 3.0.1",
  "easy-parallel",
  "editor",
- "env_logger 0.8.3",
+ "env_logger",
  "file_finder",
  "fsevent",
  "futures",

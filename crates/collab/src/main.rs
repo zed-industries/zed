@@ -41,11 +41,7 @@ impl AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    if std::env::var("LOG_JSON").is_ok() {
-        json_env_logger::init();
-    } else {
-        env_logger::init();
-    }
+    env_logger::init();
 
     if let Err(error) = env::load_dotenv() {
         log::error!(

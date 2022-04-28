@@ -3,6 +3,7 @@ use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use rpc::{proto, ConnectionId};
 use std::{collections::hash_map, path::PathBuf};
+use tracing::instrument;
 
 #[derive(Default)]
 pub struct Store {
@@ -81,6 +82,7 @@ pub struct LeftProject {
 }
 
 impl Store {
+    #[instrument(skip(self))]
     pub fn add_connection(&mut self, connection_id: ConnectionId, user_id: UserId) {
         self.connections.insert(
             connection_id,
@@ -96,6 +98,7 @@ impl Store {
             .insert(connection_id);
     }
 
+    #[instrument(skip(self))]
     pub fn remove_connection(
         &mut self,
         connection_id: ConnectionId,

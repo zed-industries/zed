@@ -25,7 +25,6 @@ base64 = "0.13"
 envy = "0.4.2"
 env_logger = "0.8"
 futures = "0.3"
-json_env_logger = "0.1"
 lazy_static = "1.4"
 lipsum = { version = "0.8", optional = true }
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }

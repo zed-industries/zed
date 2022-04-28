@@ -37,6 +37,7 @@ where
         }
     }
 }
+
 pub trait ResultExt {
     type Ok;
 
