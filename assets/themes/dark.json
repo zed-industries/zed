@@ -1304,14 +1304,14 @@
     "match_background": "#3f15a380",
     "tab_icon_spacing": 8,
     "tab_icon_width": 14,
-    "active_hovered_option_button": {
+    "option_button": {
       "family": "Zed Mono",
-      "color": "#ffffff",
+      "color": "#9c9c9c",
       "size": 14,
-      "background": "#232323",
+      "background": "#0e0e0e",
       "corner_radius": 4,
       "border": {
-        "color": "#404040",
+        "color": "#232323",
         "width": 1
       },
       "margin": {
@@ -1323,27 +1323,26 @@
         "left": 8,
         "right": 8,
         "top": 3
-      }
-    },
-    "active_option_button": {
-      "family": "Zed Mono",
-      "color": "#ffffff",
-      "size": 14,
-      "background": "#232323",
-      "corner_radius": 4,
-      "border": {
-        "color": "#404040",
-        "width": 1
       },
-      "margin": {
-        "left": 2,
-        "right": 2
+      "active": {
+        "family": "Zed Mono",
+        "color": "#ffffff",
+        "size": 14,
+        "background": "#232323",
+        "border": {
+          "color": "#404040",
+          "width": 1
+        }
       },
-      "padding": {
-        "bottom": 3,
-        "left": 8,
-        "right": 8,
-        "top": 3
+      "hover": {
+        "family": "Zed Mono",
+        "color": "#ffffff",
+        "size": 14,
+        "background": "#1c1c1c",
+        "border": {
+          "color": "#404040",
+          "width": 1
+        }
       }
     },
     "editor": {
@@ -1377,27 +1376,6 @@
         "bottom": 3,
         "left": 12,
         "right": 8
-      }
-    },
-    "hovered_option_button": {
-      "family": "Zed Mono",
-      "color": "#ffffff",
-      "size": 14,
-      "background": "#0e0e0e",
-      "corner_radius": 4,
-      "border": {
-        "color": "#404040",
-        "width": 1
-      },
-      "margin": {
-        "left": 2,
-        "right": 2
-      },
-      "padding": {
-        "bottom": 3,
-        "left": 8,
-        "right": 8,
-        "top": 3
       }
     },
     "invalid_editor": {
@@ -1438,27 +1416,6 @@
       "color": "#808080",
       "size": 14,
       "padding": 6
-    },
-    "option_button": {
-      "family": "Zed Mono",
-      "color": "#9c9c9c",
-      "size": 14,
-      "background": "#0e0e0e",
-      "corner_radius": 4,
-      "border": {
-        "color": "#232323",
-        "width": 1
-      },
-      "margin": {
-        "left": 2,
-        "right": 2
-      },
-      "padding": {
-        "bottom": 3,
-        "left": 8,
-        "right": 8,
-        "top": 3
-      }
     },
     "option_button_group": {
       "padding": {

@@ -281,13 +281,12 @@ impl BufferSearchBar {
     ) -> ElementBox {
         let is_active = self.is_search_option_enabled(search_option);
         MouseEventHandler::new::<Self, _, _>(search_option as usize, cx, |state, cx| {
-            let theme = &cx.global::<Settings>().theme.search;
-            let style = match (is_active, state.hovered) {
-                (false, false) => &theme.option_button,
-                (false, true) => &theme.hovered_option_button,
-                (true, false) => &theme.active_option_button,
-                (true, true) => &theme.active_hovered_option_button,
-            };
+            let style = &cx
+                .global::<Settings>()
+                .theme
+                .search
+                .option_button
+                .style_for(state, is_active);
             Label::new(icon.to_string(), style.text.clone())
                 .contained()
                 .with_style(style.container)
@@ -306,12 +305,12 @@ impl BufferSearchBar {
     ) -> ElementBox {
         enum NavButton {}
         MouseEventHandler::new::<NavButton, _, _>(direction as usize, cx, |state, cx| {
-            let theme = &cx.global::<Settings>().theme.search;
-            let style = if state.hovered {
-                &theme.hovered_option_button
-            } else {
-                &theme.option_button
-            };
+            let style = &cx
+                .global::<Settings>()
+                .theme
+                .search
+                .option_button
+                .style_for(state, false);
             Label::new(icon.to_string(), style.text.clone())
                 .contained()
                 .with_style(style.container)
