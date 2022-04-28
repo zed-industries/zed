@@ -1861,69 +1861,63 @@ impl Editor {
 
     pub fn newline(&mut self, _: &Newline, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            let mut old_selections = SmallVec::<[_; 32]>::new();
-            {
+            let (edits, selection_fixup_info): (Vec<_>, Vec<_>) = {
                 let selections = this.local_selections::<usize>(cx);
                 let buffer = this.buffer.read(cx).snapshot(cx);
-                for selection in selections.iter() {
-                    let start_point = selection.start.to_point(&buffer);
-                    let indent = buffer
-                        .indent_column_for_line(start_point.row)
-                        .min(start_point.column);
-                    let start = selection.start;
-                    let end = selection.end;
+                selections
+                    .iter()
+                    .map(|selection| {
+                        let start_point = selection.start.to_point(&buffer);
+                        let indent = buffer
+                            .indent_column_for_line(start_point.row)
+                            .min(start_point.column);
+                        let start = selection.start;
+                        let end = selection.end;
 
-                    let mut insert_extra_newline = false;
-                    if let Some(language) = buffer.language() {
-                        let leading_whitespace_len = buffer
-                            .reversed_chars_at(start)
-                            .take_while(|c| c.is_whitespace() && *c != '\n')
-                            .map(|c| c.len_utf8())
-                            .sum::<usize>();
+                        let mut insert_extra_newline = false;
+                        if let Some(language) = buffer.language() {
+                            let leading_whitespace_len = buffer
+                                .reversed_chars_at(start)
+                                .take_while(|c| c.is_whitespace() && *c != '\n')
+                                .map(|c| c.len_utf8())
+                                .sum::<usize>();
 
-                        let trailing_whitespace_len = buffer
-                            .chars_at(end)
-                            .take_while(|c| c.is_whitespace() && *c != '\n')
-                            .map(|c| c.len_utf8())
-                            .sum::<usize>();
+                            let trailing_whitespace_len = buffer
+                                .chars_at(end)
+                                .take_while(|c| c.is_whitespace() && *c != '\n')
+                                .map(|c| c.len_utf8())
+                                .sum::<usize>();
 
-                        insert_extra_newline = language.brackets().iter().any(|pair| {
-                            let pair_start = pair.start.trim_end();
-                            let pair_end = pair.end.trim_start();
+                            insert_extra_newline = language.brackets().iter().any(|pair| {
+                                let pair_start = pair.start.trim_end();
+                                let pair_end = pair.end.trim_start();
 
-                            pair.newline
-                                && buffer.contains_str_at(end + trailing_whitespace_len, pair_end)
-                                && buffer.contains_str_at(
-                                    (start - leading_whitespace_len)
-                                        .saturating_sub(pair_start.len()),
-                                    pair_start,
-                                )
-                        });
-                    }
+                                pair.newline
+                                    && buffer
+                                        .contains_str_at(end + trailing_whitespace_len, pair_end)
+                                    && buffer.contains_str_at(
+                                        (start - leading_whitespace_len)
+                                            .saturating_sub(pair_start.len()),
+                                        pair_start,
+                                    )
+                            });
+                        }
 
-                    old_selections.push((
-                        selection.id,
-                        buffer.anchor_after(end),
-                        start..end,
-                        indent,
-                        insert_extra_newline,
-                    ));
-                }
-            }
+                        let mut new_text = String::with_capacity(1 + indent as usize);
+                        new_text.push('\n');
+                        new_text.extend(iter::repeat(' ').take(indent as usize));
+                        if insert_extra_newline {
+                            new_text = new_text.repeat(2);
+                        }
+                        (
+                            (start..end, new_text),
+                            (insert_extra_newline, buffer.anchor_after(end)),
+                        )
+                    })
+                    .unzip()
+            };
 
             this.buffer.update(cx, |buffer, cx| {
-                let edits =
-                    old_selections
-                        .iter()
-                        .map(|(_, _, range, indent, insert_extra_newline)| {
-                            let mut new_text = String::with_capacity(1 + *indent as usize);
-                            new_text.push('\n');
-                            new_text.extend(iter::repeat(' ').take(*indent as usize));
-                            if *insert_extra_newline {
-                                new_text = new_text.repeat(2);
-                            }
-                            (range.clone(), new_text)
-                        });
                 buffer.edit_with_autoindent_batched(edits, cx);
 
                 let buffer = buffer.read(cx);
@@ -1931,20 +1925,18 @@ impl Editor {
                     .selections
                     .iter()
                     .cloned()
-                    .zip(old_selections)
-                    .map(
-                        |(mut new_selection, (_, end_anchor, _, _, insert_extra_newline))| {
-                            let mut cursor = end_anchor.to_point(&buffer);
-                            if insert_extra_newline {
-                                cursor.row -= 1;
-                                cursor.column = buffer.line_len(cursor.row);
-                            }
-                            let anchor = buffer.anchor_after(cursor);
-                            new_selection.start = anchor.clone();
-                            new_selection.end = anchor;
-                            new_selection
-                        },
-                    )
+                    .zip(selection_fixup_info)
+                    .map(|(mut new_selection, (extra_newline_inserted, end))| {
+                        let mut cursor = end.to_point(&buffer);
+                        if extra_newline_inserted {
+                            cursor.row -= 1;
+                            cursor.column = buffer.line_len(cursor.row);
+                        }
+                        let anchor = buffer.anchor_after(cursor);
+                        new_selection.start = anchor.clone();
+                        new_selection.end = anchor;
+                        new_selection
+                    })
                     .collect();
             });
 
