@@ -1,5 +1,5 @@
 name = "JavaScript"
-path_suffixes = ["js", "jsx"]
+path_suffixes = ["js", "jsx", "mjs"]
 line_comment = "// "
 autoclose_before = ";:.,=}])>"
 brackets = [
