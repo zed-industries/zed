@@ -81,9 +81,11 @@ export default function workspace(theme: Theme) {
       width: 1,
     },
     statusBar: {
-      height: 24,
-      itemSpacing: 12,
+      height: 30,
+      itemSpacing: 8,
       padding: {
+        top: 1,
+        bottom: 1,
         left: 6,
         right: 6,
       },
@@ -109,7 +111,9 @@ export default function workspace(theme: Theme) {
         height: 16,
         summaryOk: {
           ...diagnosticSummary,
-          hover: {}
+          hover: {
+            background: backgroundColor(theme, 300, "hovered"),
+          }
         },
         summaryWarning: {
           ...diagnosticSummary,
@@ -142,12 +146,12 @@ export default function workspace(theme: Theme) {
         groupLeft: {},
         groupRight: {},
         item: {
-          iconSize: 18,
-          padding: { left: 5, right: 5 },
-          cornerRadius: 5,
-          iconColor: iconColor(theme, "muted"),
+          iconSize: 14,
+          padding: { top: 3, bottom: 3, left: 6, right: 6 },
+          cornerRadius: 6,
+          iconColor: iconColor(theme, "secondary"),
           hover: {
-            iconColor: iconColor(theme, "secondary"),
+            iconColor: iconColor(theme, "primary"),
             background: backgroundColor(theme, 300, "hovered"),
           },
           active: {
