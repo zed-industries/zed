@@ -2,20 +2,6 @@ import Theme from "../themes/theme";
 import { backgroundColor, border, iconColor, text } from "./components";
 
 export default function workspace(theme: Theme) {
-  const signInPrompt = {
-    ...text(theme, "sans", "secondary", { size: "xs" }),
-    border: border(theme, "primary"),
-    cornerRadius: 6,
-    margin: {
-      top: 1,
-      right: 6,
-    },
-    padding: {
-      left: 6,
-      right: 6,
-    },
-  };
-
   const tab = {
     height: 32,
     background: backgroundColor(theme, 300),
@@ -47,32 +33,6 @@ export default function workspace(theme: Theme) {
     },
   };
 
-  const sidebarItem = {
-    height: 32,
-    iconColor: iconColor(theme, "secondary"),
-    iconSize: 18,
-  };
-  const sidebar = {
-    width: 30,
-    background: backgroundColor(theme, 300),
-    border: border(theme, "primary", { right: true }),
-    item: sidebarItem,
-    activeItem: {
-      ...sidebarItem,
-      iconColor: iconColor(theme, "active"),
-    },
-    resizeHandle: {
-      background: border(theme, "primary").color,
-      padding: {
-        left: 1,
-      },
-    },
-  };
-  const shareIcon = {
-    margin: { top: 3, bottom: 2 },
-    cornerRadius: 6,
-  };
-
   return {
     background: backgroundColor(theme, 300),
     leaderBorderOpacity: 0.7,
@@ -86,31 +46,112 @@ export default function workspace(theme: Theme) {
       },
       cursor: "Arrow"
     },
-    leftSidebar: {
-      ...sidebar,
-      border: border(theme, "primary", { right: true }),
-    },
-    rightSidebar: {
-      ...sidebar,
-      border: border(theme, "primary", { left: true }),
+    sidebarResizeHandle: {
+      background: border(theme, "primary").color,
+      padding: {
+        left: 1,
+      },
     },
     paneDivider: {
       color: border(theme, "secondary").color,
       width: 1,
     },
-    status_bar: {
-      height: 24,
+    statusBar: {
+      height: 30,
       itemSpacing: 8,
       padding: {
+        top: 1,
+        bottom: 1,
         left: 6,
         right: 6,
       },
       border: border(theme, "primary", { top: true, overlay: true }),
       cursorPosition: text(theme, "sans", "muted"),
-      diagnosticMessage: text(theme, "sans", "muted"),
-      lspMessage: text(theme, "sans", "muted"),
       autoUpdateProgressMessage: text(theme, "sans", "muted"),
       autoUpdateDoneMessage: text(theme, "sans", "muted"),
+      lspStatus: {
+        iconSpacing: 4,
+        iconWidth: 14,
+        height: 18,
+        cornerRadius: 6,
+        padding: { left: 6, right: 6 },
+        message: text(theme, "sans", "muted"),
+        iconColor: iconColor(theme, "muted"),
+        hover: {
+          message: text(theme, "sans", "primary"),
+          iconColor: iconColor(theme, "primary"),
+          background: backgroundColor(theme, 300, "hovered"),
+        }
+      },
+      diagnosticMessage: {
+        ...text(theme, "sans", "muted"),
+        hover: text(theme, "sans", "secondary"),
+      },
+      diagnosticSummary: {
+        height: 16,
+        iconWidth: 14,
+        iconSpacing: 2,
+        summarySpacing: 6,
+        text: text(theme, "sans", "primary", { size: "sm" }),
+        iconColorOk: iconColor(theme, "secondary"),
+        iconColorWarning: iconColor(theme, "warning"),
+        iconColorError: iconColor(theme, "error"),
+        containerOk: {
+          cornerRadius: 6,
+          padding: { left: 6, right: 6 },
+          background: backgroundColor(theme, 300, "hovered"),
+        },
+        containerWarning: {
+          cornerRadius: 6,
+          padding: { left: 6, right: 6 },
+          background: backgroundColor(theme, "warning"),
+          border: border(theme, "warning"),
+        },
+        containerError: {
+          cornerRadius: 6,
+          padding: { left: 6, right: 6 },
+          background: backgroundColor(theme, "error"),
+          border: border(theme, "error"),
+        },
+        hover: {
+          iconColorOk: iconColor(theme, "primary"),
+          containerOk: {
+            cornerRadius: 6,
+            padding: { left: 6, right: 6 },
+            background: backgroundColor(theme, 300, "hovered"),
+          },
+          containerWarning: {
+            cornerRadius: 6,
+            padding: { left: 6, right: 6 },
+            background: backgroundColor(theme, "warning", "hovered"),
+            border: border(theme, "warning"),
+          },
+          containerError: {
+            cornerRadius: 6,
+            padding: { left: 6, right: 6 },
+            background: backgroundColor(theme, "error", "hovered"),
+            border: border(theme, "error"),
+          }
+        },
+      },
+      sidebarButtons: {
+        groupLeft: {},
+        groupRight: {},
+        item: {
+          iconSize: 14,
+          padding: { top: 3, bottom: 3, left: 6, right: 6 },
+          cornerRadius: 6,
+          iconColor: iconColor(theme, "secondary"),
+          hover: {
+            iconColor: iconColor(theme, "primary"),
+            background: backgroundColor(theme, 300, "hovered"),
+          },
+          active: {
+            iconColor: iconColor(theme, "active"),
+            background: backgroundColor(theme, 300, "active"),
+          }
+        },
+      },
     },
     titlebar: {
       avatarWidth: 18,
@@ -134,10 +175,19 @@ export default function workspace(theme: Theme) {
         // set with a token, not hardcoded in rust
       },
       border: border(theme, "primary", { bottom: true }),
-      signInPrompt,
-      hoveredSignInPrompt: {
-        ...signInPrompt,
-        ...text(theme, "sans", "active", { size: "xs" }),
+      signInPrompt: {
+        border: border(theme, "primary"),
+        cornerRadius: 6,
+        margin: {
+          top: 1,
+          right: 6,
+        },
+        padding: {
+          left: 6,
+          right: 6,
+        },
+        ...text(theme, "sans", "secondary", { size: "xs" }),
+        hover: text(theme, "sans", "active", { size: "xs" }),
       },
       offlineIcon: {
         color: iconColor(theme, "secondary"),
@@ -147,23 +197,21 @@ export default function workspace(theme: Theme) {
         },
       },
       shareIcon: {
-        ...shareIcon,
-        color: iconColor(theme, "secondary")
-      },
-      hoveredShareIcon: {
-        ...shareIcon,
-        background: backgroundColor(theme, 100, "hovered"),
+        cornerRadius: 6,
+        margin: { top: 3, bottom: 2 },
         color: iconColor(theme, "secondary"),
-      },
-      hoveredActiveShareIcon: {
-        ...shareIcon,
-        background: backgroundColor(theme, 100, "hovered"),
-        color: iconColor(theme, "active"),
-      },
-      activeShareIcon: {
-        ...shareIcon,
-        background: backgroundColor(theme, 100, "active"),
-        color: iconColor(theme, "active"),
+        hover: {
+          background: backgroundColor(theme, 100, "hovered"),
+          color: iconColor(theme, "secondary"),
+        },
+        active: {
+          background: backgroundColor(theme, 100, "active"),
+          color: iconColor(theme, "active"),
+        },
+        activeHover: {
+          background: backgroundColor(theme, 100, "hovered"),
+          color: iconColor(theme, "active"),
+        }
       },
       outdatedWarning: {
         ...text(theme, "sans", "warning"),

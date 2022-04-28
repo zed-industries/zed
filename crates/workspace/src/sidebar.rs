@@ -1,8 +1,13 @@
-use super::Workspace;
-use gpui::{elements::*, impl_actions, platform::CursorStyle, AnyViewHandle, RenderContext};
+use gpui::{
+    elements::*, impl_actions, platform::CursorStyle, AnyViewHandle, Entity, RenderContext, View,
+    ViewContext, ViewHandle,
+};
 use serde::Deserialize;
+use settings::Settings;
 use std::{cell::RefCell, rc::Rc};
 use theme::Theme;
+
+use crate::StatusItemView;
 
 pub struct Sidebar {
     side: Side,
@@ -12,30 +17,35 @@ pub struct Sidebar {
     custom_width: Rc<RefCell<f32>>,
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize)]
 pub enum Side {
     Left,
     Right,
 }
 
+#[derive(Clone)]
 struct Item {
     icon_path: &'static str,
     view: AnyViewHandle,
 }
 
-#[derive(Clone, Deserialize)]
-pub struct ToggleSidebarItem(pub SidebarItemId);
+pub struct SidebarButtons {
+    sidebar: ViewHandle<Sidebar>,
+}
 
-#[derive(Clone, Deserialize)]
-pub struct ToggleSidebarItemFocus(pub SidebarItemId);
-
-impl_actions!(workspace, [ToggleSidebarItem, ToggleSidebarItemFocus]);
-
-#[derive(Clone, Deserialize)]
-pub struct SidebarItemId {
+#[derive(Clone, Debug, Deserialize)]
+pub struct ToggleSidebarItem {
     pub side: Side,
     pub item_index: usize,
 }
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ToggleSidebarItemFocus {
+    pub side: Side,
+    pub item_index: usize,
+}
+
+impl_actions!(workspace, [ToggleSidebarItem, ToggleSidebarItemFocus]);
 
 impl Sidebar {
     pub fn new(side: Side) -> Self {
@@ -48,20 +58,28 @@ impl Sidebar {
         }
     }
 
-    pub fn add_item(&mut self, icon_path: &'static str, view: AnyViewHandle) {
+    pub fn add_item(
+        &mut self,
+        icon_path: &'static str,
+        view: AnyViewHandle,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.items.push(Item { icon_path, view });
+        cx.notify()
     }
 
-    pub fn activate_item(&mut self, item_ix: usize) {
+    pub fn activate_item(&mut self, item_ix: usize, cx: &mut ViewContext<Self>) {
         self.active_item_ix = Some(item_ix);
+        cx.notify();
     }
 
-    pub fn toggle_item(&mut self, item_ix: usize) {
+    pub fn toggle_item(&mut self, item_ix: usize, cx: &mut ViewContext<Self>) {
         if self.active_item_ix == Some(item_ix) {
             self.active_item_ix = None;
         } else {
             self.active_item_ix = Some(item_ix);
         }
+        cx.notify();
     }
 
     pub fn active_item(&self) -> Option<&AnyViewHandle> {
@@ -70,101 +88,14 @@ impl Sidebar {
             .map(|item| &item.view)
     }
 
-    fn theme<'a>(&self, theme: &'a Theme) -> &'a theme::Sidebar {
-        match self.side {
-            Side::Left => &theme.workspace.left_sidebar,
-            Side::Right => &theme.workspace.right_sidebar,
-        }
-    }
-
-    pub fn render(&self, theme: &Theme, cx: &mut RenderContext<Workspace>) -> ElementBox {
-        let side = self.side;
-        let theme = self.theme(theme);
-
-        ConstrainedBox::new(
-            Container::new(
-                Flex::column()
-                    .with_children(self.items.iter().enumerate().map(|(item_index, item)| {
-                        let theme = if Some(item_index) == self.active_item_ix {
-                            &theme.active_item
-                        } else {
-                            &theme.item
-                        };
-                        enum SidebarButton {}
-                        MouseEventHandler::new::<SidebarButton, _, _>(item.view.id(), cx, |_, _| {
-                            ConstrainedBox::new(
-                                Align::new(
-                                    ConstrainedBox::new(
-                                        Svg::new(item.icon_path)
-                                            .with_color(theme.icon_color)
-                                            .boxed(),
-                                    )
-                                    .with_height(theme.icon_size)
-                                    .boxed(),
-                                )
-                                .boxed(),
-                            )
-                            .with_height(theme.height)
-                            .boxed()
-                        })
-                        .with_cursor_style(CursorStyle::PointingHand)
-                        .on_mouse_down(move |cx| {
-                            cx.dispatch_action(ToggleSidebarItem(SidebarItemId {
-                                side,
-                                item_index,
-                            }))
-                        })
-                        .boxed()
-                    }))
-                    .boxed(),
-            )
-            .with_style(theme.container)
-            .boxed(),
-        )
-        .with_width(theme.width)
-        .boxed()
-    }
-
-    pub fn render_active_item(
-        &self,
-        theme: &Theme,
-        cx: &mut RenderContext<Workspace>,
-    ) -> Option<ElementBox> {
-        if let Some(active_item) = self.active_item() {
-            let mut container = Flex::row();
-            if matches!(self.side, Side::Right) {
-                container.add_child(self.render_resize_handle(theme, cx));
-            }
-
-            container.add_child(
-                Hook::new(
-                    ConstrainedBox::new(ChildView::new(active_item).boxed())
-                        .with_max_width(*self.custom_width.borrow())
-                        .boxed(),
-                )
-                .on_after_layout({
-                    let actual_width = self.actual_width.clone();
-                    move |size, _| *actual_width.borrow_mut() = size.x()
-                })
-                .flex(1., false)
-                .boxed(),
-            );
-            if matches!(self.side, Side::Left) {
-                container.add_child(self.render_resize_handle(theme, cx));
-            }
-            Some(container.boxed())
-        } else {
-            None
-        }
-    }
-
-    fn render_resize_handle(&self, theme: &Theme, cx: &mut RenderContext<Workspace>) -> ElementBox {
+    fn render_resize_handle(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
         let actual_width = self.actual_width.clone();
         let custom_width = self.custom_width.clone();
         let side = self.side;
         MouseEventHandler::new::<Self, _, _>(side as usize, cx, |_, _| {
-            Container::new(Empty::new().boxed())
-                .with_style(self.theme(theme).resize_handle)
+            Empty::new()
+                .contained()
+                .with_style(theme.workspace.sidebar_resize_handle)
                 .boxed()
         })
         .with_padding(Padding {
@@ -183,5 +114,120 @@ impl Sidebar {
             cx.notify();
         })
         .boxed()
+    }
+}
+
+impl Entity for Sidebar {
+    type Event = ();
+}
+
+impl View for Sidebar {
+    fn ui_name() -> &'static str {
+        "Sidebar"
+    }
+
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        let theme = cx.global::<Settings>().theme.clone();
+        if let Some(active_item) = self.active_item() {
+            let mut container = Flex::row();
+            if matches!(self.side, Side::Right) {
+                container.add_child(self.render_resize_handle(&theme, cx));
+            }
+
+            container.add_child(
+                Hook::new(
+                    ChildView::new(active_item)
+                        .constrained()
+                        .with_max_width(*self.custom_width.borrow())
+                        .boxed(),
+                )
+                .on_after_layout({
+                    let actual_width = self.actual_width.clone();
+                    move |size, _| *actual_width.borrow_mut() = size.x()
+                })
+                .flex(1., false)
+                .boxed(),
+            );
+            if matches!(self.side, Side::Left) {
+                container.add_child(self.render_resize_handle(&theme, cx));
+            }
+            container.boxed()
+        } else {
+            Empty::new().boxed()
+        }
+    }
+}
+
+impl SidebarButtons {
+    pub fn new(sidebar: ViewHandle<Sidebar>, cx: &mut ViewContext<Self>) -> Self {
+        cx.observe(&sidebar, |_, _, cx| cx.notify()).detach();
+        Self { sidebar }
+    }
+}
+
+impl Entity for SidebarButtons {
+    type Event = ();
+}
+
+impl View for SidebarButtons {
+    fn ui_name() -> &'static str {
+        "SidebarToggleButton"
+    }
+
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        let theme = &cx
+            .global::<Settings>()
+            .theme
+            .workspace
+            .status_bar
+            .sidebar_buttons;
+        let sidebar = self.sidebar.read(cx);
+        let item_style = theme.item;
+        let active_ix = sidebar.active_item_ix;
+        let side = sidebar.side;
+        let group_style = match side {
+            Side::Left => theme.group_left,
+            Side::Right => theme.group_right,
+        };
+        let items = sidebar.items.clone();
+        Flex::row()
+            .with_children(items.iter().enumerate().map(|(ix, item)| {
+                MouseEventHandler::new::<Self, _, _>(ix, cx, move |state, _| {
+                    let style = if Some(ix) == active_ix {
+                        item_style.active()
+                    } else if state.hovered {
+                        item_style.hover()
+                    } else {
+                        &item_style.default
+                    };
+                    Svg::new(item.icon_path)
+                        .with_color(style.icon_color)
+                        .constrained()
+                        .with_height(style.icon_size)
+                        .contained()
+                        .with_style(style.container)
+                        .boxed()
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(move |cx| {
+                    cx.dispatch_action(ToggleSidebarItem {
+                        side,
+                        item_index: ix,
+                    })
+                })
+                .boxed()
+            }))
+            .contained()
+            .with_style(group_style)
+            .boxed()
+    }
+}
+
+impl StatusItemView for SidebarButtons {
+    fn set_active_pane_item(
+        &mut self,
+        _: Option<&dyn crate::ItemHandle>,
+        _: &mut ViewContext<Self>,
+    ) {
     }
 }

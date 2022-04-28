@@ -6,7 +6,8 @@ use gpui::{
     fonts::{HighlightStyle, TextStyle},
     Border,
 };
-use serde::Deserialize;
+use serde::{de::DeserializeOwned, Deserialize};
+use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
 pub use theme_registry::*;
@@ -38,8 +39,7 @@ pub struct Workspace {
     pub pane_divider: Border,
     pub leader_border_opacity: f32,
     pub leader_border_width: f32,
-    pub left_sidebar: Sidebar,
-    pub right_sidebar: Sidebar,
+    pub sidebar_resize_handle: ContainerStyle,
     pub status_bar: StatusBar,
     pub toolbar: Toolbar,
     pub disconnected_overlay: ContainedText,
@@ -55,13 +55,9 @@ pub struct Titlebar {
     pub avatar_width: f32,
     pub avatar_ribbon: AvatarRibbon,
     pub offline_icon: OfflineIcon,
-    pub share_icon: ShareIcon,
-    pub hovered_share_icon: ShareIcon,
-    pub active_share_icon: ShareIcon,
-    pub hovered_active_share_icon: ShareIcon,
+    pub share_icon: Interactive<ShareIcon>,
     pub avatar: ImageStyle,
-    pub sign_in_prompt: ContainedText,
-    pub hovered_sign_in_prompt: ContainedText,
+    pub sign_in_prompt: Interactive<ContainedText>,
     pub outdated_warning: ContainedText,
 }
 
@@ -138,33 +134,64 @@ pub struct FindEditor {
 }
 
 #[derive(Deserialize, Default)]
-pub struct Sidebar {
-    #[serde(flatten)]
-    pub container: ContainerStyle,
-    pub width: f32,
-    pub item: SidebarItem,
-    pub active_item: SidebarItem,
-    pub resize_handle: ContainerStyle,
-}
-
-#[derive(Deserialize, Default)]
-pub struct SidebarItem {
-    pub icon_color: Color,
-    pub icon_size: f32,
-    pub height: f32,
-}
-
-#[derive(Deserialize, Default)]
 pub struct StatusBar {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub height: f32,
     pub item_spacing: f32,
     pub cursor_position: TextStyle,
-    pub diagnostic_message: TextStyle,
-    pub lsp_message: TextStyle,
     pub auto_update_progress_message: TextStyle,
     pub auto_update_done_message: TextStyle,
+    pub lsp_status: Interactive<StatusBarLspStatus>,
+    pub sidebar_buttons: StatusBarSidebarButtons,
+    pub diagnostic_summary: Interactive<StatusBarDiagnosticSummary>,
+    pub diagnostic_message: Interactive<ContainedText>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct StatusBarSidebarButtons {
+    pub group_left: ContainerStyle,
+    pub group_right: ContainerStyle,
+    pub item: Interactive<SidebarItem>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct StatusBarDiagnosticSummary {
+    pub container_ok: ContainerStyle,
+    pub container_warning: ContainerStyle,
+    pub container_error: ContainerStyle,
+    pub text: TextStyle,
+    pub icon_color_ok: Color,
+    pub icon_color_warning: Color,
+    pub icon_color_error: Color,
+    pub height: f32,
+    pub icon_width: f32,
+    pub icon_spacing: f32,
+    pub summary_spacing: f32,
+}
+
+#[derive(Deserialize, Default)]
+pub struct StatusBarLspStatus {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub height: f32,
+    pub icon_spacing: f32,
+    pub icon_color: Color,
+    pub icon_width: f32,
+    pub message: TextStyle,
+}
+
+#[derive(Deserialize, Default)]
+pub struct Sidebar {
+    pub resize_handle: ContainerStyle,
+}
+
+#[derive(Clone, Copy, Deserialize, Default)]
+pub struct SidebarItem {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub icon_color: Color,
+    pub icon_size: f32,
 }
 
 #[derive(Deserialize, Default)]
@@ -291,7 +318,6 @@ pub struct ProjectDiagnostics {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub empty_message: TextStyle,
-    pub status_bar_item: ContainedText,
     pub tab_icon_width: f32,
     pub tab_icon_spacing: f32,
     pub tab_summary_spacing: f32,
@@ -382,6 +408,77 @@ pub struct FieldEditor {
     #[serde(default)]
     pub placeholder_text: Option<TextStyle>,
     pub selection: SelectionStyle,
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct Interactive<T> {
+    pub default: T,
+    pub hover: Option<T>,
+    pub active: Option<T>,
+    pub active_hover: Option<T>,
+}
+
+impl<T> Interactive<T> {
+    pub fn active(&self) -> &T {
+        self.active.as_ref().unwrap_or(&self.default)
+    }
+
+    pub fn hover(&self) -> &T {
+        self.hover.as_ref().unwrap_or(&self.default)
+    }
+
+    pub fn active_hover(&self) -> &T {
+        self.active_hover.as_ref().unwrap_or(self.active())
+    }
+}
+
+impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Helper {
+            #[serde(flatten)]
+            default: Value,
+            hover: Option<Value>,
+            active: Option<Value>,
+            active_hover: Option<Value>,
+        }
+
+        let json = Helper::deserialize(deserializer)?;
+
+        let deserialize_state = |state_json: Option<Value>| -> Result<Option<T>, D::Error> {
+            if let Some(mut state_json) = state_json {
+                if let Value::Object(state_json) = &mut state_json {
+                    if let Value::Object(default) = &json.default {
+                        for (key, value) in default {
+                            if !state_json.contains_key(key) {
+                                state_json.insert(key.clone(), value.clone());
+                            }
+                        }
+                    }
+                }
+                Ok(Some(
+                    serde_json::from_value::<T>(state_json).map_err(serde::de::Error::custom)?,
+                ))
+            } else {
+                Ok(None)
+            }
+        };
+
+        let hover = deserialize_state(json.hover)?;
+        let active = deserialize_state(json.active)?;
+        let active_hover = deserialize_state(json.active_hover)?;
+        let default = serde_json::from_value(json.default).map_err(serde::de::Error::custom)?;
+
+        Ok(Interactive {
+            default,
+            hover,
+            active,
+            active_hover,
+        })
+    }
 }
 
 impl Editor {

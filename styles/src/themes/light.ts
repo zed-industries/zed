@@ -34,28 +34,28 @@ const backgroundColor = {
     focused: colors.neutral[25],
   },
   ok: {
-    base: colors.green[100],
-    hovered: colors.green[100],
-    active: colors.green[100],
-    focused: colors.green[100],
+    base: withOpacity(colors.green[600], 0.15),
+    hovered: withOpacity(colors.green[600], 0.20),
+    active: withOpacity(colors.green[600], 0.25),
+    focused: withOpacity(colors.green[600], 0.20),
   },
   error: {
-    base: colors.red[100],
-    hovered: colors.red[100],
-    active: colors.red[100],
-    focused: colors.red[100],
+    base: withOpacity(colors.red[600], 0.15),
+    hovered: withOpacity(colors.red[600], 0.20),
+    active: withOpacity(colors.red[600], 0.25),
+    focused: withOpacity(colors.red[600], 0.20),
   },
   warning: {
-    base: colors.yellow[100],
-    hovered: colors.yellow[100],
-    active: colors.yellow[100],
-    focused: colors.yellow[100],
+    base: withOpacity(colors.amber[400], 0.15),
+    hovered: withOpacity(colors.amber[400], 0.20),
+    active: withOpacity(colors.amber[400], 0.25),
+    focused: withOpacity(colors.amber[400], 0.20),
   },
   info: {
-    base: colors.blue[100],
-    hovered: colors.blue[100],
-    active: colors.blue[100],
-    focused: colors.blue[100],
+    base: withOpacity(colors.blue[500], 0.15),
+    hovered: withOpacity(colors.blue[500], 0.20),
+    active: withOpacity(colors.blue[500], 0.25),
+    focused: withOpacity(colors.blue[500], 0.20),
   },
 };
 
@@ -65,10 +65,10 @@ const borderColor = {
   muted: colors.neutral[100],
   focused: colors.indigo[500],
   active: colors.neutral[250],
-  ok: colors.green[200],
-  error: colors.red[200],
-  warning: colors.yellow[200],
-  info: colors.blue[200],
+  ok: withOpacity(colors.green[600], 0.15),
+  error: withOpacity(colors.red[500], 0.15),
+  warning: withOpacity(colors.amber[400], 0.15),
+  info: withOpacity(colors.blue[500], 0.15),
 };
 
 const textColor = {
@@ -122,10 +122,10 @@ const editor = {
   highlight: {
     selection: player[1].selectionColor,
     occurrence: withOpacity(colors.neutral[900], 0.06),
-    activeOccurrence: withOpacity(colors.neutral[900], 0.16), // TODO: This is not hooked up to occurences on the rust side
+    activeOccurrence: withOpacity(colors.neutral[900], 0.16),
     matchingBracket: colors.neutral[0],
     match: colors.yellow[100],
-    activeMatch: colors.yellow[200], // TODO: This is not hooked up to occurences on the rust side
+    activeMatch: colors.yellow[200],
     related: colors.neutral[0],
   },
   gutter: {

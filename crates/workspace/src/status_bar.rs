@@ -1,9 +1,9 @@
 use crate::{ItemHandle, Pane};
-use settings::Settings;
 use gpui::{
     elements::*, AnyViewHandle, ElementBox, Entity, MutableAppContext, RenderContext, Subscription,
     View, ViewContext, ViewHandle,
 };
+use settings::Settings;
 
 pub trait StatusItemView: View {
     fn set_active_pane_item(
@@ -48,7 +48,7 @@ impl View for StatusBar {
                     .with_margin_right(theme.item_spacing)
                     .boxed()
             }))
-            .with_children(self.right_items.iter().map(|i| {
+            .with_children(self.right_items.iter().rev().map(|i| {
                 ChildView::new(i.as_ref())
                     .aligned()
                     .contained()

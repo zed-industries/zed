@@ -34,28 +34,28 @@ const backgroundColor = {
     focused: colors.neutral[800],
   },
   ok: {
-    base: colors.green[600],
-    hovered: colors.green[600],
-    active: colors.green[600],
-    focused: colors.green[600],
+    base: withOpacity(colors.green[600], 0.15),
+    hovered: withOpacity(colors.green[600], 0.20),
+    active: withOpacity(colors.green[600], 0.25),
+    focused: withOpacity(colors.green[600], 0.20),
   },
   error: {
-    base: colors.red[400],
-    hovered: colors.red[400],
-    active: colors.red[400],
-    focused: colors.red[400],
+    base: withOpacity(colors.red[600], 0.15),
+    hovered: withOpacity(colors.red[600], 0.20),
+    active: withOpacity(colors.red[600], 0.25),
+    focused: withOpacity(colors.red[600], 0.20),
   },
   warning: {
-    base: colors.amber[300],
-    hovered: colors.amber[300],
-    active: colors.amber[300],
-    focused: colors.amber[300],
+    base: withOpacity(colors.amber[400], 0.15),
+    hovered: withOpacity(colors.amber[400], 0.20),
+    active: withOpacity(colors.amber[400], 0.25),
+    focused: withOpacity(colors.amber[400], 0.20),
   },
   info: {
-    base: colors.blue[500],
-    hovered: colors.blue[500],
-    active: colors.blue[500],
-    focused: colors.blue[500],
+    base: withOpacity(colors.blue[500], 0.15),
+    hovered: withOpacity(colors.blue[500], 0.20),
+    active: withOpacity(colors.blue[500], 0.25),
+    focused: withOpacity(colors.blue[500], 0.20),
   },
 };
 
@@ -65,10 +65,10 @@ const borderColor = {
   muted: colors.neutral[675],
   focused: colors.indigo[500],
   active: colors.neutral[900],
-  ok: colors.green[500],
-  error: colors.red[500],
-  warning: colors.amber[500],
-  info: colors.blue[500],
+  ok: withOpacity(colors.green[600], 0.15),
+  error: withOpacity(colors.red[500], 0.15),
+  warning: withOpacity(colors.amber[400], 0.15),
+  info: withOpacity(colors.blue[500], 0.15),
 };
 
 const textColor = {
@@ -77,7 +77,6 @@ const textColor = {
   muted: colors.neutral[450],
   placeholder: colors.neutral[650],
   active: colors.neutral[0],
-  //TODO: (design) define feature and it's correct value
   feature: colors.blue[400],
   ok: colors.green[600],
   error: colors.red[400],
@@ -91,7 +90,6 @@ const iconColor = {
   muted: colors.neutral[600],
   placeholder: colors.neutral[700],
   active: colors.neutral[0],
-  //TODO: (design) define feature and it's correct value
   feature: colors.blue[500],
   ok: colors.green[600],
   error: colors.red[500],
@@ -124,7 +122,7 @@ const editor = {
   highlight: {
     selection: player[1].selectionColor,
     occurrence: withOpacity(colors.neutral[0], 0.12),
-    activeOccurrence: withOpacity(colors.neutral[0], 0.16), // TODO: This is not correctly hooked up to occurences on the rust side
+    activeOccurrence: withOpacity(colors.neutral[0], 0.16),
     matchingBracket: backgroundColor[500].active,
     match: withOpacity(colors.violet[700], 0.5),
     activeMatch: withOpacity(colors.violet[600], 0.7),
