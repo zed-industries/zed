@@ -55,13 +55,9 @@ pub struct Titlebar {
     pub avatar_width: f32,
     pub avatar_ribbon: AvatarRibbon,
     pub offline_icon: OfflineIcon,
-    pub share_icon: ShareIcon,
-    pub hovered_share_icon: ShareIcon,
-    pub active_share_icon: ShareIcon,
-    pub hovered_active_share_icon: ShareIcon,
+    pub share_icon: Interactive<ShareIcon>,
     pub avatar: ImageStyle,
-    pub sign_in_prompt: ContainedText,
-    pub hovered_sign_in_prompt: ContainedText,
+    pub sign_in_prompt: Interactive<ContainedText>,
     pub outdated_warning: ContainedText,
 }
 
@@ -418,6 +414,7 @@ pub struct Interactive<T> {
     pub default: T,
     pub hover: Option<T>,
     pub active: Option<T>,
+    pub active_hover: Option<T>,
 }
 
 impl<T> Interactive<T> {
@@ -427,6 +424,10 @@ impl<T> Interactive<T> {
 
     pub fn hover(&self) -> &T {
         self.hover.as_ref().unwrap_or(&self.default)
+    }
+
+    pub fn active_hover(&self) -> &T {
+        self.active_hover.as_ref().unwrap_or(self.active())
     }
 }
 
@@ -441,46 +442,40 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
             default: Value,
             hover: Option<Value>,
             active: Option<Value>,
+            active_hover: Option<Value>,
         }
 
         let json = Helper::deserialize(deserializer)?;
 
-        let hover = if let Some(mut hovered) = json.hover {
-            if let Value::Object(hovered) = &mut hovered {
-                if let Value::Object(default) = &json.default {
-                    for (key, value) in default {
-                        if !hovered.contains_key(key) {
-                            hovered.insert(key.clone(), value.clone());
+        let deserialize_state = |state_json: Option<Value>| -> Result<Option<T>, D::Error> {
+            if let Some(mut state_json) = state_json {
+                if let Value::Object(state_json) = &mut state_json {
+                    if let Value::Object(default) = &json.default {
+                        for (key, value) in default {
+                            if !state_json.contains_key(key) {
+                                state_json.insert(key.clone(), value.clone());
+                            }
                         }
                     }
                 }
+                Ok(Some(
+                    serde_json::from_value::<T>(state_json).map_err(serde::de::Error::custom)?,
+                ))
+            } else {
+                Ok(None)
             }
-            Some(serde_json::from_value::<T>(hovered).map_err(serde::de::Error::custom)?)
-        } else {
-            None
         };
 
-        let active = if let Some(mut active) = json.active {
-            if let Value::Object(active) = &mut active {
-                if let Value::Object(default) = &json.default {
-                    for (key, value) in default {
-                        if !active.contains_key(key) {
-                            active.insert(key.clone(), value.clone());
-                        }
-                    }
-                }
-            }
-            Some(serde_json::from_value::<T>(active).map_err(serde::de::Error::custom)?)
-        } else {
-            None
-        };
-
+        let hover = deserialize_state(json.hover)?;
+        let active = deserialize_state(json.active)?;
+        let active_hover = deserialize_state(json.active_hover)?;
         let default = serde_json::from_value(json.default).map_err(serde::de::Error::custom)?;
 
         Ok(Interactive {
             default,
             hover,
             active,
+            active_hover,
         })
     }
 }

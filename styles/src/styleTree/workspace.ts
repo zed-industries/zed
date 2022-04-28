@@ -2,20 +2,6 @@ import Theme from "../themes/theme";
 import { backgroundColor, border, iconColor, text } from "./components";
 
 export default function workspace(theme: Theme) {
-  const signInPrompt = {
-    ...text(theme, "sans", "secondary", { size: "xs" }),
-    border: border(theme, "primary"),
-    cornerRadius: 6,
-    margin: {
-      top: 1,
-      right: 6,
-    },
-    padding: {
-      left: 6,
-      right: 6,
-    },
-  };
-
   const tab = {
     height: 32,
     background: backgroundColor(theme, 300),
@@ -51,10 +37,6 @@ export default function workspace(theme: Theme) {
     cornerRadius: 6,
     padding: { left: 6, right: 6 },
     ...text(theme, "sans", "primary", { size: "sm" }),
-  };
-  const shareIcon = {
-    cornerRadius: 6,
-    margin: { top: 3, bottom: 2 },
   };
 
   return {
@@ -183,10 +165,19 @@ export default function workspace(theme: Theme) {
         // set with a token, not hardcoded in rust
       },
       border: border(theme, "primary", { bottom: true }),
-      signInPrompt,
-      hoveredSignInPrompt: {
-        ...signInPrompt,
-        ...text(theme, "sans", "active", { size: "xs" }),
+      signInPrompt: {
+        border: border(theme, "primary"),
+        cornerRadius: 6,
+        margin: {
+          top: 1,
+          right: 6,
+        },
+        padding: {
+          left: 6,
+          right: 6,
+        },
+        ...text(theme, "sans", "secondary", { size: "xs" }),
+        hover: text(theme, "sans", "active", { size: "xs" }),
       },
       offlineIcon: {
         color: iconColor(theme, "secondary"),
@@ -196,23 +187,21 @@ export default function workspace(theme: Theme) {
         },
       },
       shareIcon: {
-        ...shareIcon,
-        color: iconColor(theme, "secondary")
-      },
-      hoveredShareIcon: {
-        ...shareIcon,
-        background: backgroundColor(theme, 100, "hovered"),
+        cornerRadius: 6,
+        margin: { top: 3, bottom: 2 },
         color: iconColor(theme, "secondary"),
-      },
-      hoveredActiveShareIcon: {
-        ...shareIcon,
-        background: backgroundColor(theme, 100, "hovered"),
-        color: iconColor(theme, "active"),
-      },
-      activeShareIcon: {
-        ...shareIcon,
-        background: backgroundColor(theme, 100, "active"),
-        color: iconColor(theme, "active"),
+        hover: {
+          background: backgroundColor(theme, 100, "hovered"),
+          color: iconColor(theme, "secondary"),
+        },
+        active: {
+          background: backgroundColor(theme, 100, "active"),
+          color: iconColor(theme, "active"),
+        },
+        activeHover: {
+          background: backgroundColor(theme, 100, "hovered"),
+          color: iconColor(theme, "active"),
+        }
       },
       outdatedWarning: {
         ...text(theme, "sans", "warning"),

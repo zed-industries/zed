@@ -347,39 +347,26 @@
         "bottom": true
       },
       "sign_in_prompt": {
+        "border": {
+          "color": "#efecf4",
+          "width": 1
+        },
+        "corner_radius": 6,
+        "margin": {
+          "top": 1,
+          "right": 6
+        },
+        "padding": {
+          "left": 6,
+          "right": 6
+        },
         "family": "Zed Sans",
         "color": "#585260",
         "size": 12,
-        "border": {
-          "color": "#efecf4",
-          "width": 1
-        },
-        "corner_radius": 6,
-        "margin": {
-          "top": 1,
-          "right": 6
-        },
-        "padding": {
-          "left": 6,
-          "right": 6
-        }
-      },
-      "hovered_sign_in_prompt": {
-        "family": "Zed Sans",
-        "color": "#19171c",
-        "size": 12,
-        "border": {
-          "color": "#efecf4",
-          "width": 1
-        },
-        "corner_radius": 6,
-        "margin": {
-          "top": 1,
-          "right": 6
-        },
-        "padding": {
-          "left": 6,
-          "right": 6
+        "hover": {
+          "family": "Zed Sans",
+          "color": "#19171c",
+          "size": 12
         }
       },
       "offline_icon": {
@@ -395,34 +382,19 @@
           "top": 3,
           "bottom": 2
         },
-        "color": "#585260"
-      },
-      "hovered_share_icon": {
-        "corner_radius": 6,
-        "margin": {
-          "top": 3,
-          "bottom": 2
+        "color": "#585260",
+        "hover": {
+          "background": "#8b87921f",
+          "color": "#585260"
         },
-        "background": "#8b87921f",
-        "color": "#585260"
-      },
-      "hovered_active_share_icon": {
-        "corner_radius": 6,
-        "margin": {
-          "top": 3,
-          "bottom": 2
+        "active": {
+          "background": "#8b87922e",
+          "color": "#19171c"
         },
-        "background": "#8b87921f",
-        "color": "#19171c"
-      },
-      "active_share_icon": {
-        "corner_radius": 6,
-        "margin": {
-          "top": 3,
-          "bottom": 2
-        },
-        "background": "#8b87922e",
-        "color": "#19171c"
+        "active_hover": {
+          "background": "#8b87921f",
+          "color": "#19171c"
+        }
       },
       "outdated_warning": {
         "family": "Zed Sans",
