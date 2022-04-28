@@ -1316,7 +1316,7 @@ impl Editor {
     pub fn replace_selections_with(
         &mut self,
         cx: &mut ViewContext<Self>,
-        find_replacement: impl Fn(&DisplaySnapshot) -> DisplayPoint,
+        mut find_replacement: impl FnMut(&DisplaySnapshot) -> DisplayPoint,
     ) {
         let display_map = self.snapshot(cx);
         let cursor = find_replacement(&display_map);
@@ -1334,7 +1334,7 @@ impl Editor {
     pub fn move_selections(
         &mut self,
         cx: &mut ViewContext<Self>,
-        move_selection: impl Fn(&DisplaySnapshot, &mut Selection<DisplayPoint>),
+        mut move_selection: impl FnMut(&DisplaySnapshot, &mut Selection<DisplayPoint>),
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self
@@ -1352,7 +1352,7 @@ impl Editor {
     pub fn move_selection_heads(
         &mut self,
         cx: &mut ViewContext<Self>,
-        update_head: impl Fn(
+        mut update_head: impl FnMut(
             &DisplaySnapshot,
             DisplayPoint,
             SelectionGoal,
@@ -1367,7 +1367,7 @@ impl Editor {
     pub fn move_cursors(
         &mut self,
         cx: &mut ViewContext<Self>,
-        update_cursor_position: impl Fn(
+        mut update_cursor_position: impl FnMut(
             &DisplaySnapshot,
             DisplayPoint,
             SelectionGoal,
