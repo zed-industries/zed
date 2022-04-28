@@ -254,8 +254,7 @@
           "padding": {
             "left": 6,
             "right": 6
-          },
-          "background": "#93a1a11f"
+          }
         },
         "container_warning": {
           "corner_radius": 6,

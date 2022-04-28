@@ -99,7 +99,6 @@ export default function workspace(theme: Theme) {
         containerOk: {
           cornerRadius: 6,
           padding: { left: 6, right: 6 },
-          background: backgroundColor(theme, 300, "hovered"),
         },
         containerWarning: {
           cornerRadius: 6,
