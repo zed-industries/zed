@@ -1,1 +1,2 @@
 ZED_ENVIRONMENT=production
+TRACE_LEVEL=debug

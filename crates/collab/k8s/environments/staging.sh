@@ -1,1 +1,2 @@
 ZED_ENVIRONMENT=staging
+TRACE_LEVEL=debug

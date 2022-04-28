@@ -85,6 +85,15 @@ spec:
               value: "1"
             - name: RUST_LOG
               value: "trace"
+            - name: TRACE_LEVEL
+              value: ${TRACE_LEVEL}
+            - name: HONEYCOMB_DATASET
+              value: "collab"
+            - name: HONEYCOMB_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: honeycomb
+                  key: apiKey
           securityContext:
             capabilities:
               # FIXME - Switch to the more restrictive `PERFMON` capability.
