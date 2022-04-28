@@ -1179,7 +1179,6 @@ impl Buffer {
                     let start = (delta + range.start as isize) as usize + first_newline_ix + 1;
                     let end = (delta + range.start as isize) as usize + new_text_len;
                     delta += new_text_len as isize - (range.end as isize - range.start as isize);
-                    dbg!(&range, new_text, start, end, delta);
                     Some(self.anchor_before(start)..self.anchor_after(end))
                 })
                 .collect::<Vec<Range<Anchor>>>();
