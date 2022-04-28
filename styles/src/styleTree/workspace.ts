@@ -33,12 +33,6 @@ export default function workspace(theme: Theme) {
     },
   };
 
-  const diagnosticSummary = {
-    cornerRadius: 6,
-    padding: { left: 6, right: 6 },
-    ...text(theme, "sans", "primary", { size: "sm" }),
-  };
-
   return {
     background: backgroundColor(theme, 300),
     leaderBorderOpacity: 0.7,
@@ -89,40 +83,56 @@ export default function workspace(theme: Theme) {
           background: backgroundColor(theme, 300, "hovered"),
         }
       },
-      diagnostics: {
+      diagnosticMessage: {
+        ...text(theme, "sans", "muted"),
+        hover: text(theme, "sans", "secondary"),
+      },
+      diagnosticSummary: {
         height: 16,
-        summaryOk: {
-          ...diagnosticSummary,
-          hover: {
-            background: backgroundColor(theme, 300, "hovered"),
-          }
-        },
-        summaryWarning: {
-          ...diagnosticSummary,
-          background: backgroundColor(theme, "warning"),
-          border: border(theme, "warning"),
-          hover: {
-            background: backgroundColor(theme, "warning", "hovered"),
-          }
-        },
-        summaryError: {
-          ...diagnosticSummary,
-          background: backgroundColor(theme, "error"),
-          border: border(theme, "error"),
-          hover: {
-            background: backgroundColor(theme, "error", "hovered"),
-          }
-        },
-        message: {
-          ...text(theme, "sans", "muted"),
-          hover: text(theme, "sans", "secondary"),
-        },
-        iconColorOk: iconColor(theme, "secondary"),
-        iconColorWarning: iconColor(theme, "warning"),
-        iconColorError: iconColor(theme, "error"),
         iconWidth: 14,
         iconSpacing: 2,
         summarySpacing: 6,
+        text: text(theme, "sans", "primary", { size: "sm" }),
+        iconColorOk: iconColor(theme, "secondary"),
+        iconColorWarning: iconColor(theme, "warning"),
+        iconColorError: iconColor(theme, "error"),
+        containerOk: {
+          cornerRadius: 6,
+          padding: { left: 6, right: 6 },
+          background: backgroundColor(theme, 300, "hovered"),
+        },
+        containerWarning: {
+          cornerRadius: 6,
+          padding: { left: 6, right: 6 },
+          background: backgroundColor(theme, "warning"),
+          border: border(theme, "warning"),
+        },
+        containerError: {
+          cornerRadius: 6,
+          padding: { left: 6, right: 6 },
+          background: backgroundColor(theme, "error"),
+          border: border(theme, "error"),
+        },
+        hover: {
+          iconColorOk: iconColor(theme, "primary"),
+          containerOk: {
+            cornerRadius: 6,
+            padding: { left: 6, right: 6 },
+            background: backgroundColor(theme, 300, "hovered"),
+          },
+          containerWarning: {
+            cornerRadius: 6,
+            padding: { left: 6, right: 6 },
+            background: backgroundColor(theme, "warning", "hovered"),
+            border: border(theme, "warning"),
+          },
+          containerError: {
+            cornerRadius: 6,
+            padding: { left: 6, right: 6 },
+            background: backgroundColor(theme, "error", "hovered"),
+            border: border(theme, "error"),
+          }
+        },
       },
       sidebarButtons: {
         groupLeft: {},

@@ -95,20 +95,11 @@ impl View for DiagnosticIndicator {
                     .theme
                     .workspace
                     .status_bar
-                    .diagnostics;
-
-                let summary_style = if self.summary.error_count > 0 {
-                    &style.summary_error
-                } else if self.summary.warning_count > 0 {
-                    &style.summary_warning
+                    .diagnostic_summary;
+                let style = if state.hovered {
+                    style.hover()
                 } else {
-                    &style.summary_ok
-                };
-
-                let summary_style = if state.hovered {
-                    summary_style.hover()
-                } else {
-                    &summary_style.default
+                    &style.default
                 };
 
                 let mut summary_row = Flex::row();
@@ -122,12 +113,9 @@ impl View for DiagnosticIndicator {
                             .contained()
                             .with_margin_right(style.icon_spacing)
                             .named("error-icon"),
-                        Label::new(
-                            self.summary.error_count.to_string(),
-                            summary_style.text.clone(),
-                        )
-                        .aligned()
-                        .boxed(),
+                        Label::new(self.summary.error_count.to_string(), style.text.clone())
+                            .aligned()
+                            .boxed(),
                     ]);
                 }
 
@@ -146,12 +134,9 @@ impl View for DiagnosticIndicator {
                                 0.
                             })
                             .named("warning-icon"),
-                        Label::new(
-                            self.summary.warning_count.to_string(),
-                            summary_style.text.clone(),
-                        )
-                        .aligned()
-                        .boxed(),
+                        Label::new(self.summary.warning_count.to_string(), style.text.clone())
+                            .aligned()
+                            .boxed(),
                     ]);
                 }
 
@@ -170,7 +155,13 @@ impl View for DiagnosticIndicator {
                     .constrained()
                     .with_height(style.height)
                     .contained()
-                    .with_style(summary_style.container)
+                    .with_style(if self.summary.error_count > 0 {
+                        style.container_error
+                    } else if self.summary.warning_count > 0 {
+                        style.container_warning
+                    } else {
+                        style.container_ok
+                    })
                     .boxed()
             })
             .with_cursor_style(CursorStyle::PointingHand)
@@ -181,20 +172,22 @@ impl View for DiagnosticIndicator {
 
         let style = &cx.global::<Settings>().theme.workspace.status_bar;
         let item_spacing = style.item_spacing;
-        let message_style = &style.diagnostics.message;
 
         if in_progress {
             element.add_child(
-                Label::new("checking…".into(), message_style.default.text.clone())
-                    .aligned()
-                    .contained()
-                    .with_margin_left(item_spacing)
-                    .boxed(),
+                Label::new(
+                    "checking…".into(),
+                    style.diagnostic_message.default.text.clone(),
+                )
+                .aligned()
+                .contained()
+                .with_margin_left(item_spacing)
+                .boxed(),
             );
         } else if let Some(diagnostic) = &self.current_diagnostic {
-            let message_style = message_style.clone();
+            let message_style = style.diagnostic_message.clone();
             element.add_child(
-                MouseEventHandler::new::<Message, _, _>(0, cx, |state, _| {
+                MouseEventHandler::new::<Message, _, _>(1, cx, |state, _| {
                     Label::new(
                         diagnostic.message.split('\n').next().unwrap().to_string(),
                         if state.hovered {

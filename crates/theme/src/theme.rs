@@ -144,7 +144,8 @@ pub struct StatusBar {
     pub auto_update_done_message: TextStyle,
     pub lsp_status: Interactive<StatusBarLspStatus>,
     pub sidebar_buttons: StatusBarSidebarButtons,
-    pub diagnostics: StatusBarDiagnostics,
+    pub diagnostic_summary: Interactive<StatusBarDiagnosticSummary>,
+    pub diagnostic_message: Interactive<ContainedText>,
 }
 
 #[derive(Deserialize, Default)]
@@ -155,14 +156,14 @@ pub struct StatusBarSidebarButtons {
 }
 
 #[derive(Deserialize, Default)]
-pub struct StatusBarDiagnostics {
-    pub message: Interactive<ContainedText>,
-    pub summary_ok: Interactive<ContainedText>,
-    pub summary_warning: Interactive<ContainedText>,
-    pub summary_error: Interactive<ContainedText>,
+pub struct StatusBarDiagnosticSummary {
+    pub container_ok: ContainerStyle,
+    pub container_warning: ContainerStyle,
+    pub container_error: ContainerStyle,
+    pub text: TextStyle,
     pub icon_color_ok: Color,
-    pub icon_color_error: Color,
     pub icon_color_warning: Color,
+    pub icon_color_error: Color,
     pub height: f32,
     pub icon_width: f32,
     pub icon_spacing: f32,
