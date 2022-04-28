@@ -6,7 +6,7 @@ import commandPalette from "./commandPalette";
 import editor from "./editor";
 import projectPanel from "./projectPanel";
 import search from "./search";
-import selectorModal from "./selectorModal";
+import picker from "./picker";
 import workspace from "./workspace";
 import projectDiagnostics from "./projectDiagnostics";
 
@@ -16,7 +16,7 @@ export const panel = {
 
 export default function app(theme: Theme): Object {
   return {
-    selector: selectorModal(theme),
+    picker: picker(theme),
     workspace: workspace(theme),
     editor: editor(theme),
     projectDiagnostics: projectDiagnostics(theme),

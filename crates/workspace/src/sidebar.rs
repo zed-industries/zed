@@ -193,13 +193,7 @@ impl View for SidebarButtons {
         Flex::row()
             .with_children(items.iter().enumerate().map(|(ix, item)| {
                 MouseEventHandler::new::<Self, _, _>(ix, cx, move |state, _| {
-                    let style = if Some(ix) == active_ix {
-                        item_style.active()
-                    } else if state.hovered {
-                        item_style.hover()
-                    } else {
-                        &item_style.default
-                    };
+                    let style = item_style.style_for(state, Some(ix) == active_ix);
                     Svg::new(item.icon_path)
                         .with_color(style.icon_color)
                         .constrained()

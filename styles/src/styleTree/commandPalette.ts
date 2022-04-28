@@ -18,6 +18,9 @@ export default function commandPalette(theme: Theme) {
       margin: {
         left: 2
       },
+      active: {
+        text: text(theme, "mono", "active", { size: "xs" }),
+      }
     }
   }
 }

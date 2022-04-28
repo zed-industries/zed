@@ -1,12 +1,14 @@
 use editor::Editor;
 use gpui::{
     elements::{
-        ChildView, EventHandler, Flex, Label, ParentElement, ScrollTarget, UniformList,
-        UniformListState,
+        ChildView, Flex, Label, MouseEventHandler, MouseState, ParentElement, ScrollTarget,
+        UniformList, UniformListState,
     },
     geometry::vector::{vec2f, Vector2F},
-    keymap, AppContext, Axis, Element, ElementBox, Entity, MutableAppContext, RenderContext, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle,
+    keymap,
+    platform::CursorStyle,
+    AppContext, Axis, Element, ElementBox, Entity, MutableAppContext, RenderContext, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 use std::cmp;
@@ -29,7 +31,13 @@ pub trait PickerDelegate: View {
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) -> Task<()>;
     fn confirm(&mut self, cx: &mut ViewContext<Self>);
     fn dismiss(&mut self, cx: &mut ViewContext<Self>);
-    fn render_match(&self, ix: usize, selected: bool, cx: &AppContext) -> ElementBox;
+    fn render_match(
+        &self,
+        ix: usize,
+        state: &MouseState,
+        selected: bool,
+        cx: &AppContext,
+    ) -> ElementBox;
     fn center_selection_after_match_updates(&self) -> bool {
         false
     }
@@ -57,34 +65,34 @@ impl<D: PickerDelegate> View for Picker<D> {
             .with_child(
                 ChildView::new(&self.query_editor)
                     .contained()
-                    .with_style(settings.theme.selector.input_editor.container)
+                    .with_style(settings.theme.picker.input_editor.container)
                     .boxed(),
             )
             .with_child(
                 if match_count == 0 {
                     Label::new(
                         "No matches".into(),
-                        settings.theme.selector.empty.label.clone(),
+                        settings.theme.picker.empty.label.clone(),
                     )
                     .contained()
-                    .with_style(settings.theme.selector.empty.container)
+                    .with_style(settings.theme.picker.empty.container)
                 } else {
                     UniformList::new(
                         self.list_state.clone(),
                         match_count,
                         move |mut range, items, cx| {
-                            let cx = cx.as_ref();
                             let delegate = delegate.upgrade(cx).unwrap();
-                            let delegate = delegate.read(cx);
-                            let selected_ix = delegate.selected_index();
-                            range.end = cmp::min(range.end, delegate.match_count());
+                            let selected_ix = delegate.read(cx).selected_index();
+                            range.end = cmp::min(range.end, delegate.read(cx).match_count());
                             items.extend(range.map(move |ix| {
-                                EventHandler::new(delegate.render_match(ix, ix == selected_ix, cx))
-                                    .on_mouse_down(move |cx| {
-                                        cx.dispatch_action(SelectIndex(ix));
-                                        true
-                                    })
-                                    .boxed()
+                                MouseEventHandler::new::<D, _, _>(ix, cx, |state, cx| {
+                                    delegate
+                                        .read(cx)
+                                        .render_match(ix, state, ix == selected_ix, cx)
+                                })
+                                .on_mouse_down(move |cx| cx.dispatch_action(SelectIndex(ix)))
+                                .with_cursor_style(CursorStyle::PointingHand)
+                                .boxed()
                             }));
                         },
                     )
@@ -95,7 +103,7 @@ impl<D: PickerDelegate> View for Picker<D> {
                 .boxed(),
             )
             .contained()
-            .with_style(settings.theme.selector.container)
+            .with_style(settings.theme.picker.container)
             .constrained()
             .with_max_width(self.max_size.x())
             .with_max_height(self.max_size.y())
@@ -126,7 +134,7 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn new(delegate: WeakViewHandle<D>, cx: &mut ViewContext<Self>) -> Self {
         let query_editor = cx.add_view(|cx| {
-            Editor::single_line(Some(|theme| theme.selector.input_editor.clone()), cx)
+            Editor::single_line(Some(|theme| theme.picker.input_editor.clone()), cx)
         });
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();

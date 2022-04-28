@@ -228,14 +228,16 @@ impl PickerDelegate for OutlineView {
         cx.emit(Event::Dismissed);
     }
 
-    fn render_match(&self, ix: usize, selected: bool, cx: &AppContext) -> ElementBox {
+    fn render_match(
+        &self,
+        ix: usize,
+        mouse_state: &MouseState,
+        selected: bool,
+        cx: &AppContext,
+    ) -> ElementBox {
         let settings = cx.global::<Settings>();
         let string_match = &self.matches[ix];
-        let style = if selected {
-            &settings.theme.selector.active_item
-        } else {
-            &settings.theme.selector.item
-        };
+        let style = settings.theme.picker.item.style_for(mouse_state, selected);
         let outline_item = &self.outline.items[string_match.candidate_id];
 
         Text::new(outline_item.text.clone(), style.label.text.clone())

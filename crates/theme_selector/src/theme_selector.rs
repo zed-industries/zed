@@ -203,15 +203,17 @@ impl PickerDelegate for ThemeSelector {
         })
     }
 
-    fn render_match(&self, ix: usize, selected: bool, cx: &AppContext) -> ElementBox {
+    fn render_match(
+        &self,
+        ix: usize,
+        mouse_state: &MouseState,
+        selected: bool,
+        cx: &AppContext,
+    ) -> ElementBox {
         let settings = cx.global::<Settings>();
         let theme = &settings.theme;
         let theme_match = &self.matches[ix];
-        let style = if selected {
-            &theme.selector.active_item
-        } else {
-            &theme.selector.item
-        };
+        let style = theme.picker.item.style_for(mouse_state, selected);
 
         Label::new(theme_match.string.clone(), style.label.clone())
             .with_highlights(theme_match.positions.clone())

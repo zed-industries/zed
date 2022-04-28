@@ -2,7 +2,7 @@ mod theme_registry;
 
 use gpui::{
     color::Color,
-    elements::{ContainerStyle, ImageStyle, LabelStyle},
+    elements::{ContainerStyle, ImageStyle, LabelStyle, MouseState},
     fonts::{HighlightStyle, TextStyle},
     Border,
 };
@@ -23,7 +23,7 @@ pub struct Theme {
     pub contacts_panel: ContactsPanel,
     pub project_panel: ProjectPanel,
     pub command_palette: CommandPalette,
-    pub selector: Selector,
+    pub picker: Picker,
     pub editor: Editor,
     pub search: Search,
     pub project_diagnostics: ProjectDiagnostics,
@@ -114,10 +114,7 @@ pub struct Search {
     pub editor: FindEditor,
     pub invalid_editor: ContainerStyle,
     pub option_button_group: ContainerStyle,
-    pub option_button: ContainedText,
-    pub active_option_button: ContainedText,
-    pub hovered_option_button: ContainedText,
-    pub active_hovered_option_button: ContainedText,
+    pub option_button: Interactive<ContainedText>,
     pub match_background: Color,
     pub match_index: ContainedText,
     pub results_status: TextStyle,
@@ -229,7 +226,7 @@ pub struct ProjectPanelEntry {
 
 #[derive(Debug, Deserialize, Default)]
 pub struct CommandPalette {
-    pub key: ContainedLabel,
+    pub key: Interactive<ContainedLabel>,
     pub keystroke_spacing: f32,
 }
 
@@ -288,13 +285,12 @@ pub struct ChannelName {
 }
 
 #[derive(Deserialize, Default)]
-pub struct Selector {
+pub struct Picker {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub empty: ContainedLabel,
     pub input_editor: FieldEditor,
-    pub item: ContainedLabel,
-    pub active_item: ContainedLabel,
+    pub item: Interactive<ContainedLabel>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]
@@ -410,7 +406,7 @@ pub struct FieldEditor {
     pub selection: SelectionStyle,
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Interactive<T> {
     pub default: T,
     pub hover: Option<T>,
@@ -419,16 +415,23 @@ pub struct Interactive<T> {
 }
 
 impl<T> Interactive<T> {
-    pub fn active(&self) -> &T {
-        self.active.as_ref().unwrap_or(&self.default)
-    }
-
-    pub fn hover(&self) -> &T {
-        self.hover.as_ref().unwrap_or(&self.default)
-    }
-
-    pub fn active_hover(&self) -> &T {
-        self.active_hover.as_ref().unwrap_or(self.active())
+    pub fn style_for(&self, state: &MouseState, active: bool) -> &T {
+        if active {
+            if state.hovered {
+                self.active_hover
+                    .as_ref()
+                    .or(self.active.as_ref())
+                    .unwrap_or(&self.default)
+            } else {
+                self.active.as_ref().unwrap_or(&self.default)
+            }
+        } else {
+            if state.hovered {
+                self.hover.as_ref().unwrap_or(&self.default)
+            } else {
+                &self.default
+            }
+        }
     }
 }
 

@@ -223,14 +223,16 @@ impl PickerDelegate for FileFinder {
         cx.emit(Event::Dismissed);
     }
 
-    fn render_match(&self, ix: usize, selected: bool, cx: &AppContext) -> ElementBox {
+    fn render_match(
+        &self,
+        ix: usize,
+        mouse_state: &MouseState,
+        selected: bool,
+        cx: &AppContext,
+    ) -> ElementBox {
         let path_match = &self.matches[ix];
         let settings = cx.global::<Settings>();
-        let style = if selected {
-            &settings.theme.selector.active_item
-        } else {
-            &settings.theme.selector.item
-        };
+        let style = settings.theme.picker.item.style_for(mouse_state, selected);
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match);
         Flex::column()
