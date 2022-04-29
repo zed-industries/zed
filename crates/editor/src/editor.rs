@@ -1945,6 +1945,7 @@ impl Editor {
     }
 
     pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
+        let text: Arc<str> = text.into();
         self.transact(cx, |this, cx| {
             let old_selections = this.local_selections::<usize>(cx);
             let selection_anchors = this.buffer.update(cx, |buffer, cx| {
@@ -1956,7 +1957,9 @@ impl Editor {
                         .collect::<Vec<_>>()
                 };
                 buffer.edit_with_autoindent(
-                    old_selections.iter().map(|s| (s.start..s.end, text)),
+                    old_selections
+                        .iter()
+                        .map(|s| (s.start..s.end, text.clone())),
                     cx,
                 );
                 anchors
