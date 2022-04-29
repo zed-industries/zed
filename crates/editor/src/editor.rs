@@ -9354,19 +9354,10 @@ mod tests {
         let fs = FakeFs::new(cx.background().clone());
         fs.insert_file("/file.rs", Default::default()).await;
 
-        let project = Project::test(fs, cx);
+        let project = Project::test(fs, ["/file.rs"], cx).await;
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));
-
-        let worktree_id = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/file.rs", true, cx)
-            })
-            .await
-            .unwrap()
-            .0
-            .read_with(cx, |tree, _| tree.id());
         let buffer = project
-            .update(cx, |project, cx| project.open_buffer((worktree_id, ""), cx))
+            .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
             .await
             .unwrap();
 
@@ -9485,19 +9476,10 @@ mod tests {
         let fs = FakeFs::new(cx.background().clone());
         fs.insert_file("/file.rs", text).await;
 
-        let project = Project::test(fs, cx);
+        let project = Project::test(fs, ["/file.rs"], cx).await;
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));
-
-        let worktree_id = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/file.rs", true, cx)
-            })
-            .await
-            .unwrap()
-            .0
-            .read_with(cx, |tree, _| tree.id());
         let buffer = project
-            .update(cx, |project, cx| project.open_buffer((worktree_id, ""), cx))
+            .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
             .await
             .unwrap();
         let mut fake_server = fake_servers.next().await.unwrap();

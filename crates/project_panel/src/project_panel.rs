@@ -1,4 +1,3 @@
-use editor::Editor;
 use gpui::{
     actions,
     elements::{
@@ -578,6 +577,7 @@ impl Entity for ProjectPanel {
 mod tests {
     use super::*;
     use gpui::{TestAppContext, ViewHandle};
+    use project::FakeFs;
     use serde_json::json;
     use std::{collections::HashSet, path::Path};
     use workspace::WorkspaceParams;
@@ -586,8 +586,7 @@ mod tests {
     async fn test_visible_list(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
 
-        let params = cx.update(WorkspaceParams::test);
-        let fs = params.fs.as_fake();
+        let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/root1",
             json!({
@@ -624,34 +623,8 @@ mod tests {
         )
         .await;
 
-        let project = cx.update(|cx| {
-            Project::local(
-                params.client.clone(),
-                params.user_store.clone(),
-                params.languages.clone(),
-                params.fs.clone(),
-                cx,
-            )
-        });
-        let (root1, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root1", true, cx)
-            })
-            .await
-            .unwrap();
-        root1
-            .read_with(cx, |t, _| t.as_local().unwrap().scan_complete())
-            .await;
-        let (root2, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root2", true, cx)
-            })
-            .await
-            .unwrap();
-        root2
-            .read_with(cx, |t, _| t.as_local().unwrap().scan_complete())
-            .await;
-
+        let project = Project::test(fs.clone(), ["/root1", "/root2"], cx).await;
+        let params = cx.update(WorkspaceParams::test);
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
         assert_eq!(

@@ -452,12 +452,27 @@ impl Project {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn test(fs: Arc<dyn Fs>, cx: &mut gpui::TestAppContext) -> ModelHandle<Project> {
+    pub async fn test(
+        fs: Arc<dyn Fs>,
+        root_paths: impl IntoIterator<Item = impl AsRef<Path>>,
+        cx: &mut gpui::TestAppContext,
+    ) -> ModelHandle<Project> {
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = client::Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        cx.update(|cx| Project::local(client, user_store, languages, fs, cx))
+        let project = cx.update(|cx| Project::local(client, user_store, languages, fs, cx));
+        for path in root_paths {
+            let (tree, _) = project
+                .update(cx, |project, cx| {
+                    project.find_or_create_local_worktree(path, true, cx)
+                })
+                .await
+                .unwrap();
+            tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+                .await;
+        }
+        project
     }
 
     pub fn buffer_for_id(&self, remote_id: u64, cx: &AppContext) -> Option<ModelHandle<Buffer>> {
@@ -850,6 +865,18 @@ impl Project {
         })
     }
 
+    pub fn open_local_buffer(
+        &mut self,
+        abs_path: impl AsRef<Path>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<Buffer>>> {
+        if let Some((worktree, relative_path)) = self.find_local_worktree(abs_path.as_ref(), cx) {
+            self.open_buffer((worktree.read(cx).id(), relative_path), cx)
+        } else {
+            Task::ready(Err(anyhow!("no such path")))
+        }
+    }
+
     pub fn open_buffer(
         &mut self,
         path: impl Into<ProjectPath>,
@@ -879,9 +906,9 @@ impl Project {
                 entry.insert(rx.clone());
 
                 let load_buffer = if worktree.read(cx).is_local() {
-                    self.open_local_buffer(&project_path.path, &worktree, cx)
+                    self.open_local_buffer_internal(&project_path.path, &worktree, cx)
                 } else {
-                    self.open_remote_buffer(&project_path.path, &worktree, cx)
+                    self.open_remote_buffer_internal(&project_path.path, &worktree, cx)
                 };
 
                 cx.spawn(move |this, mut cx| async move {
@@ -911,7 +938,7 @@ impl Project {
         })
     }
 
-    fn open_local_buffer(
+    fn open_local_buffer_internal(
         &mut self,
         path: &Arc<Path>,
         worktree: &ModelHandle<Worktree>,
@@ -928,7 +955,7 @@ impl Project {
         })
     }
 
-    fn open_remote_buffer(
+    fn open_remote_buffer_internal(
         &mut self,
         path: &Arc<Path>,
         worktree: &ModelHandle<Worktree>,
@@ -4905,6 +4932,8 @@ impl Item for Buffer {
 
 #[cfg(test)]
 mod tests {
+    use crate::worktree::WorktreeHandle;
+
     use super::{Event, *};
     use fs::RealFs;
     use futures::{future, StreamExt};
@@ -4918,7 +4947,6 @@ mod tests {
     use std::{cell::RefCell, os::unix, path::PathBuf, rc::Rc, task::Poll};
     use unindent::Unindent as _;
     use util::{assert_set_eq, test::temp_tree};
-    use worktree::WorktreeHandle as _;
 
     #[gpui::test]
     async fn test_populate_and_search(cx: &mut gpui::TestAppContext) {
@@ -4945,19 +4973,10 @@ mod tests {
         )
         .unwrap();
 
-        let project = Project::test(Arc::new(RealFs), cx);
+        let project = Project::test(Arc::new(RealFs), [root_link_path], cx).await;
 
-        let (tree, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree(&root_link_path, true, cx)
-            })
-            .await
-            .unwrap();
-
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-        cx.read(|cx| {
-            let tree = tree.read(cx);
+        project.read_with(cx, |project, cx| {
+            let tree = project.worktrees(cx).next().unwrap().read(cx);
             assert_eq!(tree.file_count(), 5);
             assert_eq!(
                 tree.inode_for_path("fennel/grape"),
@@ -5038,25 +5057,16 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), cx);
+        let project = Project::test(fs.clone(), ["/the-root"], cx).await;
         project.update(cx, |project, _| {
             project.languages.add(Arc::new(rust_language));
             project.languages.add(Arc::new(json_language));
         });
 
-        let worktree_id = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/the-root", true, cx)
-            })
-            .await
-            .unwrap()
-            .0
-            .read_with(cx, |tree, _| tree.id());
-
         // Open a buffer without an associated language server.
         let toml_buffer = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "Cargo.toml"), cx)
+                project.open_local_buffer("/the-root/Cargo.toml", cx)
             })
             .await
             .unwrap();
@@ -5064,7 +5074,7 @@ mod tests {
         // Open a buffer with an associated language server.
         let rust_buffer = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "test.rs"), cx)
+                project.open_local_buffer("/the-root/test.rs", cx)
             })
             .await
             .unwrap();
@@ -5111,7 +5121,7 @@ mod tests {
         // Open a third buffer with a different associated language server.
         let json_buffer = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "package.json"), cx)
+                project.open_local_buffer("/the-root/package.json", cx)
             })
             .await
             .unwrap();
@@ -5141,7 +5151,7 @@ mod tests {
         // it is also configured based on the existing language server's capabilities.
         let rust_buffer2 = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "test2.rs"), cx)
+                project.open_local_buffer("/the-root/test2.rs", cx)
             })
             .await
             .unwrap();
@@ -5382,34 +5392,14 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, cx);
-        let worktree_a_id = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir/a.rs", true, cx)
-            })
-            .await
-            .unwrap()
-            .0
-            .read_with(cx, |tree, _| tree.id());
-        let worktree_b_id = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir/b.rs", true, cx)
-            })
-            .await
-            .unwrap()
-            .0
-            .read_with(cx, |tree, _| tree.id());
+        let project = Project::test(fs, ["/dir/a.rs", "/dir/b.rs"], cx).await;
 
         let buffer_a = project
-            .update(cx, |project, cx| {
-                project.open_buffer((worktree_a_id, ""), cx)
-            })
+            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
             .await
             .unwrap();
         let buffer_b = project
-            .update(cx, |project, cx| {
-                project.open_buffer((worktree_b_id, ""), cx)
-            })
+            .update(cx, |project, cx| project.open_local_buffer("/dir/b.rs", cx))
             .await
             .unwrap();
 
@@ -5513,25 +5503,14 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, cx);
+        let project = Project::test(fs, ["/dir"], cx).await;
         project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-
-        let (tree, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", true, cx)
-            })
-            .await
-            .unwrap();
-        let worktree_id = tree.read_with(cx, |tree, _| tree.id());
-
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
+        let worktree_id =
+            project.read_with(cx, |p, cx| p.worktrees(cx).next().unwrap().read(cx).id());
 
         // Cause worktree to start the fake language server
         let _buffer = project
-            .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, Path::new("b.rs")), cx)
-            })
+            .update(cx, |project, cx| project.open_local_buffer("/dir/b.rs", cx))
             .await
             .unwrap();
 
@@ -5577,7 +5556,7 @@ mod tests {
         );
 
         let buffer = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
+            .update(cx, |p, cx| p.open_local_buffer("/dir/a.rs", cx))
             .await
             .unwrap();
 
@@ -5646,22 +5625,11 @@ mod tests {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree("/dir", json!({ "a.rs": "" })).await;
 
-        let project = Project::test(fs, cx);
+        let project = Project::test(fs, ["/dir"], cx).await;
         project.update(cx, |project, _| project.languages.add(Arc::new(language)));
 
-        let worktree_id = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", true, cx)
-            })
-            .await
-            .unwrap()
-            .0
-            .read_with(cx, |tree, _| tree.id());
-
         let buffer = project
-            .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "a.rs"), cx)
-            })
+            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
             .await
             .unwrap();
 
@@ -5726,22 +5694,11 @@ mod tests {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree("/dir", json!({ "a.rs": text })).await;
 
-        let project = Project::test(fs, cx);
+        let project = Project::test(fs, ["/dir"], cx).await;
         project.update(cx, |project, _| project.languages.add(Arc::new(language)));
 
-        let worktree_id = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", true, cx)
-            })
-            .await
-            .unwrap()
-            .0
-            .read_with(cx, |tree, _| tree.id());
-
         let buffer = project
-            .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "a.rs"), cx)
-            })
+            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
             .await
             .unwrap();
 
@@ -6006,20 +5963,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree("/dir", json!({ "a.rs": text })).await;
 
-        let project = Project::test(fs, cx);
-        let worktree_id = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", true, cx)
-            })
-            .await
-            .unwrap()
-            .0
-            .read_with(cx, |tree, _| tree.id());
-
+        let project = Project::test(fs, ["/dir"], cx).await;
         let buffer = project
-            .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "a.rs"), cx)
-            })
+            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
             .await
             .unwrap();
 
@@ -6108,22 +6054,10 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, cx);
+        let project = Project::test(fs, ["/dir"], cx).await;
         project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-
-        let worktree_id = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", true, cx)
-            })
-            .await
-            .unwrap()
-            .0
-            .read_with(cx, |tree, _| tree.id());
-
         let buffer = project
-            .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "a.rs"), cx)
-            })
+            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
             .await
             .unwrap();
 
@@ -6274,20 +6208,9 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, cx);
-        let worktree_id = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", true, cx)
-            })
-            .await
-            .unwrap()
-            .0
-            .read_with(cx, |tree, _| tree.id());
-
+        let project = Project::test(fs, ["/dir"], cx).await;
         let buffer = project
-            .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "a.rs"), cx)
-            })
+            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
             .await
             .unwrap();
 
@@ -6408,17 +6331,7 @@ mod tests {
             }
         }));
 
-        let project = Project::test(Arc::new(RealFs), cx);
-        let (tree, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree(&dir.path(), true, cx)
-            })
-            .await
-            .unwrap();
-
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-
+        let project = Project::test(Arc::new(RealFs), [dir.path()], cx).await;
         let cancel_flag = Default::default();
         let results = project
             .read_with(cx, |project, cx| {
@@ -6451,21 +6364,11 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, cx);
+        let project = Project::test(fs, ["/dir/b.rs"], cx).await;
         project.update(cx, |project, _| project.languages.add(Arc::new(language)));
 
-        let (tree, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir/b.rs", true, cx)
-            })
-            .await
-            .unwrap();
-        let worktree_id = tree.read_with(cx, |tree, _| tree.id());
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-
         let buffer = project
-            .update(cx, |project, cx| project.open_buffer((worktree_id, ""), cx))
+            .update(cx, |project, cx| project.open_local_buffer("/dir/b.rs", cx))
             .await
             .unwrap();
 
@@ -6555,21 +6458,10 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, cx);
+        let project = Project::test(fs, ["/dir"], cx).await;
         project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-
-        let (tree, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", true, cx)
-            })
-            .await
-            .unwrap();
-        let worktree_id = tree.read_with(cx, |tree, _| tree.id());
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-
         let buffer = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "a.ts"), cx))
+            .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
             .await
             .unwrap();
 
@@ -6624,21 +6516,10 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, cx);
+        let project = Project::test(fs, ["/dir"], cx).await;
         project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-
-        let (tree, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", true, cx)
-            })
-            .await
-            .unwrap();
-        let worktree_id = tree.read_with(cx, |tree, _| tree.id());
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-
         let buffer = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "a.ts"), cx))
+            .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
             .await
             .unwrap();
 
@@ -6741,18 +6622,9 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), cx);
-        let worktree_id = project
-            .update(cx, |p, cx| {
-                p.find_or_create_local_worktree("/dir", true, cx)
-            })
-            .await
-            .unwrap()
-            .0
-            .read_with(cx, |tree, _| tree.id());
-
+        let project = Project::test(fs.clone(), ["/dir"], cx).await;
         let buffer = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
+            .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
             .await
             .unwrap();
         buffer
@@ -6779,18 +6651,9 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), cx);
-        let worktree_id = project
-            .update(cx, |p, cx| {
-                p.find_or_create_local_worktree("/dir/file1", true, cx)
-            })
-            .await
-            .unwrap()
-            .0
-            .read_with(cx, |tree, _| tree.id());
-
+        let project = Project::test(fs.clone(), ["/dir/file1"], cx).await;
         let buffer = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, ""), cx))
+            .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
             .await
             .unwrap();
         buffer
@@ -6810,15 +6673,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree("/dir", json!({})).await;
 
-        let project = Project::test(fs.clone(), cx);
-        let (worktree, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", true, cx)
-            })
-            .await
-            .unwrap();
-        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
-
+        let project = Project::test(fs.clone(), ["/dir"], cx).await;
         let buffer = project.update(cx, |project, cx| {
             project.create_buffer("", None, cx).unwrap()
         });
@@ -6842,7 +6697,7 @@ mod tests {
 
         let opened_buffer = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "file1"), cx)
+                project.open_local_buffer("/dir/file1", cx)
             })
             .await
             .unwrap();
@@ -6865,24 +6720,18 @@ mod tests {
             }
         }));
 
-        let project = Project::test(Arc::new(RealFs), cx);
+        let project = Project::test(Arc::new(RealFs), [dir.path()], cx).await;
         let rpc = project.read_with(cx, |p, _| p.client.clone());
 
-        let (tree, _) = project
-            .update(cx, |p, cx| {
-                p.find_or_create_local_worktree(dir.path(), true, cx)
-            })
-            .await
-            .unwrap();
-        let worktree_id = tree.read_with(cx, |tree, _| tree.id());
-
         let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
-            let buffer = project.update(cx, |p, cx| p.open_buffer((worktree_id, path), cx));
+            let buffer = project.update(cx, |p, cx| p.open_local_buffer(dir.path().join(path), cx));
             async move { buffer.await.unwrap() }
         };
         let id_for_path = |path: &'static str, cx: &gpui::TestAppContext| {
-            tree.read_with(cx, |tree, _| {
-                tree.entry_for_path(path)
+            project.read_with(cx, |project, cx| {
+                let tree = project.worktrees(cx).next().unwrap();
+                tree.read(cx)
+                    .entry_for_path(path)
                     .expect(&format!("no entry for path {}", path))
                     .id
             })
@@ -6897,11 +6746,8 @@ mod tests {
         let file3_id = id_for_path("a/file3", &cx);
         let file4_id = id_for_path("b/c/file4", &cx);
 
-        // Wait for the initial scan.
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-
         // Create a remote copy of this worktree.
+        let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
         let initial_snapshot = tree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot());
         let (remote, load_task) = cx.update(|cx| {
             Worktree::remote(
@@ -6912,6 +6758,7 @@ mod tests {
                 cx,
             )
         });
+        // tree
         load_task.await;
 
         cx.read(|cx| {
@@ -7005,7 +6852,7 @@ mod tests {
     async fn test_buffer_deduping(cx: &mut gpui::TestAppContext) {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
-            "/the-dir",
+            "/dir",
             json!({
                 "a.txt": "a-contents",
                 "b.txt": "b-contents",
@@ -7013,22 +6860,14 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), cx);
-        let worktree_id = project
-            .update(cx, |p, cx| {
-                p.find_or_create_local_worktree("/the-dir", true, cx)
-            })
-            .await
-            .unwrap()
-            .0
-            .read_with(cx, |tree, _| tree.id());
+        let project = Project::test(fs.clone(), ["/dir"], cx).await;
 
         // Spawn multiple tasks to open paths, repeating some paths.
         let (buffer_a_1, buffer_b, buffer_a_2) = project.update(cx, |p, cx| {
             (
-                p.open_buffer((worktree_id, "a.txt"), cx),
-                p.open_buffer((worktree_id, "b.txt"), cx),
-                p.open_buffer((worktree_id, "a.txt"), cx),
+                p.open_local_buffer("/dir/a.txt", cx),
+                p.open_local_buffer("/dir/b.txt", cx),
+                p.open_local_buffer("/dir/a.txt", cx),
             )
         });
 
@@ -7045,7 +6884,7 @@ mod tests {
         // Open the same path again while it is still open.
         drop(buffer_a_1);
         let buffer_a_3 = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+            .update(cx, |p, cx| p.open_local_buffer("/dir/a.txt", cx))
             .await
             .unwrap();
 
@@ -7055,30 +6894,21 @@ mod tests {
 
     #[gpui::test]
     async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
-        use std::fs;
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "file1": "abc",
+                "file2": "def",
+                "file3": "ghi",
+            }),
+        )
+        .await;
 
-        let dir = temp_tree(json!({
-            "file1": "abc",
-            "file2": "def",
-            "file3": "ghi",
-        }));
-
-        let project = Project::test(Arc::new(RealFs), cx);
-        let (worktree, _) = project
-            .update(cx, |p, cx| {
-                p.find_or_create_local_worktree(dir.path(), true, cx)
-            })
-            .await
-            .unwrap();
-        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
-
-        worktree.flush_fs_events(&cx).await;
-        worktree
-            .read_with(cx, |t, _| t.as_local().unwrap().scan_complete())
-            .await;
+        let project = Project::test(fs.clone(), ["/dir"], cx).await;
 
         let buffer1 = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
+            .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
             .await
             .unwrap();
         let events = Rc::new(RefCell::new(Vec::new()));
@@ -7148,7 +6978,7 @@ mod tests {
         // When a file is deleted, the buffer is considered dirty.
         let events = Rc::new(RefCell::new(Vec::new()));
         let buffer2 = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "file2"), cx))
+            .update(cx, |p, cx| p.open_local_buffer("/dir/file2", cx))
             .await
             .unwrap();
         buffer2.update(cx, |_, cx| {
@@ -7159,7 +6989,9 @@ mod tests {
             .detach();
         });
 
-        fs::remove_file(dir.path().join("file2")).unwrap();
+        fs.remove_file("/dir/file2".as_ref(), Default::default())
+            .await
+            .unwrap();
         buffer2.condition(&cx, |b, _| b.is_dirty()).await;
         assert_eq!(
             *events.borrow(),
@@ -7169,7 +7001,7 @@ mod tests {
         // When a file is already dirty when deleted, we don't emit a Dirtied event.
         let events = Rc::new(RefCell::new(Vec::new()));
         let buffer3 = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "file3"), cx))
+            .update(cx, |p, cx| p.open_local_buffer("/dir/file3", cx))
             .await
             .unwrap();
         buffer3.update(cx, |_, cx| {
@@ -7180,12 +7012,13 @@ mod tests {
             .detach();
         });
 
-        worktree.flush_fs_events(&cx).await;
         buffer3.update(cx, |buffer, cx| {
             buffer.edit([(0..0, "x")], cx);
         });
         events.borrow_mut().clear();
-        fs::remove_file(dir.path().join("file3")).unwrap();
+        fs.remove_file("/dir/file3".as_ref(), Default::default())
+            .await
+            .unwrap();
         buffer3
             .condition(&cx, |_, _| !events.borrow().is_empty())
             .await;
@@ -7195,47 +7028,24 @@ mod tests {
 
     #[gpui::test]
     async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
-        use std::fs;
-
         let initial_contents = "aaa\nbbbbb\nc\n";
-        let dir = temp_tree(json!({ "the-file": initial_contents }));
-
-        let project = Project::test(Arc::new(RealFs), cx);
-        let (worktree, _) = project
-            .update(cx, |p, cx| {
-                p.find_or_create_local_worktree(dir.path(), true, cx)
-            })
-            .await
-            .unwrap();
-        let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
-
-        worktree
-            .read_with(cx, |t, _| t.as_local().unwrap().scan_complete())
-            .await;
-
-        let abs_path = dir.path().join("the-file");
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "the-file": initial_contents,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir"], cx).await;
         let buffer = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "the-file"), cx))
+            .update(cx, |p, cx| p.open_local_buffer("/dir/the-file", cx))
             .await
             .unwrap();
 
-        // TODO
-        // Add a cursor on each row.
-        // let selection_set_id = buffer.update(&mut cx, |buffer, cx| {
-        //     assert!(!buffer.is_dirty());
-        //     buffer.add_selection_set(
-        //         &(0..3)
-        //             .map(|row| Selection {
-        //                 id: row as usize,
-        //                 start: Point::new(row, 1),
-        //                 end: Point::new(row, 1),
-        //                 reversed: false,
-        //                 goal: SelectionGoal::None,
-        //             })
-        //             .collect::<Vec<_>>(),
-        //         cx,
-        //     )
-        // });
+        let anchors = (0..3)
+            .map(|row| buffer.read_with(cx, |b, _| b.anchor_before(Point::new(row, 1))))
+            .collect::<Vec<_>>();
 
         // Change the file on disk, adding two new lines of text, and removing
         // one line.
@@ -7244,7 +7054,9 @@ mod tests {
             assert!(!buffer.has_conflict());
         });
         let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
-        fs::write(&abs_path, new_contents).unwrap();
+        fs.save("/dir/the-file".as_ref(), &new_contents.into())
+            .await
+            .unwrap();
 
         // Because the buffer was not modified, it is reloaded from disk. Its
         // contents are edited according to the diff between the old and new
@@ -7258,20 +7070,14 @@ mod tests {
             assert!(!buffer.is_dirty());
             assert!(!buffer.has_conflict());
 
-            // TODO
-            // let cursor_positions = buffer
-            //     .selection_set(selection_set_id)
-            //     .unwrap()
-            //     .selections::<Point>(&*buffer)
-            //     .map(|selection| {
-            //         assert_eq!(selection.start, selection.end);
-            //         selection.start
-            //     })
-            //     .collect::<Vec<_>>();
-            // assert_eq!(
-            //     cursor_positions,
-            //     [Point::new(1, 1), Point::new(3, 1), Point::new(4, 0)]
-            // );
+            let anchor_positions = anchors
+                .iter()
+                .map(|anchor| anchor.to_point(&*buffer))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                anchor_positions,
+                [Point::new(1, 1), Point::new(3, 1), Point::new(4, 0)]
+            );
         });
 
         // Modify the buffer
@@ -7282,7 +7088,12 @@ mod tests {
         });
 
         // Change the file on disk again, adding blank lines to the beginning.
-        fs::write(&abs_path, "\n\n\nAAAA\naaa\nBB\nbbbbb\n").unwrap();
+        fs.save(
+            "/dir/the-file".as_ref(),
+            &"\n\n\nAAAA\naaa\nBB\nbbbbb\n".into(),
+        )
+        .await
+        .unwrap();
 
         // Because the buffer is modified, it doesn't reload from disk, but is
         // marked as having a conflict.
@@ -7311,17 +7122,9 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), cx);
-        let (worktree, _) = project
-            .update(cx, |p, cx| {
-                p.find_or_create_local_worktree("/the-dir", true, cx)
-            })
-            .await
-            .unwrap();
-        let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
-
+        let project = Project::test(fs.clone(), ["/the-dir"], cx).await;
         let buffer = project
-            .update(cx, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
+            .update(cx, |p, cx| p.open_local_buffer("/the-dir/a.rs", cx))
             .await
             .unwrap();
 
@@ -7583,22 +7386,11 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), cx);
+        let project = Project::test(fs.clone(), ["/dir"], cx).await;
         project.update(cx, |project, _| project.languages.add(Arc::new(language)));
-
-        let (tree, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", true, cx)
-            })
-            .await
-            .unwrap();
-        let worktree_id = tree.read_with(cx, |tree, _| tree.id());
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, Path::new("one.rs")), cx)
+                project.open_local_buffer("/dir/one.rs", cx)
             })
             .await
             .unwrap();
@@ -7713,17 +7505,7 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), cx);
-        let (tree, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", true, cx)
-            })
-            .await
-            .unwrap();
-        let worktree_id = tree.read_with(cx, |tree, _| tree.id());
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-
+        let project = Project::test(fs.clone(), ["/dir"], cx).await;
         assert_eq!(
             search(&project, SearchQuery::text("TWO", false, true), cx)
                 .await
@@ -7736,7 +7518,7 @@ mod tests {
 
         let buffer_4 = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "four.rs"), cx)
+                project.open_local_buffer("/dir/four.rs", cx)
             })
             .await
             .unwrap();

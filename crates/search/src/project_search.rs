@@ -844,16 +844,7 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), cx);
-        let (tree, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", true, cx)
-            })
-            .await
-            .unwrap();
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-
+        let project = Project::test(fs.clone(), ["/dir"], cx).await;
         let search = cx.add_model(|cx| ProjectSearch::new(project, cx));
         let search_view = cx.add_view(Default::default(), |cx| {
             ProjectSearchView::new(search.clone(), cx)
