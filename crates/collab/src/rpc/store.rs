@@ -81,7 +81,41 @@ pub struct LeftProject {
     pub authorized_user_ids: Vec<UserId>,
 }
 
+#[derive(Copy, Clone)]
+pub struct Metrics {
+    pub connections: usize,
+    pub registered_projects: usize,
+    pub shared_projects: usize,
+    pub collaborators_per_project: f32,
+}
+
 impl Store {
+    pub fn metrics(&self) -> Metrics {
+        let connections = self.connections.len();
+        let mut registered_projects = 0;
+        let mut shared_projects = 0;
+        let mut collaborators = 0;
+        for project in self.projects.values() {
+            registered_projects += 1;
+            if let Some(share) = project.share.as_ref() {
+                shared_projects += 1;
+                collaborators += share.active_replica_ids.len();
+            }
+        }
+        let collaborators_per_project = if shared_projects == 0 || collaborators == 0 {
+            0.
+        } else {
+            collaborators as f32 / shared_projects as f32
+        };
+
+        Metrics {
+            connections,
+            registered_projects,
+            shared_projects,
+            collaborators_per_project,
+        }
+    }
+
     #[instrument(skip(self))]
     pub fn add_connection(&mut self, connection_id: ConnectionId, user_id: UserId) {
         self.connections.insert(

@@ -218,7 +218,7 @@ impl Server {
             let receipt = envelope.receipt();
             let handler = handler.clone();
             async move {
-                let mut store = server.store.write().await;
+                let mut store = server.state_mut().await;
                 let response = (handler)(server.clone(), &mut *store, envelope);
                 match response {
                     Ok(response) => {
@@ -1094,6 +1094,15 @@ impl<'a> Drop for StoreWriteGuard<'a> {
     fn drop(&mut self) {
         #[cfg(test)]
         self.check_invariants();
+
+        let metrics = self.metrics();
+        tracing::info!(
+            connections = metrics.connections,
+            registered_projects = metrics.registered_projects,
+            shared_projects = metrics.shared_projects,
+            collaborators_per_project = metrics.collaborators_per_project,
+            "metrics"
+        );
     }
 }
 
