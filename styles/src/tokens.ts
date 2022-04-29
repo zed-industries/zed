@@ -65,6 +65,27 @@ export const fontWeights = {
   "black": fontWeight("black"),
 }
 
+// Standard size unit used for paddings, margins, borders, etc.
+
+export type Size = number
+
+export type SizeToken = Token<Size, "size">;
+function size(value: Size): SizeToken {
+  return {
+    value,
+    type: "size"
+  };
+}
+
+export const sizes = {
+  px: size(1),
+  xs: size(2),
+  sm: size(4),
+  md: size(6),
+  lg: size(8),
+  xl: size(12),
+};
+
 export type Color = string;
 export interface ColorToken {
   value: Color,
@@ -104,5 +125,6 @@ export default {
   fontFamilies,
   fontSizes,
   fontWeights,
+  size,
   colors,
 };

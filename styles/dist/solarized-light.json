@@ -93,11 +93,11 @@
         "type": "color"
       },
       "hovered": {
-        "value": "#93a1a1",
+        "value": "#93a1a11f",
         "type": "color"
       },
       "active": {
-        "value": "#93a1a1",
+        "value": "#93a1a12e",
         "type": "color"
       },
       "focused": {
@@ -111,11 +111,11 @@
         "type": "color"
       },
       "hovered": {
-        "value": "#93a1a1",
+        "value": "#93a1a11f",
         "type": "color"
       },
       "active": {
-        "value": "#93a1a1",
+        "value": "#93a1a12e",
         "type": "color"
       },
       "focused": {
@@ -165,15 +165,15 @@
         "type": "color"
       },
       "hovered": {
-        "value": "#93a1a1",
+        "value": "#839496",
         "type": "color"
       },
       "active": {
-        "value": "#93a1a1",
+        "value": "#839496",
         "type": "color"
       },
       "focused": {
-        "value": "#93a1a1",
+        "value": "#839496",
         "type": "color"
       }
     },
@@ -260,15 +260,15 @@
       "type": "color"
     },
     "muted": {
-      "value": "#93a1a1",
+      "value": "#839496",
       "type": "color"
     },
     "focused": {
-      "value": "#93a1a1",
+      "value": "#839496",
       "type": "color"
     },
     "active": {
-      "value": "#93a1a1",
+      "value": "#839496",
       "type": "color"
     },
     "ok": {
@@ -294,7 +294,7 @@
       "type": "color"
     },
     "indent_guide": {
-      "value": "#93a1a1",
+      "value": "#839496",
       "type": "color"
     },
     "indent_guide_active": {
@@ -329,11 +329,11 @@
         "type": "color"
       },
       "occurrence": {
-        "value": "#8394961f",
+        "value": "#fdf6e31f",
         "type": "color"
       },
       "activeOccurrence": {
-        "value": "#83949629",
+        "value": "#fdf6e329",
         "type": "color"
       },
       "matchingBracket": {
@@ -370,7 +370,7 @@
       "type": "color"
     },
     "comment": {
-      "value": "#073642",
+      "value": "#586e75",
       "type": "color"
     },
     "keyword": {
@@ -561,7 +561,7 @@
     }
   },
   "shadowAlpha": {
-    "value": 0.32,
+    "value": 0.12,
     "type": "number"
   }
 }

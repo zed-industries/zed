@@ -93,11 +93,11 @@
         "type": "color"
       },
       "hovered": {
-        "value": "#586e75",
+        "value": "#586e7552",
         "type": "color"
       },
       "active": {
-        "value": "#586e75",
+        "value": "#586e757a",
         "type": "color"
       },
       "focused": {
@@ -111,11 +111,11 @@
         "type": "color"
       },
       "hovered": {
-        "value": "#586e75",
+        "value": "#586e7552",
         "type": "color"
       },
       "active": {
-        "value": "#586e75",
+        "value": "#586e757a",
         "type": "color"
       },
       "focused": {
@@ -165,15 +165,15 @@
         "type": "color"
       },
       "hovered": {
-        "value": "#586e75",
+        "value": "#657b83",
         "type": "color"
       },
       "active": {
-        "value": "#586e75",
+        "value": "#657b83",
         "type": "color"
       },
       "focused": {
-        "value": "#586e75",
+        "value": "#657b83",
         "type": "color"
       }
     },
@@ -260,15 +260,15 @@
       "type": "color"
     },
     "muted": {
-      "value": "#586e75",
+      "value": "#657b83",
       "type": "color"
     },
     "focused": {
-      "value": "#586e75",
+      "value": "#657b83",
       "type": "color"
     },
     "active": {
-      "value": "#586e75",
+      "value": "#657b83",
       "type": "color"
     },
     "ok": {
@@ -294,7 +294,7 @@
       "type": "color"
     },
     "indent_guide": {
-      "value": "#586e75",
+      "value": "#657b83",
       "type": "color"
     },
     "indent_guide_active": {
@@ -329,11 +329,11 @@
         "type": "color"
       },
       "occurrence": {
-        "value": "#657b831f",
+        "value": "#002b361f",
         "type": "color"
       },
       "activeOccurrence": {
-        "value": "#657b8329",
+        "value": "#002b3629",
         "type": "color"
       },
       "matchingBracket": {
@@ -370,7 +370,7 @@
       "type": "color"
     },
     "comment": {
-      "value": "#eee8d5",
+      "value": "#93a1a1",
       "type": "color"
     },
     "keyword": {
