@@ -66,7 +66,9 @@
             "shift-A": "vim::InsertEndOfLine",
             "x": "vim::DeleteRight",
             "shift-X": "vim::DeleteLeft",
-            "shift-^": "vim::FirstNonWhitespace"
+            "shift-^": "vim::FirstNonWhitespace",
+            "o": "vim::InsertLineBelow",
+            "shift-O": "vim::InsertLineAbove"
         }
     },
     {

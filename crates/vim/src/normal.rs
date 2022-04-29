@@ -7,6 +7,8 @@ use crate::{
     Vim,
 };
 use change::init as change_init;
+use collections::HashSet;
+use editor::{Bias, DisplayPoint};
 use gpui::{actions, MutableAppContext, ViewContext};
 use language::SelectionGoal;
 use workspace::Workspace;
@@ -120,41 +122,54 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
         vim.switch_mode(Mode::Insert, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
-                editor.move_cursors(cx, |map, cursor, goal| {
-                    let (indent, _) = map.line_indent(cursor.row());
-                    let (cursor, _) = Motion::EndOfLine.move_point(map, cursor, goal);
-                    (cursor, SelectionGoal::Column(indent))
+                let (map, old_selections) = editor.display_selections(cx);
+                let selection_start_rows: HashSet<u32> = old_selections
+                    .into_iter()
+                    .map(|selection| selection.start.row())
+                    .collect();
+                let edits = selection_start_rows.into_iter().map(|row| {
+                    let (indent, _) = map.line_indent(row);
+                    let start_of_line = map
+                        .clip_point(DisplayPoint::new(row, 0), Bias::Left)
+                        .to_point(&map);
+                    let mut new_text = " ".repeat(indent as usize);
+                    new_text.push('\n');
+                    (start_of_line..start_of_line, new_text)
                 });
-                editor.insert("\n", cx);
-                editor.move_cursors(cx, |_, mut cursor, goal| {
-                    if let SelectionGoal::Column(column) = goal {
-                        *cursor.column_mut() = column;
-                    }
-                    (cursor, SelectionGoal::None)
+                editor.edit(edits, cx);
+                editor.move_cursors(cx, |map, mut cursor, _| {
+                    *cursor.row_mut() -= 1;
+                    *cursor.column_mut() = map.line_len(cursor.row());
+                    (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
                 });
             });
         });
     });
 }
 
-fn insert_line_below(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContext<Workspace>) {
+fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.switch_mode(Mode::Insert, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
+                let (map, old_selections) = editor.display_selections(cx);
+                let selection_end_rows: HashSet<u32> = old_selections
+                    .into_iter()
+                    .map(|selection| selection.end.row())
+                    .collect();
+                let edits = selection_end_rows.into_iter().map(|row| {
+                    let (indent, _) = map.line_indent(row);
+                    let end_of_line = map
+                        .clip_point(DisplayPoint::new(row, map.line_len(row)), Bias::Left)
+                        .to_point(&map);
+                    let mut new_text = "\n".to_string();
+                    new_text.push_str(&" ".repeat(indent as usize));
+                    (end_of_line..end_of_line, new_text)
+                });
                 editor.move_cursors(cx, |map, cursor, goal| {
-                    let (indent, _) = map.line_indent(cursor.row());
-                    let (cursor, _) = Motion::StartOfLine.move_point(map, cursor, goal);
-                    (cursor, SelectionGoal::Column(indent))
+                    Motion::EndOfLine.move_point(map, cursor, goal)
                 });
-                editor.insert("\n", cx);
-                editor.move_cursors(cx, |_, mut cursor, goal| {
-                    *cursor.row_mut() -= 1;
-                    if let SelectionGoal::Column(column) = goal {
-                        *cursor.column_mut() = column;
-                    }
-                    (cursor, SelectionGoal::None)
-                });
+                editor.edit(edits, cx);
             });
         });
     });

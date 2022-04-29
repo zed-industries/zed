@@ -1334,6 +1334,19 @@ impl Editor {
         self.update_selections(vec![selection], None, cx);
     }
 
+    pub fn display_selections(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let selections = self
+            .local_selections::<Point>(cx)
+            .into_iter()
+            .map(|selection| selection.map(|point| point.to_display_point(&display_map)))
+            .collect();
+        (display_map, selections)
+    }
+
     pub fn move_selections(
         &mut self,
         cx: &mut ViewContext<Self>,
@@ -1380,6 +1393,25 @@ impl Editor {
             let (cursor, new_goal) = update_cursor_position(map, selection.head(), selection.goal);
             selection.collapse_to(cursor, new_goal)
         });
+    }
+
+    pub fn edit<I, S, T>(&mut self, edits: I, cx: &mut ViewContext<Self>)
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        self.buffer.update(cx, |buffer, cx| buffer.edit(edits, cx));
+    }
+
+    pub fn edit_with_autoindent<I, S, T>(&mut self, edits: I, cx: &mut ViewContext<Self>)
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        self.buffer
+            .update(cx, |buffer, cx| buffer.edit_with_autoindent(edits, cx));
     }
 
     fn select(&mut self, Select(phase): &Select, cx: &mut ViewContext<Self>) {
