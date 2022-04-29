@@ -672,7 +672,7 @@ impl LocalWorktree {
         })
     }
 
-    fn save(
+    pub fn save(
         &self,
         path: impl Into<Arc<Path>>,
         text: Rope,

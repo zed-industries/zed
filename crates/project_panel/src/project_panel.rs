@@ -1,13 +1,15 @@
+use editor::{Cancel, Editor};
 use gpui::{
     actions,
+    anyhow::Result,
     elements::{
-        ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement, ScrollTarget, Svg,
-        UniformList, UniformListState,
+        ChildView, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement,
+        ScrollTarget, Svg, UniformList, UniformListState,
     },
     impl_internal_actions, keymap,
     platform::CursorStyle,
-    AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Entry, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use settings::Settings;
@@ -19,7 +21,7 @@ use std::{
 };
 use unicase::UniCase;
 use workspace::{
-    menu::{SelectNext, SelectPrev},
+    menu::{Confirm, SelectNext, SelectPrev},
     Workspace,
 };
 
@@ -29,6 +31,8 @@ pub struct ProjectPanel {
     visible_entries: Vec<(WorktreeId, Vec<Entry>)>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     selection: Option<Selection>,
+    edit_state: Option<EditState>,
+    filename_editor: ViewHandle<Editor>,
     handle: WeakViewHandle<Self>,
 }
 
@@ -38,13 +42,28 @@ struct Selection {
     entry_id: ProjectEntryId,
 }
 
+#[derive(Copy, Clone, Debug)]
+struct EditState {
+    worktree_id: WorktreeId,
+    entry_id: ProjectEntryId,
+    new_file: bool,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct EntryDetails {
     filename: String,
     depth: usize,
-    is_dir: bool,
+    kind: EntryKind,
     is_expanded: bool,
     is_selected: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum EntryKind {
+    File,
+    Dir,
+    FileRenameEditor,
+    NewFileEditor,
 }
 
 #[derive(Clone)]
@@ -53,7 +72,10 @@ pub struct ToggleExpanded(pub ProjectEntryId);
 #[derive(Clone)]
 pub struct Open(pub ProjectEntryId);
 
-actions!(project_panel, [ExpandSelectedEntry, CollapseSelectedEntry]);
+actions!(
+    project_panel,
+    [ExpandSelectedEntry, CollapseSelectedEntry, AddFile]
+);
 impl_internal_actions!(project_panel, [Open, ToggleExpanded]);
 
 pub fn init(cx: &mut MutableAppContext) {
@@ -63,6 +85,9 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::select_prev);
     cx.add_action(ProjectPanel::select_next);
     cx.add_action(ProjectPanel::open_entry);
+    cx.add_action(ProjectPanel::add_file);
+    cx.add_async_action(ProjectPanel::confirm);
+    cx.add_action(ProjectPanel::cancel);
 }
 
 pub enum Event {
@@ -96,12 +121,22 @@ impl ProjectPanel {
             })
             .detach();
 
+            let editor = cx.add_view(|cx| Editor::single_line(None, cx));
+            cx.subscribe(&editor, |this, _, event, cx| {
+                if let editor::Event::Blurred = event {
+                    this.editor_blurred(cx);
+                }
+            })
+            .detach();
+
             let mut this = Self {
                 project: project.clone(),
                 list: Default::default(),
                 visible_entries: Default::default(),
                 expanded_dir_ids: Default::default(),
                 selection: None,
+                edit_state: None,
+                filename_editor: editor,
                 handle: cx.weak_handle(),
             };
             this.update_visible_entries(None, cx);
@@ -230,8 +265,112 @@ impl ProjectPanel {
         }
     }
 
+    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        let edit_state = self.edit_state.take()?;
+        cx.focus_self();
+        let worktree = self
+            .project
+            .read(cx)
+            .worktree_for_id(edit_state.worktree_id, cx)?;
+
+        // TODO - implement this for remote projects
+        if !worktree.read(cx).is_local() {
+            return None;
+        }
+
+        let entry = worktree.read(cx).entry_for_id(edit_state.entry_id)?;
+        let filename = self.filename_editor.read(cx).text(cx);
+
+        if edit_state.new_file {
+            let new_path = entry.path.join(filename);
+            let save = worktree.update(cx, |worktree, cx| {
+                worktree
+                    .as_local()
+                    .unwrap()
+                    .save(new_path, Default::default(), cx)
+            });
+            Some(cx.spawn(|this, mut cx| async move {
+                save.await?;
+                this.update(&mut cx, |this, cx| {
+                    this.update_visible_entries(None, cx);
+                    cx.notify();
+                });
+                Ok(())
+            }))
+        } else {
+            // TODO - implement
+            None
+        }
+    }
+
+    fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        self.edit_state = None;
+        self.update_visible_entries(None, cx);
+        cx.focus_self();
+        cx.notify();
+    }
+
     fn open_entry(&mut self, action: &Open, cx: &mut ViewContext<Self>) {
         cx.emit(Event::OpenedEntry(action.0));
+    }
+
+    fn add_file(&mut self, _: &AddFile, cx: &mut ViewContext<Self>) {
+        if let Some(Selection {
+            worktree_id,
+            entry_id,
+        }) = self.selection
+        {
+            let directory_id;
+            if let Some((worktree, expanded_dir_ids)) = self
+                .project
+                .read(cx)
+                .worktree_for_id(worktree_id, cx)
+                .zip(self.expanded_dir_ids.get_mut(&worktree_id))
+            {
+                let worktree = worktree.read(cx);
+                if let Some(mut entry) = worktree.entry_for_id(entry_id) {
+                    loop {
+                        if entry.is_dir() {
+                            if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
+                                expanded_dir_ids.insert(ix, entry.id);
+                            }
+                            directory_id = entry.id;
+                            break;
+                        } else {
+                            if let Some(parent_path) = entry.path.parent() {
+                                if let Some(parent_entry) = worktree.entry_for_path(parent_path) {
+                                    entry = parent_entry;
+                                    continue;
+                                }
+                            }
+                            return;
+                        }
+                    }
+                } else {
+                    return;
+                };
+            } else {
+                return;
+            };
+
+            self.edit_state = Some(EditState {
+                worktree_id,
+                entry_id: directory_id,
+                new_file: true,
+            });
+            self.filename_editor
+                .update(cx, |editor, cx| editor.clear(cx));
+            cx.focus(&self.filename_editor);
+            self.update_visible_entries(None, cx);
+        }
+        cx.notify();
+    }
+
+    fn editor_blurred(&mut self, cx: &mut ViewContext<Self>) {
+        self.edit_state = None;
+        self.update_visible_entries(None, cx);
+        cx.focus_self();
+        cx.notify();
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
@@ -346,11 +485,30 @@ impl ProjectPanel {
                 }
             };
 
+            let new_file_parent_id = self.edit_state.and_then(|edit_state| {
+                if edit_state.worktree_id == worktree_id && edit_state.new_file {
+                    Some(edit_state.entry_id)
+                } else {
+                    None
+                }
+            });
+
             let mut visible_worktree_entries = Vec::new();
             let mut entry_iter = snapshot.entries(false);
-            while let Some(item) = entry_iter.entry() {
-                visible_worktree_entries.push(item.clone());
-                if expanded_dir_ids.binary_search(&item.id).is_err() {
+            while let Some(entry) = entry_iter.entry() {
+                visible_worktree_entries.push(entry.clone());
+                if Some(entry.id) == new_file_parent_id {
+                    visible_worktree_entries.push(Entry {
+                        id: entry.id,
+                        kind: project::EntryKind::File(Default::default()),
+                        path: entry.path.join("\0").into(),
+                        inode: 0,
+                        mtime: entry.mtime,
+                        is_symlink: false,
+                        is_ignored: false,
+                    });
+                }
+                if expanded_dir_ids.binary_search(&entry.id).is_err() {
                     if entry_iter.advance_to_sibling() {
                         continue;
                     }
@@ -436,6 +594,7 @@ impl ProjectPanel {
             if ix >= range.end {
                 return;
             }
+
             if ix + visible_worktree_entries.len() <= range.start {
                 ix += visible_worktree_entries.len();
                 continue;
@@ -452,16 +611,39 @@ impl ProjectPanel {
                 let root_name = OsStr::new(snapshot.root_name());
                 for entry in &visible_worktree_entries[range.start.saturating_sub(ix)..end_ix - ix]
                 {
-                    let filename = entry.path.file_name().unwrap_or(root_name);
-                    let details = EntryDetails {
-                        filename: filename.to_string_lossy().to_string(),
+                    let mut details = EntryDetails {
+                        filename: entry
+                            .path
+                            .file_name()
+                            .unwrap_or(root_name)
+                            .to_string_lossy()
+                            .to_string(),
                         depth: entry.path.components().count(),
-                        is_dir: entry.is_dir(),
+                        kind: if entry.is_dir() {
+                            EntryKind::Dir
+                        } else {
+                            EntryKind::File
+                        },
                         is_expanded: expanded_entry_ids.binary_search(&entry.id).is_ok(),
                         is_selected: self.selection.map_or(false, |e| {
                             e.worktree_id == snapshot.id() && e.entry_id == entry.id
                         }),
                     };
+                    if let Some(edit_state) = self.edit_state {
+                        if edit_state.worktree_id == *worktree_id && edit_state.entry_id == entry.id
+                        {
+                            if edit_state.new_file {
+                                if entry.is_file() {
+                                    details.kind = EntryKind::NewFileEditor;
+                                    details.filename = Default::default();
+                                    details.is_expanded = false;
+                                    details.is_selected = false;
+                                }
+                            } else {
+                                details.kind = EntryKind::FileRenameEditor;
+                            }
+                        }
+                    }
                     callback(entry.id, details, cx);
                 }
             }
@@ -472,15 +654,29 @@ impl ProjectPanel {
     fn render_entry(
         entry_id: ProjectEntryId,
         details: EntryDetails,
+        editor: &ViewHandle<Editor>,
         theme: &theme::ProjectPanel,
         cx: &mut ViewContext<Self>,
     ) -> ElementBox {
-        let is_dir = details.is_dir;
+        let kind = details.kind;
+        let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
+
+        if kind == EntryKind::FileRenameEditor || kind == EntryKind::NewFileEditor {
+            return ChildView::new(editor.clone())
+                .constrained()
+                .with_height(theme.entry.default.height)
+                .contained()
+                .with_margin_left(
+                    padding + theme.entry.default.icon_spacing + theme.entry.default.icon_size,
+                )
+                .boxed();
+        }
+
         MouseEventHandler::new::<Self, _, _>(entry_id.to_usize(), cx, |state, _| {
             let style = theme.entry.style_for(state, details.is_selected);
             Flex::row()
                 .with_child(
-                    ConstrainedBox::new(if is_dir {
+                    ConstrainedBox::new(if kind == EntryKind::Dir {
                         if details.is_expanded {
                             Svg::new("icons/disclosure-open.svg")
                                 .with_color(style.icon_color)
@@ -512,13 +708,11 @@ impl ProjectPanel {
                 .with_height(theme.entry.default.height)
                 .contained()
                 .with_style(style.container)
-                .with_padding_left(
-                    theme.container.padding.left + details.depth as f32 * theme.indent_width,
-                )
+                .with_padding_left(padding)
                 .boxed()
         })
         .on_click(move |cx| {
-            if is_dir {
+            if kind == EntryKind::Dir {
                 cx.dispatch_action(ToggleExpanded(entry_id))
             } else {
                 cx.dispatch_action(Open(entry_id))
@@ -549,8 +743,14 @@ impl View for ProjectPanel {
                 let theme = cx.global::<Settings>().theme.clone();
                 let this = handle.upgrade(cx).unwrap();
                 this.update(cx.app, |this, cx| {
-                    this.for_each_visible_entry(range.clone(), cx, |entry, details, cx| {
-                        items.push(Self::render_entry(entry, details, &theme.project_panel, cx));
+                    this.for_each_visible_entry(range.clone(), cx, |id, details, cx| {
+                        items.push(Self::render_entry(
+                            id,
+                            details,
+                            &this.filename_editor,
+                            &theme.project_panel,
+                            cx,
+                        ));
                     });
                 })
             },
@@ -633,59 +833,59 @@ mod tests {
                 EntryDetails {
                     filename: "root1".to_string(),
                     depth: 0,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: true,
                     is_selected: false,
                 },
                 EntryDetails {
                     filename: "a".to_string(),
                     depth: 1,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: false,
                     is_selected: false,
                 },
                 EntryDetails {
                     filename: "b".to_string(),
                     depth: 1,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: false,
                     is_selected: false,
                 },
                 EntryDetails {
                     filename: "C".to_string(),
                     depth: 1,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: false,
                     is_selected: false,
                 },
                 EntryDetails {
                     filename: ".dockerignore".to_string(),
                     depth: 1,
-                    is_dir: false,
+                    kind: EntryKind::File,
                     is_expanded: false,
                     is_selected: false,
                 },
                 EntryDetails {
                     filename: "root2".to_string(),
                     depth: 0,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: true,
                     is_selected: false
                 },
                 EntryDetails {
                     filename: "d".to_string(),
                     depth: 1,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: false,
                     is_selected: false
                 },
                 EntryDetails {
                     filename: "e".to_string(),
                     depth: 1,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: false,
                     is_selected: false
-                }
+                },
             ],
         );
 
@@ -696,73 +896,73 @@ mod tests {
                 EntryDetails {
                     filename: "root1".to_string(),
                     depth: 0,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: true,
                     is_selected: false,
                 },
                 EntryDetails {
                     filename: "a".to_string(),
                     depth: 1,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: false,
                     is_selected: false,
                 },
                 EntryDetails {
                     filename: "b".to_string(),
                     depth: 1,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: true,
                     is_selected: true,
                 },
                 EntryDetails {
                     filename: "3".to_string(),
                     depth: 2,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: false,
                     is_selected: false,
                 },
                 EntryDetails {
                     filename: "4".to_string(),
                     depth: 2,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: false,
                     is_selected: false,
                 },
                 EntryDetails {
                     filename: "C".to_string(),
                     depth: 1,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: false,
                     is_selected: false,
                 },
                 EntryDetails {
                     filename: ".dockerignore".to_string(),
                     depth: 1,
-                    is_dir: false,
+                    kind: EntryKind::File,
                     is_expanded: false,
                     is_selected: false,
                 },
                 EntryDetails {
                     filename: "root2".to_string(),
                     depth: 0,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: true,
                     is_selected: false
                 },
                 EntryDetails {
                     filename: "d".to_string(),
                     depth: 1,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: false,
                     is_selected: false
                 },
                 EntryDetails {
                     filename: "e".to_string(),
                     depth: 1,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: false,
                     is_selected: false
-                }
+                },
             ]
         );
 
@@ -772,66 +972,251 @@ mod tests {
                 EntryDetails {
                     filename: "C".to_string(),
                     depth: 1,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: false,
                     is_selected: false
                 },
                 EntryDetails {
                     filename: ".dockerignore".to_string(),
                     depth: 1,
-                    is_dir: false,
+                    kind: EntryKind::File,
                     is_expanded: false,
                     is_selected: false
                 },
                 EntryDetails {
                     filename: "root2".to_string(),
                     depth: 0,
-                    is_dir: true,
+                    kind: EntryKind::Dir,
                     is_expanded: true,
                     is_selected: false
+                },
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_editing_files(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                ".dockerignore": "",
+                ".git": {
+                    "HEAD": "",
+                },
+                "a": {
+                    "0": { "q": "", "r": "", "s": "" },
+                    "1": { "t": "", "u": "" },
+                    "2": { "v": "", "w": "", "x": "", "y": "" },
+                },
+                "b": {
+                    "3": { "Q": "" },
+                    "4": { "R": "", "S": "", "T": "", "U": "" },
+                },
+                "C": {
+                    "5": {},
+                    "6": { "V": "", "W": "" },
+                    "7": { "X": "" },
+                    "8": { "Y": {}, "Z": "" }
                 }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/root2",
+            json!({
+                "d": {
+                    "9": ""
+                },
+                "e": {}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1", "/root2"], cx).await;
+        let params = cx.update(WorkspaceParams::test);
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
+        let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
+
+        select_path(&panel, "root1", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1  <== selected",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
             ]
         );
 
-        fn toggle_expand_dir(
-            panel: &ViewHandle<ProjectPanel>,
-            path: impl AsRef<Path>,
-            cx: &mut TestAppContext,
-        ) {
-            let path = path.as_ref();
-            panel.update(cx, |panel, cx| {
-                for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
-                    let worktree = worktree.read(cx);
-                    if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
-                        let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
-                        panel.toggle_expanded(&ToggleExpanded(entry_id), cx);
-                        return;
-                    }
-                }
-                panic!("no worktree for path {:?}", path);
-            });
-        }
+        // Add a file with the root folder selected. The filename editor is placed
+        // before the first file in the root folder.
+        panel.update(cx, |panel, cx| panel.add_file(&AddFile, cx));
+        assert!(panel.read_with(cx, |panel, cx| panel.filename_editor.is_focused(cx)));
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1  <== selected",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      [NEW FILE EDITOR]",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
 
-        fn visible_entry_details(
-            panel: &ViewHandle<ProjectPanel>,
-            range: Range<usize>,
-            cx: &mut TestAppContext,
-        ) -> Vec<EntryDetails> {
-            let mut result = Vec::new();
-            let mut project_entries = HashSet::new();
-            panel.update(cx, |panel, cx| {
-                panel.for_each_visible_entry(range, cx, |project_entry, details, _| {
+        panel.update(cx, |panel, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                editor.set_text("the-new-filename", cx);
+            });
+            panel.confirm(&Confirm, cx);
+        });
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1  <== selected",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      .dockerignore",
+                "      the-new-filename",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        select_path(&panel, "root1/b", cx);
+        panel.update(cx, |panel, cx| panel.add_file(&AddFile, cx));
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..9, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    v b  <== selected",
+                "        > 3",
+                "        > 4",
+                "          [NEW FILE EDITOR]",
+                "    > C",
+                "      .dockerignore",
+                "      the-new-filename",
+            ]
+        );
+    }
+
+    fn toggle_expand_dir(
+        panel: &ViewHandle<ProjectPanel>,
+        path: impl AsRef<Path>,
+        cx: &mut TestAppContext,
+    ) {
+        let path = path.as_ref();
+        panel.update(cx, |panel, cx| {
+            for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
+                let worktree = worktree.read(cx);
+                if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
+                    let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
+                    panel.toggle_expanded(&ToggleExpanded(entry_id), cx);
+                    return;
+                }
+            }
+            panic!("no worktree for path {:?}", path);
+        });
+    }
+
+    fn select_path(
+        panel: &ViewHandle<ProjectPanel>,
+        path: impl AsRef<Path>,
+        cx: &mut TestAppContext,
+    ) {
+        let path = path.as_ref();
+        panel.update(cx, |panel, cx| {
+            for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
+                let worktree = worktree.read(cx);
+                if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
+                    let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
+                    panel.selection = Some(Selection {
+                        worktree_id: worktree.id(),
+                        entry_id,
+                    });
+                    return;
+                }
+            }
+            panic!("no worktree for path {:?}", path);
+        });
+    }
+
+    fn visible_entry_details(
+        panel: &ViewHandle<ProjectPanel>,
+        range: Range<usize>,
+        cx: &mut TestAppContext,
+    ) -> Vec<EntryDetails> {
+        let mut result = Vec::new();
+        let mut project_entries = HashSet::new();
+        let mut has_editor = false;
+        panel.update(cx, |panel, cx| {
+            panel.for_each_visible_entry(range, cx, |project_entry, details, _| {
+                if details.kind == EntryKind::NewFileEditor
+                    || details.kind == EntryKind::FileRenameEditor
+                {
+                    assert!(!has_editor, "duplicate editor entry");
+                    has_editor = true;
+                } else {
                     assert!(
                         project_entries.insert(project_entry),
                         "duplicate project entry {:?} {:?}",
                         project_entry,
                         details
                     );
-                    result.push(details);
-                });
+                }
+                result.push(details)
             });
+        });
 
-            result
-        }
+        result
+    }
+
+    fn visible_entries_as_strings(
+        panel: &ViewHandle<ProjectPanel>,
+        range: Range<usize>,
+        cx: &mut TestAppContext,
+    ) -> Vec<String> {
+        visible_entry_details(panel, range, cx)
+            .into_iter()
+            .map(|details| {
+                let indent = "    ".repeat(details.depth);
+                let icon = if details.kind == EntryKind::Dir {
+                    if details.is_expanded {
+                        "v "
+                    } else {
+                        "> "
+                    }
+                } else {
+                    "  "
+                };
+                let name = if details.kind == EntryKind::FileRenameEditor {
+                    "[RENAME EDITOR]"
+                } else if details.kind == EntryKind::NewFileEditor {
+                    "[NEW FILE EDITOR]"
+                } else {
+                    &details.filename
+                };
+                let selected = if details.is_selected {
+                    "  <== selected"
+                } else {
+                    ""
+                };
+                format!("{indent}{icon}{name}{selected}")
+            })
+            .collect()
     }
 }
