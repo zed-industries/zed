@@ -549,7 +549,7 @@
           "right": 6,
           "top": 2
         },
-        "background": "#073642"
+        "background": "#07364252"
       },
       "margin": {
         "left": -14
@@ -567,7 +567,7 @@
           "right": 6,
           "top": 2
         },
-        "background": "#073642"
+        "background": "#0736427a"
       }
     },
     "diagnostic_header": {
@@ -1334,26 +1334,25 @@
       "color": "#93a1a1",
       "size": 14,
       "background": "#073642",
-      "corner_radius": 4,
+      "corner_radius": 6,
       "border": {
         "color": "#073642",
         "width": 1
       },
       "margin": {
-        "left": 2,
-        "right": 2
+        "right": 4
       },
       "padding": {
-        "bottom": 3,
-        "left": 8,
-        "right": 8,
-        "top": 3
+        "bottom": 2,
+        "left": 10,
+        "right": 10,
+        "top": 2
       },
       "active": {
         "family": "Zed Mono",
         "color": "#fdf6e3",
         "size": 14,
-        "background": "#657b83",
+        "background": "#586e75a3",
         "border": {
           "color": "#657b83",
           "width": 1
@@ -1363,7 +1362,7 @@
         "family": "Zed Mono",
         "color": "#fdf6e3",
         "size": 14,
-        "background": "#657b83",
+        "background": "#586e7552",
         "border": {
           "color": "#657b83",
           "width": 1
@@ -1394,7 +1393,7 @@
         "width": 1
       },
       "margin": {
-        "right": 6
+        "right": 12
       },
       "padding": {
         "top": 3,
@@ -1427,7 +1426,7 @@
         "width": 1
       },
       "margin": {
-        "right": 6
+        "right": 12
       },
       "padding": {
         "top": 3,
@@ -1444,8 +1443,8 @@
     },
     "option_button_group": {
       "padding": {
-        "left": 4,
-        "right": 4
+        "left": 12,
+        "right": 12
       }
     },
     "results_status": {

@@ -1334,20 +1334,19 @@
       "color": "#474747",
       "size": 14,
       "background": "#f1f1f1",
-      "corner_radius": 4,
+      "corner_radius": 6,
       "border": {
         "color": "#d5d5d5",
         "width": 1
       },
       "margin": {
-        "left": 2,
-        "right": 2
+        "right": 4
       },
       "padding": {
-        "bottom": 3,
-        "left": 8,
-        "right": 8,
-        "top": 3
+        "bottom": 2,
+        "left": 10,
+        "right": 10,
+        "top": 2
       },
       "active": {
         "family": "Zed Mono",
@@ -1394,7 +1393,7 @@
         "width": 1
       },
       "margin": {
-        "right": 6
+        "right": 12
       },
       "padding": {
         "top": 3,
@@ -1427,7 +1426,7 @@
         "width": 1
       },
       "margin": {
-        "right": 6
+        "right": 12
       },
       "padding": {
         "top": 3,
@@ -1444,8 +1443,8 @@
     },
     "option_button_group": {
       "padding": {
-        "left": 4,
-        "right": 4
+        "left": 12,
+        "right": 12
       }
     },
     "results_status": {

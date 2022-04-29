@@ -2,6 +2,8 @@ import Theme from "../themes/theme";
 import { backgroundColor, border, player, text } from "./components";
 
 export default function search(theme: Theme) {
+
+  // Search input
   const editor = {
     background: backgroundColor(theme, 500),
     cornerRadius: 8,
@@ -12,7 +14,7 @@ export default function search(theme: Theme) {
     text: text(theme, "mono", "active"),
     border: border(theme, "secondary"),
     margin: {
-      right: 6,
+      right: 12,
     },
     padding: {
       top: 3,
@@ -29,17 +31,16 @@ export default function search(theme: Theme) {
     optionButton: {
       ...text(theme, "mono", "secondary"),
       background: backgroundColor(theme, "on500"),
-      cornerRadius: 4,
+      cornerRadius: 6,
       border: border(theme, "secondary"),
       margin: {
-        left: 2,
-        right: 2,
+        right: 4,
       },
       padding: {
-        bottom: 3,
-        left: 8,
-        right: 8,
-        top: 3,
+        bottom: 2,
+        left: 10,
+        right: 10,
+        top: 2,
       },
       active: {
         ...text(theme, "mono", "active"),
@@ -63,8 +64,8 @@ export default function search(theme: Theme) {
     },
     optionButtonGroup: {
       padding: {
-        left: 4,
-        right: 4,
+        left: 12,
+        right: 12,
       },
     },
     resultsStatus: {
