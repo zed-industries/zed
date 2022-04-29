@@ -3,6 +3,7 @@ use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use rpc::{proto, ConnectionId};
 use std::{collections::hash_map, path::PathBuf};
+use tracing::instrument;
 
 #[derive(Default)]
 pub struct Store {
@@ -80,7 +81,33 @@ pub struct LeftProject {
     pub authorized_user_ids: Vec<UserId>,
 }
 
+#[derive(Copy, Clone)]
+pub struct Metrics {
+    pub connections: usize,
+    pub registered_projects: usize,
+    pub shared_projects: usize,
+}
+
 impl Store {
+    pub fn metrics(&self) -> Metrics {
+        let connections = self.connections.len();
+        let mut registered_projects = 0;
+        let mut shared_projects = 0;
+        for project in self.projects.values() {
+            registered_projects += 1;
+            if project.share.is_some() {
+                shared_projects += 1;
+            }
+        }
+
+        Metrics {
+            connections,
+            registered_projects,
+            shared_projects,
+        }
+    }
+
+    #[instrument(skip(self))]
     pub fn add_connection(&mut self, connection_id: ConnectionId, user_id: UserId) {
         self.connections.insert(
             connection_id,
@@ -96,6 +123,7 @@ impl Store {
             .insert(connection_id);
     }
 
+    #[instrument(skip(self))]
     pub fn remove_connection(
         &mut self,
         connection_id: ConnectionId,

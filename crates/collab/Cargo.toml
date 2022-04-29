@@ -25,21 +25,26 @@ base64 = "0.13"
 envy = "0.4.2"
 env_logger = "0.8"
 futures = "0.3"
-json_env_logger = "0.1"
 lazy_static = "1.4"
 lipsum = { version = "0.8", optional = true }
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
+opentelemetry = { version = "0.17", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.10", features = ["tls-roots"] }
 parking_lot = "0.11.1"
 rand = "0.8"
 scrypt = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha-1 = "0.9"
+time = "0.2"
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.17"
+tonic = "0.6"
 tower = "0.4"
-time = "0.2"
 toml = "0.5.8"
+tracing = "0.1"
+tracing-opentelemetry = "0.17"
+tracing-subscriber = "0.3"
 
 [dependencies.sqlx]
 version = "0.5.2"

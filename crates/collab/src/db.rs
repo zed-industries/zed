@@ -431,6 +431,12 @@ macro_rules! id_type {
                 self.0 as u64
             }
         }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                self.0.fmt(f)
+            }
+        }
     };
 }
 
