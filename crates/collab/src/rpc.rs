@@ -47,7 +47,6 @@ use tokio::{
 };
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
-use util::ResultExt;
 
 type MessageHandler =
     Box<dyn Send + Sync + Fn(Arc<Server>, Box<dyn AnyTypedEnvelope>) -> BoxFuture<'static, ()>>;
@@ -875,7 +874,7 @@ impl Server {
                             contacts: contacts.clone(),
                         },
                     )
-                    .log_err();
+                    .trace_err();
             }
         }
     }
@@ -1110,13 +1109,14 @@ impl Executor for RealExecutor {
     }
 }
 
+#[instrument(skip(f))]
 fn broadcast<F>(sender_id: ConnectionId, receiver_ids: Vec<ConnectionId>, mut f: F)
 where
     F: FnMut(ConnectionId) -> anyhow::Result<()>,
 {
     for receiver_id in receiver_ids {
         if receiver_id != sender_id {
-            f(receiver_id).log_err();
+            f(receiver_id).trace_err();
         }
     }
 }
@@ -1213,6 +1213,29 @@ fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
                 code: frame.code.into(),
                 reason: frame.reason,
             }))
+        }
+    }
+}
+
+pub trait ResultExt {
+    type Ok;
+
+    fn trace_err(self) -> Option<Self::Ok>;
+}
+
+impl<T, E> ResultExt for Result<T, E>
+where
+    E: std::fmt::Debug,
+{
+    type Ok = T;
+
+    fn trace_err(self) -> Option<T> {
+        match self {
+            Ok(value) => Some(value),
+            Err(error) => {
+                tracing::error!("{:?}", error);
+                None
+            }
         }
     }
 }
