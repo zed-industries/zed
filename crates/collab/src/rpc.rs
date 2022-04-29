@@ -25,6 +25,7 @@ use axum::{
 use collections::{HashMap, HashSet};
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use lazy_static::lazy_static;
+use opentelemetry::metrics::{Meter, ValueRecorder};
 use rpc::{
     proto::{self, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},
     Connection, ConnectionId, Peer, TypedEnvelope,
@@ -47,6 +48,16 @@ use tokio::{
 };
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
+
+lazy_static! {
+    static ref METER: Meter = opentelemetry::global::meter("");
+    static ref CONNECTIONS_COUNTER: opentelemetry::metrics::Counter<u64> =
+        METER.u64_counter("connections").init();
+    // static ref REGISTERED_PROJECTS_GAUGE: ValueRecorder<u64> =
+    //     METER.u64_value_recorder("registered projects").init();
+    // static ref SHARED_PROJECTS_GAUGE: ValueRecorder<u64> =
+    //     METER.u64_value_recorder("shared projects").init();
+}
 
 type MessageHandler =
     Box<dyn Send + Sync + Fn(Arc<Server>, Box<dyn AnyTypedEnvelope>) -> BoxFuture<'static, ()>>;
@@ -1096,13 +1107,17 @@ impl<'a> Drop for StoreWriteGuard<'a> {
         self.check_invariants();
 
         let metrics = self.metrics();
-        tracing::info!(
-            connections = metrics.connections as f32,
-            registered_projects = metrics.registered_projects as f32,
-            shared_projects = metrics.shared_projects as f32,
-            collaborators_per_project = metrics.collaborators_per_project,
-            "metrics"
-        );
+
+        CONNECTIONS_COUNTER.add(1, &[]);
+        // CONNECTIONS_COUNTER. record(metrics.connections as u64 * 2, &[]);
+
+        // METER.record_batch(
+        //     &[],
+        //     [
+        //         REGISTERED_PROJECTS_GAUGE.measurement(metrics.registered_projects as u64),
+        //         SHARED_PROJECTS_GAUGE.measurement(metrics.shared_projects as u64),
+        //     ],
+        // );
     }
 }
 

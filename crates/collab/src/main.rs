@@ -6,11 +6,13 @@ mod rpc;
 
 use axum::{body::Body, http::StatusCode, response::IntoResponse, Router};
 use db::{Db, PostgresDb};
+use opentelemetry::sdk::metrics::PushController;
 use serde::Deserialize;
 use std::{
     net::{SocketAddr, TcpListener},
     sync::Arc,
 };
+use tokio_stream::wrappers::IntervalStream;
 use tracing::metadata::LevelFilter;
 
 #[derive(Default, Deserialize)]
@@ -51,7 +53,7 @@ async fn main() -> Result<()> {
     }
 
     let config = envy::from_env::<Config>().expect("error loading config");
-    init_tracing(&config);
+    let _metrics_push_controller = init_telemetry(&config);
     let state = AppState::new(&config).await?;
 
     let listener = TcpListener::bind(&format!("0.0.0.0:{}", config.http_port))
@@ -113,7 +115,7 @@ impl std::fmt::Display for Error {
     }
 }
 
-pub fn init_tracing(config: &Config) -> Option<()> {
+pub fn init_telemetry(config: &Config) -> Option<PushController> {
     use opentelemetry::KeyValue;
     use opentelemetry_otlp::WithExportConfig;
     use std::str::FromStr;
@@ -124,23 +126,23 @@ pub fn init_tracing(config: &Config) -> Option<()> {
         .honeycomb_api_key
         .clone()
         .zip(config.honeycomb_dataset.clone())?;
-
     let mut metadata = tonic::metadata::MetadataMap::new();
     metadata.insert("x-honeycomb-team", honeycomb_api_key.parse().unwrap());
+
+    let service_name = KeyValue::new("service.name", honeycomb_dataset.clone());
+
     let tracer = opentelemetry_otlp::new_pipeline()
         .tracing()
         .with_exporter(
             opentelemetry_otlp::new_exporter()
                 .tonic()
                 .with_endpoint("https://api.honeycomb.io")
-                .with_metadata(metadata),
+                .with_metadata(metadata.clone()),
         )
-        .with_trace_config(opentelemetry::sdk::trace::config().with_resource(
-            opentelemetry::sdk::Resource::new(vec![KeyValue::new(
-                "service.name",
-                honeycomb_dataset,
-            )]),
-        ))
+        .with_trace_config(
+            opentelemetry::sdk::trace::config()
+                .with_resource(opentelemetry::sdk::Resource::new([service_name.clone()])),
+        )
         .install_batch(opentelemetry::runtime::Tokio)
         .expect("failed to initialize tracing");
 
@@ -158,5 +160,25 @@ pub fn init_tracing(config: &Config) -> Option<()> {
 
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
-    None
+    // metadata.insert("x-honeycomb-dataset", "collab_metrics".parse().unwrap());
+    // let push_controller = opentelemetry_otlp::new_pipeline()
+    //     .metrics(tokio::spawn, |duration| {
+    //         IntervalStream::new(tokio::time::interval(duration))
+    //     })
+    //     .with_exporter(
+    //         opentelemetry_otlp::new_exporter()
+    //             .tonic()
+    //             .with_endpoint("https://api.honeycomb.io")
+    //             .with_metadata(metadata.clone()),
+    //     )
+    //     .with_resource([service_name])
+    //     .build()
+    //     .unwrap();
+
+    let push_controller = opentelemetry::sdk::export::metrics::stdout(tokio::spawn, |duration| {
+        IntervalStream::new(tokio::time::interval(duration))
+    })
+    .init();
+
+    Some(push_controller)
 }
