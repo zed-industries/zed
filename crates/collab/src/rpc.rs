@@ -1097,9 +1097,9 @@ impl<'a> Drop for StoreWriteGuard<'a> {
 
         let metrics = self.metrics();
         tracing::info!(
-            connections = metrics.connections,
-            registered_projects = metrics.registered_projects,
-            shared_projects = metrics.shared_projects,
+            connections = metrics.connections as f32,
+            registered_projects = metrics.registered_projects as f32,
+            shared_projects = metrics.shared_projects as f32,
             collaborators_per_project = metrics.collaborators_per_project,
             "metrics"
         );
