@@ -3,6 +3,7 @@ use anyhow::{anyhow, Result};
 use async_tungstenite::tungstenite::Message as WebSocketMessage;
 use futures::{SinkExt as _, StreamExt as _};
 use prost::Message as _;
+use serde::Serialize;
 use std::any::{Any, TypeId};
 use std::{
     io,
@@ -11,7 +12,7 @@ use std::{
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
-pub trait EnvelopedMessage: Clone + Sized + Send + Sync + 'static {
+pub trait EnvelopedMessage: Clone + Serialize + Sized + Send + Sync + 'static {
     const NAME: &'static str;
     const PRIORITY: MessagePriority;
     fn into_envelope(

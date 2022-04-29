@@ -156,7 +156,10 @@ impl Server {
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
                 let span = info_span!(
                     "handle message",
-                    payload_type = envelope.payload_type_name()
+                    payload_type = envelope.payload_type_name(),
+                    payload = serde_json::to_string_pretty(&envelope.payload)
+                        .unwrap()
+                        .as_str(),
                 );
                 let future = (handler)(server, *envelope);
                 async move {
