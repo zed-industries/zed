@@ -346,7 +346,7 @@
     },
     "titlebar": {
       "avatar_width": 18,
-      "height": 32,
+      "height": 33,
       "background": "#073642",
       "padding": {
         "left": 80
@@ -370,7 +370,8 @@
       "border": {
         "color": "#002b36",
         "width": 1,
-        "bottom": true
+        "bottom": true,
+        "overlay": true
       },
       "sign_in_prompt": {
         "border": {
@@ -425,7 +426,17 @@
       "outdated_warning": {
         "family": "Zed Sans",
         "color": "#b58900",
-        "size": 13,
+        "size": 12,
+        "background": "#b5890026",
+        "border": {
+          "color": "#b5890026",
+          "width": 1
+        },
+        "padding": {
+          "left": 6,
+          "right": 6
+        },
+        "corner_radius": 6,
         "margin": {
           "right": 6
         }

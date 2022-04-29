@@ -61,7 +61,7 @@ export default function workspace(theme: Theme) {
     statusBar: statusBar(theme),
     titlebar: {
       avatarWidth: 18,
-      height: 32,
+      height: 33,
       background: backgroundColor(theme, 100),
       padding: {
         left: 80,
@@ -80,7 +80,7 @@ export default function workspace(theme: Theme) {
         // TODO: The background for this ideally should be 
         // set with a token, not hardcoded in rust
       },
-      border: border(theme, "primary", { bottom: true }),
+      border: border(theme, "primary", { bottom: true, overlay: true }),
       signInPrompt: {
         border: border(theme, "primary"),
         cornerRadius: 6,
@@ -120,8 +120,14 @@ export default function workspace(theme: Theme) {
         }
       },
       outdatedWarning: {
-        ...text(theme, "sans", "warning"),
-        size: 13,
+        ...text(theme, "sans", "warning", { size: "xs" }),
+        background: backgroundColor(theme, "warning"),
+        border: border(theme, "warning"),
+        padding: {
+          left: 6,
+          right: 6,
+        },
+        cornerRadius: 6,
         margin: { right: 6 }
       },
     },
