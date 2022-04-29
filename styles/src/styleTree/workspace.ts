@@ -1,7 +1,9 @@
 import Theme from "../themes/theme";
 import { backgroundColor, border, iconColor, text } from "./components";
+import statusBar from "./statusBar";
 
 export default function workspace(theme: Theme) {
+
   const tab = {
     height: 32,
     background: backgroundColor(theme, 300),
@@ -56,105 +58,10 @@ export default function workspace(theme: Theme) {
       color: border(theme, "secondary").color,
       width: 1,
     },
-    statusBar: {
-      height: 30,
-      itemSpacing: 8,
-      padding: {
-        top: 1,
-        bottom: 1,
-        left: 6,
-        right: 6,
-      },
-      border: border(theme, "primary", { top: true, overlay: true }),
-      cursorPosition: text(theme, "sans", "muted"),
-      autoUpdateProgressMessage: text(theme, "sans", "muted"),
-      autoUpdateDoneMessage: text(theme, "sans", "muted"),
-      lspStatus: {
-        iconSpacing: 4,
-        iconWidth: 14,
-        height: 18,
-        cornerRadius: 6,
-        padding: { left: 6, right: 6 },
-        message: text(theme, "sans", "muted"),
-        iconColor: iconColor(theme, "muted"),
-        hover: {
-          message: text(theme, "sans", "primary"),
-          iconColor: iconColor(theme, "primary"),
-          background: backgroundColor(theme, 300, "hovered"),
-        }
-      },
-      diagnosticMessage: {
-        ...text(theme, "sans", "muted"),
-        hover: text(theme, "sans", "secondary"),
-      },
-      diagnosticSummary: {
-        height: 16,
-        iconWidth: 14,
-        iconSpacing: 2,
-        summarySpacing: 6,
-        text: text(theme, "sans", "primary", { size: "sm" }),
-        iconColorOk: iconColor(theme, "secondary"),
-        iconColorWarning: iconColor(theme, "warning"),
-        iconColorError: iconColor(theme, "error"),
-        containerOk: {
-          cornerRadius: 6,
-          padding: { left: 6, right: 6 },
-        },
-        containerWarning: {
-          cornerRadius: 6,
-          padding: { left: 6, right: 6 },
-          background: backgroundColor(theme, "warning"),
-          border: border(theme, "warning"),
-        },
-        containerError: {
-          cornerRadius: 6,
-          padding: { left: 6, right: 6 },
-          background: backgroundColor(theme, "error"),
-          border: border(theme, "error"),
-        },
-        hover: {
-          iconColorOk: iconColor(theme, "primary"),
-          containerOk: {
-            cornerRadius: 6,
-            padding: { left: 6, right: 6 },
-            background: backgroundColor(theme, 300, "hovered"),
-          },
-          containerWarning: {
-            cornerRadius: 6,
-            padding: { left: 6, right: 6 },
-            background: backgroundColor(theme, "warning", "hovered"),
-            border: border(theme, "warning"),
-          },
-          containerError: {
-            cornerRadius: 6,
-            padding: { left: 6, right: 6 },
-            background: backgroundColor(theme, "error", "hovered"),
-            border: border(theme, "error"),
-          }
-        },
-      },
-      sidebarButtons: {
-        groupLeft: {},
-        groupRight: {},
-        item: {
-          iconSize: 14,
-          padding: { top: 3, bottom: 3, left: 6, right: 6 },
-          cornerRadius: 6,
-          iconColor: iconColor(theme, "secondary"),
-          hover: {
-            iconColor: iconColor(theme, "primary"),
-            background: backgroundColor(theme, 300, "hovered"),
-          },
-          active: {
-            iconColor: iconColor(theme, "active"),
-            background: backgroundColor(theme, 300, "active"),
-          }
-        },
-      },
-    },
+    statusBar: statusBar(theme),
     titlebar: {
       avatarWidth: 18,
-      height: 32,
+      height: 33,
       background: backgroundColor(theme, 100),
       padding: {
         left: 80,
@@ -173,7 +80,7 @@ export default function workspace(theme: Theme) {
         // TODO: The background for this ideally should be 
         // set with a token, not hardcoded in rust
       },
-      border: border(theme, "primary", { bottom: true }),
+      border: border(theme, "primary", { bottom: true, overlay: true }),
       signInPrompt: {
         border: border(theme, "primary"),
         cornerRadius: 6,
@@ -213,8 +120,14 @@ export default function workspace(theme: Theme) {
         }
       },
       outdatedWarning: {
-        ...text(theme, "sans", "warning"),
-        size: 13,
+        ...text(theme, "sans", "warning", { size: "xs" }),
+        background: backgroundColor(theme, "warning"),
+        border: border(theme, "warning"),
+        padding: {
+          left: 6,
+          right: 6,
+        },
+        cornerRadius: 6,
         margin: { right: 6 }
       },
     },
