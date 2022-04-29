@@ -192,14 +192,16 @@
         "size": 14
       },
       "lsp_status": {
-        "icon_spacing": 4,
-        "icon_width": 14,
-        "height": 18,
         "corner_radius": 6,
         "padding": {
+          "top": 1,
+          "bottom": 1,
           "left": 6,
           "right": 6
         },
+        "icon_spacing": 4,
+        "icon_width": 14,
+        "height": 18,
         "message": {
           "family": "Zed Sans",
           "color": "#586e75",
@@ -242,13 +244,17 @@
         "container_ok": {
           "corner_radius": 6,
           "padding": {
-            "left": 6,
-            "right": 6
+            "top": 3,
+            "bottom": 3,
+            "left": 7,
+            "right": 7
           }
         },
         "container_warning": {
           "corner_radius": 6,
           "padding": {
+            "top": 1,
+            "bottom": 1,
             "left": 6,
             "right": 6
           },
@@ -261,6 +267,8 @@
         "container_error": {
           "corner_radius": 6,
           "padding": {
+            "top": 1,
+            "bottom": 1,
             "left": 6,
             "right": 6
           },
@@ -275,14 +283,18 @@
           "container_ok": {
             "corner_radius": 6,
             "padding": {
-              "left": 6,
-              "right": 6
+              "top": 3,
+              "bottom": 3,
+              "left": 7,
+              "right": 7
             },
             "background": "#93a1a11f"
           },
           "container_warning": {
             "corner_radius": 6,
             "padding": {
+              "top": 1,
+              "bottom": 1,
               "left": 6,
               "right": 6
             },
@@ -295,6 +307,8 @@
           "container_error": {
             "corner_radius": 6,
             "padding": {
+              "top": 1,
+              "bottom": 1,
               "left": 6,
               "right": 6
             },
@@ -310,14 +324,14 @@
         "group_left": {},
         "group_right": {},
         "item": {
-          "icon_size": 14,
+          "corner_radius": 6,
           "padding": {
             "top": 3,
             "bottom": 3,
             "left": 6,
             "right": 6
           },
-          "corner_radius": 6,
+          "icon_size": 14,
           "icon_color": "#586e75",
           "hover": {
             "icon_color": "#073642",
