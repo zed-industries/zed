@@ -86,7 +86,6 @@ pub struct Metrics {
     pub connections: usize,
     pub registered_projects: usize,
     pub shared_projects: usize,
-    pub collaborators_per_project: f32,
 }
 
 impl Store {
@@ -94,25 +93,17 @@ impl Store {
         let connections = self.connections.len();
         let mut registered_projects = 0;
         let mut shared_projects = 0;
-        let mut collaborators = 0;
         for project in self.projects.values() {
             registered_projects += 1;
-            if let Some(share) = project.share.as_ref() {
+            if project.share.is_some() {
                 shared_projects += 1;
-                collaborators += share.active_replica_ids.len();
             }
         }
-        let collaborators_per_project = if shared_projects == 0 || collaborators == 0 {
-            0.
-        } else {
-            collaborators as f32 / shared_projects as f32
-        };
 
         Metrics {
             connections,
             registered_projects,
             shared_projects,
-            collaborators_per_project,
         }
     }
 
