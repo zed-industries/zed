@@ -208,10 +208,8 @@ pub struct ChatPanel {
 pub struct ProjectPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub entry: ProjectPanelEntry,
-    pub hovered_entry: ProjectPanelEntry,
-    pub selected_entry: ProjectPanelEntry,
-    pub hovered_selected_entry: ProjectPanelEntry,
+    pub entry: Interactive<ProjectPanelEntry>,
+    pub indent_width: f32,
 }
 
 #[derive(Debug, Deserialize, Default)]

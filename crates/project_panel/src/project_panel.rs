@@ -1,8 +1,9 @@
+use editor::Editor;
 use gpui::{
     actions,
     elements::{
-        Align, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement, ScrollTarget,
-        Svg, UniformList, UniformListState,
+        ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement, ScrollTarget, Svg,
+        UniformList, UniformListState,
     },
     impl_internal_actions, keymap,
     platform::CursorStyle,
@@ -477,35 +478,26 @@ impl ProjectPanel {
     ) -> ElementBox {
         let is_dir = details.is_dir;
         MouseEventHandler::new::<Self, _, _>(entry_id.to_usize(), cx, |state, _| {
-            let style = match (details.is_selected, state.hovered) {
-                (false, false) => &theme.entry,
-                (false, true) => &theme.hovered_entry,
-                (true, false) => &theme.selected_entry,
-                (true, true) => &theme.hovered_selected_entry,
-            };
+            let style = theme.entry.style_for(state, details.is_selected);
             Flex::row()
                 .with_child(
-                    ConstrainedBox::new(
-                        Align::new(
-                            ConstrainedBox::new(if is_dir {
-                                if details.is_expanded {
-                                    Svg::new("icons/disclosure-open.svg")
-                                        .with_color(style.icon_color)
-                                        .boxed()
-                                } else {
-                                    Svg::new("icons/disclosure-closed.svg")
-                                        .with_color(style.icon_color)
-                                        .boxed()
-                                }
-                            } else {
-                                Empty::new().boxed()
-                            })
-                            .with_max_width(style.icon_size)
-                            .with_max_height(style.icon_size)
-                            .boxed(),
-                        )
-                        .boxed(),
-                    )
+                    ConstrainedBox::new(if is_dir {
+                        if details.is_expanded {
+                            Svg::new("icons/disclosure-open.svg")
+                                .with_color(style.icon_color)
+                                .boxed()
+                        } else {
+                            Svg::new("icons/disclosure-closed.svg")
+                                .with_color(style.icon_color)
+                                .boxed()
+                        }
+                    } else {
+                        Empty::new().boxed()
+                    })
+                    .with_max_width(style.icon_size)
+                    .with_max_height(style.icon_size)
+                    .aligned()
+                    .constrained()
                     .with_width(style.icon_size)
                     .boxed(),
                 )
@@ -518,10 +510,12 @@ impl ProjectPanel {
                         .boxed(),
                 )
                 .constrained()
-                .with_height(theme.entry.height)
+                .with_height(theme.entry.default.height)
                 .contained()
                 .with_style(style.container)
-                .with_padding_left(theme.container.padding.left + details.depth as f32 * 20.)
+                .with_padding_left(
+                    theme.container.padding.left + details.depth as f32 * theme.indent_width,
+                )
                 .boxed()
         })
         .on_click(move |cx| {
