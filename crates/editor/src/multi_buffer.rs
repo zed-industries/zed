@@ -377,6 +377,7 @@ impl MultiBuffer {
                     let mut edits = edits.into_iter().peekable();
                     let mut insertions = Vec::new();
                     let mut deletions = Vec::new();
+                    let empty_str: Arc<str> = "".into();
                     while let Some((mut range, mut new_text, mut is_insertion)) = edits.next() {
                         while let Some((next_range, next_new_text, next_is_insertion)) =
                             edits.peek()
@@ -399,7 +400,7 @@ impl MultiBuffer {
                         } else if !range.is_empty() {
                             deletions.push((
                                 buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
-                                "",
+                                empty_str.clone(),
                             ));
                         }
                     }

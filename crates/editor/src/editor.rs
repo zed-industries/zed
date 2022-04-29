@@ -3027,7 +3027,13 @@ impl Editor {
 
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(deletion_ranges.into_iter().map(|range| (range, "")), cx);
+                let empty_str: Arc<str> = "".into();
+                buffer.edit(
+                    deletion_ranges
+                        .into_iter()
+                        .map(|range| (range, empty_str.clone())),
+                    cx,
+                );
             });
             this.update_selections(
                 this.local_selections::<usize>(cx),
@@ -3089,7 +3095,13 @@ impl Editor {
 
         self.transact(cx, |this, cx| {
             let buffer = this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edit_ranges.into_iter().map(|range| (range, "")), cx);
+                let empty_str: Arc<str> = "".into();
+                buffer.edit(
+                    edit_ranges
+                        .into_iter()
+                        .map(|range| (range, empty_str.clone())),
+                    cx,
+                );
                 buffer.snapshot(cx)
             });
             let new_selections = new_cursors
@@ -3137,14 +3149,12 @@ impl Editor {
                 .text_for_range(start..end)
                 .chain(Some("\n"))
                 .collect::<String>();
-            edits.push((start, text, rows.len() as u32));
+            edits.push((start..start, text));
         }
 
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |buffer, cx| {
-                for (point, text, _) in edits.into_iter().rev() {
-                    buffer.edit([(point..point, text)], cx);
-                }
+                buffer.edit(edits, cx);
             });
 
             this.request_autoscroll(Autoscroll::Fit, cx);
@@ -4259,7 +4269,14 @@ impl Editor {
 
                     if !edit_ranges.is_empty() {
                         if all_selection_lines_are_comments {
-                            buffer.edit(edit_ranges.iter().cloned().map(|range| (range, "")), cx);
+                            let empty_str: Arc<str> = "".into();
+                            buffer.edit(
+                                edit_ranges
+                                    .iter()
+                                    .cloned()
+                                    .map(|range| (range, empty_str.clone())),
+                                cx,
+                            );
                         } else {
                             let min_column =
                                 edit_ranges.iter().map(|r| r.start.column).min().unwrap();
