@@ -255,38 +255,33 @@ impl MultiBuffer {
         self.subscriptions.subscribe()
     }
 
-    pub fn edit<I, S, T>(&mut self, ranges: I, new_text: T, cx: &mut ModelContext<Self>)
+    pub fn edit<I, S, T>(&mut self, edits: I, cx: &mut ModelContext<Self>)
     where
-        I: IntoIterator<Item = Range<S>>,
+        I: IntoIterator<Item = (Range<S>, T)>,
         S: ToOffset,
-        T: Into<String>,
+        T: Into<Arc<str>>,
     {
-        self.edit_internal(ranges, new_text, false, cx)
+        self.edit_internal(edits, false, cx)
     }
 
-    pub fn edit_with_autoindent<I, S, T>(
-        &mut self,
-        ranges: I,
-        new_text: T,
-        cx: &mut ModelContext<Self>,
-    ) where
-        I: IntoIterator<Item = Range<S>>,
+    pub fn edit_with_autoindent<I, S, T>(&mut self, edits: I, cx: &mut ModelContext<Self>)
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
         S: ToOffset,
-        T: Into<String>,
+        T: Into<Arc<str>>,
     {
-        self.edit_internal(ranges, new_text, true, cx)
+        self.edit_internal(edits, true, cx)
     }
 
     pub fn edit_internal<I, S, T>(
         &mut self,
-        ranges_iter: I,
-        new_text: T,
+        edits_iter: I,
         autoindent: bool,
         cx: &mut ModelContext<Self>,
     ) where
-        I: IntoIterator<Item = Range<S>>,
+        I: IntoIterator<Item = (Range<S>, T)>,
         S: ToOffset,
-        T: Into<String>,
+        T: Into<Arc<str>>,
     {
         if self.buffers.borrow().is_empty() {
             return;
@@ -294,24 +289,29 @@ impl MultiBuffer {
 
         if let Some(buffer) = self.as_singleton() {
             let snapshot = self.read(cx);
-            let ranges = ranges_iter
-                .into_iter()
-                .map(|range| range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot));
+            let edits = edits_iter.into_iter().map(|(range, new_text)| {
+                (
+                    range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot),
+                    new_text,
+                )
+            });
             return buffer.update(cx, |buffer, cx| {
                 let language_name = buffer.language().map(|language| language.name());
                 let indent_size = cx.global::<Settings>().tab_size(language_name.as_deref());
                 if autoindent {
-                    buffer.edit_with_autoindent(ranges, new_text, indent_size, cx);
+                    buffer.edit_with_autoindent(edits, indent_size, cx);
                 } else {
-                    buffer.edit(ranges, new_text, cx);
+                    buffer.edit(edits, cx);
                 }
             });
         }
 
         let snapshot = self.read(cx);
-        let mut buffer_edits: HashMap<usize, Vec<(Range<usize>, bool)>> = Default::default();
+        let mut buffer_edits: HashMap<usize, Vec<(Range<usize>, Arc<str>, bool)>> =
+            Default::default();
         let mut cursor = snapshot.excerpts.cursor::<usize>();
-        for range in ranges_iter {
+        for (range, new_text) in edits_iter {
+            let new_text: Arc<str> = new_text.into();
             let start = range.start.to_offset(&snapshot);
             let end = range.end.to_offset(&snapshot);
             cursor.seek(&start, Bias::Right, &());
@@ -335,7 +335,7 @@ impl MultiBuffer {
                 buffer_edits
                     .entry(start_excerpt.buffer_id)
                     .or_insert(Vec::new())
-                    .push((buffer_start..buffer_end, true));
+                    .push((buffer_start..buffer_end, new_text, true));
             } else {
                 let start_excerpt_range =
                     buffer_start..start_excerpt.range.end.to_offset(&start_excerpt.buffer);
@@ -344,11 +344,11 @@ impl MultiBuffer {
                 buffer_edits
                     .entry(start_excerpt.buffer_id)
                     .or_insert(Vec::new())
-                    .push((start_excerpt_range, true));
+                    .push((start_excerpt_range, new_text.clone(), true));
                 buffer_edits
                     .entry(end_excerpt.buffer_id)
                     .or_insert(Vec::new())
-                    .push((end_excerpt_range, false));
+                    .push((end_excerpt_range, new_text.clone(), false));
 
                 cursor.seek(&start, Bias::Right, &());
                 cursor.next(&());
@@ -359,25 +359,32 @@ impl MultiBuffer {
                     buffer_edits
                         .entry(excerpt.buffer_id)
                         .or_insert(Vec::new())
-                        .push((excerpt.range.to_offset(&excerpt.buffer), false));
+                        .push((
+                            excerpt.range.to_offset(&excerpt.buffer),
+                            new_text.clone(),
+                            false,
+                        ));
                     cursor.next(&());
                 }
             }
         }
 
-        let new_text = new_text.into();
         for (buffer_id, mut edits) in buffer_edits {
-            edits.sort_unstable_by_key(|(range, _)| range.start);
+            edits.sort_unstable_by_key(|(range, _, _)| range.start);
             self.buffers.borrow()[&buffer_id]
                 .buffer
                 .update(cx, |buffer, cx| {
                     let mut edits = edits.into_iter().peekable();
                     let mut insertions = Vec::new();
                     let mut deletions = Vec::new();
-                    while let Some((mut range, mut is_insertion)) = edits.next() {
-                        while let Some((next_range, next_is_insertion)) = edits.peek() {
+                    let empty_str: Arc<str> = "".into();
+                    while let Some((mut range, mut new_text, mut is_insertion)) = edits.next() {
+                        while let Some((next_range, next_new_text, next_is_insertion)) =
+                            edits.peek()
+                        {
                             if range.end >= next_range.start {
                                 range.end = cmp::max(next_range.end, range.end);
+                                new_text = format!("{new_text}{next_new_text}").into();
                                 is_insertion |= *next_is_insertion;
                                 edits.next();
                             } else {
@@ -386,24 +393,26 @@ impl MultiBuffer {
                         }
 
                         if is_insertion {
-                            insertions.push(
+                            insertions.push((
                                 buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
-                            );
+                                new_text,
+                            ));
                         } else if !range.is_empty() {
-                            deletions.push(
+                            deletions.push((
                                 buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
-                            );
+                                empty_str.clone(),
+                            ));
                         }
                     }
                     let language_name = buffer.language().map(|l| l.name());
                     let indent_size = cx.global::<Settings>().tab_size(language_name.as_deref());
 
                     if autoindent {
-                        buffer.edit_with_autoindent(deletions, "", indent_size, cx);
-                        buffer.edit_with_autoindent(insertions, new_text.clone(), indent_size, cx);
+                        buffer.edit_with_autoindent(deletions, indent_size, cx);
+                        buffer.edit_with_autoindent(insertions, indent_size, cx);
                     } else {
-                        buffer.edit(deletions, "", cx);
-                        buffer.edit(insertions, new_text.clone(), cx);
+                        buffer.edit(deletions, cx);
+                        buffer.edit(insertions, cx);
                     }
                 })
         }
@@ -1249,28 +1258,34 @@ impl MultiBuffer {
     pub fn randomly_edit(
         &mut self,
         rng: &mut impl rand::Rng,
-        count: usize,
+        edit_count: usize,
         cx: &mut ModelContext<Self>,
     ) {
         use text::RandomCharIter;
 
         let snapshot = self.read(cx);
-        let mut old_ranges: Vec<Range<usize>> = Vec::new();
-        for _ in 0..count {
-            let last_end = old_ranges.last().map_or(0, |last_range| last_range.end + 1);
-            if last_end > snapshot.len() {
+        let mut edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
+        let mut last_end = None;
+        for _ in 0..edit_count {
+            if last_end.map_or(false, |last_end| last_end >= snapshot.len()) {
                 break;
             }
-            let end_ix = snapshot.clip_offset(rng.gen_range(0..=last_end), Bias::Right);
-            let start_ix = snapshot.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
-            old_ranges.push(start_ix..end_ix);
+
+            let new_start = last_end.map_or(0, |last_end| last_end + 1);
+            let end = snapshot.clip_offset(rng.gen_range(new_start..=snapshot.len()), Bias::Right);
+            let start = snapshot.clip_offset(rng.gen_range(new_start..=end), Bias::Right);
+            last_end = Some(end);
+            let range = start..end;
+
+            let new_text_len = rng.gen_range(0..10);
+            let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
+
+            edits.push((range, new_text.into()));
         }
-        let new_text_len = rng.gen_range(0..10);
-        let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
-        log::info!("mutating multi-buffer at {:?}: {:?}", old_ranges, new_text);
+        log::info!("mutating multi-buffer with {:?}", edits);
         drop(snapshot);
 
-        self.edit(old_ranges.iter().cloned(), new_text.as_str(), cx);
+        self.edit(edits, cx);
     }
 
     pub fn randomly_edit_excerpts(
@@ -2950,7 +2965,7 @@ mod tests {
                 .collect::<Vec<_>>()
         );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([1..3], "XXX\n", cx));
+        buffer.update(cx, |buffer, cx| buffer.edit([(1..3, "XXX\n")], cx));
         let snapshot = multibuffer.read(cx).snapshot(cx);
 
         assert_eq!(snapshot.text(), buffer.read(cx).text());
@@ -2973,11 +2988,11 @@ mod tests {
         let snapshot = multibuffer.read(cx).snapshot(cx);
         assert_eq!(snapshot.text(), "a");
 
-        guest_buffer.update(cx, |buffer, cx| buffer.edit([1..1], "b", cx));
+        guest_buffer.update(cx, |buffer, cx| buffer.edit([(1..1, "b")], cx));
         let snapshot = multibuffer.read(cx).snapshot(cx);
         assert_eq!(snapshot.text(), "ab");
 
-        guest_buffer.update(cx, |buffer, cx| buffer.edit([2..2], "c", cx));
+        guest_buffer.update(cx, |buffer, cx| buffer.edit([(2..2, "c")], cx));
         let snapshot = multibuffer.read(cx).snapshot(cx);
         assert_eq!(snapshot.text(), "abc");
     }
@@ -3091,12 +3106,12 @@ mod tests {
         );
 
         buffer_1.update(cx, |buffer, cx| {
+            let text = "\n";
             buffer.edit(
                 [
-                    Point::new(0, 0)..Point::new(0, 0),
-                    Point::new(2, 1)..Point::new(2, 3),
+                    (Point::new(0, 0)..Point::new(0, 0), text),
+                    (Point::new(2, 1)..Point::new(2, 3), text),
                 ],
-                "\n",
                 cx,
             );
         });
@@ -3234,8 +3249,8 @@ mod tests {
         let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
         let old_snapshot = multibuffer.read(cx).snapshot(cx);
         buffer.update(cx, |buffer, cx| {
-            buffer.edit([0..0], "X", cx);
-            buffer.edit([5..5], "Y", cx);
+            buffer.edit([(0..0, "X")], cx);
+            buffer.edit([(5..5, "Y")], cx);
         });
         let new_snapshot = multibuffer.read(cx).snapshot(cx);
 
@@ -3268,12 +3283,12 @@ mod tests {
         assert_eq!(Anchor::max().to_offset(&old_snapshot), 10);
 
         buffer_1.update(cx, |buffer, cx| {
-            buffer.edit([0..0], "W", cx);
-            buffer.edit([5..5], "X", cx);
+            buffer.edit([(0..0, "W")], cx);
+            buffer.edit([(5..5, "X")], cx);
         });
         buffer_2.update(cx, |buffer, cx| {
-            buffer.edit([0..0], "Y", cx);
-            buffer.edit([6..0], "Z", cx);
+            buffer.edit([(0..0, "Y")], cx);
+            buffer.edit([(6..0, "Z")], cx);
         });
         let new_snapshot = multibuffer.read(cx).snapshot(cx);
 
@@ -3302,7 +3317,7 @@ mod tests {
 
         // Create an insertion id in buffer 1 that doesn't exist in buffer 2.
         // Add an excerpt from buffer 1 that spans this new insertion.
-        buffer_1.update(cx, |buffer, cx| buffer.edit([4..4], "123", cx));
+        buffer_1.update(cx, |buffer, cx| buffer.edit([(4..4, "123")], cx));
         let excerpt_id_1 = multibuffer.update(cx, |multibuffer, cx| {
             multibuffer
                 .push_excerpts(buffer_1.clone(), [0..7], cx)
@@ -3823,18 +3838,16 @@ mod tests {
             multibuffer.start_transaction_at(now, cx);
             multibuffer.edit(
                 [
-                    Point::new(0, 0)..Point::new(0, 0),
-                    Point::new(1, 0)..Point::new(1, 0),
+                    (Point::new(0, 0)..Point::new(0, 0), "A"),
+                    (Point::new(1, 0)..Point::new(1, 0), "A"),
                 ],
-                "A",
                 cx,
             );
             multibuffer.edit(
                 [
-                    Point::new(0, 1)..Point::new(0, 1),
-                    Point::new(1, 1)..Point::new(1, 1),
+                    (Point::new(0, 1)..Point::new(0, 1), "B"),
+                    (Point::new(1, 1)..Point::new(1, 1), "B"),
                 ],
-                "B",
                 cx,
             );
             multibuffer.end_transaction_at(now, cx);
@@ -3843,19 +3856,19 @@ mod tests {
             // Edit buffer 1 through the multibuffer
             now += 2 * group_interval;
             multibuffer.start_transaction_at(now, cx);
-            multibuffer.edit([2..2], "C", cx);
+            multibuffer.edit([(2..2, "C")], cx);
             multibuffer.end_transaction_at(now, cx);
             assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678");
 
             // Edit buffer 1 independently
             buffer_1.update(cx, |buffer_1, cx| {
                 buffer_1.start_transaction_at(now);
-                buffer_1.edit([3..3], "D", cx);
+                buffer_1.edit([(3..3, "D")], cx);
                 buffer_1.end_transaction_at(now, cx);
 
                 now += 2 * group_interval;
                 buffer_1.start_transaction_at(now);
-                buffer_1.edit([4..4], "E", cx);
+                buffer_1.edit([(4..4, "E")], cx);
                 buffer_1.end_transaction_at(now, cx);
             });
             assert_eq!(multibuffer.read(cx).text(), "ABCDE1234\nAB5678");

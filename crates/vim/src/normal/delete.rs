@@ -1,29 +1,31 @@
 use crate::{motion::Motion, Vim};
+use collections::HashMap;
 use editor::Bias;
 use gpui::MutableAppContext;
-use language::SelectionGoal;
 
 pub fn delete_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
+            let mut original_columns: HashMap<_, _> = Default::default();
             editor.move_selections(cx, |map, selection| {
                 let original_head = selection.head();
                 motion.expand_selection(map, selection, true);
-                selection.goal = SelectionGoal::Column(original_head.column());
+                original_columns.insert(selection.id, original_head.column());
             });
             editor.insert(&"", cx);
 
             // Fixup cursor position after the deletion
             editor.set_clip_at_line_ends(true, cx);
-            editor.move_cursors(cx, |map, mut cursor, goal| {
+            editor.move_selections(cx, |map, selection| {
+                let mut cursor = selection.head();
                 if motion.linewise() {
-                    if let SelectionGoal::Column(column) = goal {
-                        *cursor.column_mut() = column
+                    if let Some(column) = original_columns.get(&selection.id) {
+                        *cursor.column_mut() = *column
                     }
                 }
-
-                (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
+                cursor = map.clip_point(cursor, Bias::Left);
+                selection.collapse_to(cursor, selection.goal)
             });
         });
     });

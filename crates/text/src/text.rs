@@ -91,26 +91,34 @@ impl HistoryEntry {
         self.transaction.id
     }
 
-    fn push_edit(&mut self, edit: &EditOperation) {
-        self.transaction.edit_ids.push(edit.timestamp.local());
-        self.transaction.end.observe(edit.timestamp.local());
+    fn push_edit(&mut self, edit_operation: &EditOperation) {
+        self.transaction
+            .edit_ids
+            .push(edit_operation.timestamp.local());
+        self.transaction
+            .end
+            .observe(edit_operation.timestamp.local());
 
-        let mut other_ranges = edit.ranges.iter().peekable();
+        let mut edits = edit_operation
+            .ranges
+            .iter()
+            .zip(edit_operation.new_text.iter())
+            .peekable();
         let mut new_ranges = Vec::new();
-        let insertion_len = edit.new_text.as_ref().map_or(0, |t| t.len());
         let mut delta = 0;
 
         for mut self_range in self.transaction.ranges.iter().cloned() {
             self_range.start += delta;
             self_range.end += delta;
 
-            while let Some(other_range) = other_ranges.peek() {
+            while let Some((other_range, new_text)) = edits.peek() {
+                let insertion_len = new_text.len();
                 let mut other_range = (*other_range).clone();
                 other_range.start += delta;
                 other_range.end += delta;
 
                 if other_range.start <= self_range.end {
-                    other_ranges.next().unwrap();
+                    edits.next().unwrap();
                     delta += insertion_len;
 
                     if other_range.end < self_range.start {
@@ -129,7 +137,8 @@ impl HistoryEntry {
             new_ranges.push(self_range);
         }
 
-        for other_range in other_ranges {
+        for (other_range, new_text) in edits {
+            let insertion_len = new_text.len();
             new_ranges.push(other_range.start + delta..other_range.end + delta + insertion_len);
             delta += insertion_len;
         }
@@ -515,7 +524,7 @@ pub struct EditOperation {
     pub timestamp: InsertionTimestamp,
     pub version: clock::Global,
     pub ranges: Vec<Range<FullOffset>>,
-    pub new_text: Option<String>,
+    pub new_text: Vec<Arc<str>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -606,20 +615,16 @@ impl Buffer {
         self.history.group_interval
     }
 
-    pub fn edit<R, I, S, T>(&mut self, ranges: R, new_text: T) -> Operation
+    pub fn edit<R, I, S, T>(&mut self, edits: R) -> Operation
     where
         R: IntoIterator<IntoIter = I>,
-        I: ExactSizeIterator<Item = Range<S>>,
+        I: ExactSizeIterator<Item = (Range<S>, T)>,
         S: ToOffset,
-        T: Into<String>,
+        T: Into<Arc<str>>,
     {
-        let new_text = new_text.into();
-        let new_text_len = new_text.len();
-        let new_text = if new_text_len > 0 {
-            Some(new_text)
-        } else {
-            None
-        };
+        let edits = edits
+            .into_iter()
+            .map(|(range, new_text)| (range, new_text.into()));
 
         self.start_transaction();
         let timestamp = InsertionTimestamp {
@@ -627,8 +632,7 @@ impl Buffer {
             local: self.local_clock.tick().value,
             lamport: self.lamport_clock.tick().value,
         };
-        let operation =
-            Operation::Edit(self.apply_local_edit(ranges.into_iter(), new_text, timestamp));
+        let operation = Operation::Edit(self.apply_local_edit(edits, timestamp));
 
         self.history.push(operation.clone());
         self.history.push_undo(operation.local_timestamp());
@@ -637,35 +641,35 @@ impl Buffer {
         operation
     }
 
-    fn apply_local_edit<S: ToOffset>(
+    fn apply_local_edit<S: ToOffset, T: Into<Arc<str>>>(
         &mut self,
-        ranges: impl ExactSizeIterator<Item = Range<S>>,
-        new_text: Option<String>,
+        edits: impl ExactSizeIterator<Item = (Range<S>, T)>,
         timestamp: InsertionTimestamp,
     ) -> EditOperation {
-        let mut edits = Patch::default();
+        let mut edits_patch = Patch::default();
         let mut edit_op = EditOperation {
             timestamp,
             version: self.version(),
-            ranges: Vec::with_capacity(ranges.len()),
-            new_text: None,
+            ranges: Vec::with_capacity(edits.len()),
+            new_text: Vec::with_capacity(edits.len()),
         };
         let mut new_insertions = Vec::new();
         let mut insertion_offset = 0;
 
-        let mut ranges = ranges
-            .map(|range| range.start.to_offset(&*self)..range.end.to_offset(&*self))
+        let mut ranges = edits
+            .map(|(range, new_text)| (range.to_offset(&*self), new_text))
             .peekable();
 
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
         let mut old_fragments = self.fragments.cursor::<FragmentTextSummary>();
         let mut new_fragments =
-            old_fragments.slice(&ranges.peek().unwrap().start, Bias::Right, &None);
+            old_fragments.slice(&ranges.peek().unwrap().0.start, Bias::Right, &None);
         new_ropes.push_tree(new_fragments.summary().text);
 
         let mut fragment_start = old_fragments.start().visible;
-        for range in ranges {
+        for (range, new_text) in ranges {
+            let new_text = new_text.into();
             let fragment_end = old_fragments.end(&None).visible;
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
@@ -706,9 +710,9 @@ impl Buffer {
             }
 
             // Insert the new text before any existing fragments within the range.
-            if let Some(new_text) = new_text.as_deref() {
+            if !new_text.is_empty() {
                 let new_start = new_fragments.summary().text.visible;
-                edits.push(Edit {
+                edits_patch.push(Edit {
                     old: fragment_start..fragment_start,
                     new: new_start..new_start + new_text.len(),
                 });
@@ -727,7 +731,7 @@ impl Buffer {
                     visible: true,
                 };
                 new_insertions.push(InsertionFragment::insert_new(&fragment));
-                new_ropes.push_str(new_text);
+                new_ropes.push_str(new_text.as_ref());
                 new_fragments.push(fragment, &None);
                 insertion_offset += new_text.len();
             }
@@ -750,7 +754,7 @@ impl Buffer {
                 if intersection.len > 0 {
                     if fragment.visible && !intersection.visible {
                         let new_start = new_fragments.summary().text.visible;
-                        edits.push(Edit {
+                        edits_patch.push(Edit {
                             old: fragment_start..intersection_end,
                             new: new_start..new_start,
                         });
@@ -767,6 +771,7 @@ impl Buffer {
 
             let full_range_end = FullOffset(range.end + old_fragments.start().deleted);
             edit_op.ranges.push(full_range_start..full_range_end);
+            edit_op.new_text.push(new_text);
         }
 
         // If the current fragment has been partially consumed, then consume the rest of it
@@ -794,8 +799,7 @@ impl Buffer {
         self.snapshot.insertions.edit(new_insertions, &());
         self.snapshot.visible_text = visible_text;
         self.snapshot.deleted_text = deleted_text;
-        self.subscriptions.publish_mut(&edits);
-        edit_op.new_text = new_text;
+        self.subscriptions.publish_mut(&edits_patch);
         edit_op
     }
 
@@ -822,7 +826,7 @@ impl Buffer {
                     self.apply_remote_edit(
                         &edit.version,
                         &edit.ranges,
-                        edit.new_text.as_deref(),
+                        &edit.new_text,
                         edit.timestamp,
                     );
                     self.snapshot.version.observe(edit.timestamp.local());
@@ -852,14 +856,15 @@ impl Buffer {
         &mut self,
         version: &clock::Global,
         ranges: &[Range<FullOffset>],
-        new_text: Option<&str>,
+        new_text: &[Arc<str>],
         timestamp: InsertionTimestamp,
     ) {
         if ranges.is_empty() {
             return;
         }
 
-        let mut edits = Patch::default();
+        let edits = ranges.into_iter().zip(new_text.into_iter());
+        let mut edits_patch = Patch::default();
         let cx = Some(version.clone());
         let mut new_insertions = Vec::new();
         let mut insertion_offset = 0;
@@ -874,7 +879,7 @@ impl Buffer {
         new_ropes.push_tree(new_fragments.summary().text);
 
         let mut fragment_start = old_fragments.start().0.full_offset();
-        for range in ranges {
+        for (range, new_text) in edits {
             let fragment_end = old_fragments.end(&cx).0.full_offset();
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
@@ -944,13 +949,13 @@ impl Buffer {
             }
 
             // Insert the new text before any existing fragments within the range.
-            if let Some(new_text) = new_text {
+            if !new_text.is_empty() {
                 let mut old_start = old_fragments.start().1;
                 if old_fragments.item().map_or(false, |f| f.visible) {
                     old_start += fragment_start.0 - old_fragments.start().0.full_offset().0;
                 }
                 let new_start = new_fragments.summary().text.visible;
-                edits.push(Edit {
+                edits_patch.push(Edit {
                     old: old_start..old_start,
                     new: new_start..new_start + new_text.len(),
                 });
@@ -995,7 +1000,7 @@ impl Buffer {
                         let old_start = old_fragments.start().1
                             + (fragment_start.0 - old_fragments.start().0.full_offset().0);
                         let new_start = new_fragments.summary().text.visible;
-                        edits.push(Edit {
+                        edits_patch.push(Edit {
                             old: old_start..old_start + intersection.len,
                             new: new_start..new_start,
                         });
@@ -1036,7 +1041,7 @@ impl Buffer {
         self.snapshot.visible_text = visible_text;
         self.snapshot.deleted_text = deleted_text;
         self.snapshot.insertions.edit(new_insertions, &());
-        self.subscriptions.publish_mut(&edits);
+        self.subscriptions.publish_mut(&edits_patch)
     }
 
     fn apply_undo(&mut self, undo: &UndoOperation) -> Result<()> {
@@ -1381,7 +1386,11 @@ impl Buffer {
                     &(),
                 )
                 .unwrap();
-            assert_eq!(insertion_fragment.fragment_id, fragment.id);
+            assert_eq!(
+                insertion_fragment.fragment_id, fragment.id,
+                "fragment: {:?}\ninsertion: {:?}",
+                fragment, insertion_fragment
+            );
         }
 
         let mut cursor = self.snapshot.fragments.cursor::<Option<&Locator>>();
@@ -1416,31 +1425,32 @@ impl Buffer {
     pub fn randomly_edit<T>(
         &mut self,
         rng: &mut T,
-        old_range_count: usize,
-    ) -> (Vec<Range<usize>>, String, Operation)
+        edit_count: usize,
+    ) -> (Vec<(Range<usize>, Arc<str>)>, Operation)
     where
         T: rand::Rng,
     {
-        let mut old_ranges: Vec<Range<usize>> = Vec::new();
-        for _ in 0..old_range_count {
-            let last_end = old_ranges.last().map_or(0, |last_range| last_range.end + 1);
-            if last_end > self.len() {
+        let mut edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
+        let mut last_end = None;
+        for _ in 0..edit_count {
+            if last_end.map_or(false, |last_end| last_end >= self.len()) {
                 break;
             }
-            old_ranges.push(self.random_byte_range(last_end, rng));
+            let new_start = last_end.map_or(0, |last_end| last_end + 1);
+            let range = self.random_byte_range(new_start, rng);
+            last_end = Some(range.end);
+
+            let new_text_len = rng.gen_range(0..10);
+            let new_text: String = crate::random_char_iter::RandomCharIter::new(&mut *rng)
+                .take(new_text_len)
+                .collect();
+
+            edits.push((range, new_text.into()));
         }
-        let new_text_len = rng.gen_range(0..10);
-        let new_text: String = crate::random_char_iter::RandomCharIter::new(&mut *rng)
-            .take(new_text_len)
-            .collect();
-        log::info!(
-            "mutating buffer {} at {:?}: {:?}",
-            self.replica_id,
-            old_ranges,
-            new_text
-        );
-        let op = self.edit(old_ranges.iter().cloned(), new_text.as_str());
-        (old_ranges, new_text, op)
+
+        log::info!("mutating buffer {} with {:?}", self.replica_id, edits);
+        let op = self.edit(edits.iter().cloned());
+        (edits, op)
     }
 
     pub fn randomly_undo_redo(&mut self, rng: &mut impl rand::Rng) -> Vec<Operation> {

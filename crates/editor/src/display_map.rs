@@ -843,7 +843,7 @@ pub mod tests {
 
         let ix = snapshot.buffer_snapshot.text().find("seven").unwrap();
         buffer.update(cx, |buffer, cx| {
-            buffer.edit(vec![ix..ix], "and ", cx);
+            buffer.edit([(ix..ix, "and ")], cx);
         });
 
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
@@ -878,11 +878,10 @@ pub mod tests {
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
                 vec![
-                    Point::new(1, 0)..Point::new(1, 0),
-                    Point::new(1, 1)..Point::new(1, 1),
-                    Point::new(2, 1)..Point::new(2, 1),
+                    (Point::new(1, 0)..Point::new(1, 0), "\t"),
+                    (Point::new(1, 1)..Point::new(1, 1), "\t"),
+                    (Point::new(2, 1)..Point::new(2, 1), "\t"),
                 ],
-                "\t",
                 cx,
             )
         });
