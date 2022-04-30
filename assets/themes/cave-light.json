@@ -480,8 +480,8 @@
     "code_actions_indicator": "#585260",
     "diff_background_deleted": "#be467826",
     "diff_background_inserted": "#2a929226",
-    "document_highlight_read_background": "#efecf41f",
-    "document_highlight_write_background": "#efecf429",
+    "document_highlight_read_background": "#19171c0f",
+    "document_highlight_write_background": "#19171c1f",
     "error_color": "#be4678",
     "gutter_background": "#efecf4",
     "gutter_padding_factor": 3.5,
@@ -1328,7 +1328,7 @@
     }
   },
   "search": {
-    "match_background": "#955ae780",
+    "match_background": "#955ae73d",
     "tab_icon_spacing": 8,
     "tab_icon_width": 14,
     "option_button": {
