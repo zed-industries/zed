@@ -17,7 +17,7 @@ export function createTheme(name: string, isLight: boolean, neutral: ColorToken[
   if (isLight) {
     neutral = [...neutral].reverse();
   }
-  let blend = isLight ? 0.12 : 0.32;
+  let blend = isLight ? 0.12 : 0.24;
 
   const backgroundColor = {
     100: {
@@ -125,11 +125,11 @@ export function createTheme(name: string, isLight: boolean, neutral: ColorToken[
     },
     highlight: {
       selection: player[1].selectionColor,
-      occurrence: withOpacity(neutral[0], 0.12),
-      activeOccurrence: withOpacity(neutral[0], 0.16),
+      occurrence: withOpacity(neutral[7], blend / 2),
+      activeOccurrence: withOpacity(neutral[7], blend),
       matchingBracket: backgroundColor[500].active,
-      match: withOpacity(accent.violet, 0.5),
-      activeMatch: withOpacity(accent.violet, 0.7),
+      match: withOpacity(accent.violet, blend * 2),
+      activeMatch: withOpacity(accent.violet, blend * 3),
       related: backgroundColor[500].focused,
     },
     gutter: {
