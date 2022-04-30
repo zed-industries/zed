@@ -74,7 +74,7 @@ pub struct Open(pub ProjectEntryId);
 
 actions!(
     project_panel,
-    [ExpandSelectedEntry, CollapseSelectedEntry, AddFile]
+    [ExpandSelectedEntry, CollapseSelectedEntry, AddFile, Rename]
 );
 impl_internal_actions!(project_panel, [Open, ToggleExpanded]);
 
@@ -86,6 +86,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::select_next);
     cx.add_action(ProjectPanel::open_entry);
     cx.add_action(ProjectPanel::add_file);
+    cx.add_action(ProjectPanel::rename);
     cx.add_async_action(ProjectPanel::confirm);
     cx.add_action(ProjectPanel::cancel);
 }
@@ -298,8 +299,23 @@ impl ProjectPanel {
                 Ok(())
             }))
         } else {
-            // TODO - implement
-            None
+            let old_path = entry.path.clone();
+            let new_path = if let Some(parent) = old_path.parent() {
+                parent.join(filename)
+            } else {
+                filename.into()
+            };
+            let rename = worktree.update(cx, |worktree, cx| {
+                worktree.as_local().unwrap().rename(old_path, new_path, cx)
+            });
+            Some(cx.spawn(|this, mut cx| async move {
+                let new_entry = rename.await?;
+                this.update(&mut cx, |this, cx| {
+                    this.update_visible_entries(Some((edit_state.worktree_id, new_entry.id)), cx);
+                    cx.notify();
+                });
+                Ok(())
+            }))
         }
     }
 
@@ -362,8 +378,35 @@ impl ProjectPanel {
                 .update(cx, |editor, cx| editor.clear(cx));
             cx.focus(&self.filename_editor);
             self.update_visible_entries(None, cx);
+            cx.notify();
         }
-        cx.notify();
+    }
+
+    fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) {
+        if let Some(Selection {
+            worktree_id,
+            entry_id,
+        }) = self.selection
+        {
+            if let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) {
+                if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
+                    self.edit_state = Some(EditState {
+                        worktree_id,
+                        entry_id,
+                        new_file: false,
+                    });
+                    let filename = entry
+                        .path
+                        .file_name()
+                        .map_or(String::new(), |s| s.to_string_lossy().to_string());
+                    self.filename_editor
+                        .update(cx, |editor, cx| editor.set_text(filename, cx));
+                    cx.focus(&self.filename_editor);
+                    self.update_visible_entries(None, cx);
+                    cx.notify();
+                }
+            }
+        }
     }
 
     fn editor_blurred(&mut self, cx: &mut ViewContext<Self>) {
@@ -1074,13 +1117,15 @@ mod tests {
             ]
         );
 
-        panel.update(cx, |panel, cx| {
-            panel.filename_editor.update(cx, |editor, cx| {
-                editor.set_text("the-new-filename", cx);
-            });
-            panel.confirm(&Confirm, cx);
-        });
-        cx.foreground().run_until_parked();
+        panel
+            .update(cx, |panel, cx| {
+                panel
+                    .filename_editor
+                    .update(cx, |editor, cx| editor.set_text("the-new-filename", cx));
+                panel.confirm(&Confirm, cx).unwrap()
+            })
+            .await
+            .unwrap();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
@@ -1107,6 +1152,71 @@ mod tests {
                 "        > 3",
                 "        > 4",
                 "          [NEW FILE EDITOR]",
+                "    > C",
+                "      .dockerignore",
+                "      the-new-filename",
+            ]
+        );
+
+        panel
+            .update(cx, |panel, cx| {
+                panel
+                    .filename_editor
+                    .update(cx, |editor, cx| editor.set_text("another-filename", cx));
+                panel.confirm(&Confirm, cx).unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..9, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    v b  <== selected",
+                "        > 3",
+                "        > 4",
+                "          another-filename",
+                "    > C",
+                "      .dockerignore",
+                "      the-new-filename",
+            ]
+        );
+
+        select_path(&panel, "root1/b/another-filename", cx);
+        panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..9, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    v b",
+                "        > 3",
+                "        > 4",
+                "          [RENAME EDITOR]  <== selected",
+                "    > C",
+                "      .dockerignore",
+                "      the-new-filename",
+            ]
+        );
+
+        panel
+            .update(cx, |panel, cx| {
+                panel
+                    .filename_editor
+                    .update(cx, |editor, cx| editor.set_text("a-different-filename", cx));
+                panel.confirm(&Confirm, cx).unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..9, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    v b",
+                "        > 3",
+                "        > 4",
+                "          a-different-filename  <== selected",
                 "    > C",
                 "      .dockerignore",
                 "      the-new-filename",

@@ -694,6 +694,38 @@ impl LocalWorktree {
         })
     }
 
+    pub fn rename(
+        &self,
+        old_path: impl Into<Arc<Path>>,
+        new_path: impl Into<Arc<Path>>,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<Entry>> {
+        let old_path = old_path.into();
+        let new_path = new_path.into();
+        let abs_old_path = self.absolutize(&old_path);
+        let abs_new_path = self.absolutize(&new_path);
+        let background_snapshot = self.background_snapshot.clone();
+        let fs = self.fs.clone();
+        let rename = cx.background().spawn(async move {
+            fs.rename(&abs_old_path, &abs_new_path, Default::default())
+                .await?;
+            background_snapshot.lock().remove_path(&old_path);
+            refresh_entry(
+                fs.as_ref(),
+                &background_snapshot,
+                new_path.clone(),
+                &abs_new_path,
+            )
+            .await
+        });
+
+        cx.spawn(|this, mut cx| async move {
+            let entry = rename.await?;
+            this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
+            Ok(entry)
+        })
+    }
+
     pub fn register(
         &mut self,
         project_id: u64,
