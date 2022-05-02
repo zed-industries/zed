@@ -47,6 +47,7 @@ use smol::Timer;
 use snippet::Snippet;
 use std::{
     any::TypeId,
+    borrow::Cow,
     cmp::{self, Ordering, Reverse},
     iter::{self, FromIterator},
     mem,
@@ -3447,13 +3448,24 @@ impl Editor {
     pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             if let Some(item) = cx.as_mut().read_from_clipboard() {
-                let clipboard_text = item.text();
+                let mut clipboard_text = Cow::Borrowed(item.text());
                 if let Some(mut clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
                     let mut selections = this.local_selections::<usize>(cx);
                     let all_selections_were_entire_line =
                         clipboard_selections.iter().all(|s| s.is_entire_line);
                     if clipboard_selections.len() != selections.len() {
-                        clipboard_selections.clear();
+                        let mut newline_separated_text = String::new();
+                        let mut clipboard_selections = clipboard_selections.drain(..).peekable();
+                        let mut ix = 0;
+                        while let Some(clipboard_selection) = clipboard_selections.next() {
+                            newline_separated_text
+                                .push_str(&clipboard_text[ix..ix + clipboard_selection.len]);
+                            ix += clipboard_selection.len;
+                            if clipboard_selections.peek().is_some() {
+                                newline_separated_text.push('\n');
+                            }
+                        }
+                        clipboard_text = Cow::Owned(newline_separated_text);
                     }
 
                     let mut delta = 0_isize;
@@ -3496,7 +3508,7 @@ impl Editor {
                     }
                     this.update_selections(selections, Some(Autoscroll::Fit), cx);
                 } else {
-                    this.insert(clipboard_text, cx);
+                    this.insert(&clipboard_text, cx);
                 }
             }
         });
@@ -8241,7 +8253,7 @@ mod tests {
             view.handle_input(&Input(") ".into()), cx);
             assert_eq!(
                 view.display_text(cx),
-                "( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
+                "( one✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
             );
         });
 
@@ -8250,7 +8262,7 @@ mod tests {
             view.handle_input(&Input("123\n4567\n89\n".into()), cx);
             assert_eq!(
                 view.display_text(cx),
-                "123\n4567\n89\n( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
+                "123\n4567\n89\n( one✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
             );
         });
 
@@ -8267,7 +8279,7 @@ mod tests {
             view.cut(&Cut, cx);
             assert_eq!(
                 view.display_text(cx),
-                "13\n9\n( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
+                "13\n9\n( one✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
             );
         });
 
@@ -8285,7 +8297,7 @@ mod tests {
             view.paste(&Paste, cx);
             assert_eq!(
                 view.display_text(cx),
-                "123\n4567\n9\n( 8ne✅ three five ) two one✅ four three six five ( one✅ three five ) "
+                "123\n4567\n9\n( 8ne✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
             );
             assert_eq!(
                 view.selected_display_ranges(cx),
@@ -8317,7 +8329,7 @@ mod tests {
             view.paste(&Paste, cx);
             assert_eq!(
                 view.display_text(cx),
-                "123\n123\n123\n67\n123\n9\n( 8ne✅ three five ) two one✅ four three six five ( one✅ three five ) "
+                "123\n123\n123\n67\n123\n9\n( 8ne✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
             );
             assert_eq!(
                 view.selected_display_ranges(cx),
