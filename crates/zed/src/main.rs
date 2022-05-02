@@ -265,36 +265,53 @@ fn init_crash_handler(
     background
         .spawn({
             let logs_dir_path = logs_dir_path.clone();
-            let app_version = ZED_APP_VERSION.map_or("dev".to_string(), |v| v.to_string());
+
             async move {
                 let crash_report_url = format!("{}/api/crash", &*client::ZED_SERVER_URL);
                 let mut children = smol::fs::read_dir(&logs_dir_path).await?;
                 while let Some(child) = children.next().await {
                     let child = child?;
                     let child_path = child.path();
-                    if child_path.extension() == Some(OsStr::new("crash")) {
-                        let text = smol::fs::read_to_string(&child_path)
-                            .await
-                            .context("error reading crash file")?;
-                        let body = serde_json::to_string(&json!({
-                            "text": text,
-                            "version": app_version
-                        }))
-                        .unwrap();
-                        let request = Request::builder()
-                            .uri(&crash_report_url)
-                            .method(http::Method::POST)
-                            .redirect_policy(isahc::config::RedirectPolicy::Follow)
-                            .header("Content-Type", "application/json")
-                            .body(AsyncBody::from(body))?;
-                        let response = http.send(request).await.context("error sending crash")?;
-                        if response.status().is_success() {
-                            fs::remove_file(child_path)
-                                .context("error removing crash after sending it successfully")
-                                .log_err();
-                        } else {
-                            log::error!("{:?}", response);
-                        }
+                    if child_path.extension() != Some(OsStr::new("crash")) {
+                        continue;
+                    }
+                    let filename = if let Some(filename) = child_path.file_name() {
+                        filename.to_string_lossy()
+                    } else {
+                        continue;
+                    };
+
+                    let mut components = filename.split('-');
+                    if components.next() != Some("zed") {
+                        continue;
+                    }
+                    let version = if let Some(version) = components.next() {
+                        version
+                    } else {
+                        continue;
+                    };
+
+                    let text = smol::fs::read_to_string(&child_path)
+                        .await
+                        .context("error reading crash file")?;
+                    let body = serde_json::to_string(&json!({
+                        "text": text,
+                        "version": version
+                    }))
+                    .unwrap();
+                    let request = Request::builder()
+                        .uri(&crash_report_url)
+                        .method(http::Method::POST)
+                        .redirect_policy(isahc::config::RedirectPolicy::Follow)
+                        .header("Content-Type", "application/json")
+                        .body(AsyncBody::from(body))?;
+                    let response = http.send(request).await.context("error sending crash")?;
+                    if response.status().is_success() {
+                        fs::remove_file(child_path)
+                            .context("error removing crash after sending it successfully")
+                            .log_err();
+                    } else {
+                        log::error!("{:?}", response);
                     }
                 }
                 Ok::<_, anyhow::Error>(())
@@ -303,6 +320,7 @@ fn init_crash_handler(
         })
         .detach();
 
+    let app_version = ZED_APP_VERSION.map_or("dev".to_string(), |v| v.to_string());
     let is_pty = stdout_is_a_pty();
     panic::set_hook(Box::new(move |info| {
         let backtrace = Backtrace::new();
@@ -335,9 +353,9 @@ fn init_crash_handler(
             ),
         };
 
-        let crash_filename = chrono::Utc::now().format("%Y-%m-%d-%H_%M_%S").to_string();
+        let crash_filename = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
         fs::write(
-            logs_dir_path.join(format!("zed-{}.crash", crash_filename)),
+            logs_dir_path.join(format!("zed-{}-{}.crash", app_version, crash_filename)),
             &message,
         )
         .context("error writing panic to disk")

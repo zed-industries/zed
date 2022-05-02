@@ -137,7 +137,7 @@ struct Crash {
     text: String,
 }
 
-#[instrument]
+#[instrument(skip(crash))]
 async fn trace_crash(crash: Json<Crash>) -> Result<()> {
     tracing::error!(version = %crash.version, text = %crash.text, "crash report");
     Ok(())
