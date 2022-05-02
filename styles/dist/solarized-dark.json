@@ -93,15 +93,15 @@
         "type": "color"
       },
       "hovered": {
-        "value": "#586e7552",
+        "value": "#586e753d",
         "type": "color"
       },
       "active": {
-        "value": "#586e757a",
+        "value": "#586e755c",
         "type": "color"
       },
       "focused": {
-        "value": "#586e75",
+        "value": "#586e753d",
         "type": "color"
       }
     },
@@ -111,15 +111,15 @@
         "type": "color"
       },
       "hovered": {
-        "value": "#586e7552",
+        "value": "#586e753d",
         "type": "color"
       },
       "active": {
-        "value": "#586e757a",
+        "value": "#586e755c",
         "type": "color"
       },
       "focused": {
-        "value": "#586e75",
+        "value": "#586e753d",
         "type": "color"
       }
     },
@@ -129,15 +129,15 @@
         "type": "color"
       },
       "hovered": {
-        "value": "#073642",
+        "value": "#0736423d",
         "type": "color"
       },
       "active": {
-        "value": "#073642",
+        "value": "#0736425c",
         "type": "color"
       },
       "focused": {
-        "value": "#073642",
+        "value": "#0736423d",
         "type": "color"
       }
     },
@@ -147,15 +147,15 @@
         "type": "color"
       },
       "hovered": {
-        "value": "#073642",
+        "value": "#0736423d",
         "type": "color"
       },
       "active": {
-        "value": "#073642",
+        "value": "#0736427a",
         "type": "color"
       },
       "focused": {
-        "value": "#073642",
+        "value": "#0736423d",
         "type": "color"
       }
     },
@@ -165,87 +165,87 @@
         "type": "color"
       },
       "hovered": {
-        "value": "#657b83",
+        "value": "#586e753d",
         "type": "color"
       },
       "active": {
-        "value": "#657b83",
+        "value": "#586e757a",
         "type": "color"
       },
       "focused": {
-        "value": "#657b83",
+        "value": "#586e753d",
         "type": "color"
       }
     },
     "ok": {
       "base": {
-        "value": "#859900",
+        "value": "#85990026",
         "type": "color"
       },
       "hovered": {
-        "value": "#859900",
+        "value": "#85990033",
         "type": "color"
       },
       "active": {
-        "value": "#859900",
+        "value": "#85990040",
         "type": "color"
       },
       "focused": {
-        "value": "#859900",
+        "value": "#85990033",
         "type": "color"
       }
     },
     "error": {
       "base": {
-        "value": "#dc322f",
+        "value": "#dc322f26",
         "type": "color"
       },
       "hovered": {
-        "value": "#dc322f",
+        "value": "#dc322f33",
         "type": "color"
       },
       "active": {
-        "value": "#dc322f",
+        "value": "#dc322f40",
         "type": "color"
       },
       "focused": {
-        "value": "#dc322f",
+        "value": "#dc322f33",
         "type": "color"
       }
     },
     "warning": {
       "base": {
-        "value": "#b58900",
+        "value": "#b5890026",
         "type": "color"
       },
       "hovered": {
-        "value": "#b58900",
+        "value": "#b5890033",
         "type": "color"
       },
       "active": {
-        "value": "#b58900",
+        "value": "#b5890040",
         "type": "color"
       },
       "focused": {
-        "value": "#b58900",
+        "value": "#b5890033",
         "type": "color"
       }
     },
     "info": {
       "base": {
-        "value": "#268bd2",
+        "value": "#268bd226",
         "type": "color"
       },
       "hovered": {
-        "value": "#268bd2",
+        "value": "#268bd233",
         "type": "color"
       },
       "active": {
-        "value": "#268bd2",
+        "value": "#268bd240",
         "type": "color"
       },
       "focused": {
-        "value": "#268bd2",
+        "value": "#268bd233",
         "type": "color"
       }
     }
@@ -272,19 +272,19 @@
       "type": "color"
     },
     "ok": {
-      "value": "#859900",
+      "value": "#85990026",
       "type": "color"
     },
     "error": {
-      "value": "#dc322f",
+      "value": "#dc322f26",
       "type": "color"
     },
     "warning": {
-      "value": "#b58900",
+      "value": "#b5890026",
       "type": "color"
     },
     "info": {
-      "value": "#268bd2",
+      "value": "#268bd226",
       "type": "color"
     }
   },
@@ -311,15 +311,15 @@
         "type": "color"
       },
       "inserted": {
-        "value": "#859900",
+        "value": "#85990040",
         "type": "color"
       },
       "deleted": {
-        "value": "#dc322f",
+        "value": "#dc322f40",
         "type": "color"
       },
       "modified": {
-        "value": "#268bd2",
+        "value": "#268bd240",
         "type": "color"
       }
     },
@@ -329,27 +329,27 @@
         "type": "color"
       },
       "occurrence": {
-        "value": "#002b361f",
+        "value": "#fdf6e31f",
         "type": "color"
       },
       "activeOccurrence": {
-        "value": "#002b3629",
+        "value": "#fdf6e33d",
         "type": "color"
       },
       "matchingBracket": {
-        "value": "#073642",
+        "value": "#0736425c",
         "type": "color"
       },
       "match": {
-        "value": "#6c71c480",
+        "value": "#6c71c47a",
         "type": "color"
       },
       "activeMatch": {
-        "value": "#6c71c4b3",
+        "value": "#6c71c4b8",
         "type": "color"
       },
       "related": {
-        "value": "#073642",
+        "value": "#0736423d",
         "type": "color"
       }
     },
@@ -561,7 +561,7 @@
     }
   },
   "shadowAlpha": {
-    "value": 0.32,
+    "value": 0.24,
     "type": "number"
   }
 }
