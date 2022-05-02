@@ -55,7 +55,7 @@ fn main() {
     init_logger(&logs_dir_path);
 
     let mut app = gpui::App::new(Assets).unwrap();
-    init_crash_handler(logs_dir_path, http.clone(), app.background());
+    init_panic_hook(logs_dir_path, http.clone(), app.background());
 
     load_embedded_fonts(&app);
 
@@ -257,22 +257,18 @@ fn init_logger(logs_dir_path: &Path) {
     }
 }
 
-fn init_crash_handler(
-    logs_dir_path: PathBuf,
-    http: Arc<dyn HttpClient>,
-    background: Arc<Background>,
-) {
+fn init_panic_hook(logs_dir_path: PathBuf, http: Arc<dyn HttpClient>, background: Arc<Background>) {
     background
         .spawn({
             let logs_dir_path = logs_dir_path.clone();
 
             async move {
-                let crash_report_url = format!("{}/api/crash", &*client::ZED_SERVER_URL);
+                let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
                 let mut children = smol::fs::read_dir(&logs_dir_path).await?;
                 while let Some(child) = children.next().await {
                     let child = child?;
                     let child_path = child.path();
-                    if child_path.extension() != Some(OsStr::new("crash")) {
+                    if child_path.extension() != Some(OsStr::new("panic")) {
                         continue;
                     }
                     let filename = if let Some(filename) = child_path.file_name() {
@@ -293,7 +289,7 @@ fn init_crash_handler(
 
                     let text = smol::fs::read_to_string(&child_path)
                         .await
-                        .context("error reading crash file")?;
+                        .context("error reading panic file")?;
                     let body = serde_json::to_string(&json!({
                         "text": text,
                         "version": version,
@@ -301,19 +297,19 @@ fn init_crash_handler(
                     }))
                     .unwrap();
                     let request = Request::builder()
-                        .uri(&crash_report_url)
+                        .uri(&panic_report_url)
                         .method(http::Method::POST)
                         .redirect_policy(isahc::config::RedirectPolicy::Follow)
                         .header("Content-Type", "application/json")
                         .body(AsyncBody::from(body))?;
-                    let response = http.send(request).await.context("error sending crash")?;
+                    let response = http.send(request).await.context("error sending panic")?;
                     if response.status().is_success() {
                         fs::remove_file(child_path)
-                            .context("error removing crash after sending it successfully")
+                            .context("error removing panic after sending it successfully")
                             .log_err();
                     } else {
                         return Err(anyhow!(
-                            "error uploading crash to server: {}",
+                            "error uploading panic to server: {}",
                             response.status()
                         ));
                     }
@@ -357,9 +353,9 @@ fn init_crash_handler(
             ),
         };
 
-        let crash_filename = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
+        let panic_filename = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
         fs::write(
-            logs_dir_path.join(format!("zed-{}-{}.crash", app_version, crash_filename)),
+            logs_dir_path.join(format!("zed-{}-{}.panic", app_version, panic_filename)),
             &message,
         )
         .context("error writing panic to disk")

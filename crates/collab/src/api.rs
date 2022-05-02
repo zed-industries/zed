@@ -26,7 +26,7 @@ pub fn routes(state: Arc<AppState>) -> Router<Body> {
             put(update_user).delete(destroy_user).get(get_user),
         )
         .route("/users/:id/access_tokens", post(create_access_token))
-        .route("/crash", post(trace_crash))
+        .route("/panic", post(trace_panic))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(state))
@@ -132,14 +132,14 @@ async fn get_user(
 }
 
 #[derive(Debug, Deserialize)]
-struct Crash {
+struct Panic {
     version: String,
     text: String,
 }
 
-#[instrument(skip(crash))]
-async fn trace_crash(crash: Json<Crash>) -> Result<()> {
-    tracing::error!(version = %crash.version, text = %crash.text, "crash report");
+#[instrument(skip(panic))]
+async fn trace_panic(panic: Json<Panic>) -> Result<()> {
+    tracing::error!(version = %panic.version, text = %panic.text, "panic report");
     Ok(())
 }
 
