@@ -24,6 +24,7 @@ use postage::oneshot;
 use serde::Deserialize;
 use std::{
     any::Any,
+    fmt::{self, Display},
     path::{Path, PathBuf},
     rc::Rc,
     str::FromStr,
@@ -164,6 +165,12 @@ impl FromStr for AppVersion {
             minor,
             patch,
         })
+    }
+}
+
+impl Display for AppVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
     }
 }
 
