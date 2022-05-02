@@ -12,7 +12,7 @@ use cli::{
 use client::{
     self,
     http::{self, HttpClient},
-    ChannelList, UserStore,
+    ChannelList, UserStore, ZED_SECRET_CLIENT_TOKEN,
 };
 use fs::OpenOptions;
 use futures::{
@@ -296,7 +296,8 @@ fn init_crash_handler(
                         .context("error reading crash file")?;
                     let body = serde_json::to_string(&json!({
                         "text": text,
-                        "version": version
+                        "version": version,
+                        "token": ZED_SECRET_CLIENT_TOKEN,
                     }))
                     .unwrap();
                     let request = Request::builder()
@@ -311,7 +312,10 @@ fn init_crash_handler(
                             .context("error removing crash after sending it successfully")
                             .log_err();
                     } else {
-                        log::error!("{:?}", response);
+                        return Err(anyhow!(
+                            "error uploading crash to server: {}",
+                            response.status()
+                        ));
                     }
                 }
                 Ok::<_, anyhow::Error>(())

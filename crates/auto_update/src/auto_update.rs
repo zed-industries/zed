@@ -1,6 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use client::http::HttpClient;
-
+use client::{http::HttpClient, ZED_SECRET_CLIENT_TOKEN};
 use gpui::{
     actions,
     elements::{Empty, MouseEventHandler, Text},
@@ -16,7 +15,6 @@ use std::{env, ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
 use workspace::{ItemHandle, StatusItemView};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
-const ACCESS_TOKEN: &'static str = "618033988749894";
 
 lazy_static! {
     pub static ref ZED_APP_VERSION: Option<AppVersion> = env::var("ZED_APP_VERSION")
@@ -135,7 +133,7 @@ impl AutoUpdater {
         });
         let mut response = client
             .get(
-                &format!("{server_url}/api/releases/latest?token={ACCESS_TOKEN}&asset=Zed.dmg"),
+                &format!("{server_url}/api/releases/latest?token={ZED_SECRET_CLIENT_TOKEN}&asset=Zed.dmg"),
                 Default::default(),
                 true,
             )

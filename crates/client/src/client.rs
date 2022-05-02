@@ -50,6 +50,8 @@ lazy_static! {
         .and_then(|s| if s.is_empty() { None } else { Some(s) });
 }
 
+pub const ZED_SECRET_CLIENT_TOKEN: &'static str = "618033988749894";
+
 actions!(client, [Authenticate]);
 
 pub fn init(rpc: Arc<Client>, cx: &mut MutableAppContext) {
