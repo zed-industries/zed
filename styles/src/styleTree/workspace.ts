@@ -65,6 +65,7 @@ export default function workspace(theme: Theme) {
       background: backgroundColor(theme, 100),
       padding: {
         left: 80,
+        right: 6,
       },
       title: text(theme, "sans", "primary"),
       avatar: {
@@ -86,7 +87,6 @@ export default function workspace(theme: Theme) {
         cornerRadius: 6,
         margin: {
           top: 1,
-          right: 6,
         },
         padding: {
           left: 6,
@@ -104,7 +104,7 @@ export default function workspace(theme: Theme) {
       },
       shareIcon: {
         cornerRadius: 6,
-        margin: { top: 3, bottom: 2 },
+        margin: { top: 3, bottom: 2, left: 6 },
         color: iconColor(theme, "secondary"),
         hover: {
           background: backgroundColor(theme, 100, "hovered"),
@@ -128,7 +128,6 @@ export default function workspace(theme: Theme) {
           right: 6,
         },
         cornerRadius: 6,
-        margin: { right: 6 }
       },
     },
     toolbar: {

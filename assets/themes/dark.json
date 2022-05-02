@@ -349,7 +349,8 @@
       "height": 33,
       "background": "#2b2b2b",
       "padding": {
-        "left": 80
+        "left": 80,
+        "right": 6
       },
       "title": {
         "family": "Zed Sans",
@@ -380,8 +381,7 @@
         },
         "corner_radius": 6,
         "margin": {
-          "top": 1,
-          "right": 6
+          "top": 1
         },
         "padding": {
           "left": 6,
@@ -407,7 +407,8 @@
         "corner_radius": 6,
         "margin": {
           "top": 3,
-          "bottom": 2
+          "bottom": 2,
+          "left": 6
         },
         "color": "#9c9c9c",
         "hover": {
@@ -436,10 +437,7 @@
           "left": 6,
           "right": 6
         },
-        "corner_radius": 6,
-        "margin": {
-          "right": 6
-        }
+        "corner_radius": 6
       }
     },
     "toolbar": {
