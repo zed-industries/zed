@@ -219,88 +219,88 @@
     },
     "ok": {
       "base": {
-        "value": "#1b9447",
+        "value": "#1b944726",
         "description": "Step: 600",
         "type": "color"
       },
       "hovered": {
-        "value": "#1b9447",
+        "value": "#1b944733",
         "description": "Step: 600",
         "type": "color"
       },
       "active": {
-        "value": "#1b9447",
+        "value": "#1b944740",
         "description": "Step: 600",
         "type": "color"
       },
       "focused": {
-        "value": "#1b9447",
+        "value": "#1b944733",
         "description": "Step: 600",
         "type": "color"
       }
     },
     "error": {
       "base": {
-        "value": "#f15656",
-        "description": "Step: 400",
+        "value": "#c9181826",
+        "description": "Step: 600",
         "type": "color"
       },
       "hovered": {
-        "value": "#f15656",
-        "description": "Step: 400",
+        "value": "#c9181833",
+        "description": "Step: 600",
         "type": "color"
       },
       "active": {
-        "value": "#f15656",
-        "description": "Step: 400",
+        "value": "#c9181840",
+        "description": "Step: 600",
         "type": "color"
       },
       "focused": {
-        "value": "#f15656",
-        "description": "Step: 400",
+        "value": "#c9181833",
+        "description": "Step: 600",
         "type": "color"
       }
     },
     "warning": {
       "base": {
-        "value": "#f7bb57",
-        "description": "Step: 300",
+        "value": "#f6a72426",
+        "description": "Step: 400",
         "type": "color"
       },
       "hovered": {
-        "value": "#f7bb57",
-        "description": "Step: 300",
+        "value": "#f6a72433",
+        "description": "Step: 400",
         "type": "color"
       },
       "active": {
-        "value": "#f7bb57",
-        "description": "Step: 300",
+        "value": "#f6a72440",
+        "description": "Step: 400",
         "type": "color"
       },
       "focused": {
-        "value": "#f7bb57",
-        "description": "Step: 300",
+        "value": "#f6a72433",
+        "description": "Step: 400",
         "type": "color"
       }
     },
     "info": {
       "base": {
-        "value": "#2472f2",
+        "value": "#2472f226",
         "description": "Step: 500",
         "type": "color"
       },
       "hovered": {
-        "value": "#2472f2",
+        "value": "#2472f233",
         "description": "Step: 500",
         "type": "color"
       },
       "active": {
-        "value": "#2472f2",
+        "value": "#2472f240",
         "description": "Step: 500",
         "type": "color"
       },
       "focused": {
-        "value": "#2472f2",
+        "value": "#2472f233",
         "description": "Step: 500",
         "type": "color"
       }
@@ -333,22 +333,22 @@
       "type": "color"
     },
     "ok": {
-      "value": "#20b456",
-      "description": "Step: 500",
+      "value": "#1b944726",
+      "description": "Step: 600",
       "type": "color"
     },
     "error": {
-      "value": "#eb2d2d",
+      "value": "#eb2d2d26",
       "description": "Step: 500",
       "type": "color"
     },
     "warning": {
-      "value": "#de900c",
-      "description": "Step: 500",
+      "value": "#f6a72426",
+      "description": "Step: 400",
       "type": "color"
     },
     "info": {
-      "value": "#2472f2",
+      "value": "#2472f226",
       "description": "Step: 500",
       "type": "color"
     }
@@ -381,17 +381,17 @@
         "type": "color"
       },
       "inserted": {
-        "value": "#1b9447",
+        "value": "#1b944740",
         "description": "Step: 600",
         "type": "color"
       },
       "deleted": {
-        "value": "#f15656",
-        "description": "Step: 400",
+        "value": "#c9181840",
+        "description": "Step: 600",
         "type": "color"
       },
       "modified": {
-        "value": "#2472f2",
+        "value": "#2472f240",
         "description": "Step: 500",
         "type": "color"
       }
