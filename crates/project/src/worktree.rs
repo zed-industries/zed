@@ -1568,7 +1568,7 @@ pub struct Entry {
     pub is_ignored: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryKind {
     PendingDir,
     Dir,

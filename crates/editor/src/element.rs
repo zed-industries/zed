@@ -875,6 +875,12 @@ impl Element for EditorElement {
                     .max(constraint.min_along(Axis::Vertical))
                     .min(line_height * max_lines as f32),
             )
+        } else if let EditorMode::SingleLine = snapshot.mode {
+            size.set_y(
+                line_height
+                    .min(constraint.max_along(Axis::Vertical))
+                    .max(constraint.min_along(Axis::Vertical)),
+            )
         } else if size.y().is_infinite() {
             size.set_y(scroll_height);
         }

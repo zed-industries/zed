@@ -1,6 +1,6 @@
 import Theme from "../themes/theme";
 import { panel } from "./app";
-import { backgroundColor, iconColor, text } from "./components";
+import { backgroundColor, iconColor, player, text } from "./components";
 
 export default function projectPanel(theme: Theme) {
   return {
@@ -25,6 +25,11 @@ export default function projectPanel(theme: Theme) {
         background: backgroundColor(theme, 300, "hovered"),
         text: text(theme, "mono", "active", { size: "sm" }),
       }
+    },
+    filenameEditor: {
+      background: backgroundColor(theme, 500, "active"),
+      text: text(theme, "mono", "primary", { size: "sm" }),
+      selection: player(theme, 1).selection,
     },
   };
 }

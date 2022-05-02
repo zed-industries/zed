@@ -11,7 +11,7 @@ use gpui::{
     AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
-use project::{Entry, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
+use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use settings::Settings;
 use std::{
     cmp::Ordering,
@@ -24,6 +24,8 @@ use workspace::{
     menu::{Confirm, SelectNext, SelectPrev},
     Workspace,
 };
+
+const NEW_FILE_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
 pub struct ProjectPanel {
     project: ModelHandle<Project>,
@@ -56,14 +58,7 @@ struct EntryDetails {
     kind: EntryKind,
     is_expanded: bool,
     is_selected: bool,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum EntryKind {
-    File,
-    Dir,
-    FileRenameEditor,
-    NewFileEditor,
+    is_editing: bool,
 }
 
 #[derive(Clone)]
@@ -122,8 +117,17 @@ impl ProjectPanel {
             })
             .detach();
 
-            let editor = cx.add_view(|cx| Editor::single_line(None, cx));
-            cx.subscribe(&editor, |this, _, event, cx| {
+            let filename_editor = cx.add_view(|cx| {
+                Editor::single_line(
+                    Some(|theme| {
+                        let mut style = theme.project_panel.filename_editor.clone();
+                        style.container.background_color.take();
+                        style
+                    }),
+                    cx,
+                )
+            });
+            cx.subscribe(&filename_editor, |this, _, event, cx| {
                 if let editor::Event::Blurred = event {
                     this.editor_blurred(cx);
                 }
@@ -137,7 +141,7 @@ impl ProjectPanel {
                 expanded_dir_ids: Default::default(),
                 selection: None,
                 edit_state: None,
-                filename_editor: editor,
+                filename_editor,
                 handle: cx.weak_handle(),
             };
             this.update_visible_entries(None, cx);
@@ -399,8 +403,10 @@ impl ProjectPanel {
                         .path
                         .file_name()
                         .map_or(String::new(), |s| s.to_string_lossy().to_string());
-                    self.filename_editor
-                        .update(cx, |editor, cx| editor.set_text(filename, cx));
+                    self.filename_editor.update(cx, |editor, cx| {
+                        editor.set_text(filename, cx);
+                        editor.select_all(&Default::default(), cx);
+                    });
                     cx.focus(&self.filename_editor);
                     self.update_visible_entries(None, cx);
                     cx.notify();
@@ -542,7 +548,7 @@ impl ProjectPanel {
                 visible_worktree_entries.push(entry.clone());
                 if Some(entry.id) == new_file_parent_id {
                     visible_worktree_entries.push(Entry {
-                        id: entry.id,
+                        id: NEW_FILE_ENTRY_ID,
                         kind: project::EntryKind::File(Default::default()),
                         path: entry.path.join("\0").into(),
                         inode: 0,
@@ -662,30 +668,24 @@ impl ProjectPanel {
                             .to_string_lossy()
                             .to_string(),
                         depth: entry.path.components().count(),
-                        kind: if entry.is_dir() {
-                            EntryKind::Dir
-                        } else {
-                            EntryKind::File
-                        },
+                        kind: entry.kind,
                         is_expanded: expanded_entry_ids.binary_search(&entry.id).is_ok(),
                         is_selected: self.selection.map_or(false, |e| {
                             e.worktree_id == snapshot.id() && e.entry_id == entry.id
                         }),
+                        is_editing: false,
                     };
                     if let Some(edit_state) = self.edit_state {
-                        if edit_state.worktree_id == *worktree_id && edit_state.entry_id == entry.id
-                        {
-                            if edit_state.new_file {
-                                if entry.is_file() {
-                                    details.kind = EntryKind::NewFileEditor;
-                                    details.filename = Default::default();
-                                    details.is_expanded = false;
-                                    details.is_selected = false;
-                                }
-                            } else {
-                                details.kind = EntryKind::FileRenameEditor;
+                        if edit_state.new_file {
+                            if entry.id == NEW_FILE_ENTRY_ID {
+                                details.is_editing = true;
+                                details.filename.clear();
                             }
-                        }
+                        } else {
+                            if entry.id == edit_state.entry_id {
+                                details.is_editing = true;
+                            }
+                        };
                     }
                     callback(entry.id, details, cx);
                 }
@@ -702,21 +702,14 @@ impl ProjectPanel {
         cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         let kind = details.kind;
-        let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
-
-        if kind == EntryKind::FileRenameEditor || kind == EntryKind::NewFileEditor {
-            return ChildView::new(editor.clone())
-                .constrained()
-                .with_height(theme.entry.default.height)
-                .contained()
-                .with_margin_left(
-                    padding + theme.entry.default.icon_spacing + theme.entry.default.icon_size,
-                )
-                .boxed();
-        }
-
         MouseEventHandler::new::<Self, _, _>(entry_id.to_usize(), cx, |state, _| {
+            let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
             let style = theme.entry.style_for(state, details.is_selected);
+            let row_container_style = if details.is_editing {
+                theme.filename_editor.container
+            } else {
+                style.container
+            };
             Flex::row()
                 .with_child(
                     ConstrainedBox::new(if kind == EntryKind::Dir {
@@ -739,18 +732,26 @@ impl ProjectPanel {
                     .with_width(style.icon_size)
                     .boxed(),
                 )
-                .with_child(
+                .with_child(if details.is_editing {
+                    ChildView::new(editor.clone())
+                        .contained()
+                        .with_margin_left(theme.entry.default.icon_spacing)
+                        .aligned()
+                        .left()
+                        .flex(1.0, true)
+                        .boxed()
+                } else {
                     Label::new(details.filename, style.text.clone())
                         .contained()
                         .with_margin_left(style.icon_spacing)
                         .aligned()
                         .left()
-                        .boxed(),
-                )
+                        .boxed()
+                })
                 .constrained()
                 .with_height(theme.entry.default.height)
                 .contained()
-                .with_style(style.container)
+                .with_style(row_container_style)
                 .with_padding_left(padding)
                 .boxed()
         })
@@ -871,168 +872,43 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
         assert_eq!(
-            visible_entry_details(&panel, 0..50, cx),
+            visible_entries_as_strings(&panel, 0..50, cx),
             &[
-                EntryDetails {
-                    filename: "root1".to_string(),
-                    depth: 0,
-                    kind: EntryKind::Dir,
-                    is_expanded: true,
-                    is_selected: false,
-                },
-                EntryDetails {
-                    filename: "a".to_string(),
-                    depth: 1,
-                    kind: EntryKind::Dir,
-                    is_expanded: false,
-                    is_selected: false,
-                },
-                EntryDetails {
-                    filename: "b".to_string(),
-                    depth: 1,
-                    kind: EntryKind::Dir,
-                    is_expanded: false,
-                    is_selected: false,
-                },
-                EntryDetails {
-                    filename: "C".to_string(),
-                    depth: 1,
-                    kind: EntryKind::Dir,
-                    is_expanded: false,
-                    is_selected: false,
-                },
-                EntryDetails {
-                    filename: ".dockerignore".to_string(),
-                    depth: 1,
-                    kind: EntryKind::File,
-                    is_expanded: false,
-                    is_selected: false,
-                },
-                EntryDetails {
-                    filename: "root2".to_string(),
-                    depth: 0,
-                    kind: EntryKind::Dir,
-                    is_expanded: true,
-                    is_selected: false
-                },
-                EntryDetails {
-                    filename: "d".to_string(),
-                    depth: 1,
-                    kind: EntryKind::Dir,
-                    is_expanded: false,
-                    is_selected: false
-                },
-                EntryDetails {
-                    filename: "e".to_string(),
-                    depth: 1,
-                    kind: EntryKind::Dir,
-                    is_expanded: false,
-                    is_selected: false
-                },
-            ],
+                "v root1",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
         );
 
         toggle_expand_dir(&panel, "root1/b", cx);
         assert_eq!(
-            visible_entry_details(&panel, 0..50, cx),
+            visible_entries_as_strings(&panel, 0..50, cx),
             &[
-                EntryDetails {
-                    filename: "root1".to_string(),
-                    depth: 0,
-                    kind: EntryKind::Dir,
-                    is_expanded: true,
-                    is_selected: false,
-                },
-                EntryDetails {
-                    filename: "a".to_string(),
-                    depth: 1,
-                    kind: EntryKind::Dir,
-                    is_expanded: false,
-                    is_selected: false,
-                },
-                EntryDetails {
-                    filename: "b".to_string(),
-                    depth: 1,
-                    kind: EntryKind::Dir,
-                    is_expanded: true,
-                    is_selected: true,
-                },
-                EntryDetails {
-                    filename: "3".to_string(),
-                    depth: 2,
-                    kind: EntryKind::Dir,
-                    is_expanded: false,
-                    is_selected: false,
-                },
-                EntryDetails {
-                    filename: "4".to_string(),
-                    depth: 2,
-                    kind: EntryKind::Dir,
-                    is_expanded: false,
-                    is_selected: false,
-                },
-                EntryDetails {
-                    filename: "C".to_string(),
-                    depth: 1,
-                    kind: EntryKind::Dir,
-                    is_expanded: false,
-                    is_selected: false,
-                },
-                EntryDetails {
-                    filename: ".dockerignore".to_string(),
-                    depth: 1,
-                    kind: EntryKind::File,
-                    is_expanded: false,
-                    is_selected: false,
-                },
-                EntryDetails {
-                    filename: "root2".to_string(),
-                    depth: 0,
-                    kind: EntryKind::Dir,
-                    is_expanded: true,
-                    is_selected: false
-                },
-                EntryDetails {
-                    filename: "d".to_string(),
-                    depth: 1,
-                    kind: EntryKind::Dir,
-                    is_expanded: false,
-                    is_selected: false
-                },
-                EntryDetails {
-                    filename: "e".to_string(),
-                    depth: 1,
-                    kind: EntryKind::Dir,
-                    is_expanded: false,
-                    is_selected: false
-                },
+                "v root1",
+                "    > a",
+                "    v b  <== selected",
+                "        > 3",
+                "        > 4",
+                "    > C",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
             ]
         );
 
         assert_eq!(
-            visible_entry_details(&panel, 5..8, cx),
-            [
-                EntryDetails {
-                    filename: "C".to_string(),
-                    depth: 1,
-                    kind: EntryKind::Dir,
-                    is_expanded: false,
-                    is_selected: false
-                },
-                EntryDetails {
-                    filename: ".dockerignore".to_string(),
-                    depth: 1,
-                    kind: EntryKind::File,
-                    is_expanded: false,
-                    is_selected: false
-                },
-                EntryDetails {
-                    filename: "root2".to_string(),
-                    depth: 0,
-                    kind: EntryKind::Dir,
-                    is_expanded: true,
-                    is_selected: false
-                },
+            visible_entries_as_strings(&panel, 5..8, cx),
+            &[
+                //
+                "    > C",
+                "      .dockerignore",
+                "v root2",
             ]
         );
     }
@@ -1109,7 +985,7 @@ mod tests {
                 "    > a",
                 "    > b",
                 "    > C",
-                "      [NEW FILE EDITOR]",
+                "      [EDITOR: '']",
                 "      .dockerignore",
                 "v root2",
                 "    > d",
@@ -1151,7 +1027,7 @@ mod tests {
                 "    v b  <== selected",
                 "        > 3",
                 "        > 4",
-                "          [NEW FILE EDITOR]",
+                "          [EDITOR: '']",
                 "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
@@ -1192,7 +1068,7 @@ mod tests {
                 "    v b",
                 "        > 3",
                 "        > 4",
-                "          [RENAME EDITOR]  <== selected",
+                "          [EDITOR: 'another-filename']  <== selected",
                 "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
@@ -1265,19 +1141,17 @@ mod tests {
         });
     }
 
-    fn visible_entry_details(
+    fn visible_entries_as_strings(
         panel: &ViewHandle<ProjectPanel>,
         range: Range<usize>,
         cx: &mut TestAppContext,
-    ) -> Vec<EntryDetails> {
+    ) -> Vec<String> {
         let mut result = Vec::new();
         let mut project_entries = HashSet::new();
         let mut has_editor = false;
         panel.update(cx, |panel, cx| {
             panel.for_each_visible_entry(range, cx, |project_entry, details, _| {
-                if details.kind == EntryKind::NewFileEditor
-                    || details.kind == EntryKind::FileRenameEditor
-                {
+                if details.is_editing {
                     assert!(!has_editor, "duplicate editor entry");
                     has_editor = true;
                 } else {
@@ -1288,21 +1162,7 @@ mod tests {
                         details
                     );
                 }
-                result.push(details)
-            });
-        });
 
-        result
-    }
-
-    fn visible_entries_as_strings(
-        panel: &ViewHandle<ProjectPanel>,
-        range: Range<usize>,
-        cx: &mut TestAppContext,
-    ) -> Vec<String> {
-        visible_entry_details(panel, range, cx)
-            .into_iter()
-            .map(|details| {
                 let indent = "    ".repeat(details.depth);
                 let icon = if details.kind == EntryKind::Dir {
                     if details.is_expanded {
@@ -1313,10 +1173,9 @@ mod tests {
                 } else {
                     "  "
                 };
-                let name = if details.kind == EntryKind::FileRenameEditor {
-                    "[RENAME EDITOR]"
-                } else if details.kind == EntryKind::NewFileEditor {
-                    "[NEW FILE EDITOR]"
+                let editor_text = format!("[EDITOR: '{}']", details.filename);
+                let name = if details.is_editing {
+                    &editor_text
                 } else {
                     &details.filename
                 };
@@ -1325,8 +1184,10 @@ mod tests {
                 } else {
                     ""
                 };
-                format!("{indent}{icon}{name}{selected}")
-            })
-            .collect()
+                result.push(format!("{indent}{icon}{name}{selected}"));
+            });
+        });
+
+        result
     }
 }

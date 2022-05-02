@@ -204,11 +204,12 @@ pub struct ChatPanel {
     pub hovered_sign_in_prompt: TextStyle,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Deserialize, Default)]
 pub struct ProjectPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub entry: Interactive<ProjectPanelEntry>,
+    pub filename_editor: FieldEditor,
     pub indent_width: f32,
 }
 

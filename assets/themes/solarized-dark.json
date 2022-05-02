@@ -972,6 +972,18 @@
           "size": 14
         }
       }
+    },
+    "filename_editor": {
+      "background": "#0736425c",
+      "text": {
+        "family": "Zed Mono",
+        "color": "#eee8d5",
+        "size": 14
+      },
+      "selection": {
+        "cursor": "#268bd2",
+        "selection": "#268bd23d"
+      }
     }
   },
   "chat_panel": {

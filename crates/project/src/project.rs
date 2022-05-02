@@ -225,6 +225,8 @@ impl DiagnosticSummary {
 pub struct ProjectEntryId(usize);
 
 impl ProjectEntryId {
+    pub const MAX: Self = Self(usize::MAX);
+
     pub fn new(counter: &AtomicUsize) -> Self {
         Self(counter.fetch_add(1, SeqCst))
     }
