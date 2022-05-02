@@ -47,6 +47,7 @@ use smol::Timer;
 use snippet::Snippet;
 use std::{
     any::TypeId,
+    borrow::Cow,
     cmp::{self, Ordering, Reverse},
     iter::{self, FromIterator},
     mem,
@@ -3447,56 +3448,65 @@ impl Editor {
     pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             if let Some(item) = cx.as_mut().read_from_clipboard() {
-                let clipboard_text = item.text();
+                let mut clipboard_text = Cow::Borrowed(item.text());
                 if let Some(mut clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
-                    let mut selections = this.local_selections::<usize>(cx);
+                    let old_selections = this.local_selections::<usize>(cx);
                     let all_selections_were_entire_line =
                         clipboard_selections.iter().all(|s| s.is_entire_line);
-                    if clipboard_selections.len() != selections.len() {
-                        clipboard_selections.clear();
+                    if clipboard_selections.len() != old_selections.len() {
+                        let mut newline_separated_text = String::new();
+                        let mut clipboard_selections = clipboard_selections.drain(..).peekable();
+                        let mut ix = 0;
+                        while let Some(clipboard_selection) = clipboard_selections.next() {
+                            newline_separated_text
+                                .push_str(&clipboard_text[ix..ix + clipboard_selection.len]);
+                            ix += clipboard_selection.len;
+                            if clipboard_selections.peek().is_some() {
+                                newline_separated_text.push('\n');
+                            }
+                        }
+                        clipboard_text = Cow::Owned(newline_separated_text);
                     }
 
-                    let mut delta = 0_isize;
-                    let mut start_offset = 0;
-                    for (i, selection) in selections.iter_mut().enumerate() {
-                        let to_insert;
-                        let entire_line;
-                        if let Some(clipboard_selection) = clipboard_selections.get(i) {
-                            let end_offset = start_offset + clipboard_selection.len;
-                            to_insert = &clipboard_text[start_offset..end_offset];
-                            entire_line = clipboard_selection.is_entire_line;
-                            start_offset = end_offset
-                        } else {
-                            to_insert = clipboard_text.as_str();
-                            entire_line = all_selections_were_entire_line;
-                        }
+                    this.buffer.update(cx, |buffer, cx| {
+                        let snapshot = buffer.read(cx);
+                        let mut start_offset = 0;
+                        let mut edits = Vec::new();
+                        for (ix, selection) in old_selections.iter().enumerate() {
+                            let to_insert;
+                            let entire_line;
+                            if let Some(clipboard_selection) = clipboard_selections.get(ix) {
+                                let end_offset = start_offset + clipboard_selection.len;
+                                to_insert = &clipboard_text[start_offset..end_offset];
+                                entire_line = clipboard_selection.is_entire_line;
+                                start_offset = end_offset;
+                            } else {
+                                to_insert = clipboard_text.as_str();
+                                entire_line = all_selections_were_entire_line;
+                            }
 
-                        selection.start = (selection.start as isize + delta) as usize;
-                        selection.end = (selection.end as isize + delta) as usize;
-
-                        this.buffer.update(cx, |buffer, cx| {
                             // If the corresponding selection was empty when this slice of the
                             // clipboard text was written, then the entire line containing the
                             // selection was copied. If this selection is also currently empty,
                             // then paste the line before the current line of the buffer.
                             let range = if selection.is_empty() && entire_line {
-                                let column =
-                                    selection.start.to_point(&buffer.read(cx)).column as usize;
+                                let column = selection.start.to_point(&snapshot).column as usize;
                                 let line_start = selection.start - column;
                                 line_start..line_start
                             } else {
                                 selection.start..selection.end
                             };
 
-                            delta += to_insert.len() as isize - range.len() as isize;
-                            buffer.edit([(range, to_insert)], cx);
-                            selection.start += to_insert.len();
-                            selection.end = selection.start;
-                        });
-                    }
+                            edits.push((range, to_insert));
+                        }
+                        drop(snapshot);
+                        buffer.edit_with_autoindent(edits, cx);
+                    });
+
+                    let selections = this.local_selections::<usize>(cx);
                     this.update_selections(selections, Some(Autoscroll::Fit), cx);
                 } else {
-                    this.insert(clipboard_text, cx);
+                    this.insert(&clipboard_text, cx);
                 }
             }
         });
@@ -8241,7 +8251,7 @@ mod tests {
             view.handle_input(&Input(") ".into()), cx);
             assert_eq!(
                 view.display_text(cx),
-                "( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
+                "( one✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
             );
         });
 
@@ -8250,7 +8260,7 @@ mod tests {
             view.handle_input(&Input("123\n4567\n89\n".into()), cx);
             assert_eq!(
                 view.display_text(cx),
-                "123\n4567\n89\n( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
+                "123\n4567\n89\n( one✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
             );
         });
 
@@ -8267,7 +8277,7 @@ mod tests {
             view.cut(&Cut, cx);
             assert_eq!(
                 view.display_text(cx),
-                "13\n9\n( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
+                "13\n9\n( one✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
             );
         });
 
@@ -8285,7 +8295,7 @@ mod tests {
             view.paste(&Paste, cx);
             assert_eq!(
                 view.display_text(cx),
-                "123\n4567\n9\n( 8ne✅ three five ) two one✅ four three six five ( one✅ three five ) "
+                "123\n4567\n9\n( 8ne✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
             );
             assert_eq!(
                 view.selected_display_ranges(cx),
@@ -8317,7 +8327,7 @@ mod tests {
             view.paste(&Paste, cx);
             assert_eq!(
                 view.display_text(cx),
-                "123\n123\n123\n67\n123\n9\n( 8ne✅ three five ) two one✅ four three six five ( one✅ three five ) "
+                "123\n123\n123\n67\n123\n9\n( 8ne✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
             );
             assert_eq!(
                 view.selected_display_ranges(cx),
