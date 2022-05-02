@@ -3,25 +3,41 @@
 
 use anyhow::{anyhow, Context, Result};
 use assets::Assets;
+use auto_update::ZED_APP_VERSION;
+use backtrace::Backtrace;
 use cli::{
     ipc::{self, IpcSender},
     CliRequest, CliResponse, IpcHandshake,
 };
-use client::{self, http, ChannelList, UserStore};
+use client::{
+    self,
+    http::{self, HttpClient},
+    ChannelList, UserStore, ZED_SECRET_CLIENT_TOKEN,
+};
 use fs::OpenOptions;
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
 };
-use gpui::{App, AssetSource, AsyncAppContext, Task};
+use gpui::{executor::Background, App, AssetSource, AsyncAppContext, Task};
+use isahc::{config::Configurable, AsyncBody, Request};
 use log::LevelFilter;
 use parking_lot::Mutex;
 use project::Fs;
+use serde_json::json;
 use settings::{self, KeymapFileContent, Settings, SettingsFileContent};
 use smol::process::Command;
-use std::{env, fs, path::PathBuf, sync::Arc, thread, time::Duration};
+use std::{
+    env,
+    ffi::OsStr,
+    fs, panic,
+    path::{Path, PathBuf},
+    sync::Arc,
+    thread,
+    time::Duration,
+};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
-use util::ResultExt;
+use util::{ResultExt, TryFutureExt};
 use workspace::{self, AppState, OpenNew, OpenPaths};
 use zed::{
     self, build_window_options, build_workspace,
@@ -31,9 +47,16 @@ use zed::{
 };
 
 fn main() {
-    init_logger();
+    let http = http::client();
+    let logs_dir_path = dirs::home_dir()
+        .expect("could not find home dir")
+        .join("Library/Logs/Zed");
+    fs::create_dir_all(&logs_dir_path).expect("could not create logs path");
+    init_logger(&logs_dir_path);
 
     let mut app = gpui::App::new(Assets).unwrap();
+    init_panic_hook(logs_dir_path, http.clone(), app.background());
+
     load_embedded_fonts(&app);
 
     let fs = Arc::new(RealFs);
@@ -107,7 +130,6 @@ fn main() {
     });
 
     app.run(move |cx| {
-        let http = http::client();
         let client = client::Client::new(http.clone());
         let mut languages = languages::build_language_registry(login_shell_env_loaded);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
@@ -219,16 +241,12 @@ fn main() {
     });
 }
 
-fn init_logger() {
+fn init_logger(logs_dir_path: &Path) {
     if stdout_is_a_pty() {
         env_logger::init();
     } else {
         let level = LevelFilter::Info;
-        let log_dir_path = dirs::home_dir()
-            .expect("could not locate home directory for logging")
-            .join("Library/Logs/");
-        let log_file_path = log_dir_path.join("Zed.log");
-        fs::create_dir_all(&log_dir_path).expect("could not create log directory");
+        let log_file_path = logs_dir_path.join("Zed.log");
         let log_file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -236,8 +254,119 @@ fn init_logger() {
             .expect("could not open logfile");
         simplelog::WriteLogger::init(level, simplelog::Config::default(), log_file)
             .expect("could not initialize logger");
-        log_panics::init();
     }
+}
+
+fn init_panic_hook(logs_dir_path: PathBuf, http: Arc<dyn HttpClient>, background: Arc<Background>) {
+    background
+        .spawn({
+            let logs_dir_path = logs_dir_path.clone();
+
+            async move {
+                let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
+                let mut children = smol::fs::read_dir(&logs_dir_path).await?;
+                while let Some(child) = children.next().await {
+                    let child = child?;
+                    let child_path = child.path();
+                    if child_path.extension() != Some(OsStr::new("panic")) {
+                        continue;
+                    }
+                    let filename = if let Some(filename) = child_path.file_name() {
+                        filename.to_string_lossy()
+                    } else {
+                        continue;
+                    };
+
+                    let mut components = filename.split('-');
+                    if components.next() != Some("zed") {
+                        continue;
+                    }
+                    let version = if let Some(version) = components.next() {
+                        version
+                    } else {
+                        continue;
+                    };
+
+                    let text = smol::fs::read_to_string(&child_path)
+                        .await
+                        .context("error reading panic file")?;
+                    let body = serde_json::to_string(&json!({
+                        "text": text,
+                        "version": version,
+                        "token": ZED_SECRET_CLIENT_TOKEN,
+                    }))
+                    .unwrap();
+                    let request = Request::builder()
+                        .uri(&panic_report_url)
+                        .method(http::Method::POST)
+                        .redirect_policy(isahc::config::RedirectPolicy::Follow)
+                        .header("Content-Type", "application/json")
+                        .body(AsyncBody::from(body))?;
+                    let response = http.send(request).await.context("error sending panic")?;
+                    if response.status().is_success() {
+                        fs::remove_file(child_path)
+                            .context("error removing panic after sending it successfully")
+                            .log_err();
+                    } else {
+                        return Err(anyhow!(
+                            "error uploading panic to server: {}",
+                            response.status()
+                        ));
+                    }
+                }
+                Ok::<_, anyhow::Error>(())
+            }
+            .log_err()
+        })
+        .detach();
+
+    let app_version = ZED_APP_VERSION.map_or("dev".to_string(), |v| v.to_string());
+    let is_pty = stdout_is_a_pty();
+    panic::set_hook(Box::new(move |info| {
+        let backtrace = Backtrace::new();
+
+        let thread = thread::current();
+        let thread = thread.name().unwrap_or("<unnamed>");
+
+        let payload = match info.payload().downcast_ref::<&'static str>() {
+            Some(s) => *s,
+            None => match info.payload().downcast_ref::<String>() {
+                Some(s) => &**s,
+                None => "Box<Any>",
+            },
+        };
+
+        let message = match info.location() {
+            Some(location) => {
+                format!(
+                    "thread '{}' panicked at '{}': {}:{}{:?}",
+                    thread,
+                    payload,
+                    location.file(),
+                    location.line(),
+                    backtrace
+                )
+            }
+            None => format!(
+                "thread '{}' panicked at '{}'{:?}",
+                thread, payload, backtrace
+            ),
+        };
+
+        let panic_filename = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
+        fs::write(
+            logs_dir_path.join(format!("zed-{}-{}.panic", app_version, panic_filename)),
+            &message,
+        )
+        .context("error writing panic to disk")
+        .log_err();
+
+        if is_pty {
+            eprintln!("{}", message);
+        } else {
+            log::error!(target: "panic", "{}", message);
+        }
+    }));
 }
 
 async fn load_login_shell_environment() -> Result<()> {

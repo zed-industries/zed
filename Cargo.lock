@@ -2500,16 +2500,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "log-panics"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae0136257df209261daa18d6c16394757c63e032e27aafd8b07788b051082bef"
-dependencies = [
- "backtrace",
- "log",
-]
-
-[[package]]
 name = "loom"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5859,8 +5849,10 @@ dependencies = [
  "async-recursion",
  "async-trait",
  "auto_update",
+ "backtrace",
  "breadcrumbs",
  "chat_panel",
+ "chrono",
  "cli",
  "client",
  "clock",
@@ -5889,7 +5881,6 @@ dependencies = [
  "lazy_static",
  "libc",
  "log",
- "log-panics",
  "lsp",
  "num_cpus",
  "outline",

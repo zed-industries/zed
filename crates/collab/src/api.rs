@@ -16,6 +16,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tower::ServiceBuilder;
+use tracing::instrument;
 
 pub fn routes(state: Arc<AppState>) -> Router<Body> {
     Router::new()
@@ -25,6 +26,7 @@ pub fn routes(state: Arc<AppState>) -> Router<Body> {
             put(update_user).delete(destroy_user).get(get_user),
         )
         .route("/users/:id/access_tokens", post(create_access_token))
+        .route("/panic", post(trace_panic))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(state))
@@ -127,6 +129,18 @@ async fn get_user(
         .await?
         .ok_or_else(|| anyhow!("user not found"))?;
     Ok(Json(user))
+}
+
+#[derive(Debug, Deserialize)]
+struct Panic {
+    version: String,
+    text: String,
+}
+
+#[instrument(skip(panic))]
+async fn trace_panic(panic: Json<Panic>) -> Result<()> {
+    tracing::error!(version = %panic.version, text = %panic.text, "panic report");
+    Ok(())
 }
 
 #[derive(Deserialize)]
