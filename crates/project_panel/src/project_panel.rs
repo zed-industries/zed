@@ -913,7 +913,7 @@ mod tests {
         );
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 30)]
     async fn test_editing_files(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
 

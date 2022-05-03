@@ -5282,6 +5282,7 @@ mod tests {
                 language_id: Default::default()
             },
         );
+
         // We clear the diagnostics, since the language has changed.
         rust_buffer2.read_with(cx, |buffer, _| {
             assert_eq!(
