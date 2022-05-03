@@ -346,6 +346,7 @@
     },
     "titlebar": {
       "avatar_width": 18,
+      "avatar_margin": 8,
       "height": 33,
       "background": "#073642",
       "padding": {

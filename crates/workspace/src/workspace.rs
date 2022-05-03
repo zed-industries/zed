@@ -1629,7 +1629,7 @@ impl Workspace {
             .constrained()
             .with_width(theme.workspace.titlebar.avatar_width)
             .contained()
-            .with_margin_left(2.)
+            .with_margin_left(theme.workspace.titlebar.avatar_margin)
             .boxed();
 
         if let Some(peer_id) = peer_id {

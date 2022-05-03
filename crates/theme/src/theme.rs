@@ -53,6 +53,7 @@ pub struct Titlebar {
     pub height: f32,
     pub title: TextStyle,
     pub avatar_width: f32,
+    pub avatar_margin: f32,
     pub avatar_ribbon: AvatarRibbon,
     pub offline_icon: OfflineIcon,
     pub share_icon: Interactive<ShareIcon>,
