@@ -5555,6 +5555,7 @@ dependencies = [
  "editor",
  "gpui",
  "indoc",
+ "itertools",
  "language",
  "log",
  "project",

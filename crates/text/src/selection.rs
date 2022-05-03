@@ -85,6 +85,19 @@ impl<T: Copy + Ord> Selection<T> {
     }
 }
 
+impl Selection<usize> {
+    #[cfg(feature = "test-support")]
+    pub fn from_offset(offset: usize) -> Self {
+        Selection {
+            id: 0,
+            start: offset,
+            end: offset,
+            goal: SelectionGoal::None,
+            reversed: false,
+        }
+    }
+}
+
 impl Selection<Anchor> {
     pub fn resolve<'a, D: 'a + TextDimension>(
         &'a self,

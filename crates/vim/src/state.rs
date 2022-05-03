@@ -6,6 +6,7 @@ use serde::Deserialize;
 pub enum Mode {
     Normal,
     Insert,
+    Visual,
 }
 
 impl Default for Mode {
@@ -36,6 +37,7 @@ impl VimState {
     pub fn cursor_shape(&self) -> CursorShape {
         match self.mode {
             Mode::Normal => CursorShape::Block,
+            Mode::Visual => CursorShape::Block,
             Mode::Insert => CursorShape::Bar,
         }
     }
@@ -50,6 +52,7 @@ impl VimState {
             "vim_mode".to_string(),
             match self.mode {
                 Mode::Normal => "normal",
+                Mode::Visual => "visual",
                 Mode::Insert => "insert",
             }
             .to_string(),

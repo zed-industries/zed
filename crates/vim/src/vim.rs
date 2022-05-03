@@ -6,6 +6,7 @@ mod insert;
 mod motion;
 mod normal;
 mod state;
+mod visual;
 
 use collections::HashMap;
 use editor::{CursorShape, Editor};
@@ -27,6 +28,7 @@ impl_actions!(vim, [SwitchMode, PushOperator]);
 pub fn init(cx: &mut MutableAppContext) {
     editor_events::init(cx);
     normal::init(cx);
+    visual::init(cx);
     insert::init(cx);
     motion::init(cx);
 
@@ -116,6 +118,7 @@ impl Vim {
 
     fn sync_editor_options(&self, cx: &mut MutableAppContext) {
         let state = &self.state;
+
         let cursor_shape = state.cursor_shape();
         for editor in self.editors.values() {
             if let Some(editor) = editor.upgrade(cx) {

@@ -68,7 +68,11 @@
             "shift-X": "vim::DeleteLeft",
             "shift-^": "vim::FirstNonWhitespace",
             "o": "vim::InsertLineBelow",
-            "shift-O": "vim::InsertLineAbove"
+            "shift-O": "vim::InsertLineAbove",
+            "v": [
+                "vim::SwitchMode",
+                "Visual"
+            ]
         }
     },
     {
@@ -98,6 +102,14 @@
         "context": "Editor && vim_operator == d",
         "bindings": {
             "d": "vim::CurrentLine"
+        }
+    },
+    {
+        "context": "Editor && vim_mode == visual",
+        "bindings": {
+            "c": "vim::VisualChange",
+            "d": "vim::VisualDelete",
+            "x": "vim::VisualDelete"
         }
     },
     {
