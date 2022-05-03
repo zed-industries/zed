@@ -61,6 +61,7 @@ export default function workspace(theme: Theme) {
     statusBar: statusBar(theme),
     titlebar: {
       avatarWidth: 18,
+      avatarMargin: 8,
       height: 33,
       background: backgroundColor(theme, 100),
       padding: {
