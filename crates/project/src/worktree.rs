@@ -628,7 +628,8 @@ impl LocalWorktree {
         cx.spawn(|this, mut cx| async move {
             let text = fs.load(&abs_path).await?;
             // Eagerly populate the snapshot with an updated entry for the loaded file
-            let entry = refresh_entry(fs.as_ref(), &background_snapshot, path, &abs_path).await?;
+            let entry =
+                refresh_entry(fs.as_ref(), &background_snapshot, path, &abs_path, None).await?;
             this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
             Ok((
                 File {
@@ -684,7 +685,14 @@ impl LocalWorktree {
         let fs = self.fs.clone();
         let save = cx.background().spawn(async move {
             fs.save(&abs_path, &text).await?;
-            refresh_entry(fs.as_ref(), &background_snapshot, path.clone(), &abs_path).await
+            refresh_entry(
+                fs.as_ref(),
+                &background_snapshot,
+                path.clone(),
+                &abs_path,
+                None,
+            )
+            .await
         });
 
         cx.spawn(|this, mut cx| async move {
@@ -709,12 +717,12 @@ impl LocalWorktree {
         let rename = cx.background().spawn(async move {
             fs.rename(&abs_old_path, &abs_new_path, Default::default())
                 .await?;
-            background_snapshot.lock().remove_path(&old_path);
             refresh_entry(
                 fs.as_ref(),
                 &background_snapshot,
                 new_path.clone(),
                 &abs_new_path,
+                Some(old_path),
             )
             .await
         });
@@ -2144,6 +2152,7 @@ async fn refresh_entry(
     snapshot: &Mutex<LocalSnapshot>,
     path: Arc<Path>,
     abs_path: &Path,
+    old_path: Option<Arc<Path>>,
 ) -> Result<Entry> {
     let root_char_bag;
     let next_entry_id;
@@ -2160,7 +2169,11 @@ async fn refresh_entry(
         &next_entry_id,
         root_char_bag,
     );
-    Ok(snapshot.lock().insert_entry(entry, fs))
+    let mut snapshot = snapshot.lock();
+    if let Some(old_path) = old_path {
+        snapshot.remove_path(&old_path);
+    }
+    Ok(snapshot.insert_entry(entry, fs))
 }
 
 fn char_bag_for_path(root_char_bag: CharBag, path: &Path) -> CharBag {
