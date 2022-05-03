@@ -379,7 +379,7 @@ impl FakeFs {
     async fn simulate_random_delay(&self) {
         self.executor
             .upgrade()
-            .expect("excecutor has been dropped")
+            .expect("executor has been dropped")
             .simulate_random_delay()
             .await;
     }
@@ -647,9 +647,16 @@ impl Fs for FakeFs {
         let (tx, rx) = smol::channel::unbounded();
         state.event_txs.push(tx);
         let path = path.to_path_buf();
+        let executor = self.executor.clone();
         Box::pin(futures::StreamExt::filter(rx, move |events| {
             let result = events.iter().any(|event| event.path.starts_with(&path));
-            async move { result }
+            let executor = executor.clone();
+            async move {
+                if let Some(executor) = executor.clone().upgrade() {
+                    executor.simulate_random_delay().await;
+                }
+                result
+            }
         }))
     }
 

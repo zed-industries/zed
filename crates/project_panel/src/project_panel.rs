@@ -295,9 +295,9 @@ impl ProjectPanel {
                     .save(new_path, Default::default(), cx)
             });
             Some(cx.spawn(|this, mut cx| async move {
-                save.await?;
+                let new_entry = save.await?;
                 this.update(&mut cx, |this, cx| {
-                    this.update_visible_entries(None, cx);
+                    this.update_visible_entries(Some((edit_state.worktree_id, new_entry.id)), cx);
                     cx.notify();
                 });
                 Ok(())
@@ -1005,12 +1005,12 @@ mod tests {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
-                "v root1  <== selected",
+                "v root1",
                 "    > a",
                 "    > b",
                 "    > C",
                 "      .dockerignore",
-                "      the-new-filename",
+                "      the-new-filename  <== selected",
                 "v root2",
                 "    > d",
                 "    > e",
@@ -1048,10 +1048,10 @@ mod tests {
             &[
                 "v root1",
                 "    > a",
-                "    v b  <== selected",
+                "    v b",
                 "        > 3",
                 "        > 4",
-                "          another-filename",
+                "          another-filename  <== selected",
                 "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
