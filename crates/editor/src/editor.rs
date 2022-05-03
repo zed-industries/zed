@@ -136,6 +136,7 @@ actions!(
         DuplicateLine,
         MoveLineUp,
         MoveLineDown,
+        Transpose,
         Cut,
         Copy,
         Paste,
@@ -239,6 +240,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::duplicate_line);
     cx.add_action(Editor::move_line_up);
     cx.add_action(Editor::move_line_down);
+    cx.add_action(Editor::transpose);
     cx.add_action(Editor::cut);
     cx.add_action(Editor::copy);
     cx.add_action(Editor::paste);
@@ -3379,6 +3381,41 @@ impl Editor {
             });
             this.fold_ranges(refold_ranges, cx);
             this.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+        });
+    }
+
+    pub fn transpose(&mut self, _: &Transpose, cx: &mut ViewContext<Self>) {
+        self.transact(cx, |this, cx| {
+            let mut edits: Vec<(Range<usize>, String)> = Default::default();
+            this.move_selections(cx, |display_map, selection| {
+                if !selection.is_empty() {
+                    return;
+                }
+
+                let mut head = selection.head();
+                let mut transpose_offset = head.to_offset(display_map, Bias::Right);
+                if head.column() == display_map.line_len(head.row()) {
+                    transpose_offset = transpose_offset.saturating_sub(1);
+                }
+
+                if transpose_offset == 0 {
+                    return;
+                }
+
+                *head.column_mut() += 1;
+                head = display_map.clip_point(head, Bias::Right);
+                selection.collapse_to(head, SelectionGoal::Column(head.column()));
+
+                let transpose_start = transpose_offset.saturating_sub(1);
+                if edits.last().map_or(true, |e| e.0.end < transpose_start) {
+                    let transpose_end = transpose_offset + 1;
+                    if let Some(ch) = display_map.buffer_snapshot.chars_at(transpose_start).next() {
+                        edits.push((transpose_start..transpose_offset, String::new()));
+                        edits.push((transpose_end..transpose_end, ch.to_string()));
+                    }
+                }
+            });
+            this.buffer.update(cx, |buffer, cx| buffer.edit(edits, cx));
         });
     }
 
@@ -8209,6 +8246,84 @@ mod tests {
             editor.select_ranges([Point::new(2, 0)..Point::new(2, 0)], None, cx);
             editor.move_line_down(&MoveLineDown, cx);
         });
+    }
+
+    #[gpui::test]
+    fn test_transpose(cx: &mut gpui::MutableAppContext) {
+        cx.set_global(Settings::test(cx));
+
+        cx.add_window(Default::default(), |cx| {
+            let mut editor = build_editor(MultiBuffer::build_simple("abc", cx), cx);
+
+            editor.select_ranges([1..1], None, cx);
+            editor.transpose(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "bac");
+            assert_eq!(editor.selected_ranges(cx), [2..2]);
+
+            editor.transpose(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "bca");
+            assert_eq!(editor.selected_ranges(cx), [3..3]);
+
+            editor.transpose(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "bac");
+            assert_eq!(editor.selected_ranges(cx), [3..3]);
+
+            editor
+        })
+        .1;
+
+        cx.add_window(Default::default(), |cx| {
+            let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), cx);
+
+            editor.select_ranges([3..3], None, cx);
+            editor.transpose(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "acb\nde");
+            assert_eq!(editor.selected_ranges(cx), [3..3]);
+
+            editor.select_ranges([4..4], None, cx);
+            editor.transpose(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "acbd\ne");
+            assert_eq!(editor.selected_ranges(cx), [5..5]);
+
+            editor.transpose(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "acbde\n");
+            assert_eq!(editor.selected_ranges(cx), [6..6]);
+
+            editor.transpose(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "acbd\ne");
+            assert_eq!(editor.selected_ranges(cx), [6..6]);
+
+            editor
+        })
+        .1;
+
+        cx.add_window(Default::default(), |cx| {
+            let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), cx);
+
+            editor.select_ranges([1..1, 2..2, 4..4], None, cx);
+            editor.transpose(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "bacd\ne");
+            assert_eq!(editor.selected_ranges(cx), [2..2, 3..3, 5..5]);
+
+            editor.transpose(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "bcade\n");
+            assert_eq!(editor.selected_ranges(cx), [3..3, 4..4, 6..6]);
+
+            editor.transpose(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "bcdae\n");
+            assert_eq!(editor.selected_ranges(cx), [4..4, 5..5, 6..6]);
+
+            editor.transpose(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "bcdea\n");
+            assert_eq!(editor.selected_ranges(cx), [5..5, 6..6]);
+
+            editor.transpose(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "bcdae\n");
+            assert_eq!(editor.selected_ranges(cx), [5..5, 6..6]);
+
+            editor
+        })
+        .1;
     }
 
     #[gpui::test]
