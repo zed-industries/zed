@@ -1501,8 +1501,16 @@ impl Editor {
             }
             2 => {
                 let range = movement::surrounding_word(&display_map, position);
-                start = buffer.anchor_before(range.start.to_point(&display_map));
-                end = buffer.anchor_before(range.end.to_point(&display_map));
+                start = buffer.anchor_before(
+                    display_map
+                        .clip_point(range.start, Bias::Left)
+                        .to_point(&display_map),
+                );
+                end = buffer.anchor_before(
+                    display_map
+                        .clip_point(range.end, Bias::Right)
+                        .to_point(&display_map),
+                );
                 mode = SelectMode::Word(start.clone()..end.clone());
             }
             3 => {
@@ -1593,6 +1601,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let position = display_map.clip_point(position, Bias::Left);
 
         if let Some(tail) = self.columnar_selection_tail.as_ref() {
             let tail = tail.to_display_point(&display_map);
