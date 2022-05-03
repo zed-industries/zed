@@ -3395,7 +3395,9 @@ impl Editor {
                 let mut head = selection.head();
                 let mut transpose_offset = head.to_offset(display_map, Bias::Right);
                 if head.column() == display_map.line_len(head.row()) {
-                    transpose_offset = transpose_offset.saturating_sub(1);
+                    transpose_offset = display_map
+                        .buffer_snapshot
+                        .clip_offset(transpose_offset.saturating_sub(1), Bias::Left);
                 }
 
                 if transpose_offset == 0 {
@@ -3406,9 +3408,13 @@ impl Editor {
                 head = display_map.clip_point(head, Bias::Right);
                 selection.collapse_to(head, SelectionGoal::Column(head.column()));
 
-                let transpose_start = transpose_offset.saturating_sub(1);
+                let transpose_start = display_map
+                    .buffer_snapshot
+                    .clip_offset(transpose_offset.saturating_sub(1), Bias::Left);
                 if edits.last().map_or(true, |e| e.0.end < transpose_start) {
-                    let transpose_end = transpose_offset + 1;
+                    let transpose_end = display_map
+                        .buffer_snapshot
+                        .clip_offset(transpose_offset + 1, Bias::Right);
                     if let Some(ch) = display_map.buffer_snapshot.chars_at(transpose_start).next() {
                         edits.push((transpose_start..transpose_offset, String::new()));
                         edits.push((transpose_end..transpose_end, ch.to_string()));
