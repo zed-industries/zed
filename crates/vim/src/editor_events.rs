@@ -18,15 +18,11 @@ fn editor_created(EditorCreated(editor): &EditorCreated, cx: &mut MutableAppCont
 }
 
 fn editor_focused(EditorFocused(editor): &EditorFocused, cx: &mut MutableAppContext) {
-    let mode = if matches!(editor.read(cx).mode(), EditorMode::SingleLine) {
-        Mode::Insert
-    } else {
-        Mode::Normal
-    };
-
     Vim::update(cx, |state, cx| {
         state.active_editor = Some(editor.downgrade());
-        state.switch_mode(mode, cx);
+        if editor.read(cx).mode() != EditorMode::Full {
+            state.switch_mode(Mode::Insert, cx);
+        }
     });
 }
 

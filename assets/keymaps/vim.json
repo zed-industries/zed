@@ -2,10 +2,6 @@
     {
         "context": "Editor && VimControl",
         "bindings": {
-            "i": [
-                "vim::SwitchMode",
-                "Insert"
-            ],
             "g": [
                 "vim::PushOperator",
                 {
@@ -13,6 +9,7 @@
                 }
             ],
             "h": "vim::Left",
+            "backspace": "vim::Left",
             "j": "vim::Down",
             "k": "vim::Up",
             "l": "vim::Right",
@@ -47,28 +44,40 @@
         }
     },
     {
-        "context": "Editor && vim_operator == g",
-        "bindings": {
-            "g": "vim::StartOfDocument"
-        }
-    },
-    {
-        "context": "Editor && vim_mode == insert",
-        "bindings": {
-            "escape": "vim::NormalBefore",
-            "ctrl-c": "vim::NormalBefore"
-        }
-    },
-    {
         "context": "Editor && vim_mode == normal",
         "bindings": {
+            "escape": "editor::Cancel",
             "c": [
                 "vim::PushOperator",
                 "Change"
             ],
+            "shift-C": "vim::ChangeToEndOfLine",
             "d": [
                 "vim::PushOperator",
                 "Delete"
+            ],
+            "shift-D": "vim::DeleteToEndOfLine",
+            "i": [
+                "vim::SwitchMode",
+                "Insert"
+            ],
+            "shift-I": "vim::InsertFirstNonWhitespace",
+            "a": "vim::InsertAfter",
+            "shift-A": "vim::InsertEndOfLine",
+            "x": "vim::DeleteRight",
+            "shift-X": "vim::DeleteLeft",
+            "shift-^": "vim::FirstNonWhitespace",
+            "o": "vim::InsertLineBelow",
+            "shift-O": "vim::InsertLineAbove"
+        }
+    },
+    {
+        "context": "Editor && vim_operator == g",
+        "bindings": {
+            "g": "vim::StartOfDocument",
+            "escape": [
+                "vim::SwitchMode",
+                "Normal"
             ]
         }
     },
@@ -81,7 +90,27 @@
                 {
                     "ignorePunctuation": true
                 }
-            ]
+            ],
+            "c": "vim::CurrentLine"
+        }
+    },
+    {
+        "context": "Editor && vim_operator == d",
+        "bindings": {
+            "d": "vim::CurrentLine"
+        }
+    },
+    {
+        "context": "Editor && vim_mode == insert",
+        "bindings": {
+            "escape": "vim::NormalBefore",
+            "ctrl-c": "vim::NormalBefore"
+        }
+    },
+    {
+        "context": "Editor && mode == singleline",
+        "bindings": {
+            "escape": "editor::Cancel"
         }
     }
 ]
