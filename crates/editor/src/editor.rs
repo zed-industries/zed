@@ -8324,6 +8324,26 @@ mod tests {
             editor
         })
         .1;
+
+        cx.add_window(Default::default(), |cx| {
+            let mut editor = build_editor(MultiBuffer::build_simple("🍐🏀✋", cx), cx);
+
+            editor.select_ranges([4..4], None, cx);
+            editor.transpose(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "🏀🍐✋");
+            assert_eq!(editor.selected_ranges(cx), [8..8]);
+
+            editor.transpose(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "🏀✋🍐");
+            assert_eq!(editor.selected_ranges(cx), [11..11]);
+
+            editor.transpose(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "🏀🍐✋");
+            assert_eq!(editor.selected_ranges(cx), [11..11]);
+
+            editor
+        })
+        .1;
     }
 
     #[gpui::test]
