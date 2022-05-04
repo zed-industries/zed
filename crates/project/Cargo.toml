@@ -29,7 +29,7 @@ settings = { path = "../settings" }
 sum_tree = { path = "../sum_tree" }
 util = { path = "../util" }
 aho-corasick = "0.7"
-anyhow = "1.0.38"
+anyhow = "1.0.57"
 async-trait = "0.1"
 futures = "0.3"
 ignore = "0.4"

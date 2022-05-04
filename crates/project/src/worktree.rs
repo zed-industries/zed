@@ -42,6 +42,7 @@ use std::{
     fmt,
     future::Future,
     ops::{Deref, DerefMut},
+    os::unix::prelude::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
     time::{Duration, SystemTime},
@@ -623,13 +624,15 @@ impl LocalWorktree {
         let handle = cx.handle();
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
-        let background_snapshot = self.background_snapshot.clone();
         let fs = self.fs.clone();
         cx.spawn(|this, mut cx| async move {
             let text = fs.load(&abs_path).await?;
             // Eagerly populate the snapshot with an updated entry for the loaded file
-            let entry =
-                refresh_entry(fs.as_ref(), &background_snapshot, path, &abs_path, None).await?;
+            let entry = this
+                .update(&mut cx, |this, _| {
+                    this.as_local().unwrap().refresh_entry(path, abs_path, None)
+                })
+                .await?;
             this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
             Ok((
                 File {
@@ -653,7 +656,7 @@ impl LocalWorktree {
         let buffer = buffer_handle.read(cx);
         let text = buffer.as_rope().clone();
         let version = buffer.version();
-        let save = self.save(path, text, cx);
+        let save = self.write_file(path, text, cx);
         let handle = cx.handle();
         cx.as_mut().spawn(|mut cx| async move {
             let entry = save.await?;
@@ -673,7 +676,7 @@ impl LocalWorktree {
         })
     }
 
-    pub fn save(
+    pub fn write_file(
         &self,
         path: impl Into<Arc<Path>>,
         text: Rope,
@@ -681,22 +684,21 @@ impl LocalWorktree {
     ) -> Task<Result<Entry>> {
         let path = path.into();
         let abs_path = self.absolutize(&path);
-        let background_snapshot = self.background_snapshot.clone();
-        let fs = self.fs.clone();
-        let save = cx.background().spawn(async move {
-            fs.save(&abs_path, &text).await?;
-            refresh_entry(
-                fs.as_ref(),
-                &background_snapshot,
-                path.clone(),
-                &abs_path,
-                None,
-            )
-            .await
+        let save = cx.background().spawn({
+            let fs = self.fs.clone();
+            let abs_path = abs_path.clone();
+            async move { fs.save(&abs_path, &text).await }
         });
 
         cx.spawn(|this, mut cx| async move {
-            let entry = save.await?;
+            save.await?;
+            let entry = this
+                .update(&mut cx, |this, _| {
+                    this.as_local_mut()
+                        .unwrap()
+                        .refresh_entry(path, abs_path, None)
+                })
+                .await?;
             this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
             Ok(entry)
         })
@@ -712,26 +714,66 @@ impl LocalWorktree {
         let new_path = new_path.into();
         let abs_old_path = self.absolutize(&old_path);
         let abs_new_path = self.absolutize(&new_path);
-        let background_snapshot = self.background_snapshot.clone();
-        let fs = self.fs.clone();
-        let rename = cx.background().spawn(async move {
-            fs.rename(&abs_old_path, &abs_new_path, Default::default())
-                .await?;
-            refresh_entry(
-                fs.as_ref(),
-                &background_snapshot,
-                new_path.clone(),
-                &abs_new_path,
-                Some(old_path),
-            )
-            .await
+        let rename = cx.background().spawn({
+            let fs = self.fs.clone();
+            let abs_new_path = abs_new_path.clone();
+            async move {
+                fs.rename(&abs_old_path, &abs_new_path, Default::default())
+                    .await
+            }
         });
 
         cx.spawn(|this, mut cx| async move {
-            let entry = rename.await?;
+            rename.await?;
+            let entry = this
+                .update(&mut cx, |this, _| {
+                    this.as_local_mut().unwrap().refresh_entry(
+                        new_path.clone(),
+                        abs_new_path,
+                        Some(old_path),
+                    )
+                })
+                .await?;
             this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
             Ok(entry)
         })
+    }
+
+    fn refresh_entry(
+        &self,
+        path: Arc<Path>,
+        abs_path: PathBuf,
+        old_path: Option<Arc<Path>>,
+    ) -> impl Future<Output = Result<Entry>> {
+        let root_char_bag;
+        let next_entry_id;
+        let fs = self.fs.clone();
+        let shared_snapshots_tx = self.share.as_ref().map(|share| share.snapshots_tx.clone());
+        let snapshot = self.background_snapshot.clone();
+        {
+            let snapshot = snapshot.lock();
+            root_char_bag = snapshot.root_char_bag;
+            next_entry_id = snapshot.next_entry_id.clone();
+        }
+        async move {
+            let entry = Entry::new(
+                path,
+                &fs.metadata(&abs_path)
+                    .await?
+                    .ok_or_else(|| anyhow!("could not read saved file metadata"))?,
+                &next_entry_id,
+                root_char_bag,
+            );
+            let mut snapshot = snapshot.lock();
+            if let Some(old_path) = old_path {
+                snapshot.remove_path(&old_path);
+            }
+            let entry = snapshot.insert_entry(entry, fs.as_ref());
+            if let Some(tx) = shared_snapshots_tx {
+                tx.send(snapshot.clone()).await.ok();
+            }
+            Ok(entry)
+        }
     }
 
     pub fn register(
@@ -912,6 +954,21 @@ impl Snapshot {
 
     pub fn contains_entry(&self, entry_id: ProjectEntryId) -> bool {
         self.entries_by_id.get(&entry_id, &()).is_some()
+    }
+
+    pub(crate) fn insert_entry(&mut self, entry: proto::Entry) -> Result<Entry> {
+        let entry = Entry::try_from((&self.root_char_bag, entry))?;
+        self.entries_by_id.insert_or_replace(
+            PathEntry {
+                id: entry.id,
+                path: entry.path.clone(),
+                is_ignored: entry.is_ignored,
+                scan_id: 0,
+            },
+            &(),
+        );
+        self.entries_by_path.insert_or_replace(entry.clone(), &());
+        Ok(entry)
     }
 
     pub(crate) fn apply_remote_update(&mut self, update: proto::UpdateWorktree) -> Result<()> {
@@ -1437,7 +1494,7 @@ impl language::File for File {
             Worktree::Local(worktree) => {
                 let rpc = worktree.client.clone();
                 let project_id = worktree.share.as_ref().map(|share| share.project_id);
-                let save = worktree.save(self.path.clone(), text, cx);
+                let save = worktree.write_file(self.path.clone(), text, cx);
                 cx.background().spawn(async move {
                     let entry = save.await?;
                     if let Some(project_id) = project_id {
@@ -2155,35 +2212,6 @@ impl BackgroundScanner {
     }
 }
 
-async fn refresh_entry(
-    fs: &dyn Fs,
-    snapshot: &Mutex<LocalSnapshot>,
-    path: Arc<Path>,
-    abs_path: &Path,
-    old_path: Option<Arc<Path>>,
-) -> Result<Entry> {
-    let root_char_bag;
-    let next_entry_id;
-    {
-        let snapshot = snapshot.lock();
-        root_char_bag = snapshot.root_char_bag;
-        next_entry_id = snapshot.next_entry_id.clone();
-    }
-    let entry = Entry::new(
-        path,
-        &fs.metadata(abs_path)
-            .await?
-            .ok_or_else(|| anyhow!("could not read saved file metadata"))?,
-        &next_entry_id,
-        root_char_bag,
-    );
-    let mut snapshot = snapshot.lock();
-    if let Some(old_path) = old_path {
-        snapshot.remove_path(&old_path);
-    }
-    Ok(snapshot.insert_entry(entry, fs))
-}
-
 fn char_bag_for_path(root_char_bag: CharBag, path: &Path) -> CharBag {
     let mut result = root_char_bag;
     result.extend(
@@ -2421,7 +2449,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
         Self {
             id: entry.id.to_proto(),
             is_dir: entry.is_dir(),
-            path: entry.path.to_string_lossy().to_string(),
+            path: entry.path.as_os_str().as_bytes().to_vec(),
             inode: entry.inode,
             mtime: Some(entry.mtime.into()),
             is_symlink: entry.is_symlink,
@@ -2439,10 +2467,14 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
                 EntryKind::Dir
             } else {
                 let mut char_bag = root_char_bag.clone();
-                char_bag.extend(entry.path.chars().map(|c| c.to_ascii_lowercase()));
+                char_bag.extend(
+                    String::from_utf8_lossy(&entry.path)
+                        .chars()
+                        .map(|c| c.to_ascii_lowercase()),
+                );
                 EntryKind::File(char_bag)
             };
-            let path: Arc<Path> = Arc::from(Path::new(&entry.path));
+            let path: Arc<Path> = PathBuf::from(OsString::from_vec(entry.path)).into();
             Ok(Entry {
                 id: ProjectEntryId::from_proto(entry.id),
                 kind,

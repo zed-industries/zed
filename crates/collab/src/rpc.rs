@@ -126,6 +126,7 @@ impl Server {
             .add_request_handler(Server::forward_project_request::<proto::PerformRename>)
             .add_request_handler(Server::forward_project_request::<proto::ReloadBuffers>)
             .add_request_handler(Server::forward_project_request::<proto::FormatBuffers>)
+            .add_request_handler(Server::forward_project_request::<proto::CreateProjectEntry>)
             .add_request_handler(Server::update_buffer)
             .add_message_handler(Server::update_buffer_file)
             .add_message_handler(Server::buffer_reloaded)
@@ -1806,6 +1807,73 @@ mod tests {
                 buf.file().unwrap().path().to_str() == Some("file1-renamed")
             })
             .await;
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_worktree_manipulation(
+        executor: Arc<Deterministic>,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
+    ) {
+        executor.forbid_parking();
+        let fs = FakeFs::new(cx_a.background());
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let mut client_a = server.create_client(cx_a, "user_a").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
+
+        // Share a project as client A
+        fs.insert_tree(
+            "/dir",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "a.txt": "a-contents",
+                "b.txt": "b-contents",
+            }),
+        )
+        .await;
+
+        let (project_a, worktree_id) = client_a.build_local_project(fs, "/dir", cx_a).await;
+        let project_id = project_a.read_with(cx_a, |project, _| project.remote_id().unwrap());
+        project_a
+            .update(cx_a, |project, cx| project.share(cx))
+            .await
+            .unwrap();
+
+        let project_b = client_b.build_remote_project(project_id, cx_b).await;
+
+        let worktree_a =
+            project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
+        let worktree_b =
+            project_b.read_with(cx_b, |project, cx| project.worktrees(cx).next().unwrap());
+
+        project_b
+            .update(cx_b, |project, cx| {
+                project.create_file((worktree_id, "c.txt"), cx).unwrap()
+            })
+            .await
+            .unwrap();
+
+        executor.run_until_parked();
+        worktree_a.read_with(cx_a, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "a.txt", "b.txt", "c.txt"]
+            );
+        });
+        worktree_b.read_with(cx_b, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "a.txt", "b.txt", "c.txt"]
+            );
+        });
     }
 
     #[gpui::test(iterations = 10)]

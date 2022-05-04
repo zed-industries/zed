@@ -273,27 +273,19 @@ impl ProjectPanel {
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
         let edit_state = self.edit_state.take()?;
         cx.focus_self();
+
         let worktree = self
             .project
             .read(cx)
             .worktree_for_id(edit_state.worktree_id, cx)?;
-
-        // TODO - implement this for remote projects
-        if !worktree.read(cx).is_local() {
-            return None;
-        }
-
         let entry = worktree.read(cx).entry_for_id(edit_state.entry_id)?;
         let filename = self.filename_editor.read(cx).text(cx);
 
         if edit_state.new_file {
             let new_path = entry.path.join(filename);
-            let save = worktree.update(cx, |worktree, cx| {
-                worktree
-                    .as_local()
-                    .unwrap()
-                    .save(new_path, Default::default(), cx)
-            });
+            let save = self.project.update(cx, |project, cx| {
+                project.create_file((edit_state.worktree_id, new_path), cx)
+            })?;
             Some(cx.spawn(|this, mut cx| async move {
                 let new_entry = save.await?;
                 this.update(&mut cx, |this, cx| {
@@ -303,6 +295,11 @@ impl ProjectPanel {
                 Ok(())
             }))
         } else {
+            // TODO - implement this for remote projects
+            if !worktree.read(cx).is_local() {
+                return None;
+            }
+
             let old_path = entry.path.clone();
             let new_path = if let Some(parent) = old_path.parent() {
                 parent.join(filename)

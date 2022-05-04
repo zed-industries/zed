@@ -36,9 +36,11 @@ use std::{
     cell::RefCell,
     cmp::{self, Ordering},
     convert::TryInto,
+    ffi::OsString,
     hash::Hash,
     mem,
     ops::Range,
+    os::unix::{ffi::OsStrExt, prelude::OsStringExt},
     path::{Component, Path, PathBuf},
     rc::Rc,
     sync::{
@@ -259,6 +261,7 @@ impl Project {
         client.add_model_message_handler(Self::handle_update_buffer);
         client.add_model_message_handler(Self::handle_update_diagnostic_summary);
         client.add_model_message_handler(Self::handle_update_worktree);
+        client.add_model_request_handler(Self::handle_create_project_entry);
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_model_request_handler(Self::handle_apply_code_action);
         client.add_model_request_handler(Self::handle_reload_buffers);
@@ -684,6 +687,47 @@ impl Project {
     ) -> Option<WorktreeId> {
         self.worktree_for_entry(entry_id, cx)
             .map(|worktree| worktree.read(cx).id())
+    }
+
+    pub fn create_file(
+        &mut self,
+        project_path: impl Into<ProjectPath>,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Task<Result<Entry>>> {
+        let project_path = project_path.into();
+        let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
+
+        if self.is_local() {
+            Some(worktree.update(cx, |worktree, cx| {
+                worktree.as_local_mut().unwrap().write_file(
+                    project_path.path,
+                    Default::default(),
+                    cx,
+                )
+            }))
+        } else {
+            let client = self.client.clone();
+            let project_id = self.remote_id().unwrap();
+
+            Some(cx.spawn_weak(|_, mut cx| async move {
+                let response = client
+                    .request(proto::CreateProjectEntry {
+                        worktree_id: project_path.worktree_id.to_proto(),
+                        project_id,
+                        path: project_path.path.as_os_str().as_bytes().to_vec(),
+                        is_directory: false,
+                    })
+                    .await?;
+                worktree.update(&mut cx, |worktree, _| {
+                    let worktree = worktree.as_remote_mut().unwrap();
+                    worktree.snapshot.insert_entry(
+                        response
+                            .entry
+                            .ok_or_else(|| anyhow!("missing entry in response"))?,
+                    )
+                })
+            }))
+        }
     }
 
     pub fn can_share(&self, cx: &AppContext) -> bool {
@@ -3730,6 +3774,34 @@ impl Project {
                 })?;
             }
             Ok(())
+        })
+    }
+
+    async fn handle_create_project_entry(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::CreateProjectEntry>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::CreateProjectEntryResponse> {
+        let entry = this
+            .update(&mut cx, |this, cx| {
+                let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+                let worktree = this
+                    .worktree_for_id(worktree_id, cx)
+                    .ok_or_else(|| anyhow!("worktree not found"))?;
+                worktree.update(cx, |worktree, cx| {
+                    let worktree = worktree.as_local_mut().unwrap();
+                    if envelope.payload.is_directory {
+                        unimplemented!("can't yet create directories");
+                    } else {
+                        let path = PathBuf::from(OsString::from_vec(envelope.payload.path));
+                        anyhow::Ok(worktree.write_file(path, Default::default(), cx))
+                    }
+                })
+            })?
+            .await?;
+        Ok(proto::CreateProjectEntryResponse {
+            entry: Some((&entry).into()),
         })
     }
 
