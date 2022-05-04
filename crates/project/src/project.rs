@@ -719,14 +719,14 @@ impl Project {
                         is_directory: false,
                     })
                     .await?;
-                worktree.update(&mut cx, |worktree, _| {
-                    let worktree = worktree.as_remote_mut().unwrap();
-                    worktree.snapshot.insert_entry(
-                        response
-                            .entry
-                            .ok_or_else(|| anyhow!("missing entry in response"))?,
-                    )
-                })
+                let entry = response
+                    .entry
+                    .ok_or_else(|| anyhow!("missing entry in response"))?;
+                worktree
+                    .update(&mut cx, |worktree, cx| {
+                        worktree.as_remote().unwrap().insert_entry(entry, cx)
+                    })
+                    .await
             }))
         }
     }
@@ -758,15 +758,14 @@ impl Project {
                         new_path: new_path.as_os_str().as_bytes().to_vec(),
                     })
                     .await?;
-                worktree.update(&mut cx, |worktree, _| {
-                    let worktree = worktree.as_remote_mut().unwrap();
-                    worktree.snapshot.remove_entry(entry_id);
-                    worktree.snapshot.insert_entry(
-                        response
-                            .entry
-                            .ok_or_else(|| anyhow!("missing entry in response"))?,
-                    )
-                })
+                let entry = response
+                    .entry
+                    .ok_or_else(|| anyhow!("missing entry in response"))?;
+                worktree
+                    .update(&mut cx, |worktree, cx| {
+                        worktree.as_remote().unwrap().insert_entry(entry, cx)
+                    })
+                    .await
             }))
         }
     }

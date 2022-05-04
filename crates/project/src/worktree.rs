@@ -29,6 +29,7 @@ use language::{
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
+    barrier,
     prelude::{Sink as _, Stream as _},
     watch,
 };
@@ -79,14 +80,19 @@ pub struct LocalWorktree {
 }
 
 pub struct RemoteWorktree {
-    pub(crate) snapshot: Snapshot,
+    pub snapshot: Snapshot,
+    pub(crate) background_snapshot: Arc<Mutex<Snapshot>>,
     project_id: u64,
-    snapshot_rx: watch::Receiver<Snapshot>,
     client: Arc<Client>,
-    updates_tx: UnboundedSender<proto::UpdateWorktree>,
+    updates_tx: UnboundedSender<BackgroundUpdate>,
     replica_id: ReplicaId,
     diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
     visible: bool,
+}
+
+enum BackgroundUpdate {
+    Update(proto::UpdateWorktree),
+    Barrier(barrier::Sender),
 }
 
 #[derive(Clone)]
@@ -218,13 +224,14 @@ impl Worktree {
         };
 
         let (updates_tx, mut updates_rx) = mpsc::unbounded();
-        let (mut snapshot_tx, snapshot_rx) = watch::channel_with(snapshot.clone());
+        let background_snapshot = Arc::new(Mutex::new(snapshot.clone()));
+        let (mut snapshot_updated_tx, mut snapshot_updated_rx) = watch::channel();
         let worktree_handle = cx.add_model(|_: &mut ModelContext<Worktree>| {
             Worktree::Remote(RemoteWorktree {
                 project_id: project_remote_id,
                 replica_id,
                 snapshot: snapshot.clone(),
-                snapshot_rx: snapshot_rx.clone(),
+                background_snapshot: background_snapshot.clone(),
                 updates_tx,
                 client: client.clone(),
                 diagnostic_summaries: TreeMap::from_ordered_entries(
@@ -275,37 +282,40 @@ impl Worktree {
                     .await;
 
                 {
-                    let mut snapshot = snapshot_tx.borrow_mut();
+                    let mut snapshot = background_snapshot.lock();
                     snapshot.entries_by_path = entries_by_path;
                     snapshot.entries_by_id = entries_by_id;
+                    snapshot_updated_tx.send(()).await.ok();
                 }
 
                 cx.background()
                     .spawn(async move {
                         while let Some(update) = updates_rx.next().await {
-                            let mut snapshot = snapshot_tx.borrow().clone();
-                            if let Err(error) = snapshot.apply_remote_update(update) {
-                                log::error!("error applying worktree update: {}", error);
+                            if let BackgroundUpdate::Update(update) = update {
+                                if let Err(error) =
+                                    background_snapshot.lock().apply_remote_update(update)
+                                {
+                                    log::error!("error applying worktree update: {}", error);
+                                }
+                                snapshot_updated_tx.send(()).await.ok();
                             }
-                            *snapshot_tx.borrow_mut() = snapshot;
                         }
                     })
                     .detach();
 
-                {
-                    let mut snapshot_rx = snapshot_rx.clone();
+                cx.spawn(|mut cx| {
                     let this = worktree_handle.downgrade();
-                    cx.spawn(|mut cx| async move {
-                        while let Some(_) = snapshot_rx.recv().await {
+                    async move {
+                        while let Some(_) = snapshot_updated_rx.recv().await {
                             if let Some(this) = this.upgrade(&cx) {
                                 this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
                             } else {
                                 break;
                             }
                         }
-                    })
-                    .detach();
-                }
+                    }
+                })
+                .detach();
             }
         });
         (worktree_handle, deserialize_task)
@@ -411,7 +421,7 @@ impl Worktree {
                 }
             }
             Self::Remote(worktree) => {
-                worktree.snapshot = worktree.snapshot_rx.borrow().clone();
+                worktree.snapshot = worktree.background_snapshot.lock().clone();
                 cx.emit(Event::UpdatedEntries);
             }
         };
@@ -923,10 +933,19 @@ impl RemoteWorktree {
         envelope: TypedEnvelope<proto::UpdateWorktree>,
     ) -> Result<()> {
         self.updates_tx
-            .unbounded_send(envelope.payload)
+            .unbounded_send(BackgroundUpdate::Update(envelope.payload))
             .expect("consumer runs to completion");
-
         Ok(())
+    }
+
+    pub fn finish_pending_remote_updates(&self) -> impl Future<Output = ()> {
+        let (tx, mut rx) = barrier::channel();
+        self.updates_tx
+            .unbounded_send(BackgroundUpdate::Barrier(tx))
+            .expect("consumer runs to completion");
+        async move {
+            rx.recv().await;
+        }
     }
 
     pub fn update_diagnostic_summary(
@@ -945,6 +964,29 @@ impl RemoteWorktree {
                 .insert(PathKey(path.clone()), summary);
         }
     }
+
+    pub fn insert_entry(
+        &self,
+        entry: proto::Entry,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<Entry>> {
+        cx.spawn(|this, mut cx| async move {
+            this.update(&mut cx, |worktree, _| {
+                worktree
+                    .as_remote_mut()
+                    .unwrap()
+                    .finish_pending_remote_updates()
+            })
+            .await;
+            this.update(&mut cx, |worktree, _| {
+                let worktree = worktree.as_remote_mut().unwrap();
+                let mut snapshot = worktree.background_snapshot.lock();
+                let entry = snapshot.insert_entry(entry);
+                worktree.snapshot = snapshot.clone();
+                entry
+            })
+        })
+    }
 }
 
 impl Snapshot {
@@ -956,17 +998,9 @@ impl Snapshot {
         self.entries_by_id.get(&entry_id, &()).is_some()
     }
 
-    pub(crate) fn remove_entry(&mut self, entry_id: ProjectEntryId) -> Option<Entry> {
-        if let Some(entry) = self.entries_by_id.remove(&entry_id, &()) {
-            self.entries_by_path.remove(&PathKey(entry.path), &())
-        } else {
-            None
-        }
-    }
-
     pub(crate) fn insert_entry(&mut self, entry: proto::Entry) -> Result<Entry> {
         let entry = Entry::try_from((&self.root_char_bag, entry))?;
-        self.entries_by_id.insert_or_replace(
+        let old_entry = self.entries_by_id.insert_or_replace(
             PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
@@ -975,6 +1009,9 @@ impl Snapshot {
             },
             &(),
         );
+        if let Some(old_entry) = old_entry {
+            self.entries_by_path.remove(&PathKey(old_entry.path), &());
+        }
         self.entries_by_path.insert_or_replace(entry.clone(), &());
         Ok(entry)
     }

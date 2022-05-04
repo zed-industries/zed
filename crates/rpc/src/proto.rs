@@ -6,13 +6,14 @@ use prost::Message as _;
 use serde::Serialize;
 use std::any::{Any, TypeId};
 use std::{
+    fmt::Debug,
     io,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
-pub trait EnvelopedMessage: Clone + Serialize + Sized + Send + Sync + 'static {
+pub trait EnvelopedMessage: Clone + Debug + Serialize + Sized + Send + Sync + 'static {
     const NAME: &'static str;
     const PRIORITY: MessagePriority;
     fn into_envelope(
