@@ -3411,7 +3411,7 @@ impl Editor {
                 let transpose_start = display_map
                     .buffer_snapshot
                     .clip_offset(transpose_offset.saturating_sub(1), Bias::Left);
-                if edits.last().map_or(true, |e| e.0.end < transpose_start) {
+                if edits.last().map_or(true, |e| e.0.end <= transpose_start) {
                     let transpose_end = display_map
                         .buffer_snapshot
                         .clip_offset(transpose_offset + 1, Bias::Right);
@@ -3422,6 +3422,11 @@ impl Editor {
                 }
             });
             this.buffer.update(cx, |buffer, cx| buffer.edit(edits, cx));
+            this.update_selections(
+                this.local_selections::<usize>(cx),
+                Some(Autoscroll::Fit),
+                cx,
+            );
         });
     }
 
@@ -8316,15 +8321,15 @@ mod tests {
             assert_eq!(editor.selected_ranges(cx), [3..3, 4..4, 6..6]);
 
             editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "bcdae\n");
-            assert_eq!(editor.selected_ranges(cx), [4..4, 5..5, 6..6]);
+            assert_eq!(editor.text(cx), "bcda\ne");
+            assert_eq!(editor.selected_ranges(cx), [4..4, 6..6]);
 
             editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "bcdea\n");
-            assert_eq!(editor.selected_ranges(cx), [5..5, 6..6]);
+            assert_eq!(editor.text(cx), "bcade\n");
+            assert_eq!(editor.selected_ranges(cx), [4..4, 6..6]);
 
             editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "bcdae\n");
+            assert_eq!(editor.text(cx), "bcaed\n");
             assert_eq!(editor.selected_ranges(cx), [5..5, 6..6]);
 
             editor
