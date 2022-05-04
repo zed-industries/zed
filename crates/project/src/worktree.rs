@@ -686,32 +686,30 @@ impl LocalWorktree {
         })
     }
 
+    pub fn create_entry(
+        &self,
+        path: impl Into<Arc<Path>>,
+        is_dir: bool,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<Entry>> {
+        self.write_entry_internal(
+            path,
+            if is_dir {
+                None
+            } else {
+                Some(Default::default())
+            },
+            cx,
+        )
+    }
+
     pub fn write_file(
         &self,
         path: impl Into<Arc<Path>>,
         text: Rope,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Entry>> {
-        let path = path.into();
-        let abs_path = self.absolutize(&path);
-        let save = cx.background().spawn({
-            let fs = self.fs.clone();
-            let abs_path = abs_path.clone();
-            async move { fs.save(&abs_path, &text).await }
-        });
-
-        cx.spawn(|this, mut cx| async move {
-            save.await?;
-            let entry = this
-                .update(&mut cx, |this, _| {
-                    this.as_local_mut()
-                        .unwrap()
-                        .refresh_entry(path, abs_path, None)
-                })
-                .await?;
-            this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
-            Ok(entry)
-        })
+        self.write_entry_internal(path, Some(text), cx)
     }
 
     pub fn rename_entry(
@@ -747,6 +745,40 @@ impl LocalWorktree {
             this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
             Ok(entry)
         }))
+    }
+
+    fn write_entry_internal(
+        &self,
+        path: impl Into<Arc<Path>>,
+        text_if_file: Option<Rope>,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<Entry>> {
+        let path = path.into();
+        let abs_path = self.absolutize(&path);
+        let write = cx.background().spawn({
+            let fs = self.fs.clone();
+            let abs_path = abs_path.clone();
+            async move {
+                if let Some(text) = text_if_file {
+                    fs.save(&abs_path, &text).await
+                } else {
+                    fs.create_dir(&abs_path).await
+                }
+            }
+        });
+
+        cx.spawn(|this, mut cx| async move {
+            write.await?;
+            let entry = this
+                .update(&mut cx, |this, _| {
+                    this.as_local_mut()
+                        .unwrap()
+                        .refresh_entry(path, abs_path, None)
+                })
+                .await?;
+            this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
+            Ok(entry)
+        })
     }
 
     fn refresh_entry(

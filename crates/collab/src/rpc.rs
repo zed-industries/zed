@@ -1849,7 +1849,9 @@ mod tests {
 
         let entry = project_b
             .update(cx_b, |project, cx| {
-                project.create_file((worktree_id, "c.txt"), cx).unwrap()
+                project
+                    .create_entry((worktree_id, "c.txt"), false, cx)
+                    .unwrap()
             })
             .await
             .unwrap();

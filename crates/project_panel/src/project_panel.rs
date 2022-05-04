@@ -25,7 +25,7 @@ use workspace::{
     Workspace,
 };
 
-const NEW_FILE_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
+const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
 pub struct ProjectPanel {
     project: ModelHandle<Project>,
@@ -48,7 +48,8 @@ struct Selection {
 struct EditState {
     worktree_id: WorktreeId,
     entry_id: ProjectEntryId,
-    new_file: bool,
+    is_new_entry: bool,
+    is_dir: bool,
     processing_filename: Option<String>,
 }
 
@@ -71,7 +72,13 @@ pub struct Open(pub ProjectEntryId);
 
 actions!(
     project_panel,
-    [ExpandSelectedEntry, CollapseSelectedEntry, AddFile, Rename]
+    [
+        ExpandSelectedEntry,
+        CollapseSelectedEntry,
+        AddDirectory,
+        AddFile,
+        Rename
+    ]
 );
 impl_internal_actions!(project_panel, [Open, ToggleExpanded]);
 
@@ -83,6 +90,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::select_next);
     cx.add_action(ProjectPanel::open_entry);
     cx.add_action(ProjectPanel::add_file);
+    cx.add_action(ProjectPanel::add_directory);
     cx.add_action(ProjectPanel::rename);
     cx.add_async_action(ProjectPanel::confirm);
     cx.add_action(ProjectPanel::cancel);
@@ -278,15 +286,15 @@ impl ProjectPanel {
         let edit_task;
         let edited_entry_id;
 
-        if edit_state.new_file {
+        if edit_state.is_new_entry {
             self.selection = Some(Selection {
                 worktree_id,
-                entry_id: NEW_FILE_ENTRY_ID,
+                entry_id: NEW_ENTRY_ID,
             });
             let new_path = entry.path.join(&filename);
-            edited_entry_id = NEW_FILE_ENTRY_ID;
+            edited_entry_id = NEW_ENTRY_ID;
             edit_task = self.project.update(cx, |project, cx| {
-                project.create_file((edit_state.worktree_id, new_path), cx)
+                project.create_entry((edit_state.worktree_id, new_path), edit_state.is_dir, cx)
             })?;
         } else {
             let new_path = if let Some(parent) = entry.path.clone().parent() {
@@ -332,6 +340,14 @@ impl ProjectPanel {
     }
 
     fn add_file(&mut self, _: &AddFile, cx: &mut ViewContext<Self>) {
+        self.add_entry(false, cx)
+    }
+
+    fn add_directory(&mut self, _: &AddDirectory, cx: &mut ViewContext<Self>) {
+        self.add_entry(true, cx)
+    }
+
+    fn add_entry(&mut self, is_dir: bool, cx: &mut ViewContext<Self>) {
         if let Some(Selection {
             worktree_id,
             entry_id,
@@ -373,13 +389,14 @@ impl ProjectPanel {
             self.edit_state = Some(EditState {
                 worktree_id,
                 entry_id: directory_id,
-                new_file: true,
+                is_new_entry: true,
+                is_dir,
                 processing_filename: None,
             });
             self.filename_editor
                 .update(cx, |editor, cx| editor.clear(cx));
             cx.focus(&self.filename_editor);
-            self.update_visible_entries(None, cx);
+            self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), cx);
             cx.notify();
         }
     }
@@ -395,7 +412,8 @@ impl ProjectPanel {
                     self.edit_state = Some(EditState {
                         worktree_id,
                         entry_id,
-                        new_file: false,
+                        is_new_entry: false,
+                        is_dir: entry.is_dir(),
                         processing_filename: None,
                     });
                     let filename = entry
@@ -526,22 +544,27 @@ impl ProjectPanel {
                 }
             };
 
-            let new_file_parent_id = self.edit_state.as_ref().and_then(|edit_state| {
-                if edit_state.worktree_id == worktree_id && edit_state.new_file {
-                    Some(edit_state.entry_id)
-                } else {
-                    None
+            let mut new_entry_parent_id = None;
+            let mut new_entry_kind = EntryKind::Dir;
+            if let Some(edit_state) = &self.edit_state {
+                if edit_state.worktree_id == worktree_id && edit_state.is_new_entry {
+                    new_entry_parent_id = Some(edit_state.entry_id);
+                    new_entry_kind = if edit_state.is_dir {
+                        EntryKind::Dir
+                    } else {
+                        EntryKind::File(Default::default())
+                    };
                 }
-            });
+            }
 
             let mut visible_worktree_entries = Vec::new();
             let mut entry_iter = snapshot.entries(false);
             while let Some(entry) = entry_iter.entry() {
                 visible_worktree_entries.push(entry.clone());
-                if Some(entry.id) == new_file_parent_id {
+                if Some(entry.id) == new_entry_parent_id {
                     visible_worktree_entries.push(Entry {
-                        id: NEW_FILE_ENTRY_ID,
-                        kind: project::EntryKind::File(Default::default()),
+                        id: NEW_ENTRY_ID,
+                        kind: new_entry_kind,
                         path: entry.path.join("\0").into(),
                         inode: 0,
                         mtime: entry.mtime,
@@ -669,8 +692,8 @@ impl ProjectPanel {
                         is_processing: false,
                     };
                     if let Some(edit_state) = &self.edit_state {
-                        let is_edited_entry = if edit_state.new_file {
-                            entry.id == NEW_FILE_ENTRY_ID
+                        let is_edited_entry = if edit_state.is_new_entry {
+                            entry.id == NEW_ENTRY_ID
                         } else {
                             entry.id == edit_state.entry_id
                         };
@@ -680,7 +703,7 @@ impl ProjectPanel {
                                 details.filename.clear();
                                 details.filename.push_str(&processing_filename);
                             } else {
-                                if edit_state.new_file {
+                                if edit_state.is_new_entry {
                                     details.filename.clear();
                                 }
                                 details.is_editing = true;
@@ -983,11 +1006,11 @@ mod tests {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
-                "v root1  <== selected",
+                "v root1",
                 "    > a",
                 "    > b",
                 "    > C",
-                "      [EDITOR: '']",
+                "      [EDITOR: '']  <== selected",
                 "      .dockerignore",
                 "v root2",
                 "    > d",
@@ -1039,10 +1062,10 @@ mod tests {
             &[
                 "v root1",
                 "    > a",
-                "    v b  <== selected",
+                "    v b",
                 "        > 3",
                 "        > 4",
-                "          [EDITOR: '']",
+                "          [EDITOR: '']  <== selected",
                 "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
@@ -1126,6 +1149,60 @@ mod tests {
                 "      the-new-filename",
             ]
         );
+
+        panel.update(cx, |panel, cx| panel.add_directory(&AddDirectory, cx));
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..9, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    v b",
+                "        > [EDITOR: '']  <== selected",
+                "        > 3",
+                "        > 4",
+                "          a-different-filename",
+                "    > C",
+                "      .dockerignore",
+            ]
+        );
+
+        let confirm = panel.update(cx, |panel, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("new-dir", cx));
+            panel.confirm(&Confirm, cx).unwrap()
+        });
+        panel.update(cx, |panel, cx| panel.select_next(&Default::default(), cx));
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..9, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    v b",
+                "        > [PROCESSING: 'new-dir']",
+                "        > 3  <== selected",
+                "        > 4",
+                "          a-different-filename",
+                "    > C",
+                "      .dockerignore",
+            ]
+        );
+
+        confirm.await.unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..9, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    v b",
+                "        > 3  <== selected",
+                "        > 4",
+                "        > new-dir",
+                "          a-different-filename",
+                "    > C",
+                "      .dockerignore",
+            ]
+        );
     }
 
     fn toggle_expand_dir(
@@ -1192,7 +1269,7 @@ mod tests {
                 }
 
                 let indent = "    ".repeat(details.depth);
-                let icon = if details.kind == EntryKind::Dir {
+                let icon = if matches!(details.kind, EntryKind::Dir | EntryKind::PendingDir) {
                     if details.is_expanded {
                         "v "
                     } else {

@@ -690,33 +690,31 @@ impl Project {
             .map(|worktree| worktree.read(cx).id())
     }
 
-    pub fn create_file(
+    pub fn create_entry(
         &mut self,
         project_path: impl Into<ProjectPath>,
+        is_directory: bool,
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<Result<Entry>>> {
         let project_path = project_path.into();
         let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
-
         if self.is_local() {
             Some(worktree.update(cx, |worktree, cx| {
-                worktree.as_local_mut().unwrap().write_file(
-                    project_path.path,
-                    Default::default(),
-                    cx,
-                )
+                worktree
+                    .as_local_mut()
+                    .unwrap()
+                    .create_entry(project_path.path, is_directory, cx)
             }))
         } else {
             let client = self.client.clone();
             let project_id = self.remote_id().unwrap();
-
             Some(cx.spawn_weak(|_, mut cx| async move {
                 let response = client
                     .request(proto::CreateProjectEntry {
                         worktree_id: project_path.worktree_id.to_proto(),
                         project_id,
                         path: project_path.path.as_os_str().as_bytes().to_vec(),
-                        is_directory: false,
+                        is_directory,
                     })
                     .await?;
                 let entry = response
