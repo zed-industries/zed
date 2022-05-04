@@ -38,9 +38,9 @@ message Envelope {
         UpdateWorktree update_worktree = 31;
 
         CreateProjectEntry create_project_entry = 32;
-        CreateProjectEntryResponse create_project_entry_response = 33;
-        RenameProjectEntry rename_project_entry = 34;
-        DeleteProjectEntry delete_project_entry = 35;
+        RenameProjectEntry rename_project_entry = 33;
+        DeleteProjectEntry delete_project_entry = 34;
+        ProjectEntryResponse project_entry_response = 35;
 
         UpdateDiagnosticSummary update_diagnostic_summary = 36;
         StartLanguageServer start_language_server = 37;
@@ -171,22 +171,20 @@ message CreateProjectEntry {
     bool is_directory = 4;
 }
 
-message CreateProjectEntryResponse {
-    Entry entry = 1;
-}
-
 message RenameProjectEntry {
     uint64 project_id = 1;
-    uint64 old_worktree_id = 2;
-    string old_path = 3;
-    uint64 new_worktree_id = 4;
-    string new_path = 5;
+    uint64 entry_id = 2;
+    bytes new_path = 3;
 }
 
 message DeleteProjectEntry {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     string path = 3;
+}
+
+message ProjectEntryResponse {
+    Entry entry = 1;
 }
 
 message AddProjectCollaborator {

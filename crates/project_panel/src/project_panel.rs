@@ -295,11 +295,6 @@ impl ProjectPanel {
                 Ok(())
             }))
         } else {
-            // TODO - implement this for remote projects
-            if !worktree.read(cx).is_local() {
-                return None;
-            }
-
             let old_path = entry.path.clone();
             let new_path = if let Some(parent) = old_path.parent() {
                 parent.join(filename)

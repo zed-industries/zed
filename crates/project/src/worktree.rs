@@ -956,6 +956,14 @@ impl Snapshot {
         self.entries_by_id.get(&entry_id, &()).is_some()
     }
 
+    pub(crate) fn remove_entry(&mut self, entry_id: ProjectEntryId) -> Option<Entry> {
+        if let Some(entry) = self.entries_by_id.remove(&entry_id, &()) {
+            self.entries_by_path.remove(&PathKey(entry.path), &())
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn insert_entry(&mut self, entry: proto::Entry) -> Result<Entry> {
         let entry = Entry::try_from((&self.root_char_bag, entry))?;
         self.entries_by_id.insert_or_replace(

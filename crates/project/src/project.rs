@@ -262,6 +262,7 @@ impl Project {
         client.add_model_message_handler(Self::handle_update_diagnostic_summary);
         client.add_model_message_handler(Self::handle_update_worktree);
         client.add_model_request_handler(Self::handle_create_project_entry);
+        client.add_model_request_handler(Self::handle_rename_project_entry);
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_model_request_handler(Self::handle_apply_code_action);
         client.add_model_request_handler(Self::handle_reload_buffers);
@@ -736,9 +737,9 @@ impl Project {
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<Result<Entry>>> {
+        let worktree = self.worktree_for_entry(entry_id, cx)?;
+        let new_path = new_path.into();
         if self.is_local() {
-            let worktree = self.worktree_for_entry(entry_id, cx)?;
-
             worktree.update(cx, |worktree, cx| {
                 worktree
                     .as_local_mut()
@@ -746,7 +747,27 @@ impl Project {
                     .rename_entry(entry_id, new_path, cx)
             })
         } else {
-            todo!()
+            let client = self.client.clone();
+            let project_id = self.remote_id().unwrap();
+
+            Some(cx.spawn_weak(|_, mut cx| async move {
+                let response = client
+                    .request(proto::RenameProjectEntry {
+                        project_id,
+                        entry_id: entry_id.to_proto(),
+                        new_path: new_path.as_os_str().as_bytes().to_vec(),
+                    })
+                    .await?;
+                worktree.update(&mut cx, |worktree, _| {
+                    let worktree = worktree.as_remote_mut().unwrap();
+                    worktree.snapshot.remove_entry(entry_id);
+                    worktree.snapshot.insert_entry(
+                        response
+                            .entry
+                            .ok_or_else(|| anyhow!("missing entry in response"))?,
+                    )
+                })
+            }))
         }
     }
 
@@ -3802,7 +3823,7 @@ impl Project {
         envelope: TypedEnvelope<proto::CreateProjectEntry>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
-    ) -> Result<proto::CreateProjectEntryResponse> {
+    ) -> Result<proto::ProjectEntryResponse> {
         let entry = this
             .update(&mut cx, |this, cx| {
                 let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
@@ -3820,7 +3841,26 @@ impl Project {
                 })
             })?
             .await?;
-        Ok(proto::CreateProjectEntryResponse {
+        Ok(proto::ProjectEntryResponse {
+            entry: Some((&entry).into()),
+        })
+    }
+
+    async fn handle_rename_project_entry(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::RenameProjectEntry>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let entry = this
+            .update(&mut cx, |this, cx| {
+                let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+                let new_path = PathBuf::from(OsString::from_vec(envelope.payload.new_path));
+                this.rename_entry(entry_id, new_path, cx)
+                    .ok_or_else(|| anyhow!("invalid entry"))
+            })?
+            .await?;
+        Ok(proto::ProjectEntryResponse {
             entry: Some((&entry).into()),
         })
     }

@@ -127,6 +127,7 @@ impl Server {
             .add_request_handler(Server::forward_project_request::<proto::ReloadBuffers>)
             .add_request_handler(Server::forward_project_request::<proto::FormatBuffers>)
             .add_request_handler(Server::forward_project_request::<proto::CreateProjectEntry>)
+            .add_request_handler(Server::forward_project_request::<proto::RenameProjectEntry>)
             .add_request_handler(Server::update_buffer)
             .add_message_handler(Server::update_buffer_file)
             .add_message_handler(Server::buffer_reloaded)
@@ -1810,7 +1811,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_worktree_manipulation(
+    async fn test_fs_operations(
         executor: Arc<Deterministic>,
         cx_a: &mut TestAppContext,
         cx_b: &mut TestAppContext,
@@ -1848,14 +1849,12 @@ mod tests {
         let worktree_b =
             project_b.read_with(cx_b, |project, cx| project.worktrees(cx).next().unwrap());
 
-        project_b
+        let entry = project_b
             .update(cx_b, |project, cx| {
                 project.create_file((worktree_id, "c.txt"), cx).unwrap()
             })
             .await
             .unwrap();
-
-        executor.run_until_parked();
         worktree_a.read_with(cx_a, |worktree, _| {
             assert_eq!(
                 worktree
@@ -1872,6 +1871,32 @@ mod tests {
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
                 [".zed.toml", "a.txt", "b.txt", "c.txt"]
+            );
+        });
+
+        project_b
+            .update(cx_b, |project, cx| {
+                project.rename_entry(entry.id, Path::new("d.txt"), cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        worktree_a.read_with(cx_a, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "a.txt", "b.txt", "d.txt"]
+            );
+        });
+        worktree_b.read_with(cx_b, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "a.txt", "b.txt", "d.txt"]
             );
         });
     }

@@ -502,6 +502,23 @@ impl<T: KeyedItem> SumTree<T> {
         replaced
     }
 
+    pub fn remove(&mut self, key: &T::Key, cx: &<T::Summary as Summary>::Context) -> Option<T> {
+        let mut removed = None;
+        *self = {
+            let mut cursor = self.cursor::<T::Key>();
+            let mut new_tree = cursor.slice(key, Bias::Left, cx);
+            if let Some(item) = cursor.item() {
+                if item.key() == *key {
+                    removed = Some(item.clone());
+                    cursor.next(cx);
+                }
+            }
+            new_tree.push_tree(cursor.suffix(cx), cx);
+            new_tree
+        };
+        removed
+    }
+
     pub fn edit(
         &mut self,
         mut edits: Vec<Edit<T>>,
