@@ -3829,12 +3829,8 @@ impl Project {
                     .ok_or_else(|| anyhow!("worktree not found"))?;
                 worktree.update(cx, |worktree, cx| {
                     let worktree = worktree.as_local_mut().unwrap();
-                    if envelope.payload.is_directory {
-                        unimplemented!("can't yet create directories");
-                    } else {
-                        let path = PathBuf::from(OsString::from_vec(envelope.payload.path));
-                        anyhow::Ok(worktree.write_file(path, Default::default(), cx))
-                    }
+                    let path = PathBuf::from(OsString::from_vec(envelope.payload.path));
+                    anyhow::Ok(worktree.create_entry(path, envelope.payload.is_directory, cx))
                 })
             })?
             .await?;

@@ -1899,6 +1899,33 @@ mod tests {
                 [".zed.toml", "a.txt", "b.txt", "d.txt"]
             );
         });
+
+        project_b
+            .update(cx_b, |project, cx| {
+                project
+                    .create_entry((worktree_id, "DIR"), true, cx)
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+        worktree_a.read_with(cx_a, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "DIR", "a.txt", "b.txt", "d.txt"]
+            );
+        });
+        worktree_b.read_with(cx_b, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "DIR", "a.txt", "b.txt", "d.txt"]
+            );
+        });
     }
 
     #[gpui::test(iterations = 10)]
