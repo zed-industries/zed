@@ -33,6 +33,7 @@
             "tab": "editor::Tab",
             "shift-tab": "editor::TabPrev",
             "ctrl-k": "editor::CutToEndOfLine",
+            "ctrl-t": "editor::Transpose",
             "cmd-backspace": "editor::DeleteToBeginningOfLine",
             "cmd-delete": "editor::DeleteToEndOfLine",
             "alt-backspace": "editor::DeleteToPreviousWordStart",
