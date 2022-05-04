@@ -44,11 +44,12 @@ struct Selection {
     entry_id: ProjectEntryId,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 struct EditState {
     worktree_id: WorktreeId,
     entry_id: ProjectEntryId,
     new_file: bool,
+    processing_filename: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -59,6 +60,7 @@ struct EntryDetails {
     is_expanded: bool,
     is_selected: bool,
     is_editing: bool,
+    is_processing: bool,
 }
 
 #[derive(Clone)]
@@ -127,12 +129,6 @@ impl ProjectPanel {
                     cx,
                 )
             });
-            cx.subscribe(&filename_editor, |this, _, event, cx| {
-                if let editor::Event::Blurred = event {
-                    this.editor_blurred(cx);
-                }
-            })
-            .detach();
 
             let mut this = Self {
                 project: project.clone(),
@@ -271,50 +267,57 @@ impl ProjectPanel {
     }
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
-        let edit_state = self.edit_state.take()?;
+        let edit_state = self.edit_state.as_mut()?;
         cx.focus_self();
 
-        let worktree = self
-            .project
-            .read(cx)
-            .worktree_for_id(edit_state.worktree_id, cx)?;
+        let worktree_id = edit_state.worktree_id;
+        let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         let entry = worktree.read(cx).entry_for_id(edit_state.entry_id)?.clone();
         let filename = self.filename_editor.read(cx).text(cx);
 
+        let edit_task;
+        let edited_entry_id;
+
         if edit_state.new_file {
-            let new_path = entry.path.join(filename);
-            let save = self.project.update(cx, |project, cx| {
+            self.selection = Some(Selection {
+                worktree_id,
+                entry_id: NEW_FILE_ENTRY_ID,
+            });
+            let new_path = entry.path.join(&filename);
+            edited_entry_id = NEW_FILE_ENTRY_ID;
+            edit_task = self.project.update(cx, |project, cx| {
                 project.create_file((edit_state.worktree_id, new_path), cx)
             })?;
-            Some(cx.spawn(|this, mut cx| async move {
-                let new_entry = save.await?;
-                this.update(&mut cx, |this, cx| {
-                    this.update_visible_entries(Some((edit_state.worktree_id, new_entry.id)), cx);
-                    cx.notify();
-                });
-                Ok(())
-            }))
         } else {
-            let old_path = entry.path.clone();
-            let new_path = if let Some(parent) = old_path.parent() {
-                parent.join(filename)
+            let new_path = if let Some(parent) = entry.path.clone().parent() {
+                parent.join(&filename)
             } else {
-                filename.into()
+                filename.clone().into()
             };
-
-            let rename = self.project.update(cx, |project, cx| {
+            edited_entry_id = entry.id;
+            edit_task = self.project.update(cx, |project, cx| {
                 project.rename_entry(entry.id, new_path, cx)
             })?;
+        };
 
-            Some(cx.spawn(|this, mut cx| async move {
-                let new_entry = rename.await?;
-                this.update(&mut cx, |this, cx| {
-                    this.update_visible_entries(Some((edit_state.worktree_id, new_entry.id)), cx);
-                    cx.notify();
-                });
-                Ok(())
-            }))
-        }
+        edit_state.processing_filename = Some(filename);
+        cx.notify();
+
+        Some(cx.spawn(|this, mut cx| async move {
+            let new_entry = edit_task.await?;
+            this.update(&mut cx, |this, cx| {
+                this.edit_state.take();
+                if let Some(selection) = &mut this.selection {
+                    if selection.entry_id == edited_entry_id {
+                        selection.worktree_id = worktree_id;
+                        selection.entry_id = new_entry.id;
+                    }
+                }
+                this.update_visible_entries(None, cx);
+                cx.notify();
+            });
+            Ok(())
+        }))
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
@@ -371,6 +374,7 @@ impl ProjectPanel {
                 worktree_id,
                 entry_id: directory_id,
                 new_file: true,
+                processing_filename: None,
             });
             self.filename_editor
                 .update(cx, |editor, cx| editor.clear(cx));
@@ -392,6 +396,7 @@ impl ProjectPanel {
                         worktree_id,
                         entry_id,
                         new_file: false,
+                        processing_filename: None,
                     });
                     let filename = entry
                         .path
@@ -407,13 +412,6 @@ impl ProjectPanel {
                 }
             }
         }
-    }
-
-    fn editor_blurred(&mut self, cx: &mut ViewContext<Self>) {
-        self.edit_state = None;
-        self.update_visible_entries(None, cx);
-        cx.focus_self();
-        cx.notify();
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
@@ -528,7 +526,7 @@ impl ProjectPanel {
                 }
             };
 
-            let new_file_parent_id = self.edit_state.and_then(|edit_state| {
+            let new_file_parent_id = self.edit_state.as_ref().and_then(|edit_state| {
                 if edit_state.worktree_id == worktree_id && edit_state.new_file {
                     Some(edit_state.entry_id)
                 } else {
@@ -668,19 +666,28 @@ impl ProjectPanel {
                             e.worktree_id == snapshot.id() && e.entry_id == entry.id
                         }),
                         is_editing: false,
+                        is_processing: false,
                     };
-                    if let Some(edit_state) = self.edit_state {
-                        if edit_state.new_file {
-                            if entry.id == NEW_FILE_ENTRY_ID {
-                                details.is_editing = true;
-                                details.filename.clear();
-                            }
+                    if let Some(edit_state) = &self.edit_state {
+                        let is_edited_entry = if edit_state.new_file {
+                            entry.id == NEW_FILE_ENTRY_ID
                         } else {
-                            if entry.id == edit_state.entry_id {
+                            entry.id == edit_state.entry_id
+                        };
+                        if is_edited_entry {
+                            if let Some(processing_filename) = &edit_state.processing_filename {
+                                details.is_processing = true;
+                                details.filename.clear();
+                                details.filename.push_str(&processing_filename);
+                            } else {
+                                if edit_state.new_file {
+                                    details.filename.clear();
+                                }
                                 details.is_editing = true;
                             }
-                        };
+                        }
                     }
+
                     callback(entry.id, details, cx);
                 }
             }
@@ -696,10 +703,11 @@ impl ProjectPanel {
         cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         let kind = details.kind;
+        let show_editor = details.is_editing && !details.is_processing;
         MouseEventHandler::new::<Self, _, _>(entry_id.to_usize(), cx, |state, _| {
             let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
             let style = theme.entry.style_for(state, details.is_selected);
-            let row_container_style = if details.is_editing {
+            let row_container_style = if show_editor {
                 theme.filename_editor.container
             } else {
                 style.container
@@ -726,7 +734,7 @@ impl ProjectPanel {
                     .with_width(style.icon_size)
                     .boxed(),
                 )
-                .with_child(if details.is_editing {
+                .with_child(if show_editor {
                     ChildView::new(editor.clone())
                         .contained()
                         .with_margin_left(theme.entry.default.icon_spacing)
@@ -987,15 +995,28 @@ mod tests {
             ]
         );
 
-        panel
-            .update(cx, |panel, cx| {
-                panel
-                    .filename_editor
-                    .update(cx, |editor, cx| editor.set_text("the-new-filename", cx));
-                panel.confirm(&Confirm, cx).unwrap()
-            })
-            .await
-            .unwrap();
+        let confirm = panel.update(cx, |panel, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("the-new-filename", cx));
+            panel.confirm(&Confirm, cx).unwrap()
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    > b",
+                "    > C",
+                "      [PROCESSING: 'the-new-filename']  <== selected",
+                "      .dockerignore",
+                "v root2",
+                "    > d",
+                "    > e",
+            ]
+        );
+
+        confirm.await.unwrap();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
@@ -1069,15 +1090,28 @@ mod tests {
             ]
         );
 
-        panel
-            .update(cx, |panel, cx| {
-                panel
-                    .filename_editor
-                    .update(cx, |editor, cx| editor.set_text("a-different-filename", cx));
-                panel.confirm(&Confirm, cx).unwrap()
-            })
-            .await
-            .unwrap();
+        let confirm = panel.update(cx, |panel, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("a-different-filename", cx));
+            panel.confirm(&Confirm, cx).unwrap()
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..9, cx),
+            &[
+                "v root1",
+                "    > a",
+                "    v b",
+                "        > 3",
+                "        > 4",
+                "          [PROCESSING: 'a-different-filename']  <== selected",
+                "    > C",
+                "      .dockerignore",
+                "      the-new-filename",
+            ]
+        );
+
+        confirm.await.unwrap();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..9, cx),
             &[
@@ -1167,11 +1201,12 @@ mod tests {
                 } else {
                     "  "
                 };
-                let editor_text = format!("[EDITOR: '{}']", details.filename);
                 let name = if details.is_editing {
-                    &editor_text
+                    format!("[EDITOR: '{}']", details.filename)
+                } else if details.is_processing {
+                    format!("[PROCESSING: '{}']", details.filename)
                 } else {
-                    &details.filename
+                    details.filename.clone()
                 };
                 let selected = if details.is_selected {
                     "  <== selected"
