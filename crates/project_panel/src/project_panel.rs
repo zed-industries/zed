@@ -278,7 +278,7 @@ impl ProjectPanel {
             .project
             .read(cx)
             .worktree_for_id(edit_state.worktree_id, cx)?;
-        let entry = worktree.read(cx).entry_for_id(edit_state.entry_id)?;
+        let entry = worktree.read(cx).entry_for_id(edit_state.entry_id)?.clone();
         let filename = self.filename_editor.read(cx).text(cx);
 
         if edit_state.new_file {
@@ -306,9 +306,11 @@ impl ProjectPanel {
             } else {
                 filename.into()
             };
-            let rename = worktree.update(cx, |worktree, cx| {
-                worktree.as_local().unwrap().rename(old_path, new_path, cx)
-            });
+
+            let rename = self.project.update(cx, |project, cx| {
+                project.rename_entry(entry.id, new_path, cx)
+            })?;
+
             Some(cx.spawn(|this, mut cx| async move {
                 let new_entry = rename.await?;
                 this.update(&mut cx, |this, cx| {

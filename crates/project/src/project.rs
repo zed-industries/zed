@@ -730,6 +730,26 @@ impl Project {
         }
     }
 
+    pub fn rename_entry(
+        &mut self,
+        entry_id: ProjectEntryId,
+        new_path: impl Into<Arc<Path>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Task<Result<Entry>>> {
+        if self.is_local() {
+            let worktree = self.worktree_for_entry(entry_id, cx)?;
+
+            worktree.update(cx, |worktree, cx| {
+                worktree
+                    .as_local_mut()
+                    .unwrap()
+                    .rename_entry(entry_id, new_path, cx)
+            })
+        } else {
+            todo!()
+        }
+    }
+
     pub fn can_share(&self, cx: &AppContext) -> bool {
         self.is_local() && self.visible_worktrees(cx).next().is_some()
     }

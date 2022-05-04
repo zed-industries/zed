@@ -704,13 +704,13 @@ impl LocalWorktree {
         })
     }
 
-    pub fn rename(
+    pub fn rename_entry(
         &self,
-        old_path: impl Into<Arc<Path>>,
+        entry_id: ProjectEntryId,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<Entry>> {
-        let old_path = old_path.into();
+    ) -> Option<Task<Result<Entry>>> {
+        let old_path = self.entry_for_id(entry_id)?.path.clone();
         let new_path = new_path.into();
         let abs_old_path = self.absolutize(&old_path);
         let abs_new_path = self.absolutize(&new_path);
@@ -723,7 +723,7 @@ impl LocalWorktree {
             }
         });
 
-        cx.spawn(|this, mut cx| async move {
+        Some(cx.spawn(|this, mut cx| async move {
             rename.await?;
             let entry = this
                 .update(&mut cx, |this, _| {
@@ -736,7 +736,7 @@ impl LocalWorktree {
                 .await?;
             this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
             Ok(entry)
-        })
+        }))
     }
 
     fn refresh_entry(
