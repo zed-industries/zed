@@ -87,12 +87,13 @@ message Envelope {
         UpdateContacts update_contacts = 75;
 
         GetUsers get_users = 76;
-        GetUsersResponse get_users_response = 77;
+        FuzzySearchUsers fuzzy_search_users = 77;
+        UsersResponse users_response = 78;
 
-        Follow follow = 78;
-        FollowResponse follow_response = 79;
-        UpdateFollowers update_followers = 80;
-        Unfollow unfollow = 81;
+        Follow follow = 79;
+        FollowResponse follow_response = 80;
+        UpdateFollowers update_followers = 81;
+        Unfollow unfollow = 82;
     }
 }
 
@@ -538,7 +539,11 @@ message GetUsers {
     repeated uint64 user_ids = 1;
 }
 
-message GetUsersResponse {
+message FuzzySearchUsers {
+    string query = 1;
+}
+
+message UsersResponse {
     repeated User users = 1;
 }
 

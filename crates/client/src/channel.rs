@@ -500,7 +500,7 @@ async fn messages_from_proto(
         .collect();
     user_store
         .update(cx, |user_store, cx| {
-            user_store.load_users(unique_user_ids, cx)
+            user_store.get_users(unique_user_ids, cx)
         })
         .await?;
 
@@ -639,7 +639,7 @@ mod tests {
         server
             .respond(
                 get_users.receipt(),
-                proto::GetUsersResponse {
+                proto::UsersResponse {
                     users: vec![proto::User {
                         id: 5,
                         github_login: "nathansobo".into(),
@@ -690,7 +690,7 @@ mod tests {
         server
             .respond(
                 get_users.receipt(),
-                proto::GetUsersResponse {
+                proto::UsersResponse {
                     users: vec![proto::User {
                         id: 6,
                         github_login: "maxbrunsfeld".into(),
@@ -738,7 +738,7 @@ mod tests {
         server
             .respond(
                 get_users.receipt(),
-                proto::GetUsersResponse {
+                proto::UsersResponse {
                     users: vec![proto::User {
                         id: 7,
                         github_login: "as-cii".into(),

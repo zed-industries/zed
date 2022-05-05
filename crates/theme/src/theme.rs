@@ -234,20 +234,21 @@ pub struct CommandPalette {
 pub struct ContactsPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
+    pub header: ContainedText,
     pub user_query_editor: FieldEditor,
-    pub host_row_height: f32,
-    pub host_avatar: ImageStyle,
-    pub host_username: ContainedText,
+    pub row_height: f32,
+    pub contact_avatar: ImageStyle,
+    pub contact_username: ContainedText,
     pub tree_branch_width: f32,
     pub tree_branch_color: Color,
-    pub shared_project: WorktreeRow,
-    pub hovered_shared_project: WorktreeRow,
-    pub unshared_project: WorktreeRow,
-    pub hovered_unshared_project: WorktreeRow,
+    pub shared_project: ProjectRow,
+    pub hovered_shared_project: ProjectRow,
+    pub unshared_project: ProjectRow,
+    pub hovered_unshared_project: ProjectRow,
 }
 
 #[derive(Deserialize, Default)]
-pub struct WorktreeRow {
+pub struct ProjectRow {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub height: f32,

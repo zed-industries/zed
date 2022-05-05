@@ -3,6 +3,7 @@ use anyhow::{anyhow, Result};
 use futures::{future, AsyncReadExt};
 use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{prelude::Stream, sink::Sink, watch};
+use rpc::proto::{RequestMessage, UsersResponse};
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Weak},
@@ -121,7 +122,7 @@ impl UserStore {
             user_ids.extend(contact.projects.iter().flat_map(|w| &w.guests).copied());
         }
 
-        let load_users = self.load_users(user_ids.into_iter().collect(), cx);
+        let load_users = self.get_users(user_ids.into_iter().collect(), cx);
         cx.spawn(|this, mut cx| async move {
             load_users.await?;
 
@@ -144,37 +145,27 @@ impl UserStore {
         &self.contacts
     }
 
-    pub fn load_users(
+    pub fn has_contact(&self, user: &Arc<User>) -> bool {
+        self.contacts
+            .binary_search_by_key(&&user.github_login, |contact| &contact.user.github_login)
+            .is_ok()
+    }
+
+    pub fn get_users(
         &mut self,
         mut user_ids: Vec<u64>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
-        let rpc = self.client.clone();
-        let http = self.http.clone();
+    ) -> Task<Result<Vec<Arc<User>>>> {
         user_ids.retain(|id| !self.users.contains_key(id));
-        cx.spawn_weak(|this, mut cx| async move {
-            if let Some(rpc) = rpc.upgrade() {
-                if !user_ids.is_empty() {
-                    let response = rpc.request(proto::GetUsers { user_ids }).await?;
-                    let new_users = future::join_all(
-                        response
-                            .users
-                            .into_iter()
-                            .map(|user| User::new(user, http.as_ref())),
-                    )
-                    .await;
+        self.load_users(proto::GetUsers { user_ids }, cx)
+    }
 
-                    if let Some(this) = this.upgrade(&cx) {
-                        this.update(&mut cx, |this, _| {
-                            for user in new_users {
-                                this.users.insert(user.id, Arc::new(user));
-                            }
-                        });
-                    }
-                }
-            }
-            Ok(())
-        })
+    pub fn fuzzy_search_users(
+        &mut self,
+        query: String,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Arc<User>>>> {
+        self.load_users(proto::FuzzySearchUsers { query }, cx)
     }
 
     pub fn fetch_user(
@@ -186,7 +177,7 @@ impl UserStore {
             return cx.foreground().spawn(async move { Ok(user) });
         }
 
-        let load_users = self.load_users(vec![user_id], cx);
+        let load_users = self.get_users(vec![user_id], cx);
         cx.spawn(|this, mut cx| async move {
             load_users.await?;
             this.update(&mut cx, |this, _| {
@@ -205,15 +196,47 @@ impl UserStore {
     pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {
         self.current_user.clone()
     }
+
+    fn load_users(
+        &mut self,
+        request: impl RequestMessage<Response = UsersResponse>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Arc<User>>>> {
+        let client = self.client.clone();
+        let http = self.http.clone();
+        cx.spawn_weak(|this, mut cx| async move {
+            if let Some(rpc) = client.upgrade() {
+                let response = rpc.request(request).await?;
+                let users = future::join_all(
+                    response
+                        .users
+                        .into_iter()
+                        .map(|user| User::new(user, http.as_ref())),
+                )
+                .await;
+
+                if let Some(this) = this.upgrade(&cx) {
+                    this.update(&mut cx, |this, _| {
+                        for user in &users {
+                            this.users.insert(user.id, user.clone());
+                        }
+                    });
+                }
+                Ok(users)
+            } else {
+                Ok(Vec::new())
+            }
+        })
+    }
 }
 
 impl User {
-    async fn new(message: proto::User, http: &dyn HttpClient) -> Self {
-        User {
+    async fn new(message: proto::User, http: &dyn HttpClient) -> Arc<Self> {
+        Arc::new(User {
             id: message.id,
             github_login: message.github_login,
             avatar: fetch_avatar(http, &message.avatar_url).warn_on_err().await,
-        }
+        })
     }
 }
 

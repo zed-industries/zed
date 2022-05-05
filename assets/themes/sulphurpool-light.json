@@ -1240,20 +1240,25 @@
         "top": 7
       }
     },
-    "host_row_height": 28,
+    "row_height": 28,
     "tree_branch_color": "#898ea4",
     "tree_branch_width": 1,
-    "host_avatar": {
+    "contact_avatar": {
       "corner_radius": 10,
       "width": 18
     },
-    "host_username": {
+    "contact_username": {
       "family": "Zed Mono",
       "color": "#293256",
       "size": 14,
       "padding": {
         "left": 8
       }
+    },
+    "header": {
+      "family": "Zed Mono",
+      "color": "#5e6687",
+      "size": 14
     },
     "project": {
       "guest_avatar_spacing": 4,

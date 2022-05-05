@@ -443,7 +443,7 @@ impl Project {
             .map(|peer| peer.user_id)
             .collect();
         user_store
-            .update(cx, |user_store, cx| user_store.load_users(user_ids, cx))
+            .update(cx, |user_store, cx| user_store.get_users(user_ids, cx))
             .await?;
         let mut collaborators = HashMap::default();
         for message in response.collaborators {

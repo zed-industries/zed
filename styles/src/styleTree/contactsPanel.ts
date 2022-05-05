@@ -47,18 +47,24 @@ export default function(theme: Theme) {
         top: 7,
       },
     },
-    hostRowHeight: 28,
+    rowHeight: 28,
     treeBranchColor: borderColor(theme, "muted"),
     treeBranchWidth: 1,
-    hostAvatar: {
+    contactAvatar: {
       cornerRadius: 10,
       width: 18,
     },
-    hostUsername: {
+    contactUsername: {
       ...text(theme, "mono", "primary", { size: "sm" }),
       padding: {
         left: 8,
       },
+    },
+    header: {
+      ...text(theme, "mono", "secondary", { size: "sm" }),
+      // padding: {
+      //   left: 8,
+      // }
     },
     project,
     sharedProject,

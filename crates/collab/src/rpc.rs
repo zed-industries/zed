@@ -136,6 +136,7 @@ impl Server {
             .add_request_handler(Server::save_buffer)
             .add_request_handler(Server::get_channels)
             .add_request_handler(Server::get_users)
+            .add_request_handler(Server::fuzzy_search_users)
             .add_request_handler(Server::join_channel)
             .add_message_handler(Server::leave_channel)
             .add_request_handler(Server::send_channel_message)
@@ -842,7 +843,7 @@ impl Server {
     async fn get_users(
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetUsers>,
-    ) -> Result<proto::GetUsersResponse> {
+    ) -> Result<proto::UsersResponse> {
         let user_ids = request
             .payload
             .user_ids
@@ -861,7 +862,33 @@ impl Server {
                 github_login: user.github_login,
             })
             .collect();
-        Ok(proto::GetUsersResponse { users })
+        Ok(proto::UsersResponse { users })
+    }
+
+    async fn fuzzy_search_users(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::FuzzySearchUsers>,
+    ) -> Result<proto::UsersResponse> {
+        let query = request.payload.query;
+        let db = &self.app_state.db;
+        let users = match query.len() {
+            0 => vec![],
+            1 | 2 => db
+                .get_user_by_github_login(&query)
+                .await?
+                .into_iter()
+                .collect(),
+            _ => db.fuzzy_search_users(&query, 10).await?,
+        };
+        let users = users
+            .into_iter()
+            .map(|user| proto::User {
+                id: user.id.to_proto(),
+                avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
+                github_login: user.github_login,
+            })
+            .collect();
+        Ok(proto::UsersResponse { users })
     }
 
     #[instrument(skip(self, state, user_ids))]
