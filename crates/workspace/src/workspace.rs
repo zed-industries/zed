@@ -1065,7 +1065,7 @@ impl Workspace {
             Side::Right => &mut self.right_sidebar,
         };
         let active_item = sidebar.update(cx, |sidebar, cx| {
-            sidebar.toggle_item(action.item_index, cx);
+            sidebar.activate_item(action.item_index, cx);
             sidebar.active_item().cloned()
         });
         if let Some(active_item) = active_item {
