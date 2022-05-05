@@ -161,7 +161,7 @@ impl ProjectPanel {
             this
         });
         cx.subscribe(&project_panel, {
-            let project_panel = project_panel.clone();
+            let project_panel = project_panel.downgrade();
             move |workspace, _, event, cx| match event {
                 &Event::OpenedEntry {
                     entry_id,
@@ -180,7 +180,9 @@ impl ProjectPanel {
                                 )
                                 .detach_and_log_err(cx);
                             if !focus_opened_item {
-                                cx.focus(&project_panel);
+                                if let Some(project_panel) = project_panel.upgrade(cx) {
+                                    cx.focus(&project_panel);
+                                }
                             }
                         }
                     }
