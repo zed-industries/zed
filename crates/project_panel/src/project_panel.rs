@@ -464,7 +464,14 @@ impl ProjectPanel {
 
     fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
         let Selection { entry_id, .. } = self.selection?;
-        let mut answer = cx.prompt(PromptLevel::Info, "Delete?", &["Delete", "Cancel"]);
+        let path = self.project.read(cx).path_for_entry(entry_id, cx)?.path;
+        let file_name = path.file_name()?;
+
+        let mut answer = cx.prompt(
+            PromptLevel::Info,
+            &format!("Delete {file_name:?}?"),
+            &["Delete", "Cancel"],
+        );
         Some(cx.spawn(|this, mut cx| async move {
             if answer.next().await != Some(0) {
                 return Ok(());
