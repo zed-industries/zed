@@ -3898,7 +3898,7 @@ mod tests {
         let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
         let editor_b = workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.open_path((worktree_id, "main.rs"), cx)
+                workspace.open_path((worktree_id, "main.rs"), true, cx)
             })
             .await
             .unwrap()
@@ -4146,7 +4146,7 @@ mod tests {
         let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
         let editor_b = workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.open_path((worktree_id, "one.rs"), cx)
+                workspace.open_path((worktree_id, "one.rs"), true, cx)
             })
             .await
             .unwrap()
@@ -4898,7 +4898,7 @@ mod tests {
         let pane_a = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
         let editor_a1 = workspace_a
             .update(cx_a, |workspace, cx| {
-                workspace.open_path((worktree_id, "1.txt"), cx)
+                workspace.open_path((worktree_id, "1.txt"), true, cx)
             })
             .await
             .unwrap()
@@ -4906,7 +4906,7 @@ mod tests {
             .unwrap();
         let editor_a2 = workspace_a
             .update(cx_a, |workspace, cx| {
-                workspace.open_path((worktree_id, "2.txt"), cx)
+                workspace.open_path((worktree_id, "2.txt"), true, cx)
             })
             .await
             .unwrap()
@@ -4917,7 +4917,7 @@ mod tests {
         let workspace_b = client_b.build_workspace(&project_b, cx_b);
         let editor_b1 = workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.open_path((worktree_id, "1.txt"), cx)
+                workspace.open_path((worktree_id, "1.txt"), true, cx)
             })
             .await
             .unwrap()
@@ -5110,7 +5110,7 @@ mod tests {
         let pane_a1 = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
         let _editor_a1 = workspace_a
             .update(cx_a, |workspace, cx| {
-                workspace.open_path((worktree_id, "1.txt"), cx)
+                workspace.open_path((worktree_id, "1.txt"), true, cx)
             })
             .await
             .unwrap()
@@ -5122,7 +5122,7 @@ mod tests {
         let pane_b1 = workspace_b.read_with(cx_b, |workspace, _| workspace.active_pane().clone());
         let _editor_b1 = workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.open_path((worktree_id, "2.txt"), cx)
+                workspace.open_path((worktree_id, "2.txt"), true, cx)
             })
             .await
             .unwrap()
@@ -5157,7 +5157,7 @@ mod tests {
             .update(cx_a, |workspace, cx| {
                 workspace.activate_next_pane(cx);
                 assert_eq!(*workspace.active_pane(), pane_a1);
-                workspace.open_path((worktree_id, "3.txt"), cx)
+                workspace.open_path((worktree_id, "3.txt"), true, cx)
             })
             .await
             .unwrap();
@@ -5165,7 +5165,7 @@ mod tests {
             .update(cx_b, |workspace, cx| {
                 workspace.activate_next_pane(cx);
                 assert_eq!(*workspace.active_pane(), pane_b1);
-                workspace.open_path((worktree_id, "4.txt"), cx)
+                workspace.open_path((worktree_id, "4.txt"), true, cx)
             })
             .await
             .unwrap();
@@ -5254,7 +5254,7 @@ mod tests {
         let workspace_a = client_a.build_workspace(&project_a, cx_a);
         let _editor_a1 = workspace_a
             .update(cx_a, |workspace, cx| {
-                workspace.open_path((worktree_id, "1.txt"), cx)
+                workspace.open_path((worktree_id, "1.txt"), true, cx)
             })
             .await
             .unwrap()
@@ -5367,7 +5367,7 @@ mod tests {
         // When client B activates a different item in the original pane, it automatically stops following client A.
         workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.open_path((worktree_id, "2.txt"), cx)
+                workspace.open_path((worktree_id, "2.txt"), true, cx)
             })
             .await
             .unwrap();

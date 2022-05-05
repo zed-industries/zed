@@ -103,7 +103,10 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 pub enum Event {
-    OpenedEntry(ProjectEntryId),
+    OpenedEntry {
+        entry_id: ProjectEntryId,
+        focus_opened_item: bool,
+    },
 }
 
 impl ProjectPanel {
@@ -157,19 +160,29 @@ impl ProjectPanel {
             this.update_visible_entries(None, cx);
             this
         });
-        cx.subscribe(&project_panel, move |workspace, _, event, cx| match event {
-            &Event::OpenedEntry(entry_id) => {
-                if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
-                    if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
-                        workspace
-                            .open_path(
-                                ProjectPath {
-                                    worktree_id: worktree.read(cx).id(),
-                                    path: entry.path.clone(),
-                                },
-                                cx,
-                            )
-                            .detach_and_log_err(cx);
+        cx.subscribe(&project_panel, {
+            let project_panel = project_panel.clone();
+            move |workspace, _, event, cx| match event {
+                &Event::OpenedEntry {
+                    entry_id,
+                    focus_opened_item,
+                } => {
+                    if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
+                        if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
+                            workspace
+                                .open_path(
+                                    ProjectPath {
+                                        worktree_id: worktree.read(cx).id(),
+                                        path: entry.path.clone(),
+                                    },
+                                    focus_opened_item,
+                                    cx,
+                                )
+                                .detach_and_log_err(cx);
+                            if !focus_opened_item {
+                                cx.focus(&project_panel);
+                            }
+                        }
                     }
                 }
             }
@@ -198,7 +211,10 @@ impl ProjectPanel {
                     }
                 }
             } else {
-                let event = Event::OpenedEntry(entry.id);
+                let event = Event::OpenedEntry {
+                    entry_id: entry.id,
+                    focus_opened_item: true,
+                };
                 cx.emit(event);
             }
         }
@@ -342,7 +358,10 @@ impl ProjectPanel {
     }
 
     fn open_entry(&mut self, action: &Open, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::OpenedEntry(action.entry_id));
+        cx.emit(Event::OpenedEntry {
+            entry_id: action.entry_id,
+            focus_opened_item: action.change_focus,
+        });
     }
 
     fn add_file(&mut self, _: &AddFile, cx: &mut ViewContext<Self>) {

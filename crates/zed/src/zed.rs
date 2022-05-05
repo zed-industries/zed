@@ -446,7 +446,7 @@ mod tests {
 
         // Open the first entry
         let entry_1 = workspace
-            .update(cx, |w, cx| w.open_path(file1.clone(), cx))
+            .update(cx, |w, cx| w.open_path(file1.clone(), true, cx))
             .await
             .unwrap();
         cx.read(|cx| {
@@ -460,7 +460,7 @@ mod tests {
 
         // Open the second entry
         workspace
-            .update(cx, |w, cx| w.open_path(file2.clone(), cx))
+            .update(cx, |w, cx| w.open_path(file2.clone(), true, cx))
             .await
             .unwrap();
         cx.read(|cx| {
@@ -474,7 +474,7 @@ mod tests {
 
         // Open the first entry again. The existing pane item is activated.
         let entry_1b = workspace
-            .update(cx, |w, cx| w.open_path(file1.clone(), cx))
+            .update(cx, |w, cx| w.open_path(file1.clone(), true, cx))
             .await
             .unwrap();
         assert_eq!(entry_1.id(), entry_1b.id());
@@ -492,7 +492,7 @@ mod tests {
         workspace
             .update(cx, |w, cx| {
                 w.split_pane(w.active_pane().clone(), SplitDirection::Right, cx);
-                w.open_path(file2.clone(), cx)
+                w.open_path(file2.clone(), true, cx)
             })
             .await
             .unwrap();
@@ -511,8 +511,8 @@ mod tests {
         // Open the third entry twice concurrently. Only one pane item is added.
         let (t1, t2) = workspace.update(cx, |w, cx| {
             (
-                w.open_path(file3.clone(), cx),
-                w.open_path(file3.clone(), cx),
+                w.open_path(file3.clone(), true, cx),
+                w.open_path(file3.clone(), true, cx),
             )
         });
         t1.await.unwrap();
@@ -780,6 +780,7 @@ mod tests {
                         worktree_id: worktree.read(cx).id(),
                         path: Path::new("the-new-name.rs").into(),
                     },
+                    true,
                     cx,
                 )
             })
@@ -875,7 +876,7 @@ mod tests {
         let pane_1 = cx.read(|cx| workspace.read(cx).active_pane().clone());
 
         workspace
-            .update(cx, |w, cx| w.open_path(file1.clone(), cx))
+            .update(cx, |w, cx| w.open_path(file1.clone(), true, cx))
             .await
             .unwrap();
 
@@ -955,7 +956,7 @@ mod tests {
         let file3 = entries[2].clone();
 
         let editor1 = workspace
-            .update(cx, |w, cx| w.open_path(file1.clone(), cx))
+            .update(cx, |w, cx| w.open_path(file1.clone(), true, cx))
             .await
             .unwrap()
             .downcast::<Editor>()
@@ -964,13 +965,13 @@ mod tests {
             editor.select_display_ranges(&[DisplayPoint::new(10, 0)..DisplayPoint::new(10, 0)], cx);
         });
         let editor2 = workspace
-            .update(cx, |w, cx| w.open_path(file2.clone(), cx))
+            .update(cx, |w, cx| w.open_path(file2.clone(), true, cx))
             .await
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
         let editor3 = workspace
-            .update(cx, |w, cx| w.open_path(file3.clone(), cx))
+            .update(cx, |w, cx| w.open_path(file3.clone(), true, cx))
             .await
             .unwrap()
             .downcast::<Editor>()
