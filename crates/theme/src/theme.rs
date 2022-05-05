@@ -234,6 +234,7 @@ pub struct CommandPalette {
 pub struct ContactsPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
+    pub user_query_editor: FieldEditor,
     pub host_row_height: f32,
     pub host_avatar: ImageStyle,
     pub host_username: ContainedText,

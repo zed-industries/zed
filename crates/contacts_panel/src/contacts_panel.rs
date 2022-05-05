@@ -1,10 +1,11 @@
 use client::{Contact, UserStore};
+use editor::Editor;
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     platform::CursorStyle,
     Element, ElementBox, Entity, LayoutContext, ModelHandle, RenderContext, Subscription, View,
-    ViewContext,
+    ViewContext, ViewHandle,
 };
 use settings::Settings;
 use std::sync::Arc;
@@ -13,6 +14,7 @@ use workspace::{AppState, JoinProject};
 pub struct ContactsPanel {
     contacts: ListState,
     user_store: ModelHandle<UserStore>,
+    user_query_editor: ViewHandle<Editor>,
     _maintain_contacts: Subscription,
 }
 
@@ -38,6 +40,12 @@ impl ContactsPanel {
                     }
                 },
             ),
+            user_query_editor: cx.add_view(|cx| {
+                Editor::single_line(
+                    Some(|theme| theme.contacts_panel.user_query_editor.clone()),
+                    cx,
+                )
+            }),
             _maintain_contacts: cx.observe(&app_state.user_store, Self::update_contacts),
             user_store: app_state.user_store.clone(),
         }
@@ -237,8 +245,17 @@ impl View for ContactsPanel {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &cx.global::<Settings>().theme.contacts_panel;
-        Container::new(List::new(self.contacts.clone()).boxed())
-            .with_style(theme.container)
-            .boxed()
+        Container::new(
+            Flex::column()
+                .with_child(
+                    Container::new(ChildView::new(self.user_query_editor.clone()).boxed())
+                        .with_style(theme.user_query_editor.container)
+                        .boxed(),
+                )
+                .with_child(List::new(self.contacts.clone()).flex(1., false).boxed())
+                .boxed(),
+        )
+        .with_style(theme.container)
+        .boxed()
     }
 }

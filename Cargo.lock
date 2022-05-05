@@ -930,6 +930,7 @@ name = "contacts_panel"
 version = "0.1.0"
 dependencies = [
  "client",
+ "editor",
  "gpui",
  "postage",
  "settings",

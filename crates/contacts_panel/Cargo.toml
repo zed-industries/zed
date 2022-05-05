@@ -9,6 +9,7 @@ doctest = false
 
 [dependencies]
 client = { path = "../client" }
+editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }

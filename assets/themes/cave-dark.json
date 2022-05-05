@@ -1212,6 +1212,34 @@
       "bottom": 12,
       "right": 12
     },
+    "user_query_editor": {
+      "background": "#19171c",
+      "corner_radius": 6,
+      "text": {
+        "family": "Zed Mono",
+        "color": "#e2dfe7",
+        "size": 14
+      },
+      "placeholder_text": {
+        "family": "Zed Mono",
+        "color": "#7e7887",
+        "size": 14
+      },
+      "selection": {
+        "cursor": "#576ddb",
+        "selection": "#576ddb3d"
+      },
+      "border": {
+        "color": "#26232a",
+        "width": 1
+      },
+      "padding": {
+        "bottom": 7,
+        "left": 8,
+        "right": 8,
+        "top": 7
+      }
+    },
     "host_row_height": 28,
     "tree_branch_color": "#655f6d",
     "tree_branch_width": 1,

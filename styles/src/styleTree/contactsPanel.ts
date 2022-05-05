@@ -1,6 +1,6 @@
 import Theme from "../themes/theme";
 import { panel } from "./app";
-import { backgroundColor, borderColor, text } from "./components";
+import { backgroundColor, border, borderColor, player, text } from "./components";
 
 export default function(theme: Theme) {
   const project = {
@@ -33,6 +33,20 @@ export default function(theme: Theme) {
 
   return {
     ...panel,
+    userQueryEditor: {
+      background: backgroundColor(theme, 500),
+      cornerRadius: 6,
+      text: text(theme, "mono", "primary"),
+      placeholderText: text(theme, "mono", "placeholder", { size: "sm" }),
+      selection: player(theme, 1).selection,
+      border: border(theme, "secondary"),
+      padding: {
+        bottom: 7,
+        left: 8,
+        right: 8,
+        top: 7,
+      },
+    },
     hostRowHeight: 28,
     treeBranchColor: borderColor(theme, "muted"),
     treeBranchWidth: 1,
