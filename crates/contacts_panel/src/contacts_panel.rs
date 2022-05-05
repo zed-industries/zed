@@ -1,6 +1,8 @@
 use client::{Contact, User, UserStore};
 use editor::Editor;
+use fuzzy::StringMatchCandidate;
 use gpui::{
+    anyhow,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     platform::CursorStyle,
@@ -14,6 +16,7 @@ use workspace::{AppState, JoinProject};
 
 pub struct ContactsPanel {
     list_state: ListState,
+    contacts: Vec<Arc<Contact>>,
     potential_contacts: Vec<Arc<User>>,
     user_store: ModelHandle<UserStore>,
     contacts_search_task: Option<Task<Option<()>>>,
@@ -32,7 +35,7 @@ impl ContactsPanel {
 
         cx.subscribe(&user_query_editor, |this, _, event, cx| {
             if let editor::Event::BufferEdited = event {
-                this.user_query_changed(cx)
+                this.filter_contacts(true, cx)
             }
         })
         .detach();
@@ -48,9 +51,8 @@ impl ContactsPanel {
                     move |ix, cx| {
                         let this = this.upgrade(cx).unwrap();
                         let this = this.read(cx);
-                        let user_store = this.user_store.read(cx);
-                        let contacts = user_store.contacts().clone();
-                        let current_user_id = user_store.current_user().map(|user| user.id);
+                        let current_user_id =
+                            this.user_store.read(cx).current_user().map(|user| user.id);
                         let theme = cx.global::<Settings>().theme.clone();
                         let theme = &theme.contacts_panel;
 
@@ -63,16 +65,16 @@ impl ContactsPanel {
                                 .constrained()
                                 .with_height(theme.row_height)
                                 .boxed()
-                        } else if ix < contacts.len() + 1 {
+                        } else if ix < this.contacts.len() + 1 {
                             let contact_ix = ix - 1;
                             Self::render_contact(
-                                &contacts[contact_ix],
+                                this.contacts[contact_ix].clone(),
                                 current_user_id,
                                 app_state.clone(),
                                 theme,
                                 cx,
                             )
-                        } else if ix == contacts.len() + 1 {
+                        } else if ix == this.contacts.len() + 1 {
                             Label::new("add contacts".to_string(), theme.header.text.clone())
                                 .contained()
                                 .with_style(theme.header.container)
@@ -82,7 +84,7 @@ impl ContactsPanel {
                                 .with_height(theme.row_height)
                                 .boxed()
                         } else {
-                            let potential_contact_ix = ix - 2 - contacts.len();
+                            let potential_contact_ix = ix - 2 - this.contacts.len();
                             Self::render_potential_contact(
                                 &this.potential_contacts[potential_contact_ix],
                                 theme,
@@ -91,18 +93,19 @@ impl ContactsPanel {
                     }
                 },
             ),
+            contacts: app_state.user_store.read(cx).contacts().into(),
             potential_contacts: Default::default(),
             user_query_editor,
             _maintain_contacts: cx.observe(&app_state.user_store, |this, _, cx| {
-                this.update_contacts(cx)
+                this.filter_contacts(false, cx)
             }),
             contacts_search_task: None,
             user_store: app_state.user_store.clone(),
         }
     }
 
-    fn update_contacts(&mut self, cx: &mut ViewContext<Self>) {
-        let mut list_len = 1 + self.user_store.read(cx).contacts().len();
+    fn update_list_state(&mut self, cx: &mut ViewContext<Self>) {
+        let mut list_len = 1 + self.contacts.len();
         if !self.potential_contacts.is_empty() {
             list_len += 1 + self.potential_contacts.len();
         }
@@ -112,7 +115,7 @@ impl ContactsPanel {
     }
 
     fn render_contact(
-        contact: &Contact,
+        contact: Arc<Contact>,
         current_user_id: Option<u64>,
         app_state: Arc<AppState>,
         theme: &theme::ContactsPanel,
@@ -300,25 +303,74 @@ impl ContactsPanel {
             .boxed()
     }
 
-    fn user_query_changed(&mut self, cx: &mut ViewContext<Self>) {
+    fn filter_contacts(&mut self, query_changed: bool, cx: &mut ViewContext<Self>) {
         let query = self.user_query_editor.read(cx).text(cx);
+
         if query.is_empty() {
-            self.potential_contacts.clear();
-            self.update_contacts(cx);
+            self.contacts.clear();
+            self.contacts
+                .extend_from_slice(self.user_store.read(cx).contacts());
+
+            if query_changed {
+                self.potential_contacts.clear();
+            }
+
+            self.update_list_state(cx);
             return;
         }
 
-        let search = self
-            .user_store
-            .update(cx, |store, cx| store.fuzzy_search_users(query, cx));
+        let contacts = self.user_store.read(cx).contacts().to_vec();
+        let candidates = contacts
+            .iter()
+            .enumerate()
+            .map(|(ix, contact)| StringMatchCandidate {
+                id: ix,
+                string: contact.user.github_login.clone(),
+                char_bag: contact.user.github_login.chars().collect(),
+            })
+            .collect::<Vec<_>>();
+        let cancel_flag = Default::default();
+        let background = cx.background().clone();
+
+        let search_users = if query_changed {
+            self.user_store
+                .update(cx, |store, cx| store.fuzzy_search_users(query.clone(), cx))
+        } else {
+            Task::ready(Ok(self.potential_contacts.clone()))
+        };
+
+        let match_contacts = async move {
+            anyhow::Ok(
+                fuzzy::match_strings(
+                    &candidates,
+                    query.as_str(),
+                    false,
+                    100,
+                    &cancel_flag,
+                    background,
+                )
+                .await,
+            )
+        };
+
         self.contacts_search_task = Some(cx.spawn(|this, mut cx| async move {
-            let users = search.await.log_err()?;
+            let (contact_matches, users) =
+                futures::future::join(match_contacts, search_users).await;
+            let contact_matches = contact_matches.log_err()?;
+            let users = users.log_err()?;
+
             this.update(&mut cx, |this, cx| {
                 let user_store = this.user_store.read(cx);
+                this.contacts.clear();
+                this.contacts.extend(
+                    contact_matches
+                        .iter()
+                        .map(|mat| contacts[mat.candidate_id].clone()),
+                );
                 this.potential_contacts = users;
                 this.potential_contacts
                     .retain(|user| !user_store.has_contact(&user));
-                this.update_contacts(cx);
+                this.update_list_state(cx);
             });
             None
         }));

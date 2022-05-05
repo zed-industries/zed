@@ -35,7 +35,7 @@ pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
     update_contacts_tx: watch::Sender<Option<proto::UpdateContacts>>,
     current_user: watch::Receiver<Option<Arc<User>>>,
-    contacts: Arc<[Contact]>,
+    contacts: Vec<Arc<Contact>>,
     client: Weak<Client>,
     http: Arc<dyn HttpClient>,
     _maintain_contacts: Task<()>,
@@ -62,7 +62,7 @@ impl UserStore {
         Self {
             users: Default::default(),
             current_user: current_user_rx,
-            contacts: Arc::from([]),
+            contacts: Default::default(),
             client: Arc::downgrade(&client),
             update_contacts_tx,
             http,
@@ -128,12 +128,14 @@ impl UserStore {
 
             let mut contacts = Vec::new();
             for contact in message.contacts {
-                contacts.push(Contact::from_proto(contact, &this, &mut cx).await?);
+                contacts.push(Arc::new(
+                    Contact::from_proto(contact, &this, &mut cx).await?,
+                ));
             }
 
             this.update(&mut cx, |this, cx| {
                 contacts.sort_by(|a, b| a.user.github_login.cmp(&b.user.github_login));
-                this.contacts = contacts.into();
+                this.contacts = contacts;
                 cx.notify();
             });
 
@@ -141,7 +143,7 @@ impl UserStore {
         })
     }
 
-    pub fn contacts(&self) -> &Arc<[Contact]> {
+    pub fn contacts(&self) -> &[Arc<Contact>] {
         &self.contacts
     }
 

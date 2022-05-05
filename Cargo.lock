@@ -931,6 +931,8 @@ version = "0.1.0"
 dependencies = [
  "client",
  "editor",
+ "futures",
+ "fuzzy",
  "gpui",
  "postage",
  "settings",
