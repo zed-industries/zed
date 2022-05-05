@@ -10,6 +10,7 @@ use time::OffsetDateTime;
 pub trait Db: Send + Sync {
     async fn create_user(&self, github_login: &str, admin: bool) -> Result<UserId>;
     async fn get_all_users(&self) -> Result<Vec<User>>;
+    async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>>;
     async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>>;
     async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>>;
     async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>>;
@@ -97,6 +98,21 @@ impl Db for PostgresDb {
     async fn get_all_users(&self) -> Result<Vec<User>> {
         let query = "SELECT * FROM users ORDER BY github_login ASC";
         Ok(sqlx::query_as(query).fetch_all(&self.pool).await?)
+    }
+
+    async fn fuzzy_search_users(&self, name_query: &str, limit: u32) -> Result<Vec<User>> {
+        let query = "
+            SELECT users.*
+            FROM users
+            WHERE github_login % $1
+            ORDER BY github_login <-> $1
+            LIMIT $2
+        ";
+        Ok(sqlx::query_as(query)
+            .bind(name_query)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?)
     }
 
     async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>> {
@@ -640,6 +656,31 @@ pub mod tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_fuzzy_search_users() {
+        let test_db = TestDb::postgres().await;
+        let db = test_db.db();
+        for github_login in [
+            "nathansobo",
+            "nathansobot",
+            "nathanszabo",
+            "maxbrunsfeld",
+            "as-cii",
+        ] {
+            db.create_user(github_login, false).await.unwrap();
+        }
+
+        let results = db
+            .fuzzy_search_users("nathasbo", 10)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|user| user.github_login)
+            .collect::<Vec<_>>();
+
+        assert_eq!(results, &["nathansobo", "nathanszabo", "nathansobot"]);
+    }
+
     pub struct TestDb {
         pub db: Option<Arc<dyn Db>>,
         pub url: String,
@@ -746,6 +787,10 @@ pub mod tests {
         }
 
         async fn get_all_users(&self) -> Result<Vec<User>> {
+            unimplemented!()
+        }
+
+        async fn fuzzy_search_users(&self, _: &str, _: u32) -> Result<Vec<User>> {
             unimplemented!()
         }
 
