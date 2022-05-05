@@ -334,9 +334,14 @@ impl ProjectPanel {
         cx.notify();
 
         Some(cx.spawn(|this, mut cx| async move {
-            let new_entry = edit_task.await?;
+            let new_entry = edit_task.await;
             this.update(&mut cx, |this, cx| {
                 this.edit_state.take();
+                cx.notify();
+            });
+
+            let new_entry = new_entry?;
+            this.update(&mut cx, |this, cx| {
                 if let Some(selection) = &mut this.selection {
                     if selection.entry_id == edited_entry_id {
                         selection.worktree_id = worktree_id;
