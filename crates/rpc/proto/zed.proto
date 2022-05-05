@@ -179,8 +179,7 @@ message RenameProjectEntry {
 
 message DeleteProjectEntry {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    string path = 3;
+    uint64 entry_id = 2;
 }
 
 message ProjectEntryResponse {

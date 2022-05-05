@@ -3330,7 +3330,9 @@ name = "project_panel"
 version = "0.1.0"
 dependencies = [
  "editor",
+ "futures",
  "gpui",
+ "postage",
  "project",
  "serde_json",
  "settings",

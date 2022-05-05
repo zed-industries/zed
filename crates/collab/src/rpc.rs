@@ -128,6 +128,7 @@ impl Server {
             .add_request_handler(Server::forward_project_request::<proto::FormatBuffers>)
             .add_request_handler(Server::forward_project_request::<proto::CreateProjectEntry>)
             .add_request_handler(Server::forward_project_request::<proto::RenameProjectEntry>)
+            .add_request_handler(Server::forward_project_request::<proto::DeleteProjectEntry>)
             .add_request_handler(Server::update_buffer)
             .add_message_handler(Server::update_buffer_file)
             .add_message_handler(Server::buffer_reloaded)
@@ -1900,7 +1901,7 @@ mod tests {
             );
         });
 
-        project_b
+        let dir_entry = project_b
             .update(cx_b, |project, cx| {
                 project
                     .create_entry((worktree_id, "DIR"), true, cx)
@@ -1924,6 +1925,56 @@ mod tests {
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
                 [".zed.toml", "DIR", "a.txt", "b.txt", "d.txt"]
+            );
+        });
+
+        project_b
+            .update(cx_b, |project, cx| {
+                project.delete_entry(dir_entry.id, cx).unwrap()
+            })
+            .await
+            .unwrap();
+        worktree_a.read_with(cx_a, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "a.txt", "b.txt", "d.txt"]
+            );
+        });
+        worktree_b.read_with(cx_b, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "a.txt", "b.txt", "d.txt"]
+            );
+        });
+
+        project_b
+            .update(cx_b, |project, cx| {
+                project.delete_entry(entry.id, cx).unwrap()
+            })
+            .await
+            .unwrap();
+        worktree_a.read_with(cx_a, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "a.txt", "b.txt"]
+            );
+        });
+        worktree_b.read_with(cx_b, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "a.txt", "b.txt"]
             );
         });
     }

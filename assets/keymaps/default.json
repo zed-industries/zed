@@ -332,7 +332,8 @@
         "bindings": {
             "left": "project_panel::CollapseSelectedEntry",
             "right": "project_panel::ExpandSelectedEntry",
-            "f2": "project_panel::Rename"
+            "f2": "project_panel::Rename",
+            "backspace": "project_panel::Delete"
         }
     }
 ]

@@ -1,4 +1,4 @@
-use crate::ProjectEntryId;
+use crate::{ProjectEntryId, RemoveOptions};
 
 use super::{
     fs::{self, Fs},
@@ -712,6 +712,44 @@ impl LocalWorktree {
         self.write_entry_internal(path, Some(text), cx)
     }
 
+    pub fn delete_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Option<Task<Result<()>>> {
+        let entry = self.entry_for_id(entry_id)?.clone();
+        let abs_path = self.absolutize(&entry.path);
+        let delete = cx.background().spawn({
+            let fs = self.fs.clone();
+            let abs_path = abs_path.clone();
+            async move {
+                if entry.is_file() {
+                    fs.remove_file(&abs_path, Default::default()).await
+                } else {
+                    fs.remove_dir(
+                        &abs_path,
+                        RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: false,
+                        },
+                    )
+                    .await
+                }
+            }
+        });
+
+        Some(cx.spawn(|this, mut cx| async move {
+            delete.await?;
+            this.update(&mut cx, |this, _| {
+                let this = this.as_local_mut().unwrap();
+                let mut snapshot = this.background_snapshot.lock();
+                snapshot.delete_entry(entry_id);
+            });
+            this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
+            Ok(())
+        }))
+    }
+
     pub fn rename_entry(
         &self,
         entry_id: ProjectEntryId,
@@ -1019,6 +1057,29 @@ impl RemoteWorktree {
             })
         })
     }
+
+    pub(crate) fn delete_entry(
+        &self,
+        id: ProjectEntryId,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<()>> {
+        cx.spawn(|this, mut cx| async move {
+            this.update(&mut cx, |worktree, _| {
+                worktree
+                    .as_remote_mut()
+                    .unwrap()
+                    .finish_pending_remote_updates()
+            })
+            .await;
+            this.update(&mut cx, |worktree, _| {
+                let worktree = worktree.as_remote_mut().unwrap();
+                let mut snapshot = worktree.background_snapshot.lock();
+                snapshot.delete_entry(id);
+                worktree.snapshot = snapshot.clone();
+            });
+            Ok(())
+        })
+    }
 }
 
 impl Snapshot {
@@ -1046,6 +1107,15 @@ impl Snapshot {
         }
         self.entries_by_path.insert_or_replace(entry.clone(), &());
         Ok(entry)
+    }
+
+    fn delete_entry(&mut self, entry_id: ProjectEntryId) -> bool {
+        if let Some(entry) = self.entries_by_id.remove(&entry_id, &()) {
+            self.entries_by_path.remove(&PathKey(entry.path), &());
+            true
+        } else {
+            false
+        }
     }
 
     pub(crate) fn apply_remote_update(&mut self, update: proto::UpdateWorktree) -> Result<()> {

@@ -1,15 +1,16 @@
 use editor::{Cancel, Editor};
+use futures::stream::StreamExt;
 use gpui::{
     actions,
-    anyhow::Result,
+    anyhow::{anyhow, Result},
     elements::{
         ChildView, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement,
         ScrollTarget, Svg, UniformList, UniformListState,
     },
     impl_internal_actions, keymap,
     platform::CursorStyle,
-    AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, PromptLevel, Task,
+    View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use settings::Settings;
@@ -77,6 +78,7 @@ actions!(
         CollapseSelectedEntry,
         AddDirectory,
         AddFile,
+        Delete,
         Rename
     ]
 );
@@ -92,6 +94,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::add_file);
     cx.add_action(ProjectPanel::add_directory);
     cx.add_action(ProjectPanel::rename);
+    cx.add_async_action(ProjectPanel::delete);
     cx.add_async_action(ProjectPanel::confirm);
     cx.add_action(ProjectPanel::cancel);
 }
@@ -430,6 +433,22 @@ impl ProjectPanel {
                 }
             }
         }
+    }
+
+    fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        let Selection { entry_id, .. } = self.selection?;
+        let mut answer = cx.prompt(PromptLevel::Info, "Delete?", &["Delete", "Cancel"]);
+        Some(cx.spawn(|this, mut cx| async move {
+            if answer.next().await != Some(0) {
+                return Ok(());
+            }
+            this.update(&mut cx, |this, cx| {
+                this.project
+                    .update(cx, |project, cx| project.delete_entry(entry_id, cx))
+                    .ok_or_else(|| anyhow!("no such entry"))
+            })?
+            .await
+        }))
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
