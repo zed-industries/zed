@@ -101,14 +101,16 @@ impl Db for PostgresDb {
     }
 
     async fn fuzzy_search_users(&self, name_query: &str, limit: u32) -> Result<Vec<User>> {
+        let like_string = fuzzy_like_string(name_query);
         let query = "
             SELECT users.*
             FROM users
-            WHERE github_login % $1
-            ORDER BY github_login <-> $1
-            LIMIT $2
+            WHERE github_login like $1
+            ORDER BY github_login <-> $2
+            LIMIT $3
         ";
         Ok(sqlx::query_as(query)
+            .bind(like_string)
             .bind(name_query)
             .bind(limit)
             .fetch_all(&self.pool)
@@ -492,6 +494,18 @@ pub struct ChannelMessage {
     pub nonce: Uuid,
 }
 
+fn fuzzy_like_string(string: &str) -> String {
+    let mut result = String::with_capacity(string.len() * 2 + 1);
+    for c in string.chars() {
+        if c.is_alphanumeric() {
+            result.push('%');
+            result.push(c);
+        }
+    }
+    result.push('%');
+    result
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -656,29 +670,46 @@ pub mod tests {
         );
     }
 
+    #[test]
+    fn test_fuzzy_like_string() {
+        assert_eq!(fuzzy_like_string("abcd"), "%a%b%c%d%");
+        assert_eq!(fuzzy_like_string("x y"), "%x%y%");
+        assert_eq!(fuzzy_like_string(" z  "), "%z%");
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_fuzzy_search_users() {
         let test_db = TestDb::postgres().await;
         let db = test_db.db();
         for github_login in [
-            "nathansobo",
-            "nathansobot",
-            "nathanszabo",
-            "maxbrunsfeld",
-            "as-cii",
+            "california",
+            "colorado",
+            "oregon",
+            "washington",
+            "florida",
+            "delaware",
+            "rhode-island",
         ] {
             db.create_user(github_login, false).await.unwrap();
         }
 
-        let results = db
-            .fuzzy_search_users("nathasbo", 10)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|user| user.github_login)
-            .collect::<Vec<_>>();
+        assert_eq!(
+            fuzzy_search_user_names(db, "clr").await,
+            &["colorado", "california"]
+        );
+        assert_eq!(
+            fuzzy_search_user_names(db, "ro").await,
+            &["rhode-island", "colorado", "oregon"],
+        );
 
-        assert_eq!(results, &["nathansobo", "nathanszabo", "nathansobot"]);
+        async fn fuzzy_search_user_names(db: &Arc<dyn Db>, query: &str) -> Vec<String> {
+            db.fuzzy_search_users(query, 10)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|user| user.github_login)
+                .collect::<Vec<_>>()
+        }
     }
 
     pub struct TestDb {
