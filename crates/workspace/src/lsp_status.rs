@@ -168,7 +168,7 @@ impl View for LspStatus {
                     self.failed.join(", "),
                     if self.failed.len() > 1 { "s" } else { "" }
                 );
-                handler = Some(|cx: &mut EventContext| cx.dispatch_action(DismissErrorMessage));
+                handler = Some(|_, cx: &mut EventContext| cx.dispatch_action(DismissErrorMessage));
             } else {
                 return Empty::new().boxed();
             }

@@ -126,6 +126,9 @@ impl Server {
             .add_request_handler(Server::forward_project_request::<proto::PerformRename>)
             .add_request_handler(Server::forward_project_request::<proto::ReloadBuffers>)
             .add_request_handler(Server::forward_project_request::<proto::FormatBuffers>)
+            .add_request_handler(Server::forward_project_request::<proto::CreateProjectEntry>)
+            .add_request_handler(Server::forward_project_request::<proto::RenameProjectEntry>)
+            .add_request_handler(Server::forward_project_request::<proto::DeleteProjectEntry>)
             .add_request_handler(Server::update_buffer)
             .add_message_handler(Server::update_buffer_file)
             .add_message_handler(Server::buffer_reloaded)
@@ -157,9 +160,7 @@ impl Server {
                 let span = info_span!(
                     "handle message",
                     payload_type = envelope.payload_type_name(),
-                    payload = serde_json::to_string_pretty(&envelope.payload)
-                        .unwrap()
-                        .as_str(),
+                    payload = format!("{:?}", envelope.payload).as_str(),
                 );
                 let future = (handler)(server, *envelope);
                 async move {
@@ -447,6 +448,7 @@ impl Server {
                                 .cloned()
                                 .collect(),
                             visible: worktree.visible,
+                            scan_id: shared_worktree.scan_id,
                         })
                     })
                     .collect();
@@ -577,6 +579,7 @@ impl Server {
             request.payload.worktree_id,
             &request.payload.removed_entries,
             &request.payload.updated_entries,
+            request.payload.scan_id,
         )?;
 
         broadcast(request.sender_id, connection_ids, |connection_id| {
@@ -1806,6 +1809,176 @@ mod tests {
                 buf.file().unwrap().path().to_str() == Some("file1-renamed")
             })
             .await;
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_fs_operations(
+        executor: Arc<Deterministic>,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
+    ) {
+        executor.forbid_parking();
+        let fs = FakeFs::new(cx_a.background());
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let mut client_a = server.create_client(cx_a, "user_a").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
+
+        // Share a project as client A
+        fs.insert_tree(
+            "/dir",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "a.txt": "a-contents",
+                "b.txt": "b-contents",
+            }),
+        )
+        .await;
+
+        let (project_a, worktree_id) = client_a.build_local_project(fs, "/dir", cx_a).await;
+        let project_id = project_a.read_with(cx_a, |project, _| project.remote_id().unwrap());
+        project_a
+            .update(cx_a, |project, cx| project.share(cx))
+            .await
+            .unwrap();
+
+        let project_b = client_b.build_remote_project(project_id, cx_b).await;
+
+        let worktree_a =
+            project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
+        let worktree_b =
+            project_b.read_with(cx_b, |project, cx| project.worktrees(cx).next().unwrap());
+
+        let entry = project_b
+            .update(cx_b, |project, cx| {
+                project
+                    .create_entry((worktree_id, "c.txt"), false, cx)
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+        worktree_a.read_with(cx_a, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "a.txt", "b.txt", "c.txt"]
+            );
+        });
+        worktree_b.read_with(cx_b, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "a.txt", "b.txt", "c.txt"]
+            );
+        });
+
+        project_b
+            .update(cx_b, |project, cx| {
+                project.rename_entry(entry.id, Path::new("d.txt"), cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        worktree_a.read_with(cx_a, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "a.txt", "b.txt", "d.txt"]
+            );
+        });
+        worktree_b.read_with(cx_b, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "a.txt", "b.txt", "d.txt"]
+            );
+        });
+
+        let dir_entry = project_b
+            .update(cx_b, |project, cx| {
+                project
+                    .create_entry((worktree_id, "DIR"), true, cx)
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+        worktree_a.read_with(cx_a, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "DIR", "a.txt", "b.txt", "d.txt"]
+            );
+        });
+        worktree_b.read_with(cx_b, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "DIR", "a.txt", "b.txt", "d.txt"]
+            );
+        });
+
+        project_b
+            .update(cx_b, |project, cx| {
+                project.delete_entry(dir_entry.id, cx).unwrap()
+            })
+            .await
+            .unwrap();
+        worktree_a.read_with(cx_a, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "a.txt", "b.txt", "d.txt"]
+            );
+        });
+        worktree_b.read_with(cx_b, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "a.txt", "b.txt", "d.txt"]
+            );
+        });
+
+        project_b
+            .update(cx_b, |project, cx| {
+                project.delete_entry(entry.id, cx).unwrap()
+            })
+            .await
+            .unwrap();
+        worktree_a.read_with(cx_a, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "a.txt", "b.txt"]
+            );
+        });
+        worktree_b.read_with(cx_b, |worktree, _| {
+            assert_eq!(
+                worktree
+                    .paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                [".zed.toml", "a.txt", "b.txt"]
+            );
+        });
     }
 
     #[gpui::test(iterations = 10)]
@@ -3725,7 +3898,7 @@ mod tests {
         let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
         let editor_b = workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.open_path((worktree_id, "main.rs"), cx)
+                workspace.open_path((worktree_id, "main.rs"), true, cx)
             })
             .await
             .unwrap()
@@ -3973,7 +4146,7 @@ mod tests {
         let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
         let editor_b = workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.open_path((worktree_id, "one.rs"), cx)
+                workspace.open_path((worktree_id, "one.rs"), true, cx)
             })
             .await
             .unwrap()
@@ -4725,7 +4898,7 @@ mod tests {
         let pane_a = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
         let editor_a1 = workspace_a
             .update(cx_a, |workspace, cx| {
-                workspace.open_path((worktree_id, "1.txt"), cx)
+                workspace.open_path((worktree_id, "1.txt"), true, cx)
             })
             .await
             .unwrap()
@@ -4733,7 +4906,7 @@ mod tests {
             .unwrap();
         let editor_a2 = workspace_a
             .update(cx_a, |workspace, cx| {
-                workspace.open_path((worktree_id, "2.txt"), cx)
+                workspace.open_path((worktree_id, "2.txt"), true, cx)
             })
             .await
             .unwrap()
@@ -4744,7 +4917,7 @@ mod tests {
         let workspace_b = client_b.build_workspace(&project_b, cx_b);
         let editor_b1 = workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.open_path((worktree_id, "1.txt"), cx)
+                workspace.open_path((worktree_id, "1.txt"), true, cx)
             })
             .await
             .unwrap()
@@ -4937,7 +5110,7 @@ mod tests {
         let pane_a1 = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
         let _editor_a1 = workspace_a
             .update(cx_a, |workspace, cx| {
-                workspace.open_path((worktree_id, "1.txt"), cx)
+                workspace.open_path((worktree_id, "1.txt"), true, cx)
             })
             .await
             .unwrap()
@@ -4949,7 +5122,7 @@ mod tests {
         let pane_b1 = workspace_b.read_with(cx_b, |workspace, _| workspace.active_pane().clone());
         let _editor_b1 = workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.open_path((worktree_id, "2.txt"), cx)
+                workspace.open_path((worktree_id, "2.txt"), true, cx)
             })
             .await
             .unwrap()
@@ -4984,7 +5157,7 @@ mod tests {
             .update(cx_a, |workspace, cx| {
                 workspace.activate_next_pane(cx);
                 assert_eq!(*workspace.active_pane(), pane_a1);
-                workspace.open_path((worktree_id, "3.txt"), cx)
+                workspace.open_path((worktree_id, "3.txt"), true, cx)
             })
             .await
             .unwrap();
@@ -4992,7 +5165,7 @@ mod tests {
             .update(cx_b, |workspace, cx| {
                 workspace.activate_next_pane(cx);
                 assert_eq!(*workspace.active_pane(), pane_b1);
-                workspace.open_path((worktree_id, "4.txt"), cx)
+                workspace.open_path((worktree_id, "4.txt"), true, cx)
             })
             .await
             .unwrap();
@@ -5081,7 +5254,7 @@ mod tests {
         let workspace_a = client_a.build_workspace(&project_a, cx_a);
         let _editor_a1 = workspace_a
             .update(cx_a, |workspace, cx| {
-                workspace.open_path((worktree_id, "1.txt"), cx)
+                workspace.open_path((worktree_id, "1.txt"), true, cx)
             })
             .await
             .unwrap()
@@ -5194,7 +5367,7 @@ mod tests {
         // When client B activates a different item in the original pane, it automatically stops following client A.
         workspace_b
             .update(cx_b, |workspace, cx| {
-                workspace.open_path((worktree_id, "2.txt"), cx)
+                workspace.open_path((worktree_id, "2.txt"), true, cx)
             })
             .await
             .unwrap();
@@ -5633,6 +5806,7 @@ mod tests {
                     guest_client.username,
                     id
                 );
+                assert_eq!(guest_snapshot.scan_id(), host_snapshot.scan_id());
             }
 
             guest_client
@@ -6353,6 +6527,49 @@ mod tests {
                             } else {
                                 client.buffers.extend(search.await?.into_keys());
                             }
+                        }
+                        60..=69 => {
+                            let worktree = project
+                                .read_with(cx, |project, cx| {
+                                    project
+                                        .worktrees(&cx)
+                                        .filter(|worktree| {
+                                            let worktree = worktree.read(cx);
+                                            worktree.is_visible()
+                                                && worktree.entries(false).any(|e| e.is_file())
+                                                && worktree
+                                                    .root_entry()
+                                                    .map_or(false, |e| e.is_dir())
+                                        })
+                                        .choose(&mut *rng.lock())
+                                })
+                                .unwrap();
+                            let (worktree_id, worktree_root_name) = worktree
+                                .read_with(cx, |worktree, _| {
+                                    (worktree.id(), worktree.root_name().to_string())
+                                });
+
+                            let mut new_name = String::new();
+                            for _ in 0..10 {
+                                let letter = rng.lock().gen_range('a'..='z');
+                                new_name.push(letter);
+                            }
+                            let mut new_path = PathBuf::new();
+                            new_path.push(new_name);
+                            new_path.set_extension("rs");
+                            log::info!(
+                                "{}: creating {:?} in worktree {} ({})",
+                                guest_username,
+                                new_path,
+                                worktree_id,
+                                worktree_root_name,
+                            );
+                            project
+                                .update(cx, |project, cx| {
+                                    project.create_entry((worktree_id, new_path), false, cx)
+                                })
+                                .unwrap()
+                                .await?;
                         }
                         _ => {
                             buffer.update(cx, |buffer, cx| {

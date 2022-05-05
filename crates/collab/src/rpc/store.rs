@@ -46,6 +46,7 @@ pub struct ProjectShare {
 pub struct WorktreeShare {
     pub entries: HashMap<u64, proto::Entry>,
     pub diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
+    pub scan_id: u64,
 }
 
 #[derive(Default)]
@@ -561,6 +562,7 @@ impl Store {
         worktree_id: u64,
         removed_entries: &[u64],
         updated_entries: &[proto::Entry],
+        scan_id: u64,
     ) -> Result<Vec<ConnectionId>> {
         let project = self.write_project(project_id, connection_id)?;
         let worktree = project
@@ -574,6 +576,7 @@ impl Store {
         for entry in updated_entries {
             worktree.entries.insert(entry.id, entry.clone());
         }
+        worktree.scan_id = scan_id;
         let connection_ids = project.connection_ids();
         Ok(connection_ids)
     }

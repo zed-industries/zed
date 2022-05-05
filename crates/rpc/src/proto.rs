@@ -6,13 +6,14 @@ use prost::Message as _;
 use serde::Serialize;
 use std::any::{Any, TypeId};
 use std::{
+    fmt::Debug,
     io,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
-pub trait EnvelopedMessage: Clone + Serialize + Sized + Send + Sync + 'static {
+pub trait EnvelopedMessage: Clone + Debug + Serialize + Sized + Send + Sync + 'static {
     const NAME: &'static str;
     const PRIORITY: MessagePriority;
     fn into_envelope(
@@ -147,6 +148,8 @@ messages!(
     (BufferReloaded, Foreground),
     (BufferSaved, Foreground),
     (ChannelMessageSent, Foreground),
+    (CreateProjectEntry, Foreground),
+    (DeleteProjectEntry, Foreground),
     (Error, Foreground),
     (Follow, Foreground),
     (FollowResponse, Foreground),
@@ -174,8 +177,6 @@ messages!(
     (JoinChannelResponse, Foreground),
     (JoinProject, Foreground),
     (JoinProjectResponse, Foreground),
-    (StartLanguageServer, Foreground),
-    (UpdateLanguageServer, Foreground),
     (LeaveChannel, Foreground),
     (LeaveProject, Foreground),
     (OpenBufferById, Background),
@@ -187,6 +188,7 @@ messages!(
     (PerformRenameResponse, Background),
     (PrepareRename, Background),
     (PrepareRenameResponse, Background),
+    (ProjectEntryResponse, Foreground),
     (RegisterProjectResponse, Foreground),
     (Ping, Foreground),
     (RegisterProject, Foreground),
@@ -194,12 +196,14 @@ messages!(
     (ReloadBuffers, Foreground),
     (ReloadBuffersResponse, Foreground),
     (RemoveProjectCollaborator, Foreground),
+    (RenameProjectEntry, Foreground),
     (SaveBuffer, Foreground),
     (SearchProject, Background),
     (SearchProjectResponse, Background),
     (SendChannelMessage, Foreground),
     (SendChannelMessageResponse, Foreground),
     (ShareProject, Foreground),
+    (StartLanguageServer, Foreground),
     (Test, Foreground),
     (Unfollow, Foreground),
     (UnregisterProject, Foreground),
@@ -210,6 +214,7 @@ messages!(
     (UpdateContacts, Foreground),
     (UpdateDiagnosticSummary, Foreground),
     (UpdateFollowers, Foreground),
+    (UpdateLanguageServer, Foreground),
     (UpdateWorktree, Foreground),
 );
 
@@ -219,6 +224,8 @@ request_messages!(
         ApplyCompletionAdditionalEdits,
         ApplyCompletionAdditionalEditsResponse
     ),
+    (CreateProjectEntry, ProjectEntryResponse),
+    (DeleteProjectEntry, ProjectEntryResponse),
     (Follow, FollowResponse),
     (FormatBuffers, FormatBuffersResponse),
     (GetChannelMessages, GetChannelMessagesResponse),
@@ -241,6 +248,7 @@ request_messages!(
     (RegisterProject, RegisterProjectResponse),
     (RegisterWorktree, Ack),
     (ReloadBuffers, ReloadBuffersResponse),
+    (RenameProjectEntry, ProjectEntryResponse),
     (SaveBuffer, BufferSaved),
     (SearchProject, SearchProjectResponse),
     (SendChannelMessage, SendChannelMessageResponse),
@@ -257,6 +265,9 @@ entity_messages!(
     ApplyCompletionAdditionalEdits,
     BufferReloaded,
     BufferSaved,
+    CreateProjectEntry,
+    RenameProjectEntry,
+    DeleteProjectEntry,
     Follow,
     FormatBuffers,
     GetCodeActions,

@@ -493,7 +493,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             if T::should_activate_item_on_event(event) {
                 pane.update(cx, |pane, cx| {
                     if let Some(ix) = pane.index_for_item(&item) {
-                        pane.activate_item(ix, true, cx);
+                        pane.activate_item(ix, true, true, cx);
                         pane.activate(cx);
                     }
                 });
@@ -898,7 +898,7 @@ impl Workspace {
                             if fs.is_file(&abs_path).await {
                                 Some(
                                     this.update(&mut cx, |this, cx| {
-                                        this.open_path(project_path, cx)
+                                        this.open_path(project_path, true, cx)
                                     })
                                     .await,
                                 )
@@ -1065,7 +1065,7 @@ impl Workspace {
             Side::Right => &mut self.right_sidebar,
         };
         let active_item = sidebar.update(cx, |sidebar, cx| {
-            sidebar.toggle_item(action.item_index, cx);
+            sidebar.activate_item(action.item_index, cx);
             sidebar.active_item().cloned()
         });
         if let Some(active_item) = active_item {
@@ -1099,12 +1099,13 @@ impl Workspace {
 
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
         let pane = self.active_pane().clone();
-        Pane::add_item(self, pane, item, true, cx);
+        Pane::add_item(self, pane, item, true, true, cx);
     }
 
     pub fn open_path(
         &mut self,
         path: impl Into<ProjectPath>,
+        focus_item: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>> {
         let pane = self.active_pane().downgrade();
@@ -1119,6 +1120,7 @@ impl Workspace {
                     this,
                     pane,
                     project_entry_id,
+                    focus_item,
                     cx,
                     build_item,
                 ))
@@ -1187,7 +1189,7 @@ impl Workspace {
         });
         if let Some((pane, ix)) = result {
             self.activate_pane(pane.clone(), cx);
-            pane.update(cx, |pane, cx| pane.activate_item(ix, true, cx));
+            pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, cx));
             true
         } else {
             false
@@ -1277,7 +1279,7 @@ impl Workspace {
         self.activate_pane(new_pane.clone(), cx);
         if let Some(item) = pane.read(cx).active_item() {
             if let Some(clone) = item.clone_on_split(cx.as_mut()) {
-                Pane::add_item(self, new_pane.clone(), clone, true, cx);
+                Pane::add_item(self, new_pane.clone(), clone, true, true, cx);
             }
         }
         self.center.split(&pane, &new_pane, direction).unwrap();
@@ -1584,7 +1586,7 @@ impl Workspace {
                         .with_style(style.container)
                         .boxed()
                 })
-                .on_click(|cx| cx.dispatch_action(Authenticate))
+                .on_click(|_, cx| cx.dispatch_action(Authenticate))
                 .with_cursor_style(CursorStyle::PointingHand)
                 .aligned()
                 .boxed(),
@@ -1635,7 +1637,7 @@ impl Workspace {
         if let Some(peer_id) = peer_id {
             MouseEventHandler::new::<ToggleFollow, _, _>(replica_id.into(), cx, move |_, _| content)
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(move |cx| cx.dispatch_action(ToggleFollow(peer_id)))
+                .on_click(move |_, cx| cx.dispatch_action(ToggleFollow(peer_id)))
                 .boxed()
         } else {
             content
@@ -1667,7 +1669,7 @@ impl Workspace {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(|cx| cx.dispatch_action(ToggleShare))
+                .on_click(|_, cx| cx.dispatch_action(ToggleShare))
                 .boxed(),
             )
         } else {
@@ -1961,7 +1963,7 @@ impl Workspace {
         }
 
         for (pane, item) in items_to_add {
-            Pane::add_item(self, pane.clone(), item.boxed_clone(), false, cx);
+            Pane::add_item(self, pane.clone(), item.boxed_clone(), false, false, cx);
             if pane == self.active_pane {
                 pane.update(cx, |pane, cx| pane.focus_active_item(cx));
             }

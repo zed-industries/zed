@@ -204,7 +204,7 @@ impl ContactsPanel {
                                 } else {
                                     CursorStyle::Arrow
                                 })
-                                .on_click(move |cx| {
+                                .on_click(move |_, cx| {
                                     if !is_host && !is_guest {
                                         cx.dispatch_global_action(JoinProject {
                                             project_id,

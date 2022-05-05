@@ -483,23 +483,43 @@ impl<T: Item + PartialEq> PartialEq for SumTree<T> {
 impl<T: Item + Eq> Eq for SumTree<T> {}
 
 impl<T: KeyedItem> SumTree<T> {
-    pub fn insert_or_replace(&mut self, item: T, cx: &<T::Summary as Summary>::Context) -> bool {
-        let mut replaced = false;
+    pub fn insert_or_replace(
+        &mut self,
+        item: T,
+        cx: &<T::Summary as Summary>::Context,
+    ) -> Option<T> {
+        let mut replaced = None;
         *self = {
             let mut cursor = self.cursor::<T::Key>();
             let mut new_tree = cursor.slice(&item.key(), Bias::Left, cx);
-            if cursor
-                .item()
-                .map_or(false, |cursor_item| cursor_item.key() == item.key())
-            {
-                cursor.next(cx);
-                replaced = true;
+            if let Some(cursor_item) = cursor.item() {
+                if cursor_item.key() == item.key() {
+                    replaced = Some(cursor_item.clone());
+                    cursor.next(cx);
+                }
             }
             new_tree.push(item, cx);
             new_tree.push_tree(cursor.suffix(cx), cx);
             new_tree
         };
         replaced
+    }
+
+    pub fn remove(&mut self, key: &T::Key, cx: &<T::Summary as Summary>::Context) -> Option<T> {
+        let mut removed = None;
+        *self = {
+            let mut cursor = self.cursor::<T::Key>();
+            let mut new_tree = cursor.slice(key, Bias::Left, cx);
+            if let Some(item) = cursor.item() {
+                if item.key() == *key {
+                    removed = Some(item.clone());
+                    cursor.next(cx);
+                }
+            }
+            new_tree.push_tree(cursor.suffix(cx), cx);
+            new_tree
+        };
+        removed
     }
 
     pub fn edit(

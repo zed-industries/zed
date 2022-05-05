@@ -360,6 +360,14 @@ impl Deterministic {
 
         self.state.lock().now = new_now;
     }
+
+    pub fn forbid_parking(&self) {
+        use rand::prelude::*;
+
+        let mut state = self.state.lock();
+        state.forbid_parking = true;
+        state.rng = StdRng::seed_from_u64(state.seed);
+    }
 }
 
 impl Drop for Timer {
@@ -507,14 +515,8 @@ impl Foreground {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn forbid_parking(&self) {
-        use rand::prelude::*;
-
         match self {
-            Self::Deterministic { executor, .. } => {
-                let mut state = executor.state.lock();
-                state.forbid_parking = true;
-                state.rng = StdRng::seed_from_u64(state.seed);
-            }
+            Self::Deterministic { executor, .. } => executor.forbid_parking(),
             _ => panic!("this method can only be called on a deterministic executor"),
         }
     }

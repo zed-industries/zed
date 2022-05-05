@@ -59,7 +59,7 @@ const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
-        pane.activate_item(action.0, true, cx);
+        pane.activate_item(action.0, true, true, cx);
     });
     cx.add_action(|pane: &mut Pane, _: &ActivatePrevItem, cx| {
         pane.activate_prev_item(cx);
@@ -213,7 +213,7 @@ impl Pane {
                 {
                     let prev_active_item_index = pane.active_item_index;
                     pane.nav_history.borrow_mut().set_mode(mode);
-                    pane.activate_item(index, true, cx);
+                    pane.activate_item(index, true, true, cx);
                     pane.nav_history
                         .borrow_mut()
                         .set_mode(NavigationMode::Normal);
@@ -257,6 +257,7 @@ impl Pane {
                                 workspace,
                                 pane.clone(),
                                 project_entry_id,
+                                true,
                                 cx,
                                 build_item,
                             )
@@ -287,6 +288,7 @@ impl Pane {
         workspace: &mut Workspace,
         pane: ViewHandle<Pane>,
         project_entry_id: ProjectEntryId,
+        focus_item: bool,
         cx: &mut ViewContext<Workspace>,
         build_item: impl FnOnce(&mut MutableAppContext) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
@@ -294,7 +296,7 @@ impl Pane {
             for (ix, item) in pane.items.iter().enumerate() {
                 if item.project_entry_id(cx) == Some(project_entry_id) {
                     let item = item.boxed_clone();
-                    pane.activate_item(ix, true, cx);
+                    pane.activate_item(ix, true, focus_item, cx);
                     return Some(item);
                 }
             }
@@ -304,7 +306,7 @@ impl Pane {
             existing_item
         } else {
             let item = build_item(cx);
-            Self::add_item(workspace, pane, item.boxed_clone(), true, cx);
+            Self::add_item(workspace, pane, item.boxed_clone(), true, focus_item, cx);
             item
         }
     }
@@ -313,12 +315,15 @@ impl Pane {
         workspace: &mut Workspace,
         pane: ViewHandle<Pane>,
         item: Box<dyn ItemHandle>,
-        local: bool,
+        activate_pane: bool,
+        focus_item: bool,
         cx: &mut ViewContext<Workspace>,
     ) {
         // Prevent adding the same item to the pane more than once.
         if let Some(item_ix) = pane.read(cx).items.iter().position(|i| i.id() == item.id()) {
-            pane.update(cx, |pane, cx| pane.activate_item(item_ix, local, cx));
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(item_ix, activate_pane, focus_item, cx)
+            });
             return;
         }
 
@@ -327,7 +332,7 @@ impl Pane {
         pane.update(cx, |pane, cx| {
             let item_idx = cmp::min(pane.active_item_index + 1, pane.items.len());
             pane.items.insert(item_idx, item);
-            pane.activate_item(item_idx, local, cx);
+            pane.activate_item(item_idx, activate_pane, focus_item, cx);
             cx.notify();
         });
     }
@@ -378,7 +383,13 @@ impl Pane {
         self.items.iter().position(|i| i.id() == item.id())
     }
 
-    pub fn activate_item(&mut self, index: usize, local: bool, cx: &mut ViewContext<Self>) {
+    pub fn activate_item(
+        &mut self,
+        index: usize,
+        activate_pane: bool,
+        focus_item: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         use NavigationMode::{GoingBack, GoingForward};
         if index < self.items.len() {
             let prev_active_item_ix = mem::replace(&mut self.active_item_index, index);
@@ -387,11 +398,15 @@ impl Pane {
                     && prev_active_item_ix < self.items.len())
             {
                 self.items[prev_active_item_ix].deactivated(cx);
-                cx.emit(Event::ActivateItem { local });
+                cx.emit(Event::ActivateItem {
+                    local: activate_pane,
+                });
             }
             self.update_toolbar(cx);
-            if local {
+            if focus_item {
                 self.focus_active_item(cx);
+            }
+            if activate_pane {
                 self.activate(cx);
             }
             self.autoscroll = true;
@@ -406,7 +421,7 @@ impl Pane {
         } else if self.items.len() > 0 {
             index = self.items.len() - 1;
         }
-        self.activate_item(index, true, cx);
+        self.activate_item(index, true, true, cx);
     }
 
     pub fn activate_next_item(&mut self, cx: &mut ViewContext<Self>) {
@@ -416,7 +431,7 @@ impl Pane {
         } else {
             index = 0;
         }
-        self.activate_item(index, true, cx);
+        self.activate_item(index, true, true, cx);
     }
 
     fn close_active_item(
@@ -498,7 +513,7 @@ impl Pane {
                 if is_last_item_for_entry {
                     if cx.read(|cx| item.has_conflict(cx) && item.can_save(cx)) {
                         let mut answer = pane.update(&mut cx, |pane, cx| {
-                            pane.activate_item(item_to_close_ix, true, cx);
+                            pane.activate_item(item_to_close_ix, true, true, cx);
                             cx.prompt(
                                 PromptLevel::Warning,
                                 CONFLICT_MESSAGE,
@@ -518,7 +533,7 @@ impl Pane {
                     } else if cx.read(|cx| item.is_dirty(cx)) {
                         if cx.read(|cx| item.can_save(cx)) {
                             let mut answer = pane.update(&mut cx, |pane, cx| {
-                                pane.activate_item(item_to_close_ix, true, cx);
+                                pane.activate_item(item_to_close_ix, true, true, cx);
                                 cx.prompt(
                                     PromptLevel::Warning,
                                     DIRTY_MESSAGE,
@@ -535,7 +550,7 @@ impl Pane {
                             }
                         } else if cx.read(|cx| item.can_save_as(cx)) {
                             let mut answer = pane.update(&mut cx, |pane, cx| {
-                                pane.activate_item(item_to_close_ix, true, cx);
+                                pane.activate_item(item_to_close_ix, true, true, cx);
                                 cx.prompt(
                                     PromptLevel::Warning,
                                     DIRTY_MESSAGE,
@@ -737,7 +752,7 @@ impl Pane {
                                             .with_cursor_style(CursorStyle::PointingHand)
                                             .on_click({
                                                 let pane = pane.clone();
-                                                move |cx| {
+                                                move |_, cx| {
                                                     cx.dispatch_action(CloseItem {
                                                         item_id,
                                                         pane: pane.clone(),
@@ -949,7 +964,7 @@ mod tests {
 
         let close_items = workspace.update(cx, |workspace, cx| {
             pane.update(cx, |pane, cx| {
-                pane.activate_item(1, true, cx);
+                pane.activate_item(1, true, true, cx);
                 assert_eq!(pane.active_item().unwrap().id(), item2.id());
             });
 

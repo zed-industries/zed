@@ -297,23 +297,12 @@ mod tests {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree("/dir", json!({ "test.rs": "" })).await;
 
-        let project = Project::test(fs.clone(), cx);
-        project.update(cx, |project, _| {
-            project.languages().add(Arc::new(language));
-        });
-
-        let worktree_id = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", true, cx)
-            })
-            .await
-            .unwrap()
-            .0
-            .read_with(cx, |tree, _| tree.id());
+        let project = Project::test(fs.clone(), ["/dir"], cx).await;
+        project.update(cx, |project, _| project.languages().add(Arc::new(language)));
 
         let _buffer = project
             .update(cx, |project, cx| {
-                project.open_buffer((worktree_id, "test.rs"), cx)
+                project.open_local_buffer("/dir/test.rs", cx)
             })
             .await
             .unwrap();

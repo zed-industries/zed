@@ -666,7 +666,7 @@ impl ProjectSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |cx| match direction {
+        .on_click(move |_, cx| match direction {
             Direction::Prev => cx.dispatch_action(SelectPrevMatch),
             Direction::Next => cx.dispatch_action(SelectNextMatch),
         })
@@ -693,7 +693,7 @@ impl ProjectSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |cx| cx.dispatch_action(ToggleSearchOption(option)))
+        .on_click(move |_, cx| cx.dispatch_action(ToggleSearchOption(option)))
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
     }
@@ -844,16 +844,7 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), cx);
-        let (tree, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", true, cx)
-            })
-            .await
-            .unwrap();
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-
+        let project = Project::test(fs.clone(), ["/dir"], cx).await;
         let search = cx.add_model(|cx| ProjectSearch::new(project, cx));
         let search_view = cx.add_view(Default::default(), |cx| {
             ProjectSearchView::new(search.clone(), cx)

@@ -379,7 +379,7 @@ impl FakeFs {
     async fn simulate_random_delay(&self) {
         self.executor
             .upgrade()
-            .expect("excecutor has been dropped")
+            .expect("executor has been dropped")
             .simulate_random_delay()
             .await;
     }
@@ -493,7 +493,7 @@ impl Fs for FakeFs {
         });
 
         for (relative_path, entry) in removed {
-            let new_path = target.join(relative_path);
+            let new_path = normalize_path(&target.join(relative_path));
             state.entries.insert(new_path, entry);
         }
 
@@ -501,13 +501,15 @@ impl Fs for FakeFs {
         Ok(())
     }
 
-    async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        let path = normalize_path(path);
+    async fn remove_dir(&self, dir_path: &Path, options: RemoveOptions) -> Result<()> {
+        let dir_path = normalize_path(dir_path);
         let mut state = self.state.lock().await;
-        state.validate_path(&path)?;
-        if let Some(entry) = state.entries.get(&path) {
+        state.validate_path(&dir_path)?;
+        if let Some(entry) = state.entries.get(&dir_path) {
             if !entry.metadata.is_dir {
-                return Err(anyhow!("cannot remove {path:?} because it is not a dir"));
+                return Err(anyhow!(
+                    "cannot remove {dir_path:?} because it is not a dir"
+                ));
             }
 
             if !options.recursive {
@@ -517,14 +519,14 @@ impl Fs for FakeFs {
                     .filter(|path| path.starts_with(path))
                     .count();
                 if descendants > 1 {
-                    return Err(anyhow!("{path:?} is not empty"));
+                    return Err(anyhow!("{dir_path:?} is not empty"));
                 }
             }
 
-            state.entries.retain(|path, _| !path.starts_with(path));
-            state.emit_event(&[path]).await;
+            state.entries.retain(|path, _| !path.starts_with(&dir_path));
+            state.emit_event(&[dir_path]).await;
         } else if !options.ignore_if_not_exists {
-            return Err(anyhow!("{path:?} does not exist"));
+            return Err(anyhow!("{dir_path:?} does not exist"));
         }
 
         Ok(())
@@ -647,9 +649,16 @@ impl Fs for FakeFs {
         let (tx, rx) = smol::channel::unbounded();
         state.event_txs.push(tx);
         let path = path.to_path_buf();
+        let executor = self.executor.clone();
         Box::pin(futures::StreamExt::filter(rx, move |events| {
             let result = events.iter().any(|event| event.path.starts_with(&path));
-            async move { result }
+            let executor = executor.clone();
+            async move {
+                if let Some(executor) = executor.clone().upgrade() {
+                    executor.simulate_random_delay().await;
+                }
+                result
+            }
         }))
     }
 

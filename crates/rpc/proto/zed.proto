@@ -36,57 +36,63 @@ message Envelope {
         RegisterWorktree register_worktree = 28;
         UnregisterWorktree unregister_worktree = 29;
         UpdateWorktree update_worktree = 31;
-        UpdateDiagnosticSummary update_diagnostic_summary = 32;
-        StartLanguageServer start_language_server = 33;
-        UpdateLanguageServer update_language_server = 34;
 
-        OpenBufferById open_buffer_by_id = 35;
-        OpenBufferByPath open_buffer_by_path = 36;
-        OpenBufferResponse open_buffer_response = 37;
-        UpdateBuffer update_buffer = 38;
-        UpdateBufferFile update_buffer_file = 39;
-        SaveBuffer save_buffer = 40;
-        BufferSaved buffer_saved = 41;
-        BufferReloaded buffer_reloaded = 42;
-        ReloadBuffers reload_buffers = 43;
-        ReloadBuffersResponse reload_buffers_response = 44;
-        FormatBuffers format_buffers = 45;
-        FormatBuffersResponse format_buffers_response = 46;
-        GetCompletions get_completions = 47;
-        GetCompletionsResponse get_completions_response = 48;
-        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 49;
-        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 50;
-        GetCodeActions get_code_actions = 51;
-        GetCodeActionsResponse get_code_actions_response = 52;
-        ApplyCodeAction apply_code_action = 53;
-        ApplyCodeActionResponse apply_code_action_response = 54;
-        PrepareRename prepare_rename = 55;
-        PrepareRenameResponse prepare_rename_response = 56;
-        PerformRename perform_rename = 57;
-        PerformRenameResponse perform_rename_response = 58;
-        SearchProject search_project = 59;
-        SearchProjectResponse search_project_response = 60;
+        CreateProjectEntry create_project_entry = 32;
+        RenameProjectEntry rename_project_entry = 33;
+        DeleteProjectEntry delete_project_entry = 34;
+        ProjectEntryResponse project_entry_response = 35;
 
-        GetChannels get_channels = 61;
-        GetChannelsResponse get_channels_response = 62;
-        JoinChannel join_channel = 63;
-        JoinChannelResponse join_channel_response = 64;
-        LeaveChannel leave_channel = 65;
-        SendChannelMessage send_channel_message = 66;
-        SendChannelMessageResponse send_channel_message_response = 67;
-        ChannelMessageSent channel_message_sent = 68;
-        GetChannelMessages get_channel_messages = 69;
-        GetChannelMessagesResponse get_channel_messages_response = 70;
+        UpdateDiagnosticSummary update_diagnostic_summary = 36;
+        StartLanguageServer start_language_server = 37;
+        UpdateLanguageServer update_language_server = 38;
 
-        UpdateContacts update_contacts = 71;
+        OpenBufferById open_buffer_by_id = 39;
+        OpenBufferByPath open_buffer_by_path = 40;
+        OpenBufferResponse open_buffer_response = 41;
+        UpdateBuffer update_buffer = 42;
+        UpdateBufferFile update_buffer_file = 43;
+        SaveBuffer save_buffer = 44;
+        BufferSaved buffer_saved = 45;
+        BufferReloaded buffer_reloaded = 46;
+        ReloadBuffers reload_buffers = 47;
+        ReloadBuffersResponse reload_buffers_response = 48;
+        FormatBuffers format_buffers = 49;
+        FormatBuffersResponse format_buffers_response = 50;
+        GetCompletions get_completions = 51;
+        GetCompletionsResponse get_completions_response = 52;
+        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 53;
+        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 54;
+        GetCodeActions get_code_actions = 55;
+        GetCodeActionsResponse get_code_actions_response = 56;
+        ApplyCodeAction apply_code_action = 57;
+        ApplyCodeActionResponse apply_code_action_response = 58;
+        PrepareRename prepare_rename = 59;
+        PrepareRenameResponse prepare_rename_response = 60;
+        PerformRename perform_rename = 61;
+        PerformRenameResponse perform_rename_response = 62;
+        SearchProject search_project = 63;
+        SearchProjectResponse search_project_response = 64;
 
-        GetUsers get_users = 72;
-        GetUsersResponse get_users_response = 73;
+        GetChannels get_channels = 65;
+        GetChannelsResponse get_channels_response = 66;
+        JoinChannel join_channel = 67;
+        JoinChannelResponse join_channel_response = 68;
+        LeaveChannel leave_channel = 69;
+        SendChannelMessage send_channel_message = 70;
+        SendChannelMessageResponse send_channel_message_response = 71;
+        ChannelMessageSent channel_message_sent = 72;
+        GetChannelMessages get_channel_messages = 73;
+        GetChannelMessagesResponse get_channel_messages_response = 74;
 
-        Follow follow = 74;
-        FollowResponse follow_response = 75;
-        UpdateFollowers update_followers = 76;
-        Unfollow unfollow = 77;
+        UpdateContacts update_contacts = 75;
+
+        GetUsers get_users = 76;
+        GetUsersResponse get_users_response = 77;
+
+        Follow follow = 78;
+        FollowResponse follow_response = 79;
+        UpdateFollowers update_followers = 80;
+        Unfollow unfollow = 81;
     }
 }
 
@@ -156,6 +162,30 @@ message UpdateWorktree {
     string root_name = 3;
     repeated Entry updated_entries = 4;
     repeated uint64 removed_entries = 5;
+    uint64 scan_id = 6;
+}
+
+message CreateProjectEntry {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    bytes path = 3;
+    bool is_directory = 4;
+}
+
+message RenameProjectEntry {
+    uint64 project_id = 1;
+    uint64 entry_id = 2;
+    bytes new_path = 3;
+}
+
+message DeleteProjectEntry {
+    uint64 project_id = 1;
+    uint64 entry_id = 2;
+}
+
+message ProjectEntryResponse {
+    Entry entry = 1;
+    uint64 worktree_scan_id = 2;
 }
 
 message AddProjectCollaborator {
@@ -630,6 +660,7 @@ message Worktree {
     repeated Entry entries = 3;
     repeated DiagnosticSummary diagnostic_summaries = 4;
     bool visible = 5;
+    uint64 scan_id = 6;
 }
 
 message File {
@@ -642,7 +673,7 @@ message File {
 message Entry {
     uint64 id = 1;
     bool is_dir = 2;
-    string path = 3;
+    bytes path = 3;
     uint64 inode = 4;
     Timestamp mtime = 5;
     bool is_symlink = 6;
