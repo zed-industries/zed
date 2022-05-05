@@ -1584,7 +1584,7 @@ impl Workspace {
                         .with_style(style.container)
                         .boxed()
                 })
-                .on_click(|cx| cx.dispatch_action(Authenticate))
+                .on_click(|_, cx| cx.dispatch_action(Authenticate))
                 .with_cursor_style(CursorStyle::PointingHand)
                 .aligned()
                 .boxed(),
@@ -1635,7 +1635,7 @@ impl Workspace {
         if let Some(peer_id) = peer_id {
             MouseEventHandler::new::<ToggleFollow, _, _>(replica_id.into(), cx, move |_, _| content)
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(move |cx| cx.dispatch_action(ToggleFollow(peer_id)))
+                .on_click(move |_, cx| cx.dispatch_action(ToggleFollow(peer_id)))
                 .boxed()
         } else {
             content
@@ -1667,7 +1667,7 @@ impl Workspace {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(|cx| cx.dispatch_action(ToggleShare))
+                .on_click(|_, cx| cx.dispatch_action(ToggleShare))
                 .boxed(),
             )
         } else {

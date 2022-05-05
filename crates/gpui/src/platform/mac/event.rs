@@ -129,6 +129,7 @@ impl Event {
                     native_event.locationInWindow().x as f32,
                     window_height - native_event.locationInWindow().y as f32,
                 ),
+                click_count: native_event.clickCount() as usize,
             }),
             NSEventType::NSRightMouseDown => {
                 let modifiers = native_event.modifierFlags();

@@ -28,6 +28,7 @@ pub enum Event {
     },
     LeftMouseUp {
         position: Vector2F,
+        click_count: usize,
     },
     LeftMouseDragged {
         position: Vector2F,
@@ -68,7 +69,7 @@ impl Event {
             Event::KeyDown { .. } => None,
             Event::ScrollWheel { position, .. }
             | Event::LeftMouseDown { position, .. }
-            | Event::LeftMouseUp { position }
+            | Event::LeftMouseUp { position, .. }
             | Event::LeftMouseDragged { position }
             | Event::RightMouseDown { position, .. }
             | Event::RightMouseUp { position }

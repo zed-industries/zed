@@ -69,7 +69,10 @@ struct EntryDetails {
 pub struct ToggleExpanded(pub ProjectEntryId);
 
 #[derive(Clone)]
-pub struct Open(pub ProjectEntryId);
+pub struct Open {
+    pub entry_id: ProjectEntryId,
+    pub change_focus: bool,
+}
 
 actions!(
     project_panel,
@@ -339,7 +342,7 @@ impl ProjectPanel {
     }
 
     fn open_entry(&mut self, action: &Open, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::OpenedEntry(action.0));
+        cx.emit(Event::OpenedEntry(action.entry_id));
     }
 
     fn add_file(&mut self, _: &AddFile, cx: &mut ViewContext<Self>) {
@@ -799,11 +802,14 @@ impl ProjectPanel {
                 .with_padding_left(padding)
                 .boxed()
         })
-        .on_click(move |cx| {
+        .on_click(move |click_count, cx| {
             if kind == EntryKind::Dir {
                 cx.dispatch_action(ToggleExpanded(entry_id))
             } else {
-                cx.dispatch_action(Open(entry_id))
+                cx.dispatch_action(Open {
+                    entry_id,
+                    change_focus: click_count > 1,
+                })
             }
         })
         .with_cursor_style(CursorStyle::PointingHand)

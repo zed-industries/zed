@@ -1189,7 +1189,7 @@ impl Element for EditorElement {
                 click_count,
                 ..
             } => self.mouse_down(*position, *alt, *shift, *click_count, layout, paint, cx),
-            Event::LeftMouseUp { position } => self.mouse_up(*position, cx),
+            Event::LeftMouseUp { position, .. } => self.mouse_up(*position, cx),
             Event::LeftMouseDragged { position } => {
                 self.mouse_dragged(*position, layout, paint, cx)
             }

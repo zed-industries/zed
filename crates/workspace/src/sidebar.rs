@@ -203,7 +203,7 @@ impl View for SidebarButtons {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(move |cx| {
+                .on_click(move |_, cx| {
                     cx.dispatch_action(ToggleSidebarItem {
                         side,
                         item_index: ix,

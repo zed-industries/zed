@@ -292,7 +292,7 @@ impl BufferSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |cx| cx.dispatch_action(ToggleSearchOption(search_option)))
+        .on_click(move |_, cx| cx.dispatch_action(ToggleSearchOption(search_option)))
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
     }
@@ -316,7 +316,7 @@ impl BufferSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |cx| match direction {
+        .on_click(move |_, cx| match direction {
             Direction::Prev => cx.dispatch_action(SelectPrevMatch),
             Direction::Next => cx.dispatch_action(SelectNextMatch),
         })
