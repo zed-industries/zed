@@ -723,7 +723,11 @@ impl Project {
                     .ok_or_else(|| anyhow!("missing entry in response"))?;
                 worktree
                     .update(&mut cx, |worktree, cx| {
-                        worktree.as_remote().unwrap().insert_entry(entry, cx)
+                        worktree.as_remote().unwrap().insert_entry(
+                            entry,
+                            response.worktree_scan_id as usize,
+                            cx,
+                        )
                     })
                     .await
             }))
@@ -762,7 +766,11 @@ impl Project {
                     .ok_or_else(|| anyhow!("missing entry in response"))?;
                 worktree
                     .update(&mut cx, |worktree, cx| {
-                        worktree.as_remote().unwrap().insert_entry(entry, cx)
+                        worktree.as_remote().unwrap().insert_entry(
+                            entry,
+                            response.worktree_scan_id as usize,
+                            cx,
+                        )
                     })
                     .await
             }))
@@ -783,7 +791,7 @@ impl Project {
             let client = self.client.clone();
             let project_id = self.remote_id().unwrap();
             Some(cx.spawn_weak(|_, mut cx| async move {
-                client
+                let response = client
                     .request(proto::DeleteProjectEntry {
                         project_id,
                         entry_id: entry_id.to_proto(),
@@ -791,7 +799,11 @@ impl Project {
                     .await?;
                 worktree
                     .update(&mut cx, move |worktree, cx| {
-                        worktree.as_remote().unwrap().delete_entry(entry_id, cx)
+                        worktree.as_remote().unwrap().delete_entry(
+                            entry_id,
+                            response.worktree_scan_id as usize,
+                            cx,
+                        )
                     })
                     .await
             }))
@@ -3805,6 +3817,7 @@ impl Project {
                 entries: Default::default(),
                 diagnostic_summaries: Default::default(),
                 visible: envelope.payload.visible,
+                scan_id: 0,
             };
             let (worktree, load_task) =
                 Worktree::remote(remote_id, replica_id, worktree, client, cx);
@@ -3851,21 +3864,22 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
-        let entry = this
-            .update(&mut cx, |this, cx| {
-                let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-                let worktree = this
-                    .worktree_for_id(worktree_id, cx)
-                    .ok_or_else(|| anyhow!("worktree not found"))?;
-                worktree.update(cx, |worktree, cx| {
-                    let worktree = worktree.as_local_mut().unwrap();
-                    let path = PathBuf::from(OsString::from_vec(envelope.payload.path));
-                    anyhow::Ok(worktree.create_entry(path, envelope.payload.is_directory, cx))
-                })
-            })?
+        let worktree = this.update(&mut cx, |this, cx| {
+            let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+            this.worktree_for_id(worktree_id, cx)
+                .ok_or_else(|| anyhow!("worktree not found"))
+        })?;
+        let worktree_scan_id = worktree.read_with(&cx, |worktree, _| worktree.scan_id());
+        let entry = worktree
+            .update(&mut cx, |worktree, cx| {
+                let worktree = worktree.as_local_mut().unwrap();
+                let path = PathBuf::from(OsString::from_vec(envelope.payload.path));
+                worktree.create_entry(path, envelope.payload.is_directory, cx)
+            })
             .await?;
         Ok(proto::ProjectEntryResponse {
             entry: Some((&entry).into()),
+            worktree_scan_id: worktree_scan_id as u64,
         })
     }
 
@@ -3875,16 +3889,25 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
-        let entry = this
-            .update(&mut cx, |this, cx| {
-                let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+        let worktree = this.read_with(&cx, |this, cx| {
+            this.worktree_for_entry(entry_id, cx)
+                .ok_or_else(|| anyhow!("worktree not found"))
+        })?;
+        let worktree_scan_id = worktree.read_with(&cx, |worktree, _| worktree.scan_id());
+        let entry = worktree
+            .update(&mut cx, |worktree, cx| {
                 let new_path = PathBuf::from(OsString::from_vec(envelope.payload.new_path));
-                this.rename_entry(entry_id, new_path, cx)
+                worktree
+                    .as_local_mut()
+                    .unwrap()
+                    .rename_entry(entry_id, new_path, cx)
                     .ok_or_else(|| anyhow!("invalid entry"))
             })?
             .await?;
         Ok(proto::ProjectEntryResponse {
             entry: Some((&entry).into()),
+            worktree_scan_id: worktree_scan_id as u64,
         })
     }
 
@@ -3893,14 +3916,26 @@ impl Project {
         envelope: TypedEnvelope<proto::DeleteProjectEntry>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
-    ) -> Result<proto::Ack> {
-        this.update(&mut cx, |this, cx| {
-            let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-            this.delete_entry(entry_id, cx)
-                .ok_or_else(|| anyhow!("invalid entry"))
-        })?
-        .await?;
-        Ok(proto::Ack {})
+    ) -> Result<proto::ProjectEntryResponse> {
+        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+        let worktree = this.read_with(&cx, |this, cx| {
+            this.worktree_for_entry(entry_id, cx)
+                .ok_or_else(|| anyhow!("worktree not found"))
+        })?;
+        let worktree_scan_id = worktree.read_with(&cx, |worktree, _| worktree.scan_id());
+        worktree
+            .update(&mut cx, |worktree, cx| {
+                worktree
+                    .as_local_mut()
+                    .unwrap()
+                    .delete_entry(entry_id, cx)
+                    .ok_or_else(|| anyhow!("invalid entry"))
+            })?
+            .await?;
+        Ok(proto::ProjectEntryResponse {
+            entry: None,
+            worktree_scan_id: worktree_scan_id as u64,
+        })
     }
 
     async fn handle_update_diagnostic_summary(

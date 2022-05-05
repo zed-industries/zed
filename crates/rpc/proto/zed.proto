@@ -162,6 +162,7 @@ message UpdateWorktree {
     string root_name = 3;
     repeated Entry updated_entries = 4;
     repeated uint64 removed_entries = 5;
+    uint64 scan_id = 6;
 }
 
 message CreateProjectEntry {
@@ -184,6 +185,7 @@ message DeleteProjectEntry {
 
 message ProjectEntryResponse {
     Entry entry = 1;
+    uint64 worktree_scan_id = 2;
 }
 
 message AddProjectCollaborator {
@@ -658,6 +660,7 @@ message Worktree {
     repeated Entry entries = 3;
     repeated DiagnosticSummary diagnostic_summaries = 4;
     bool visible = 5;
+    uint64 scan_id = 6;
 }
 
 message File {

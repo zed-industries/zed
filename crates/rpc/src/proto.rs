@@ -225,7 +225,7 @@ request_messages!(
         ApplyCompletionAdditionalEditsResponse
     ),
     (CreateProjectEntry, ProjectEntryResponse),
-    (DeleteProjectEntry, Ack),
+    (DeleteProjectEntry, ProjectEntryResponse),
     (Follow, FollowResponse),
     (FormatBuffers, FormatBuffersResponse),
     (GetChannelMessages, GetChannelMessagesResponse),

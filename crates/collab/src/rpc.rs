@@ -448,6 +448,7 @@ impl Server {
                                 .cloned()
                                 .collect(),
                             visible: worktree.visible,
+                            scan_id: shared_worktree.scan_id,
                         })
                     })
                     .collect();
@@ -578,6 +579,7 @@ impl Server {
             request.payload.worktree_id,
             &request.payload.removed_entries,
             &request.payload.updated_entries,
+            request.payload.scan_id,
         )?;
 
         broadcast(request.sender_id, connection_ids, |connection_id| {
@@ -5804,6 +5806,7 @@ mod tests {
                     guest_client.username,
                     id
                 );
+                assert_eq!(guest_snapshot.scan_id(), host_snapshot.scan_id());
             }
 
             guest_client
