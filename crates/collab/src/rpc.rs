@@ -6528,6 +6528,49 @@ mod tests {
                                 client.buffers.extend(search.await?.into_keys());
                             }
                         }
+                        60..=69 => {
+                            let worktree = project
+                                .read_with(cx, |project, cx| {
+                                    project
+                                        .worktrees(&cx)
+                                        .filter(|worktree| {
+                                            let worktree = worktree.read(cx);
+                                            worktree.is_visible()
+                                                && worktree.entries(false).any(|e| e.is_file())
+                                                && worktree
+                                                    .root_entry()
+                                                    .map_or(false, |e| e.is_dir())
+                                        })
+                                        .choose(&mut *rng.lock())
+                                })
+                                .unwrap();
+                            let (worktree_id, worktree_root_name) = worktree
+                                .read_with(cx, |worktree, _| {
+                                    (worktree.id(), worktree.root_name().to_string())
+                                });
+
+                            let mut new_name = String::new();
+                            for _ in 0..10 {
+                                let letter = rng.lock().gen_range('a'..='z');
+                                new_name.push(letter);
+                            }
+                            let mut new_path = PathBuf::new();
+                            new_path.push(new_name);
+                            new_path.set_extension("rs");
+                            log::info!(
+                                "{}: creating {:?} in worktree {} ({})",
+                                guest_username,
+                                new_path,
+                                worktree_id,
+                                worktree_root_name,
+                            );
+                            project
+                                .update(cx, |project, cx| {
+                                    project.create_entry((worktree_id, new_path), false, cx)
+                                })
+                                .unwrap()
+                                .await?;
+                        }
                         _ => {
                             buffer.update(cx, |buffer, cx| {
                                 log::info!(
