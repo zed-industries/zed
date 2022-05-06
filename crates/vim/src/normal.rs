@@ -76,7 +76,9 @@ pub fn normal_motion(motion: Motion, cx: &mut MutableAppContext) {
 
 fn move_cursor(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
     vim.update_active_editor(cx, |editor, cx| {
-        editor.move_cursors(cx, |map, cursor, goal| motion.move_point(map, cursor, goal))
+        editor.change_selections(true, cx, |s| {
+            s.move_cursors_with(|map, cursor, goal| motion.move_point(map, cursor, goal))
+        })
     });
 }
 
@@ -84,8 +86,10 @@ fn insert_after(_: &mut Workspace, _: &InsertAfter, cx: &mut ViewContext<Workspa
     Vim::update(cx, |vim, cx| {
         vim.switch_mode(Mode::Insert, cx);
         vim.update_active_editor(cx, |editor, cx| {
-            editor.move_cursors(cx, |map, cursor, goal| {
-                Motion::Right.move_point(map, cursor, goal)
+            editor.change_selections(true, cx, |s| {
+                s.move_cursors_with(|map, cursor, goal| {
+                    Motion::Right.move_point(map, cursor, goal)
+                });
             });
         });
     });
@@ -99,8 +103,10 @@ fn insert_first_non_whitespace(
     Vim::update(cx, |vim, cx| {
         vim.switch_mode(Mode::Insert, cx);
         vim.update_active_editor(cx, |editor, cx| {
-            editor.move_cursors(cx, |map, cursor, goal| {
-                Motion::FirstNonWhitespace.move_point(map, cursor, goal)
+            editor.change_selections(true, cx, |s| {
+                s.move_cursors_with(|map, cursor, goal| {
+                    Motion::FirstNonWhitespace.move_point(map, cursor, goal)
+                });
             });
         });
     });
@@ -110,8 +116,10 @@ fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewConte
     Vim::update(cx, |vim, cx| {
         vim.switch_mode(Mode::Insert, cx);
         vim.update_active_editor(cx, |editor, cx| {
-            editor.move_cursors(cx, |map, cursor, goal| {
-                Motion::EndOfLine.move_point(map, cursor, goal)
+            editor.change_selections(true, cx, |s| {
+                s.move_cursors_with(|map, cursor, goal| {
+                    Motion::EndOfLine.move_point(map, cursor, goal)
+                });
             });
         });
     });
@@ -137,10 +145,12 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
                     (start_of_line..start_of_line, new_text)
                 });
                 editor.edit_with_autoindent(edits, cx);
-                editor.move_cursors(cx, |map, mut cursor, _| {
-                    *cursor.row_mut() -= 1;
-                    *cursor.column_mut() = map.line_len(cursor.row());
-                    (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
+                editor.change_selections(true, cx, |s| {
+                    s.move_cursors_with(|map, mut cursor, _| {
+                        *cursor.row_mut() -= 1;
+                        *cursor.column_mut() = map.line_len(cursor.row());
+                        (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
+                    });
                 });
             });
         });
@@ -166,8 +176,10 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
                     new_text.push_str(&" ".repeat(indent as usize));
                     (end_of_line..end_of_line, new_text)
                 });
-                editor.move_cursors(cx, |map, cursor, goal| {
-                    Motion::EndOfLine.move_point(map, cursor, goal)
+                editor.change_selections(true, cx, |s| {
+                    s.move_cursors_with(|map, cursor, goal| {
+                        Motion::EndOfLine.move_point(map, cursor, goal)
+                    });
                 });
                 editor.edit_with_autoindent(edits, cx);
             });

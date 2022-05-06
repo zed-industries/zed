@@ -454,7 +454,7 @@ impl ProjectSearchView {
             let results_editor = self.results_editor.read(cx);
             let new_index = match_index_for_direction(
                 &model.match_ranges,
-                &results_editor.newest_anchor_selection().head(),
+                &results_editor.selections.newest_anchor().head(),
                 index,
                 direction,
                 &results_editor.buffer().read(cx).read(cx),
@@ -462,7 +462,9 @@ impl ProjectSearchView {
             let range_to_select = model.match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
                 editor.unfold_ranges([range_to_select.clone()], false, cx);
-                editor.select_ranges([range_to_select], Some(Autoscroll::Fit), cx);
+                editor.change_selections(true, cx, |s| {
+                    s.select_ranges([range_to_select], Some(Autoscroll::Fit))
+                });
             });
         }
     }
@@ -476,8 +478,10 @@ impl ProjectSearchView {
 
     fn focus_results_editor(&self, cx: &mut ViewContext<Self>) {
         self.query_editor.update(cx, |query_editor, cx| {
-            let cursor = query_editor.newest_anchor_selection().head();
-            query_editor.select_ranges([cursor.clone()..cursor], None, cx);
+            let cursor = query_editor.selections.newest_anchor().head();
+            query_editor.change_selections(true, cx, |s| {
+                s.select_ranges([cursor.clone()..cursor], None)
+            });
         });
         cx.focus(&self.results_editor);
     }
@@ -489,7 +493,9 @@ impl ProjectSearchView {
         } else {
             self.results_editor.update(cx, |editor, cx| {
                 if reset_selections {
-                    editor.select_ranges(match_ranges.first().cloned(), Some(Autoscroll::Fit), cx);
+                    editor.change_selections(true, cx, |s| {
+                        s.select_ranges(match_ranges.first().cloned(), Some(Autoscroll::Fit))
+                    });
                 }
                 editor.highlight_background::<Self>(
                     match_ranges,
@@ -510,7 +516,7 @@ impl ProjectSearchView {
         let results_editor = self.results_editor.read(cx);
         let new_index = active_match_index(
             &self.model.read(cx).match_ranges,
-            &results_editor.newest_anchor_selection().head(),
+            &results_editor.selections.newest_anchor().head(),
             &results_editor.buffer().read(cx).read(cx),
         );
         if self.active_match_index != new_index {

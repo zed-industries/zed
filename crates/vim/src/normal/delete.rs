@@ -8,24 +8,28 @@ pub fn delete_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
         editor.transact(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             let mut original_columns: HashMap<_, _> = Default::default();
-            editor.move_selections(cx, |map, selection| {
-                let original_head = selection.head();
-                motion.expand_selection(map, selection, true);
-                original_columns.insert(selection.id, original_head.column());
+            editor.change_selections(true, cx, |s| {
+                s.move_with(|map, selection| {
+                    let original_head = selection.head();
+                    motion.expand_selection(map, selection, true);
+                    original_columns.insert(selection.id, original_head.column());
+                });
             });
             editor.insert(&"", cx);
 
             // Fixup cursor position after the deletion
             editor.set_clip_at_line_ends(true, cx);
-            editor.move_selections(cx, |map, selection| {
-                let mut cursor = selection.head();
-                if motion.linewise() {
-                    if let Some(column) = original_columns.get(&selection.id) {
-                        *cursor.column_mut() = *column
+            editor.change_selections(true, cx, |s| {
+                s.move_with(|map, selection| {
+                    let mut cursor = selection.head();
+                    if motion.linewise() {
+                        if let Some(column) = original_columns.get(&selection.id) {
+                            *cursor.column_mut() = *column
+                        }
                     }
-                }
-                cursor = map.clip_point(cursor, Bias::Left);
-                selection.collapse_to(cursor, selection.goal)
+                    cursor = map.clip_point(cursor, Bias::Left);
+                    selection.collapse_to(cursor, selection.goal)
+                });
             });
         });
     });

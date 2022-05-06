@@ -962,7 +962,9 @@ mod tests {
             .downcast::<Editor>()
             .unwrap();
         editor1.update(cx, |editor, cx| {
-            editor.select_display_ranges(&[DisplayPoint::new(10, 0)..DisplayPoint::new(10, 0)], cx);
+            editor.change_selections(true, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(10, 0)..DisplayPoint::new(10, 0)])
+            });
         });
         let editor2 = workspace
             .update(cx, |w, cx| w.open_path(file2.clone(), true, cx))
@@ -979,10 +981,9 @@ mod tests {
 
         editor3
             .update(cx, |editor, cx| {
-                editor.select_display_ranges(
-                    &[DisplayPoint::new(12, 0)..DisplayPoint::new(12, 0)],
-                    cx,
-                );
+                editor.change_selections(true, cx, |s| {
+                    s.select_display_ranges([DisplayPoint::new(12, 0)..DisplayPoint::new(12, 0)])
+                });
                 editor.newline(&Default::default(), cx);
                 editor.newline(&Default::default(), cx);
                 editor.move_down(&Default::default(), cx);
@@ -1123,34 +1124,37 @@ mod tests {
         // Modify file to collapse multiple nav history entries into the same location.
         // Ensure we don't visit the same location twice when navigating.
         editor1.update(cx, |editor, cx| {
-            editor.select_display_ranges(&[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)], cx)
+            editor.change_selections(true, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)])
+            })
         });
 
         for _ in 0..5 {
             editor1.update(cx, |editor, cx| {
-                editor
-                    .select_display_ranges(&[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)], cx);
+                editor.change_selections(true, cx, |s| {
+                    s.select_display_ranges([DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)])
+                });
             });
             editor1.update(cx, |editor, cx| {
-                editor.select_display_ranges(
-                    &[DisplayPoint::new(13, 0)..DisplayPoint::new(13, 0)],
-                    cx,
-                )
+                editor.change_selections(true, cx, |s| {
+                    s.select_display_ranges([DisplayPoint::new(13, 0)..DisplayPoint::new(13, 0)])
+                })
             });
         }
 
         editor1.update(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
-                editor.select_display_ranges(
-                    &[DisplayPoint::new(2, 0)..DisplayPoint::new(14, 0)],
-                    cx,
-                );
+                editor.change_selections(true, cx, |s| {
+                    s.select_display_ranges([DisplayPoint::new(2, 0)..DisplayPoint::new(14, 0)])
+                });
                 editor.insert("", cx);
             })
         });
 
         editor1.update(cx, |editor, cx| {
-            editor.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx)
+            editor.change_selections(true, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
+            })
         });
         workspace
             .update(cx, |w, cx| Pane::go_back(w, None, cx))

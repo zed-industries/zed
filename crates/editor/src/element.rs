@@ -957,8 +957,9 @@ impl Element for EditorElement {
             selections.extend(remote_selections);
 
             if view.show_local_selections {
-                let local_selections =
-                    view.local_selections_in_range(start_anchor..end_anchor, &display_map);
+                let local_selections = view
+                    .selections
+                    .interleaved_in_range(start_anchor..end_anchor, &display_map.buffer_snapshot);
                 for selection in &local_selections {
                     let is_empty = selection.start == selection.end;
                     let selection_start = snapshot.prev_line_boundary(selection.start).1;
@@ -1041,7 +1042,8 @@ impl Element for EditorElement {
             }
 
             let newest_selection_head = view
-                .newest_selection_with_snapshot::<usize>(&snapshot.buffer_snapshot)
+                .selections
+                .newest::<usize>(&snapshot.buffer_snapshot)
                 .head()
                 .to_display_point(&snapshot);
 

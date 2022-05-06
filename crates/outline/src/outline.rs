@@ -172,9 +172,7 @@ impl PickerDelegate for OutlineView {
 
             let editor = self.active_editor.read(cx);
             let buffer = editor.buffer().read(cx).read(cx);
-            let cursor_offset = editor
-                .newest_selection_with_snapshot::<usize>(&buffer)
-                .head();
+            let cursor_offset = editor.selections.newest::<usize>(&buffer).head();
             selected_index = self
                 .outline
                 .items
@@ -217,7 +215,9 @@ impl PickerDelegate for OutlineView {
             if let Some(rows) = active_editor.highlighted_rows() {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
                 let position = DisplayPoint::new(rows.start, 0).to_point(&snapshot);
-                active_editor.select_ranges([position..position], Some(Autoscroll::Center), cx);
+                active_editor.change_selections(true, cx, |s| {
+                    s.select_ranges([position..position], Some(Autoscroll::Center))
+                });
             }
         });
         cx.emit(Event::Dismissed);

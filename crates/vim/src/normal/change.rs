@@ -22,8 +22,10 @@ pub fn change_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
         editor.transact(cx, |editor, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
             editor.set_clip_at_line_ends(false, cx);
-            editor.move_selections(cx, |map, selection| {
-                motion.expand_selection(map, selection, false);
+            editor.change_selections(true, cx, |s| {
+                s.move_with(|map, selection| {
+                    motion.expand_selection(map, selection, false);
+                });
             });
             editor.insert(&"", cx);
         });
@@ -46,16 +48,21 @@ fn change_word(
             editor.transact(cx, |editor, cx| {
                 // We are swapping to insert mode anyway. Just set the line end clipping behavior now
                 editor.set_clip_at_line_ends(false, cx);
-                editor.move_selections(cx, |map, selection| {
-                    if selection.end.column() == map.line_len(selection.end.row()) {
-                        return;
-                    }
+                editor.change_selections(true, cx, |s| {
+                    s.move_with(|map, selection| {
+                        if selection.end.column() == map.line_len(selection.end.row()) {
+                            return;
+                        }
 
-                    selection.end = movement::find_boundary(map, selection.end, |left, right| {
-                        let left_kind = char_kind(left).coerce_punctuation(ignore_punctuation);
-                        let right_kind = char_kind(right).coerce_punctuation(ignore_punctuation);
+                        selection.end =
+                            movement::find_boundary(map, selection.end, |left, right| {
+                                let left_kind =
+                                    char_kind(left).coerce_punctuation(ignore_punctuation);
+                                let right_kind =
+                                    char_kind(right).coerce_punctuation(ignore_punctuation);
 
-                        left_kind != right_kind || left == '\n' || right == '\n'
+                                left_kind != right_kind || left == '\n' || right == '\n'
+                            });
                     });
                 });
                 editor.insert(&"", cx);

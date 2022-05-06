@@ -417,8 +417,11 @@ impl ProjectDiagnosticsEditor {
                 }];
             } else {
                 groups = self.path_states.get(path_ix)?.diagnostic_groups.as_slice();
-                new_excerpt_ids_by_selection_id = editor.refresh_selections(cx);
-                selections = editor.local_selections::<usize>(cx);
+                new_excerpt_ids_by_selection_id =
+                    editor.change_selections(true, cx, |s| s.refresh());
+                selections = editor
+                    .selections
+                    .interleaved::<usize>(&editor.buffer().read(cx).read(cx));
             }
 
             // If any selection has lost its position, move it to start of the next primary diagnostic.
@@ -441,7 +444,9 @@ impl ProjectDiagnosticsEditor {
                     }
                 }
             }
-            editor.update_selections(selections, None, cx);
+            editor.change_selections(true, cx, |s| {
+                s.select(selections, None);
+            });
             Some(())
         });
 

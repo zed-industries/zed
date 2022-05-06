@@ -14,23 +14,25 @@ pub fn init(cx: &mut MutableAppContext) {
 pub fn visual_motion(motion: Motion, cx: &mut MutableAppContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
-            editor.move_selections(cx, |map, selection| {
-                let (new_head, goal) = motion.move_point(map, selection.head(), selection.goal);
-                let new_head = map.clip_at_line_end(new_head);
-                let was_reversed = selection.reversed;
-                selection.set_head(new_head, goal);
+            editor.change_selections(true, cx, |s| {
+                s.move_with(|map, selection| {
+                    let (new_head, goal) = motion.move_point(map, selection.head(), selection.goal);
+                    let new_head = map.clip_at_line_end(new_head);
+                    let was_reversed = selection.reversed;
+                    selection.set_head(new_head, goal);
 
-                if was_reversed && !selection.reversed {
-                    // Head was at the start of the selection, and now is at the end. We need to move the start
-                    // back by one if possible in order to compensate for this change.
-                    *selection.start.column_mut() = selection.start.column().saturating_sub(1);
-                    selection.start = map.clip_point(selection.start, Bias::Left);
-                } else if !was_reversed && selection.reversed {
-                    // Head was at the end of the selection, and now is at the start. We need to move the end
-                    // forward by one if possible in order to compensate for this change.
-                    *selection.end.column_mut() = selection.end.column() + 1;
-                    selection.end = map.clip_point(selection.end, Bias::Left);
-                }
+                    if was_reversed && !selection.reversed {
+                        // Head was at the start of the selection, and now is at the end. We need to move the start
+                        // back by one if possible in order to compensate for this change.
+                        *selection.start.column_mut() = selection.start.column().saturating_sub(1);
+                        selection.start = map.clip_point(selection.start, Bias::Left);
+                    } else if !was_reversed && selection.reversed {
+                        // Head was at the end of the selection, and now is at the start. We need to move the end
+                        // forward by one if possible in order to compensate for this change.
+                        *selection.end.column_mut() = selection.end.column() + 1;
+                        selection.end = map.clip_point(selection.end, Bias::Left);
+                    }
+                });
             });
         });
     });
@@ -40,13 +42,15 @@ pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspac
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
-            editor.move_selections(cx, |map, selection| {
-                if !selection.reversed {
-                    // Head was at the end of the selection, and now is at the start. We need to move the end
-                    // forward by one if possible in order to compensate for this change.
-                    *selection.end.column_mut() = selection.end.column() + 1;
-                    selection.end = map.clip_point(selection.end, Bias::Left);
-                }
+            editor.change_selections(true, cx, |s| {
+                s.move_with(|map, selection| {
+                    if !selection.reversed {
+                        // Head was at the end of the selection, and now is at the start. We need to move the end
+                        // forward by one if possible in order to compensate for this change.
+                        *selection.end.column_mut() = selection.end.column() + 1;
+                        selection.end = map.clip_point(selection.end, Bias::Left);
+                    }
+                });
             });
             editor.insert("", cx);
         });
@@ -59,22 +63,26 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
         vim.switch_mode(Mode::Normal, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
-            editor.move_selections(cx, |map, selection| {
-                if !selection.reversed {
-                    // Head was at the end of the selection, and now is at the start. We need to move the end
-                    // forward by one if possible in order to compensate for this change.
-                    *selection.end.column_mut() = selection.end.column() + 1;
-                    selection.end = map.clip_point(selection.end, Bias::Left);
-                }
+            editor.change_selections(true, cx, |s| {
+                s.move_with(|map, selection| {
+                    if !selection.reversed {
+                        // Head was at the end of the selection, and now is at the start. We need to move the end
+                        // forward by one if possible in order to compensate for this change.
+                        *selection.end.column_mut() = selection.end.column() + 1;
+                        selection.end = map.clip_point(selection.end, Bias::Left);
+                    }
+                });
             });
             editor.insert("", cx);
 
             // Fixup cursor position after the deletion
             editor.set_clip_at_line_ends(true, cx);
-            editor.move_selections(cx, |map, selection| {
-                let mut cursor = selection.head();
-                cursor = map.clip_point(cursor, Bias::Left);
-                selection.collapse_to(cursor, selection.goal)
+            editor.change_selections(true, cx, |s| {
+                s.move_with(|map, selection| {
+                    let mut cursor = selection.head();
+                    cursor = map.clip_point(cursor, Bias::Left);
+                    selection.collapse_to(cursor, selection.goal)
+                });
             });
         });
     });
