@@ -89,11 +89,13 @@ message Envelope {
         GetUsers get_users = 76;
         FuzzySearchUsers fuzzy_search_users = 77;
         UsersResponse users_response = 78;
+        RequestContact request_contact = 79;
+        RespondToContactRequest respond_to_contact_request = 80;
 
-        Follow follow = 79;
-        FollowResponse follow_response = 80;
-        UpdateFollowers update_followers = 81;
-        Unfollow unfollow = 82;
+        Follow follow = 81;
+        FollowResponse follow_response = 82;
+        UpdateFollowers update_followers = 83;
+        Unfollow unfollow = 84;
     }
 }
 
@@ -547,6 +549,21 @@ message UsersResponse {
     repeated User users = 1;
 }
 
+message RequestContact {
+    uint64 to_user_id = 1;
+}
+
+message RespondToContactRequest {
+    uint64 requesting_user_id = 1;
+    ContactRequestResponse response = 2;
+}
+
+enum ContactRequestResponse {
+    Accept = 0;
+    Reject = 1;
+    Block = 2;
+}
+
 message SendChannelMessage {
     uint64 channel_id = 1;
     string body = 2;
@@ -574,6 +591,13 @@ message GetChannelMessagesResponse {
 
 message UpdateContacts {
     repeated Contact contacts = 1;
+    repeated IncomingContactRequest pending_requests_from_user_ids = 2;
+    repeated uint64 pending_requests_to_user_ids = 3;
+}
+
+message IncomingContactRequest {
+    uint64 user_id = 1;
+    bool show_notification = 2;
 }
 
 message UpdateDiagnostics {

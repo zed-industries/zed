@@ -905,6 +905,8 @@ impl Server {
                         connection_id,
                         proto::UpdateContacts {
                             contacts: contacts.clone(),
+                            pending_requests_from_user_ids: Default::default(),
+                            pending_requests_to_user_ids: Default::default(),
                         },
                     )
                     .trace_err();

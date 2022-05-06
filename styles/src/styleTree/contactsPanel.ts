@@ -60,6 +60,12 @@ export default function(theme: Theme) {
         left: 8,
       },
     },
+    editContact: {
+      ...text(theme, "mono", "primary", { size: "sm" }),
+      background: backgroundColor(theme, 100),
+      cornerRadius: 12,
+      padding: { left: 7, right: 7 }
+    },
     header: {
       ...text(theme, "mono", "secondary", { size: "sm" }),
       // padding: {

@@ -1255,6 +1255,17 @@
         "left": 8
       }
     },
+    "edit_contact": {
+      "family": "Zed Mono",
+      "color": "#f1f1f1",
+      "size": 14,
+      "background": "#2b2b2b",
+      "corner_radius": 12,
+      "padding": {
+        "left": 7,
+        "right": 7
+      }
+    },
     "header": {
       "family": "Zed Mono",
       "color": "#9c9c9c",

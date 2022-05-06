@@ -298,6 +298,14 @@ impl ContactsPanel {
                 .left()
                 .boxed(),
             )
+            .with_child(
+                Label::new("+".to_string(), theme.edit_contact.text.clone())
+                    .contained()
+                    .with_style(theme.edit_contact.container)
+                    .aligned()
+                    .flex_float()
+                    .boxed(),
+            )
             .constrained()
             .with_height(theme.row_height)
             .boxed()
