@@ -19,6 +19,11 @@ pub trait Db: Send + Sync {
 
     async fn get_contacts(&self, id: UserId) -> Result<Contacts>;
     async fn send_contact_request(&self, requester_id: UserId, responder_id: UserId) -> Result<()>;
+    async fn dismiss_contact_request(
+        &self,
+        responder_id: UserId,
+        requester_id: UserId,
+    ) -> Result<()>;
     async fn respond_to_contact_request(
         &self,
         responder_id: UserId,
@@ -184,12 +189,12 @@ impl Db for PostgresDb {
 
     async fn get_contacts(&self, user_id: UserId) -> Result<Contacts> {
         let query = "
-            SELECT user_id_a, user_id_b, a_to_b, accepted
+            SELECT user_id_a, user_id_b, a_to_b, accepted, should_notify
             FROM contacts
             WHERE user_id_a = $1 OR user_id_b = $1;
         ";
 
-        let mut rows = sqlx::query_as::<_, (UserId, UserId, bool, bool)>(query)
+        let mut rows = sqlx::query_as::<_, (UserId, UserId, bool, bool, bool)>(query)
             .bind(user_id)
             .fetch(&self.pool);
 
@@ -197,7 +202,7 @@ impl Db for PostgresDb {
         let mut requests_sent = Vec::new();
         let mut requests_received = Vec::new();
         while let Some(row) = rows.next().await {
-            let (user_id_a, user_id_b, a_to_b, accepted) = row?;
+            let (user_id_a, user_id_b, a_to_b, accepted, should_notify) = row?;
 
             if user_id_a == user_id {
                 if accepted {
@@ -205,13 +210,19 @@ impl Db for PostgresDb {
                 } else if a_to_b {
                     requests_sent.push(user_id_b);
                 } else {
-                    requests_received.push(user_id_b);
+                    requests_received.push(IncomingContactRequest {
+                        requesting_user_id: user_id_b,
+                        should_notify,
+                    });
                 }
             } else {
                 if accepted {
                     current.push(user_id_a);
                 } else if a_to_b {
-                    requests_received.push(user_id_a);
+                    requests_received.push(IncomingContactRequest {
+                        requesting_user_id: user_id_a,
+                        should_notify,
+                    });
                 } else {
                     requests_sent.push(user_id_a);
                 }
@@ -232,8 +243,8 @@ impl Db for PostgresDb {
             (receiver_id, sender_id, false)
         };
         let query = "
-            INSERT into contacts (user_id_a, user_id_b, a_to_b, accepted)
-            VALUES ($1, $2, $3, 'f')
+            INSERT into contacts (user_id_a, user_id_b, a_to_b, accepted, should_notify)
+            VALUES ($1, $2, $3, 'f', 't')
             ON CONFLICT (user_id_a, user_id_b) DO UPDATE
             SET
                 accepted = 't'
@@ -270,7 +281,7 @@ impl Db for PostgresDb {
         let result = if accept {
             let query = "
                 UPDATE contacts
-                SET accepted = 't'
+                SET accepted = 't', should_notify = 'f'
                 WHERE user_id_a = $1 AND user_id_b = $2 AND a_to_b = $3;
             ";
             sqlx::query(query)
@@ -296,6 +307,37 @@ impl Db for PostgresDb {
         } else {
             Err(anyhow!("no such contact request"))
         }
+    }
+
+    async fn dismiss_contact_request(
+        &self,
+        responder_id: UserId,
+        requester_id: UserId,
+    ) -> Result<()> {
+        let (id_a, id_b, a_to_b) = if responder_id < requester_id {
+            (responder_id, requester_id, false)
+        } else {
+            (requester_id, responder_id, true)
+        };
+
+        let query = "
+            UPDATE contacts
+            SET should_notify = 'f'
+            WHERE user_id_a = $1 AND user_id_b = $2 AND a_to_b = $3;
+        ";
+
+        let result = sqlx::query(query)
+            .bind(id_a.0)
+            .bind(id_b.0)
+            .bind(a_to_b)
+            .execute(&self.pool)
+            .await?;
+
+        if result.rows_affected() == 0 {
+            Err(anyhow!("no such contact request"))?;
+        }
+
+        Ok(())
     }
 
     // access tokens
@@ -628,7 +670,13 @@ pub struct ChannelMessage {
 pub struct Contacts {
     pub current: Vec<UserId>,
     pub requests_sent: Vec<UserId>,
-    pub requests_received: Vec<UserId>,
+    pub requests_received: Vec<IncomingContactRequest>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IncomingContactRequest {
+    pub requesting_user_id: UserId,
+    pub should_notify: bool,
 }
 
 fn fuzzy_like_string(string: &str) -> String {
@@ -886,7 +934,28 @@ pub mod tests {
                 Contacts {
                     current: vec![],
                     requests_sent: vec![],
-                    requests_received: vec![user_1],
+                    requests_received: vec![IncomingContactRequest {
+                        requesting_user_id: user_1,
+                        should_notify: true
+                    }],
+                },
+            );
+
+            // User 2 dismisses the contact request notification without accepting or rejecting.
+            // We shouldn't notify them again.
+            db.dismiss_contact_request(user_1, user_2)
+                .await
+                .unwrap_err();
+            db.dismiss_contact_request(user_2, user_1).await.unwrap();
+            assert_eq!(
+                db.get_contacts(user_2).await.unwrap(),
+                Contacts {
+                    current: vec![],
+                    requests_sent: vec![],
+                    requests_received: vec![IncomingContactRequest {
+                        requesting_user_id: user_1,
+                        should_notify: false
+                    }],
                 },
             );
 
@@ -1032,6 +1101,7 @@ pub mod tests {
         requester_id: UserId,
         responder_id: UserId,
         accepted: bool,
+        should_notify: bool,
     }
 
     impl FakeDb {
@@ -1124,7 +1194,10 @@ pub mod tests {
                     if contact.accepted {
                         current.push(contact.requester_id);
                     } else {
-                        requests_received.push(contact.requester_id);
+                        requests_received.push(IncomingContactRequest {
+                            requesting_user_id: contact.requester_id,
+                            should_notify: contact.should_notify,
+                        });
                     }
                 }
             }
@@ -1162,8 +1235,27 @@ pub mod tests {
                 requester_id,
                 responder_id,
                 accepted: false,
+                should_notify: true,
             });
             Ok(())
+        }
+
+        async fn dismiss_contact_request(
+            &self,
+            responder_id: UserId,
+            requester_id: UserId,
+        ) -> Result<()> {
+            let mut contacts = self.contacts.lock();
+            for contact in contacts.iter_mut() {
+                if contact.requester_id == requester_id && contact.responder_id == responder_id {
+                    if contact.accepted {
+                        return Err(anyhow!("contact already confirmed"));
+                    }
+                    contact.should_notify = false;
+                    return Ok(());
+                }
+            }
+            Err(anyhow!("no such contact request"))
         }
 
         async fn respond_to_contact_request(

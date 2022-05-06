@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS "contacts" (
     "user_id_a" INTEGER REFERENCES users (id) NOT NULL,
     "user_id_b" INTEGER REFERENCES users (id) NOT NULL,
     "a_to_b" BOOLEAN NOT NULL,
+    "should_notify" BOOLEAN NOT NULL,
     "accepted" BOOLEAN NOT NULL
 );
 

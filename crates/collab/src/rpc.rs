@@ -154,6 +154,8 @@ impl Server {
             .add_request_handler(Server::get_channels)
             .add_request_handler(Server::get_users)
             .add_request_handler(Server::fuzzy_search_users)
+            .add_request_handler(Server::request_contact)
+            .add_request_handler(Server::respond_to_contact_request)
             .add_request_handler(Server::join_channel)
             .add_message_handler(Server::leave_channel)
             .add_request_handler(Server::send_channel_message)
@@ -911,6 +913,48 @@ impl Server {
             })
             .collect();
         response.send(proto::UsersResponse { users })?;
+        Ok(())
+    }
+
+    async fn request_contact(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::RequestContact>,
+        response: Response<proto::RequestContact>,
+    ) -> Result<()> {
+        let requester_id = self
+            .store
+            .read()
+            .await
+            .user_id_for_connection(request.sender_id)?;
+        let responder_id = UserId::from_proto(request.payload.to_user_id);
+        self.app_state
+            .db
+            .send_contact_request(requester_id, responder_id)
+            .await?;
+        response.send(proto::Ack {})?;
+        Ok(())
+    }
+
+    async fn respond_to_contact_request(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::RespondToContactRequest>,
+        response: Response<proto::RespondToContactRequest>,
+    ) -> Result<()> {
+        let responder_id = self
+            .store
+            .read()
+            .await
+            .user_id_for_connection(request.sender_id)?;
+        let requester_id = UserId::from_proto(request.payload.requesting_user_id);
+        self.app_state
+            .db
+            .respond_to_contact_request(
+                responder_id,
+                requester_id,
+                request.payload.response == proto::ContactRequestResponse::Accept as i32,
+            )
+            .await?;
+        response.send(proto::Ack {})?;
         Ok(())
     }
 
@@ -4909,6 +4953,33 @@ mod tests {
                 })
                 .collect()
         }
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_contacts_requests(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+        cx_a.foreground().forbid_parking();
+
+        // Connect to a server as 3 clients.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
+
+        client_a
+            .user_store
+            .read_with(cx_a, |store, _| {
+                store.request_contact(client_b.user_id().unwrap())
+            })
+            .await
+            .unwrap();
+
+        client_a.user_store.read_with(cx_a, |store, _| {
+            let contacts = store
+                .contacts()
+                .iter()
+                .map(|contact| contact.user.github_login.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(contacts, &["user_b"])
+        });
     }
 
     #[gpui::test(iterations = 10)]

@@ -1,6 +1,6 @@
 use super::{http::HttpClient, proto, Client, Status, TypedEnvelope};
 use anyhow::{anyhow, Result};
-use futures::{future, AsyncReadExt};
+use futures::{future, AsyncReadExt, Future};
 use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{prelude::Stream, sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
@@ -121,6 +121,13 @@ impl UserStore {
             user_ids.insert(contact.user_id);
             user_ids.extend(contact.projects.iter().flat_map(|w| &w.guests).copied());
         }
+        user_ids.extend(message.pending_requests_to_user_ids.iter());
+        user_ids.extend(
+            message
+                .pending_requests_from_user_ids
+                .iter()
+                .map(|req| req.user_id),
+        );
 
         let load_users = self.get_users(user_ids.into_iter().collect(), cx);
         cx.spawn(|this, mut cx| async move {
@@ -151,6 +158,39 @@ impl UserStore {
         self.contacts
             .binary_search_by_key(&&user.github_login, |contact| &contact.user.github_login)
             .is_ok()
+    }
+
+    pub fn request_contact(&self, to_user_id: u64) -> impl Future<Output = Result<()>> {
+        let client = self.client.upgrade();
+        async move {
+            client
+                .ok_or_else(|| anyhow!("not logged in"))?
+                .request(proto::RequestContact { to_user_id })
+                .await?;
+            Ok(())
+        }
+    }
+
+    pub fn respond_to_contact_request(
+        &self,
+        from_user_id: u64,
+        accept: bool,
+    ) -> impl Future<Output = Result<()>> {
+        let client = self.client.upgrade();
+        async move {
+            client
+                .ok_or_else(|| anyhow!("not logged in"))?
+                .request(proto::RespondToContactRequest {
+                    requesting_user_id: from_user_id,
+                    response: if accept {
+                        proto::ContactRequestResponse::Accept
+                    } else {
+                        proto::ContactRequestResponse::Reject
+                    } as i32,
+                })
+                .await?;
+            Ok(())
+        }
     }
 
     pub fn get_users(
