@@ -225,7 +225,9 @@ impl Element for Flex {
         remaining_space: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        let overflowing = *remaining_space < 0.;
+        let mut remaining_space = *remaining_space;
+
+        let overflowing = remaining_space < 0.;
         if overflowing {
             cx.scene.push_layer(Some(bounds));
         }
@@ -240,14 +242,14 @@ impl Element for Flex {
         }
 
         for child in &mut self.children {
-            if *remaining_space > 0. {
+            if remaining_space > 0. {
                 if let Some(metadata) = child.metadata::<FlexParentData>() {
                     if metadata.float {
                         match self.axis {
-                            Axis::Horizontal => child_origin += vec2f(*remaining_space, 0.0),
-                            Axis::Vertical => child_origin += vec2f(0.0, *remaining_space),
+                            Axis::Horizontal => child_origin += vec2f(remaining_space, 0.0),
+                            Axis::Vertical => child_origin += vec2f(0.0, remaining_space),
                         }
-                        *remaining_space = 0.;
+                        remaining_space = 0.;
                     }
                 }
             }
@@ -257,6 +259,7 @@ impl Element for Flex {
                 Axis::Vertical => child_origin += vec2f(0.0, child.size().y()),
             }
         }
+
         if overflowing {
             cx.scene.pop_layer();
         }
