@@ -2415,7 +2415,7 @@ mod tests {
         // Simulate connection loss for client B and ensure client A observes client B leaving the project.
         client_b.wait_for_current_user(cx_b).await;
         server.disconnect_client(client_b.current_user_id(cx_b));
-        cx_a.foreground().advance_clock(Duration::from_secs(3));
+        cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
         project_a
             .condition(cx_a, |p, _| p.collaborators().len() == 0)
             .await;
@@ -4602,7 +4602,7 @@ mod tests {
         // Disconnect client B, ensuring we can still access its cached channel data.
         server.forbid_connections();
         server.disconnect_client(client_b.current_user_id(&cx_b));
-        cx_b.foreground().advance_clock(Duration::from_secs(3));
+        cx_b.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
         while !matches!(
             status_b.next().await,
             Some(client::Status::ReconnectionError { .. })
