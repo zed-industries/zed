@@ -199,8 +199,8 @@ impl Db for PostgresDb {
             .fetch(&self.pool);
 
         let mut current = Vec::new();
-        let mut requests_sent = Vec::new();
-        let mut requests_received = Vec::new();
+        let mut outgoing_requests = Vec::new();
+        let mut incoming_requests = Vec::new();
         while let Some(row) = rows.next().await {
             let (user_id_a, user_id_b, a_to_b, accepted, should_notify) = row?;
 
@@ -208,9 +208,9 @@ impl Db for PostgresDb {
                 if accepted {
                     current.push(user_id_b);
                 } else if a_to_b {
-                    requests_sent.push(user_id_b);
+                    outgoing_requests.push(user_id_b);
                 } else {
-                    requests_received.push(IncomingContactRequest {
+                    incoming_requests.push(IncomingContactRequest {
                         requesting_user_id: user_id_b,
                         should_notify,
                     });
@@ -219,20 +219,20 @@ impl Db for PostgresDb {
                 if accepted {
                     current.push(user_id_a);
                 } else if a_to_b {
-                    requests_received.push(IncomingContactRequest {
+                    incoming_requests.push(IncomingContactRequest {
                         requesting_user_id: user_id_a,
                         should_notify,
                     });
                 } else {
-                    requests_sent.push(user_id_a);
+                    outgoing_requests.push(user_id_a);
                 }
             }
         }
 
         Ok(Contacts {
             current,
-            requests_sent,
-            requests_received,
+            outgoing_requests,
+            incoming_requests,
         })
     }
 
@@ -669,8 +669,8 @@ pub struct ChannelMessage {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Contacts {
     pub current: Vec<UserId>,
-    pub requests_sent: Vec<UserId>,
-    pub requests_received: Vec<IncomingContactRequest>,
+    pub incoming_requests: Vec<IncomingContactRequest>,
+    pub outgoing_requests: Vec<UserId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -914,8 +914,8 @@ pub mod tests {
                 db.get_contacts(user_1).await.unwrap(),
                 Contacts {
                     current: vec![],
-                    requests_sent: vec![],
-                    requests_received: vec![],
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![],
                 },
             );
 
@@ -925,16 +925,16 @@ pub mod tests {
                 db.get_contacts(user_1).await.unwrap(),
                 Contacts {
                     current: vec![],
-                    requests_sent: vec![user_2],
-                    requests_received: vec![],
+                    outgoing_requests: vec![user_2],
+                    incoming_requests: vec![],
                 },
             );
             assert_eq!(
                 db.get_contacts(user_2).await.unwrap(),
                 Contacts {
                     current: vec![],
-                    requests_sent: vec![],
-                    requests_received: vec![IncomingContactRequest {
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![IncomingContactRequest {
                         requesting_user_id: user_1,
                         should_notify: true
                     }],
@@ -951,8 +951,8 @@ pub mod tests {
                 db.get_contacts(user_2).await.unwrap(),
                 Contacts {
                     current: vec![],
-                    requests_sent: vec![],
-                    requests_received: vec![IncomingContactRequest {
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![IncomingContactRequest {
                         requesting_user_id: user_1,
                         should_notify: false
                     }],
@@ -972,16 +972,16 @@ pub mod tests {
                 db.get_contacts(user_1).await.unwrap(),
                 Contacts {
                     current: vec![user_2],
-                    requests_sent: vec![],
-                    requests_received: vec![],
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![],
                 },
             );
             assert_eq!(
                 db.get_contacts(user_2).await.unwrap(),
                 Contacts {
                     current: vec![user_1],
-                    requests_sent: vec![],
-                    requests_received: vec![],
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![],
                 },
             );
 
@@ -997,16 +997,16 @@ pub mod tests {
                 db.get_contacts(user_1).await.unwrap(),
                 Contacts {
                     current: vec![user_2, user_3],
-                    requests_sent: vec![],
-                    requests_received: vec![],
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![],
                 },
             );
             assert_eq!(
                 db.get_contacts(user_3).await.unwrap(),
                 Contacts {
                     current: vec![user_1],
-                    requests_sent: vec![],
-                    requests_received: vec![],
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![],
                 },
             );
 
@@ -1019,16 +1019,16 @@ pub mod tests {
                 db.get_contacts(user_2).await.unwrap(),
                 Contacts {
                     current: vec![user_1],
-                    requests_sent: vec![],
-                    requests_received: vec![],
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![],
                 },
             );
             assert_eq!(
                 db.get_contacts(user_3).await.unwrap(),
                 Contacts {
                     current: vec![user_1],
-                    requests_sent: vec![],
-                    requests_received: vec![],
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![],
                 },
             );
         }
@@ -1203,8 +1203,8 @@ pub mod tests {
             }
             Ok(Contacts {
                 current,
-                requests_sent,
-                requests_received,
+                outgoing_requests,
+                incoming_requests,
             })
         }
 

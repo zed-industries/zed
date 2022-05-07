@@ -36,6 +36,8 @@ pub struct UserStore {
     update_contacts_tx: watch::Sender<Option<proto::UpdateContacts>>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     contacts: Vec<Arc<Contact>>,
+    incoming_contact_requests: Vec<Arc<User>>,
+    outgoing_contact_requests: Vec<Arc<User>>,
     client: Weak<Client>,
     http: Arc<dyn HttpClient>,
     _maintain_contacts: Task<()>,
@@ -63,6 +65,8 @@ impl UserStore {
             users: Default::default(),
             current_user: current_user_rx,
             contacts: Default::default(),
+            incoming_contact_requests: Default::default(),
+            outgoing_contact_requests: Default::default(),
             client: Arc::downgrade(&client),
             update_contacts_tx,
             http,
@@ -121,29 +125,64 @@ impl UserStore {
             user_ids.insert(contact.user_id);
             user_ids.extend(contact.projects.iter().flat_map(|w| &w.guests).copied());
         }
-        user_ids.extend(message.pending_requests_to_user_ids.iter());
-        user_ids.extend(
-            message
-                .pending_requests_from_user_ids
-                .iter()
-                .map(|req| req.user_id),
-        );
+        user_ids.extend(message.incoming_requests.iter().map(|req| req.user_id));
+        user_ids.extend(message.outgoing_requests.iter());
 
         let load_users = self.get_users(user_ids.into_iter().collect(), cx);
         cx.spawn(|this, mut cx| async move {
             load_users.await?;
 
-            let mut contacts = Vec::new();
+            // Users are fetched in parallel above and cached in call to get_users
+            // No need to paralellize here
+            let mut updated_contacts = Vec::new();
             for contact in message.contacts {
-                contacts.push(Arc::new(
+                updated_contacts.push(Arc::new(
                     Contact::from_proto(contact, &this, &mut cx).await?,
                 ));
             }
 
+            let mut incoming_requests = Vec::new();
+            for request in message.incoming_requests {
+                incoming_requests.push(
+                    this.update(&mut cx, |this, cx| this.fetch_user(request.user_id, cx))
+                        .await?,
+                );
+            }
+
+            let mut outgoing_requests = Vec::new();
+            for requested_user_id in message.outgoing_requests {
+                outgoing_requests.push(
+                    this.update(&mut cx, |this, cx| this.fetch_user(requested_user_id, cx))
+                        .await?,
+                );
+            }
+
+            let removed_contacts =
+                HashSet::<u64>::from_iter(message.remove_contacts.iter().copied());
+            let removed_incoming_requests =
+                HashSet::<u64>::from_iter(message.remove_incoming_requests.iter().copied());
+            let removed_outgoing_requests =
+                HashSet::<u64>::from_iter(message.remove_outgoing_requests.iter().copied());
+
             this.update(&mut cx, |this, cx| {
-                contacts.sort_by(|a, b| a.user.github_login.cmp(&b.user.github_login));
-                this.contacts = contacts;
+                this.contacts
+                    .retain(|contact| !removed_contacts.contains(&contact.user.id));
+                this.contacts.extend(updated_contacts);
+                this.contacts
+                    .sort_by(|a, b| a.user.github_login.cmp(&b.user.github_login));
                 cx.notify();
+
+                this.incoming_contact_requests
+                    .retain(|user| !removed_incoming_requests.contains(&user.id));
+                this.incoming_contact_requests.extend(incoming_requests);
+                this.incoming_contact_requests
+                    .sort_by(|a, b| a.github_login.cmp(&b.github_login));
+
+                this.outgoing_contact_requests
+                    .retain(|user| !removed_outgoing_requests.contains(&user.id));
+                this.outgoing_contact_requests.extend(outgoing_requests);
+                this.outgoing_contact_requests
+                    .sort_by(|a, b| a.github_login.cmp(&b.github_login));
             });
 
             Ok(())

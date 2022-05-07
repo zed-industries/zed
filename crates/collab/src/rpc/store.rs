@@ -1,4 +1,4 @@
-use crate::db::{ChannelId, UserId};
+use crate::db::{self, ChannelId, UserId};
 use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use rpc::{proto, ConnectionId};
@@ -58,6 +58,7 @@ pub type ReplicaId = u16;
 
 #[derive(Default)]
 pub struct RemovedConnectionState {
+    pub user_id: UserId,
     pub hosted_projects: HashMap<u64, Project>,
     pub guest_project_ids: HashMap<u64, Vec<ConnectionId>>,
     pub contact_ids: HashSet<UserId>,
@@ -151,6 +152,7 @@ impl Store {
         }
 
         let mut result = RemovedConnectionState::default();
+        result.user_id = connection.user_id;
         for project_id in connection.projects.clone() {
             if let Ok(project) = self.unregister_project(project_id, connection_id) {
                 result.contact_ids.extend(project.authorized_user_ids());
@@ -213,50 +215,114 @@ impl Store {
             .copied()
     }
 
-    pub fn contacts_for_user(&self, user_id: UserId) -> Vec<proto::Contact> {
-        let mut contacts = HashMap::default();
-        for project_id in self
-            .visible_projects_by_user_id
+    pub fn build_initial_contacts_update(&self, contacts: db::Contacts) -> proto::UpdateContacts {
+        let mut update = proto::UpdateContacts::default();
+        for user_id in contacts.current {
+            update.contacts.push(self.contact_for_user(user_id));
+        }
+
+        for request in contacts.incoming_requests {
+            update
+                .incoming_requests
+                .push(proto::IncomingContactRequest {
+                    user_id: request.requesting_user_id.to_proto(),
+                    should_notify: request.should_notify,
+                })
+        }
+
+        for requested_user_id in contacts.outgoing_requests {
+            update.outgoing_requests.push(requested_user_id.to_proto())
+        }
+
+        update
+    }
+
+    pub fn contact_for_user(&self, user_id: UserId) -> proto::Contact {
+        proto::Contact {
+            user_id: user_id.to_proto(),
+            projects: self.project_metadata_for_user(user_id),
+            online: self.connection_ids_for_user(user_id).next().is_some(),
+        }
+    }
+
+    pub fn project_metadata_for_user(&self, user_id: UserId) -> Vec<proto::ProjectMetadata> {
+        let project_ids = self
+            .connections_by_user_id
             .get(&user_id)
-            .unwrap_or(&HashSet::default())
-        {
-            let project = &self.projects[project_id];
+            .unwrap_or_else(|| &HashSet::default())
+            .iter()
+            .filter_map(|connection_id| self.connections.get(connection_id))
+            .flat_map(|connection| connection.projects.iter().copied());
 
-            let mut guests = HashSet::default();
-            if let Ok(share) = project.share() {
-                for guest_connection_id in share.guests.keys() {
-                    if let Ok(user_id) = self.user_id_for_connection(*guest_connection_id) {
-                        guests.insert(user_id.to_proto());
-                    }
-                }
-            }
-
-            if let Ok(host_user_id) = self.user_id_for_connection(project.host_connection_id) {
-                let mut worktree_root_names = project
-                    .worktrees
-                    .values()
-                    .filter(|worktree| worktree.visible)
-                    .map(|worktree| worktree.root_name.clone())
-                    .collect::<Vec<_>>();
-                worktree_root_names.sort_unstable();
-                contacts
-                    .entry(host_user_id)
-                    .or_insert_with(|| proto::Contact {
-                        user_id: host_user_id.to_proto(),
-                        projects: Vec::new(),
-                    })
-                    .projects
-                    .push(proto::ProjectMetadata {
-                        id: *project_id,
-                        worktree_root_names,
-                        is_shared: project.share.is_some(),
-                        guests: guests.into_iter().collect(),
-                    });
+        let mut metadata = Vec::new();
+        for project_id in project_ids {
+            if let Some(project) = self.projects.get(&project_id) {
+                metadata.push(proto::ProjectMetadata {
+                    id: project_id,
+                    is_shared: project.share.is_some(),
+                    worktree_root_names: project
+                        .worktrees
+                        .values()
+                        .map(|worktree| worktree.root_name)
+                        .collect(),
+                    guests: project
+                        .share
+                        .iter()
+                        .flat_map(|share| {
+                            share.guests.values().map(|(_, user_id)| user_id.to_proto())
+                        })
+                        .collect(),
+                });
             }
         }
 
-        contacts.into_values().collect()
+        metadata
     }
+
+    // pub fn contacts_for_user(&self, user_id: UserId) -> Vec<proto::Contact> {
+    //     let mut contacts = HashMap::default();
+    //     for project_id in self
+    //         .visible_projects_by_user_id
+    //         .get(&user_id)
+    //         .unwrap_or(&HashSet::default())
+    //     {
+    //         let project = &self.projects[project_id];
+
+    //         let mut guests = HashSet::default();
+    //         if let Ok(share) = project.share() {
+    //             for guest_connection_id in share.guests.keys() {
+    //                 if let Ok(user_id) = self.user_id_for_connection(*guest_connection_id) {
+    //                     guests.insert(user_id.to_proto());
+    //                 }
+    //             }
+    //         }
+
+    //         if let Ok(host_user_id) = self.user_id_for_connection(project.host_connection_id) {
+    //             let mut worktree_root_names = project
+    //                 .worktrees
+    //                 .values()
+    //                 .filter(|worktree| worktree.visible)
+    //                 .map(|worktree| worktree.root_name.clone())
+    //                 .collect::<Vec<_>>();
+    //             worktree_root_names.sort_unstable();
+    //             contacts
+    //                 .entry(host_user_id)
+    //                 .or_insert_with(|| proto::Contact {
+    //                     user_id: host_user_id.to_proto(),
+    //                     projects: Vec::new(),
+    //                 })
+    //                 .projects
+    //                 .push(proto::ProjectMetadata {
+    //                     id: *project_id,
+    //                     worktree_root_names,
+    //                     is_shared: project.share.is_some(),
+    //                     guests: guests.into_iter().collect(),
+    //                 });
+    //         }
+    //     }
+
+    //     contacts.into_values().collect()
+    // }
 
     pub fn register_project(
         &mut self,

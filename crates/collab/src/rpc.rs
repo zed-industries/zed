@@ -246,7 +246,7 @@ impl Server {
         user_id: UserId,
         mut send_connection_id: Option<mpsc::Sender<ConnectionId>>,
         executor: E,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = Result<()>> {
         let mut this = self.clone();
         let span = info_span!("handle connection", %user_id, %address);
         async move {
@@ -269,10 +269,15 @@ impl Server {
                 let _ = send_connection_id.send(connection_id).await;
             }
 
+            let contacts = this.app_state.db.get_contacts(user_id).await?;
+            
             {
-                let mut state = this.state_mut().await;
-                state.add_connection(connection_id, user_id);
-                this.update_contacts_for_users(&*state, &[user_id]);
+                let mut store = this.store_mut().await;
+                store.add_connection(connection_id, user_id);
+                let update_contacts = store.build_initial_contacts_update(contacts);
+                for connection_id in store.connection_ids_for_user(user_id) {
+                    this.peer.send(connection_id, update_contacts.clone());
+                }
             }
 
             let handle_io = handle_io.fuse();
@@ -322,14 +327,15 @@ impl Server {
             if let Err(error) = this.sign_out(connection_id).await {
                 tracing::error!(%error, "error signing out");
             }
+            
+            Ok(())
         }.instrument(span)
     }
 
     async fn sign_out(self: &mut Arc<Self>, connection_id: ConnectionId) -> Result<()> {
         self.peer.disconnect(connection_id);
-        let mut state = self.state_mut().await;
-        let removed_connection = state.remove_connection(connection_id)?;
-
+        let removed_connection = self.store_mut().await.remove_connection(connection_id)?;
+    
         for (project_id, project) in removed_connection.hosted_projects {
             if let Some(share) = project.share {
                 broadcast(
@@ -354,8 +360,22 @@ impl Server {
                 )
             });
         }
-
-        self.update_contacts_for_users(&*state, removed_connection.contact_ids.iter());
+                
+        let contacts_to_update = self.app_state.db.get_contacts(removed_connection.user_id).await?;
+        let mut update = proto::UpdateContacts::default();
+        update.contacts.push(proto::Contact {
+            user_id: removed_connection.user_id.to_proto(),
+            projects: Default::default(),
+            online: false,
+        });
+        
+        let store = self.store().await;
+        for user_id in contacts_to_update.current {
+            for connection_id in store.connection_ids_for_user(user_id) {
+                self.peer.send(connection_id, update.clone());
+            }
+        }        
+        
         Ok(())
     }
 
@@ -374,7 +394,7 @@ impl Server {
         response: Response<proto::RegisterProject>,
     ) -> Result<()> {
         let project_id = {
-            let mut state = self.state_mut().await;
+            let mut state = self.store_mut().await;
             let user_id = state.user_id_for_connection(request.sender_id)?;
             state.register_project(request.sender_id, user_id)
         };
@@ -386,7 +406,7 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::UnregisterProject>,
     ) -> Result<()> {
-        let mut state = self.state_mut().await;
+        let mut state = self.store_mut().await;
         let project = state.unregister_project(request.payload.project_id, request.sender_id)?;
         self.update_contacts_for_users(&*state, &project.authorized_user_ids());
         Ok(())
@@ -397,7 +417,7 @@ impl Server {
         request: TypedEnvelope<proto::ShareProject>,
         response: Response<proto::ShareProject>,
     ) -> Result<()> {
-        let mut state = self.state_mut().await;
+        let mut state = self.store_mut().await;
         let project = state.share_project(request.payload.project_id, request.sender_id)?;
         self.update_contacts_for_users(&mut *state, &project.authorized_user_ids);
         response.send(proto::Ack {})?;
@@ -409,7 +429,7 @@ impl Server {
         request: TypedEnvelope<proto::UnshareProject>,
     ) -> Result<()> {
         let project_id = request.payload.project_id;
-        let mut state = self.state_mut().await;
+        let mut state = self.store_mut().await;
         let project = state.unshare_project(project_id, request.sender_id)?;
         broadcast(request.sender_id, project.connection_ids, |conn_id| {
             self.peer
@@ -426,7 +446,7 @@ impl Server {
     ) -> Result<()> {
         let project_id = request.payload.project_id;
 
-        let state = &mut *self.state_mut().await;
+        let state = &mut *self.store_mut().await;
         let user_id = state.user_id_for_connection(request.sender_id)?;
         let (response_payload, connection_ids, contact_user_ids) = state
             .join_project(request.sender_id, user_id, project_id)
@@ -502,7 +522,7 @@ impl Server {
     ) -> Result<()> {
         let sender_id = request.sender_id;
         let project_id = request.payload.project_id;
-        let mut state = self.state_mut().await;
+        let mut state = self.store_mut().await;
         let worktree = state.leave_project(sender_id, project_id)?;
         broadcast(sender_id, worktree.connection_ids, |conn_id| {
             self.peer.send(
@@ -528,7 +548,7 @@ impl Server {
             contact_user_ids.insert(contact_user_id);
         }
 
-        let mut state = self.state_mut().await;
+        let mut state = self.store_mut().await;
         let host_user_id = state.user_id_for_connection(request.sender_id)?;
         contact_user_ids.insert(host_user_id);
 
@@ -562,7 +582,7 @@ impl Server {
     ) -> Result<()> {
         let project_id = request.payload.project_id;
         let worktree_id = request.payload.worktree_id;
-        let mut state = self.state_mut().await;
+        let mut state = self.store_mut().await;
         let (worktree, guest_connection_ids) =
             state.unregister_worktree(project_id, worktree_id, request.sender_id)?;
         broadcast(request.sender_id, guest_connection_ids, |conn_id| {
@@ -583,7 +603,7 @@ impl Server {
         request: TypedEnvelope<proto::UpdateWorktree>,
         response: Response<proto::UpdateWorktree>,
     ) -> Result<()> {
-        let connection_ids = self.state_mut().await.update_worktree(
+        let connection_ids = self.store_mut().await.update_worktree(
             request.sender_id,
             request.payload.project_id,
             request.payload.worktree_id,
@@ -609,7 +629,7 @@ impl Server {
             .summary
             .clone()
             .ok_or_else(|| anyhow!("invalid summary"))?;
-        let receiver_ids = self.state_mut().await.update_diagnostic_summary(
+        let receiver_ids = self.store_mut().await.update_diagnostic_summary(
             request.payload.project_id,
             request.payload.worktree_id,
             request.sender_id,
@@ -627,7 +647,7 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::StartLanguageServer>,
     ) -> Result<()> {
-        let receiver_ids = self.state_mut().await.start_language_server(
+        let receiver_ids = self.store_mut().await.start_language_server(
             request.payload.project_id,
             request.sender_id,
             request
@@ -648,7 +668,7 @@ impl Server {
         request: TypedEnvelope<proto::UpdateLanguageServer>,
     ) -> Result<()> {
         let receiver_ids = self
-            .state()
+            .store()
             .await
             .project_connection_ids(request.payload.project_id, request.sender_id)?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
@@ -667,7 +687,7 @@ impl Server {
         T: EntityMessage + RequestMessage,
     {
         let host_connection_id = self
-            .state()
+            .store()
             .await
             .read_project(request.payload.remote_entity_id(), request.sender_id)?
             .host_connection_id;
@@ -686,7 +706,7 @@ impl Server {
         response: Response<proto::SaveBuffer>,
     ) -> Result<()> {
         let host = self
-            .state()
+            .store()
             .await
             .read_project(request.payload.project_id, request.sender_id)?
             .host_connection_id;
@@ -696,7 +716,7 @@ impl Server {
             .await?;
 
         let mut guests = self
-            .state()
+            .store()
             .await
             .read_project(request.payload.project_id, request.sender_id)?
             .connection_ids();
@@ -715,7 +735,7 @@ impl Server {
         response: Response<proto::UpdateBuffer>,
     ) -> Result<()> {
         let receiver_ids = self
-            .state()
+            .store()
             .await
             .project_connection_ids(request.payload.project_id, request.sender_id)?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
@@ -731,7 +751,7 @@ impl Server {
         request: TypedEnvelope<proto::UpdateBufferFile>,
     ) -> Result<()> {
         let receiver_ids = self
-            .state()
+            .store()
             .await
             .project_connection_ids(request.payload.project_id, request.sender_id)?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
@@ -746,7 +766,7 @@ impl Server {
         request: TypedEnvelope<proto::BufferReloaded>,
     ) -> Result<()> {
         let receiver_ids = self
-            .state()
+            .store()
             .await
             .project_connection_ids(request.payload.project_id, request.sender_id)?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
@@ -761,7 +781,7 @@ impl Server {
         request: TypedEnvelope<proto::BufferSaved>,
     ) -> Result<()> {
         let receiver_ids = self
-            .state()
+            .store()
             .await
             .project_connection_ids(request.payload.project_id, request.sender_id)?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
@@ -779,7 +799,7 @@ impl Server {
         let leader_id = ConnectionId(request.payload.leader_id);
         let follower_id = request.sender_id;
         if !self
-            .state()
+            .store()
             .await
             .project_connection_ids(request.payload.project_id, follower_id)?
             .contains(&leader_id)
@@ -800,7 +820,7 @@ impl Server {
     async fn unfollow(self: Arc<Self>, request: TypedEnvelope<proto::Unfollow>) -> Result<()> {
         let leader_id = ConnectionId(request.payload.leader_id);
         if !self
-            .state()
+            .store()
             .await
             .project_connection_ids(request.payload.project_id, request.sender_id)?
             .contains(&leader_id)
@@ -817,7 +837,7 @@ impl Server {
         request: TypedEnvelope<proto::UpdateFollowers>,
     ) -> Result<()> {
         let connection_ids = self
-            .state()
+            .store()
             .await
             .project_connection_ids(request.payload.project_id, request.sender_id)?;
         let leader_id = request
@@ -845,7 +865,7 @@ impl Server {
         response: Response<proto::GetChannels>,
     ) -> Result<()> {
         let user_id = self
-            .state()
+            .store()
             .await
             .user_id_for_connection(request.sender_id)?;
         let channels = self.app_state.db.get_accessible_channels(user_id).await?;
@@ -958,28 +978,28 @@ impl Server {
         Ok(())
     }
 
-    #[instrument(skip(self, state, user_ids))]
-    fn update_contacts_for_users<'a>(
-        self: &Arc<Self>,
-        state: &Store,
-        user_ids: impl IntoIterator<Item = &'a UserId>,
-    ) {
-        for user_id in user_ids {
-            let contacts = state.contacts_for_user(*user_id);
-            for connection_id in state.connection_ids_for_user(*user_id) {
-                self.peer
-                    .send(
-                        connection_id,
-                        proto::UpdateContacts {
-                            contacts: contacts.clone(),
-                            pending_requests_from_user_ids: Default::default(),
-                            pending_requests_to_user_ids: Default::default(),
-                        },
-                    )
-                    .trace_err();
-            }
-        }
-    }
+    // #[instrument(skip(self, state, user_ids))]
+    // fn update_contacts_for_users<'a>(
+    //     self: &Arc<Self>,
+    //     state: &Store,
+    //     user_ids: impl IntoIterator<Item = &'a UserId>,
+    // ) {
+    //     for user_id in user_ids {
+    //         let contacts = state.contacts_for_user(*user_id);
+    //         for connection_id in state.connection_ids_for_user(*user_id) {
+    //             self.peer
+    //                 .send(
+    //                     connection_id,
+    //                     proto::UpdateContacts {
+    //                         contacts: contacts.clone(),
+    //                         pending_requests_from_user_ids: Default::default(),
+    //                         pending_requests_to_user_ids: Default::default(),
+    //                     },
+    //                 )
+    //                 .trace_err();
+    //         }
+    //     }
+    // }
 
     async fn join_channel(
         self: Arc<Self>,
@@ -987,7 +1007,7 @@ impl Server {
         response: Response<proto::JoinChannel>,
     ) -> Result<()> {
         let user_id = self
-            .state()
+            .store()
             .await
             .user_id_for_connection(request.sender_id)?;
         let channel_id = ChannelId::from_proto(request.payload.channel_id);
@@ -1000,7 +1020,7 @@ impl Server {
             Err(anyhow!("access denied"))?;
         }
 
-        self.state_mut()
+        self.store_mut()
             .await
             .join_channel(request.sender_id, channel_id);
         let messages = self
@@ -1029,7 +1049,7 @@ impl Server {
         request: TypedEnvelope<proto::LeaveChannel>,
     ) -> Result<()> {
         let user_id = self
-            .state()
+            .store()
             .await
             .user_id_for_connection(request.sender_id)?;
         let channel_id = ChannelId::from_proto(request.payload.channel_id);
@@ -1042,7 +1062,7 @@ impl Server {
             Err(anyhow!("access denied"))?;
         }
 
-        self.state_mut()
+        self.store_mut()
             .await
             .leave_channel(request.sender_id, channel_id);
 
@@ -1058,7 +1078,7 @@ impl Server {
         let user_id;
         let connection_ids;
         {
-            let state = self.state().await;
+            let state = self.store().await;
             user_id = state.user_id_for_connection(request.sender_id)?;
             connection_ids = state.channel_connection_ids(channel_id)?;
         }
@@ -1112,7 +1132,7 @@ impl Server {
         response: Response<proto::GetChannelMessages>,
     ) -> Result<()> {
         let user_id = self
-            .state()
+            .store()
             .await
             .user_id_for_connection(request.sender_id)?;
         let channel_id = ChannelId::from_proto(request.payload.channel_id);
@@ -1150,7 +1170,7 @@ impl Server {
         Ok(())
     }
 
-    async fn state<'a>(self: &'a Arc<Self>) -> StoreReadGuard<'a> {
+    async fn store<'a>(self: &'a Arc<Self>) -> StoreReadGuard<'a> {
         #[cfg(test)]
         tokio::task::yield_now().await;
         let guard = self.store.read().await;
@@ -1162,7 +1182,7 @@ impl Server {
         }
     }
 
-    async fn state_mut<'a>(self: &'a Arc<Self>) -> StoreWriteGuard<'a> {
+    async fn store_mut<'a>(self: &'a Arc<Self>) -> StoreWriteGuard<'a> {
         #[cfg(test)]
         tokio::task::yield_now().await;
         let guard = self.store.write().await;

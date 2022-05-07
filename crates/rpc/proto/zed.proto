@@ -591,13 +591,16 @@ message GetChannelMessagesResponse {
 
 message UpdateContacts {
     repeated Contact contacts = 1;
-    repeated IncomingContactRequest pending_requests_from_user_ids = 2;
-    repeated uint64 pending_requests_to_user_ids = 3;
+    repeated uint64 remove_contacts = 2;
+    repeated IncomingContactRequest incoming_requests = 3;
+    repeated uint64 remove_incoming_requests = 4;
+    repeated uint64 outgoing_requests = 5;
+    repeated uint64 remove_outgoing_requests = 6;
 }
 
 message IncomingContactRequest {
     uint64 user_id = 1;
-    bool show_notification = 2;
+    bool should_notify = 2;
 }
 
 message UpdateDiagnostics {
@@ -868,6 +871,7 @@ message ChannelMessage {
 message Contact {
     uint64 user_id = 1;
     repeated ProjectMetadata projects = 2;
+    bool online = 3;
 }
 
 message ProjectMetadata {
