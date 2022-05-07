@@ -550,11 +550,11 @@ message UsersResponse {
 }
 
 message RequestContact {
-    uint64 to_user_id = 1;
+    uint64 responder_id = 1;
 }
 
 message RespondToContactRequest {
-    uint64 requesting_user_id = 1;
+    uint64 requester_id = 1;
     ContactRequestResponse response = 2;
 }
 
@@ -599,7 +599,7 @@ message UpdateContacts {
 }
 
 message IncomingContactRequest {
-    uint64 user_id = 1;
+    uint64 requester_id = 1;
     bool should_notify = 2;
 }
 

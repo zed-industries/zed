@@ -276,7 +276,7 @@ impl Server {
                 store.add_connection(connection_id, user_id);
                 let update_contacts = store.build_initial_contacts_update(contacts);
                 for connection_id in store.connection_ids_for_user(user_id) {
-                    this.peer.send(connection_id, update_contacts.clone());
+                    this.peer.send(connection_id, update_contacts.clone())?;
                 }
             }
 
@@ -953,11 +953,30 @@ impl Server {
             .read()
             .await
             .user_id_for_connection(request.sender_id)?;
-        let responder_id = UserId::from_proto(request.payload.to_user_id);
+        let responder_id = UserId::from_proto(request.payload.responder_id);
         self.app_state
             .db
             .send_contact_request(requester_id, responder_id)
             .await?;
+        
+
+        // Update outgoing contact requests of requester
+        let mut update = proto::UpdateContacts::default();
+        update.outgoing_requests.push(responder_id.to_proto());
+        for connection_id in self.store().await.connection_ids_for_user(requester_id) {
+            self.peer.send(connection_id, update.clone())?;
+        }
+    
+        // Update incoming contact requests of responder
+        let mut update = proto::UpdateContacts::default();
+        update.incoming_requests.push(proto::IncomingContactRequest {
+            requester_id: requester_id.to_proto(),
+            should_notify: true,
+        });
+        for connection_id in self.store().await.connection_ids_for_user(responder_id) {
+            self.peer.send(connection_id, update.clone())?;
+        }
+        
         response.send(proto::Ack {})?;
         Ok(())
     }
@@ -972,15 +991,45 @@ impl Server {
             .read()
             .await
             .user_id_for_connection(request.sender_id)?;
-        let requester_id = UserId::from_proto(request.payload.requesting_user_id);
+        let requester_id = UserId::from_proto(request.payload.requester_id);
+        let accept = request.payload.response == proto::ContactRequestResponse::Accept as i32;
         self.app_state
             .db
             .respond_to_contact_request(
                 responder_id,
                 requester_id,
-                request.payload.response == proto::ContactRequestResponse::Accept as i32,
+                accept,
             )
             .await?;
+            
+        if accept {
+            // Update responder with new contact
+            let mut update = proto::UpdateContacts::default();
+            update.contacts.push(proto::Contact {
+                user_id: requester_id.to_proto(),
+                projects: Default::default(), // TODO
+                online: true, // TODO
+            });
+            update.remove_incoming_requests.push(requester_id.to_proto());
+            for connection_id in self.store.read().await.connection_ids_for_user(responder_id) {
+                self.peer.send(connection_id, update.clone())?;
+            }
+            
+            // Update requester with new contact
+            let mut update = proto::UpdateContacts::default();
+            update.contacts.push(proto::Contact {
+                user_id: responder_id.to_proto(),
+                projects: Default::default(), // TODO
+                online: true, // TODO
+            });
+            update.remove_outgoing_requests.push(responder_id.to_proto());
+            for connection_id in self.store.read().await.connection_ids_for_user(requester_id) {
+                self.peer.send(connection_id, update.clone())?;
+            }
+        } else {
+            todo!()
+        }
+            
         response.send(proto::Ack {})?;
         Ok(())
     }
@@ -4987,14 +5036,16 @@ mod tests {
         }
     }
 
-    #[gpui::test(iterations = 10)]
-    async fn test_contacts_requests(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    #[gpui::test(iterations = 1)] // TODO: More iterations
+    async fn test_contacts_requests(executor: Arc<Deterministic>, cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 3 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+
+        // User A requests that user B become their contact
 
         client_a
             .user_store
@@ -5003,15 +5054,55 @@ mod tests {
             })
             .await
             .unwrap();
+        
+        executor.run_until_parked();
+        
+        // Both parties see the pending request appear. User B accepts the request.
+        
+        client_a.user_store.read_with(cx_a, |store, _| {
+            let contacts = store
+                .outgoing_contact_requests()
+                .iter()
+                .map(|contact| contact.github_login.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(contacts, &["user_b"]);
+        });
+                
+        client_b.user_store.read_with(cx_b, |store, _| {
+            let contacts = store
+                .incoming_contact_requests()
+                .iter()
+                .map(|contact| contact.github_login.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(contacts, &["user_a"]);
+            
+            store.respond_to_contact_request(client_a.user_id().unwrap(), true)
+        }).await.unwrap();
 
+        executor.run_until_parked();
+
+        // User B sees user A as their contact now, and the incoming request from them is removed
+        client_b.user_store.read_with(cx_b, |store, _| {
+            let contacts = store
+                .contacts()
+                .iter()
+                .map(|contact| contact.user.github_login.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(contacts, &["user_a"]);
+            assert!(store.incoming_contact_requests().is_empty());
+        });
+
+        // User A sees user B as their contact now, and the outgoing request to them is removed
         client_a.user_store.read_with(cx_a, |store, _| {
             let contacts = store
                 .contacts()
                 .iter()
                 .map(|contact| contact.user.github_login.clone())
                 .collect::<Vec<_>>();
-            assert_eq!(contacts, &["user_b"])
+            assert_eq!(contacts, &["user_b"]);
+            assert!(store.outgoing_contact_requests().is_empty());
         });
+        
     }
 
     #[gpui::test(iterations = 10)]

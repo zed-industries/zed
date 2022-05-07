@@ -125,7 +125,7 @@ impl UserStore {
             user_ids.insert(contact.user_id);
             user_ids.extend(contact.projects.iter().flat_map(|w| &w.guests).copied());
         }
-        user_ids.extend(message.incoming_requests.iter().map(|req| req.user_id));
+        user_ids.extend(message.incoming_requests.iter().map(|req| req.requester_id));
         user_ids.extend(message.outgoing_requests.iter());
 
         let load_users = self.get_users(user_ids.into_iter().collect(), cx);
@@ -144,8 +144,10 @@ impl UserStore {
             let mut incoming_requests = Vec::new();
             for request in message.incoming_requests {
                 incoming_requests.push(
-                    this.update(&mut cx, |this, cx| this.fetch_user(request.user_id, cx))
-                        .await?,
+                    this.update(&mut cx, |this, cx| {
+                        this.fetch_user(request.requester_id, cx)
+                    })
+                    .await?,
                 );
             }
 
@@ -199,12 +201,20 @@ impl UserStore {
             .is_ok()
     }
 
-    pub fn request_contact(&self, to_user_id: u64) -> impl Future<Output = Result<()>> {
+    pub fn incoming_contact_requests(&self) -> &[Arc<User>] {
+        &self.incoming_contact_requests
+    }
+
+    pub fn outgoing_contact_requests(&self) -> &[Arc<User>] {
+        &self.outgoing_contact_requests
+    }
+
+    pub fn request_contact(&self, responder_id: u64) -> impl Future<Output = Result<()>> {
         let client = self.client.upgrade();
         async move {
             client
                 .ok_or_else(|| anyhow!("not logged in"))?
-                .request(proto::RequestContact { to_user_id })
+                .request(proto::RequestContact { responder_id })
                 .await?;
             Ok(())
         }
@@ -212,7 +222,7 @@ impl UserStore {
 
     pub fn respond_to_contact_request(
         &self,
-        from_user_id: u64,
+        requester_id: u64,
         accept: bool,
     ) -> impl Future<Output = Result<()>> {
         let client = self.client.upgrade();
@@ -220,7 +230,7 @@ impl UserStore {
             client
                 .ok_or_else(|| anyhow!("not logged in"))?
                 .request(proto::RespondToContactRequest {
-                    requesting_user_id: from_user_id,
+                    requester_id,
                     response: if accept {
                         proto::ContactRequestResponse::Accept
                     } else {

@@ -225,7 +225,7 @@ impl Store {
             update
                 .incoming_requests
                 .push(proto::IncomingContactRequest {
-                    user_id: request.requesting_user_id.to_proto(),
+                    requester_id: request.requester_id.to_proto(),
                     should_notify: request.should_notify,
                 })
         }

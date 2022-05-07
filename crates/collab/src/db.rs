@@ -211,7 +211,7 @@ impl Db for PostgresDb {
                     outgoing_requests.push(user_id_b);
                 } else {
                     incoming_requests.push(IncomingContactRequest {
-                        requesting_user_id: user_id_b,
+                        requester_id: user_id_b,
                         should_notify,
                     });
                 }
@@ -220,7 +220,7 @@ impl Db for PostgresDb {
                     current.push(user_id_a);
                 } else if a_to_b {
                     incoming_requests.push(IncomingContactRequest {
-                        requesting_user_id: user_id_a,
+                        requester_id: user_id_a,
                         should_notify,
                     });
                 } else {
@@ -675,7 +675,7 @@ pub struct Contacts {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IncomingContactRequest {
-    pub requesting_user_id: UserId,
+    pub requester_id: UserId,
     pub should_notify: bool,
 }
 
@@ -935,7 +935,7 @@ pub mod tests {
                     current: vec![],
                     outgoing_requests: vec![],
                     incoming_requests: vec![IncomingContactRequest {
-                        requesting_user_id: user_1,
+                        requester_id: user_1,
                         should_notify: true
                     }],
                 },
@@ -953,7 +953,7 @@ pub mod tests {
                     current: vec![],
                     outgoing_requests: vec![],
                     incoming_requests: vec![IncomingContactRequest {
-                        requesting_user_id: user_1,
+                        requester_id: user_1,
                         should_notify: false
                     }],
                 },
@@ -1195,7 +1195,7 @@ pub mod tests {
                         current.push(contact.requester_id);
                     } else {
                         incoming_requests.push(IncomingContactRequest {
-                            requesting_user_id: contact.requester_id,
+                            requester_id: contact.requester_id,
                             should_notify: contact.should_notify,
                         });
                     }
