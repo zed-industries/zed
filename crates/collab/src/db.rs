@@ -601,7 +601,7 @@ impl Db for PostgresDb {
 macro_rules! id_type {
     ($name:ident) => {
         #[derive(
-            Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, sqlx::Type, Serialize,
+            Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, sqlx::Type, Serialize,
         )]
         #[sqlx(transparent)]
         #[serde(transparent)]
@@ -1181,20 +1181,20 @@ pub mod tests {
         async fn get_contacts(&self, id: UserId) -> Result<Contacts> {
             self.background.simulate_random_delay().await;
             let mut current = Vec::new();
-            let mut requests_sent = Vec::new();
-            let mut requests_received = Vec::new();
+            let mut outgoing_requests = Vec::new();
+            let mut incoming_requests = Vec::new();
             for contact in self.contacts.lock().iter() {
                 if contact.requester_id == id {
                     if contact.accepted {
                         current.push(contact.responder_id);
                     } else {
-                        requests_sent.push(contact.responder_id);
+                        outgoing_requests.push(contact.responder_id);
                     }
                 } else if contact.responder_id == id {
                     if contact.accepted {
                         current.push(contact.requester_id);
                     } else {
-                        requests_received.push(IncomingContactRequest {
+                        incoming_requests.push(IncomingContactRequest {
                             requesting_user_id: contact.requester_id,
                             should_notify: contact.should_notify,
                         });

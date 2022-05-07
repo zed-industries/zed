@@ -246,13 +246,13 @@ impl Store {
     }
 
     pub fn project_metadata_for_user(&self, user_id: UserId) -> Vec<proto::ProjectMetadata> {
-        let project_ids = self
-            .connections_by_user_id
-            .get(&user_id)
-            .unwrap_or_else(|| &HashSet::default())
-            .iter()
-            .filter_map(|connection_id| self.connections.get(connection_id))
-            .flat_map(|connection| connection.projects.iter().copied());
+        let connection_ids = self.connections_by_user_id.get(&user_id);
+        let project_ids = connection_ids.iter().flat_map(|connection_ids| {
+            connection_ids
+                .iter()
+                .filter_map(|connection_id| self.connections.get(connection_id))
+                .flat_map(|connection| connection.projects.iter().copied())
+        });
 
         let mut metadata = Vec::new();
         for project_id in project_ids {
@@ -263,7 +263,7 @@ impl Store {
                     worktree_root_names: project
                         .worktrees
                         .values()
-                        .map(|worktree| worktree.root_name)
+                        .map(|worktree| worktree.root_name.clone())
                         .collect(),
                     guests: project
                         .share
