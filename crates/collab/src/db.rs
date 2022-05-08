@@ -1097,6 +1097,7 @@ pub mod tests {
         contacts: Mutex<Vec<FakeContact>>,
     }
 
+    #[derive(Debug)]
     struct FakeContact {
         requester_id: UserId,
         responder_id: UserId,
@@ -1166,8 +1167,13 @@ pub mod tests {
             Ok(ids.iter().filter_map(|id| users.get(id).cloned()).collect())
         }
 
-        async fn get_user_by_github_login(&self, _github_login: &str) -> Result<Option<User>> {
-            unimplemented!()
+        async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
+            Ok(self
+                .users
+                .lock()
+                .values()
+                .find(|user| user.github_login == github_login)
+                .cloned())
         }
 
         async fn set_user_is_admin(&self, _id: UserId, _is_admin: bool) -> Result<()> {
@@ -1183,6 +1189,7 @@ pub mod tests {
             let mut current = Vec::new();
             let mut outgoing_requests = Vec::new();
             let mut incoming_requests = Vec::new();
+
             for contact in self.contacts.lock().iter() {
                 if contact.requester_id == id {
                     if contact.accepted {
@@ -1201,6 +1208,7 @@ pub mod tests {
                     }
                 }
             }
+
             Ok(Contacts {
                 current,
                 outgoing_requests,

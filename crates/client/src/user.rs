@@ -1,5 +1,5 @@
 use super::{http::HttpClient, proto, Client, Status, TypedEnvelope};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use futures::{future, AsyncReadExt, Future};
 use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{prelude::Stream, sink::Sink, watch};
@@ -120,6 +120,7 @@ impl UserStore {
         message: proto::UpdateContacts,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
+        log::info!("update contacts on client {:?}", message);
         let mut user_ids = HashSet::new();
         for contact in &message.contacts {
             user_ids.insert(contact.user_id);
@@ -167,24 +168,51 @@ impl UserStore {
                 HashSet::<u64>::from_iter(message.remove_outgoing_requests.iter().copied());
 
             this.update(&mut cx, |this, cx| {
+                // Remove contacts
                 this.contacts
                     .retain(|contact| !removed_contacts.contains(&contact.user.id));
-                this.contacts.extend(updated_contacts);
-                this.contacts
-                    .sort_by(|a, b| a.user.github_login.cmp(&b.user.github_login));
+                // Update existing contacts and insert new ones
+                for updated_contact in updated_contacts {
+                    match this
+                        .contacts
+                        .binary_search_by_key(&&updated_contact.user.github_login, |contact| {
+                            &contact.user.github_login
+                        }) {
+                        Ok(ix) => this.contacts[ix] = updated_contact,
+                        Err(ix) => this.contacts.insert(ix, updated_contact),
+                    }
+                }
                 cx.notify();
 
+                // Remove incoming contact requests
                 this.incoming_contact_requests
                     .retain(|user| !removed_incoming_requests.contains(&user.id));
-                this.incoming_contact_requests.extend(incoming_requests);
-                this.incoming_contact_requests
-                    .sort_by(|a, b| a.github_login.cmp(&b.github_login));
+                // Update existing incoming requests and insert new ones
+                for request in incoming_requests {
+                    match this
+                        .incoming_contact_requests
+                        .binary_search_by_key(&&request.github_login, |contact| {
+                            &contact.github_login
+                        }) {
+                        Ok(ix) => this.incoming_contact_requests[ix] = request,
+                        Err(ix) => this.incoming_contact_requests.insert(ix, request),
+                    }
+                }
 
+                // Remove outgoing contact requests
                 this.outgoing_contact_requests
                     .retain(|user| !removed_outgoing_requests.contains(&user.id));
-                this.outgoing_contact_requests.extend(outgoing_requests);
-                this.outgoing_contact_requests
-                    .sort_by(|a, b| a.github_login.cmp(&b.github_login));
+                // Update existing incoming requests and insert new ones
+                for request in outgoing_requests {
+                    match this
+                        .outgoing_contact_requests
+                        .binary_search_by_key(&&request.github_login, |contact| {
+                            &contact.github_login
+                        }) {
+                        Ok(ix) => this.outgoing_contact_requests[ix] = request,
+                        Err(ix) => this.outgoing_contact_requests.insert(ix, request),
+                    }
+                }
             });
 
             Ok(())
@@ -242,6 +270,13 @@ impl UserStore {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn clear_contacts(&mut self) {
+        self.contacts.clear();
+        self.incoming_contact_requests.clear();
+        self.outgoing_contact_requests.clear();
+    }
+
     pub fn get_users(
         &mut self,
         mut user_ids: Vec<u64>,
@@ -297,7 +332,7 @@ impl UserStore {
         let http = self.http.clone();
         cx.spawn_weak(|this, mut cx| async move {
             if let Some(rpc) = client.upgrade() {
-                let response = rpc.request(request).await?;
+                let response = rpc.request(request).await.context("error loading users")?;
                 let users = future::join_all(
                     response
                         .users

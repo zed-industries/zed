@@ -173,7 +173,10 @@ impl Peer {
                                     Err(anyhow!("timed out writing message"))?;
                                 }
                             }
-                            None => return Ok(()),
+                            None => {
+                                log::info!("outgoing channel closed");
+                                return Ok(())
+                            },
                         },
                         incoming = read_message => {
                             let incoming = incoming.context("received invalid RPC message")?;
@@ -181,7 +184,10 @@ impl Peer {
                             if let proto::Message::Envelope(incoming) = incoming {
                                 match incoming_tx.send(incoming).timeout(RECEIVE_TIMEOUT).await {
                                     Some(Ok(_)) => {},
-                                    Some(Err(_)) => return Ok(()),
+                                    Some(Err(_)) => {
+                                        log::info!("incoming channel closed");
+                                        return Ok(())
+                                    },
                                     None => Err(anyhow!("timed out processing incoming message"))?,
                                 }
                             }

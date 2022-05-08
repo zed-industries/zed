@@ -117,7 +117,7 @@ impl EstablishConnectionError {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Status {
     SignedOut,
     UpgradeRequired,
@@ -293,6 +293,7 @@ impl Client {
     }
 
     fn set_status(self: &Arc<Self>, status: Status, cx: &AsyncAppContext) {
+        log::info!("set status on client {}: {:?}", self.id, status);
         let mut state = self.state.write();
         *state.status.0.borrow_mut() = status;
 
@@ -629,10 +630,13 @@ impl Client {
 
     async fn set_connection(self: &Arc<Self>, conn: Connection, cx: &AsyncAppContext) {
         let executor = cx.background();
+        log::info!("add connection to peer");
         let (connection_id, handle_io, mut incoming) = self
             .peer
             .add_connection(conn, move |duration| executor.timer(duration))
             .await;
+        log::info!("set status to connected {}", connection_id);
+        self.set_status(Status::Connected { connection_id }, cx);
         cx.foreground()
             .spawn({
                 let cx = cx.clone();
@@ -730,15 +734,17 @@ impl Client {
             })
             .detach();
 
-        self.set_status(Status::Connected { connection_id }, cx);
-
         let handle_io = cx.background().spawn(handle_io);
         let this = self.clone();
         let cx = cx.clone();
         cx.foreground()
             .spawn(async move {
                 match handle_io.await {
-                    Ok(()) => this.set_status(Status::SignedOut, &cx),
+                    Ok(()) => {
+                        if *this.status().borrow() == (Status::Connected { connection_id }) {
+                            this.set_status(Status::SignedOut, &cx);
+                        }
+                    }
                     Err(err) => {
                         log::error!("connection error: {:?}", err);
                         this.set_status(Status::ConnectionLost, &cx);

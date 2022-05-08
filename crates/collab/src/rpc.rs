@@ -274,10 +274,7 @@ impl Server {
             {
                 let mut store = this.store_mut().await;
                 store.add_connection(connection_id, user_id);
-                let update_contacts = store.build_initial_contacts_update(contacts);
-                for connection_id in store.connection_ids_for_user(user_id) {
-                    this.peer.send(connection_id, update_contacts.clone())?;
-                }
+                this.peer.send(connection_id, store.build_initial_contacts_update(contacts))?;
             }
 
             let handle_io = handle_io.fuse();
@@ -959,7 +956,6 @@ impl Server {
             .send_contact_request(requester_id, responder_id)
             .await?;
         
-
         // Update outgoing contact requests of requester
         let mut update = proto::UpdateContacts::default();
         update.outgoing_requests.push(responder_id.to_proto());
@@ -5035,18 +5031,21 @@ mod tests {
                 .collect()
         }
     }
-
-    #[gpui::test(iterations = 1)] // TODO: More iterations
-    async fn test_contacts_requests(executor: Arc<Deterministic>, cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    
+    #[gpui::test(iterations = 10)]
+    async fn test_contact_requests(executor: Arc<Deterministic>, cx_a: &mut TestAppContext, cx_a2: &mut TestAppContext, cx_b: &mut TestAppContext, cx_b2: &mut TestAppContext) {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 3 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
+        let client_a2 = server.create_client(cx_a2, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        let client_b2 = server.create_client(cx_b2, "user_b").await;
+        
+        assert_eq!(client_a.user_id().unwrap(), client_a2.user_id().unwrap());
 
         // User A requests that user B become their contact
-
         client_a
             .user_store
             .read_with(cx_a, |store, _| {
@@ -5054,55 +5053,56 @@ mod tests {
             })
             .await
             .unwrap();
-        
         executor.run_until_parked();
         
-        // Both parties see the pending request appear. User B accepts the request.
+        // Both users see the pending request appear in all their clients.
+        assert_eq!(client_a.summarize_contacts(&cx_a).outgoing_requests, &["user_b"]);
+        assert_eq!(client_a2.summarize_contacts(&cx_a2).outgoing_requests, &["user_b"]);
+        assert_eq!(client_b.summarize_contacts(&cx_b).incoming_requests, &["user_a"]);
+        assert_eq!(client_b2.summarize_contacts(&cx_b2).incoming_requests, &["user_a"]);
         
-        client_a.user_store.read_with(cx_a, |store, _| {
-            let contacts = store
-                .outgoing_contact_requests()
-                .iter()
-                .map(|contact| contact.github_login.clone())
-                .collect::<Vec<_>>();
-            assert_eq!(contacts, &["user_b"]);
-        });
-                
+        // Contact requests are present upon connecting (tested here via disconnect/reconnect)
+        disconnect_and_reconnect(&client_a, cx_a).await;
+        disconnect_and_reconnect(&client_b, cx_b).await;
+        executor.run_until_parked();
+        assert_eq!(client_a.summarize_contacts(&cx_a).outgoing_requests, &["user_b"]);
+        assert_eq!(client_b.summarize_contacts(&cx_b).incoming_requests, &["user_a"]);
+        
+        // User B accepts the request.
         client_b.user_store.read_with(cx_b, |store, _| {
-            let contacts = store
-                .incoming_contact_requests()
-                .iter()
-                .map(|contact| contact.github_login.clone())
-                .collect::<Vec<_>>();
-            assert_eq!(contacts, &["user_a"]);
-            
             store.respond_to_contact_request(client_a.user_id().unwrap(), true)
         }).await.unwrap();
 
         executor.run_until_parked();
 
-        // User B sees user A as their contact now, and the incoming request from them is removed
-        client_b.user_store.read_with(cx_b, |store, _| {
-            let contacts = store
-                .contacts()
-                .iter()
-                .map(|contact| contact.user.github_login.clone())
-                .collect::<Vec<_>>();
-            assert_eq!(contacts, &["user_a"]);
-            assert!(store.incoming_contact_requests().is_empty());
-        });
-
-        // User A sees user B as their contact now, and the outgoing request to them is removed
-        client_a.user_store.read_with(cx_a, |store, _| {
-            let contacts = store
-                .contacts()
-                .iter()
-                .map(|contact| contact.user.github_login.clone())
-                .collect::<Vec<_>>();
-            assert_eq!(contacts, &["user_b"]);
-            assert!(store.outgoing_contact_requests().is_empty());
-        });
+        // User B sees user A as their contact now in all client, and the incoming request from them is removed.
+        let contacts_b = client_b.summarize_contacts(&cx_b);
+        assert_eq!(contacts_b.current, &["user_a"]);
+        assert!(contacts_b.incoming_requests.is_empty());
+        let contacts_b2 = client_b2.summarize_contacts(&cx_b2);
+        assert_eq!(contacts_b2.current, &["user_a"]);
+        assert!(contacts_b2.incoming_requests.is_empty());
         
+        // User A sees user B as their contact now in all clients, and the outgoing request to them is removed.
+        let contacts_a = client_a.summarize_contacts(&cx_a);
+        assert_eq!(contacts_a.current, &["user_b"]);
+        assert!(contacts_a.outgoing_requests.is_empty());
+        let contacts_a2 = client_a2.summarize_contacts(&cx_a2);
+        assert_eq!(contacts_a2.current, &["user_b"]);
+        assert!(contacts_a2.outgoing_requests.is_empty());
+
+        // Contacts are present upon connecting (tested here via disconnect/reconnect)
+        disconnect_and_reconnect(&client_a, cx_a).await;
+        disconnect_and_reconnect(&client_b, cx_b).await;
+        executor.run_until_parked();
+        assert_eq!(client_a.summarize_contacts(&cx_a).current, &["user_b"]);
+        // assert_eq!(client_b.summarize_contacts(&cx_b).current, &["user_a"]);
+        
+        async fn disconnect_and_reconnect(client: &TestClient, cx: &mut TestAppContext) {
+            client.disconnect(&cx.to_async()).unwrap();
+            client.clear_contacts(cx);
+            client.authenticate_and_connect(false, &cx.to_async()).await.unwrap();
+        }
     }
 
     #[gpui::test(iterations = 10)]
@@ -6143,7 +6143,11 @@ mod tests {
             });
 
             let http = FakeHttpClient::with_404_response();
-            let user_id = self.app_state.db.create_user(name, false).await.unwrap();
+            let user_id = if let Ok(Some(user)) = self.app_state.db.get_user_by_github_login(name).await {
+                user.id
+            } else {
+                self.app_state.db.create_user(name, false).await.unwrap()
+            };
             let client_name = name.to_string();
             let mut client = Client::new(http.clone());
             let server = self.server.clone();
@@ -6295,6 +6299,12 @@ mod tests {
             &self.client
         }
     }
+    
+    struct ContactsSummary {
+        pub current: Vec<String>,
+        pub outgoing_requests: Vec<String>,
+        pub incoming_requests: Vec<String>,
+    }
 
     impl TestClient {
         pub fn current_user_id(&self, cx: &TestAppContext) -> UserId {
@@ -6309,6 +6319,22 @@ mod tests {
                 .user_store
                 .read_with(cx, |user_store, _| user_store.watch_current_user());
             while authed_user.next().await.unwrap().is_none() {}
+        }
+        
+        fn clear_contacts(&self, cx: &mut TestAppContext) {
+            self.user_store.update(cx, |store, _| {
+                store.clear_contacts();
+            });
+        }
+        
+        fn summarize_contacts(&self, cx: &TestAppContext) -> ContactsSummary {
+            self.user_store.read_with(cx, |store, cx| {
+                ContactsSummary {
+                    current: store.contacts().iter().map(|contact| contact.user.github_login.clone()).collect(),
+                    outgoing_requests: store.outgoing_contact_requests().iter().map(|user| user.github_login.clone()).collect(),
+                    incoming_requests: store.incoming_contact_requests().iter().map(|user| user.github_login.clone()).collect(),
+                }            
+            })
         }
 
         async fn build_local_project(
