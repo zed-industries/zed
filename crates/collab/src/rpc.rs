@@ -277,7 +277,7 @@ impl Server {
                 store.add_connection(connection_id, user_id);
                 this.peer.send(connection_id, store.build_initial_contacts_update(contacts))?;
             }
-            // this.update_user_contacts(user_id).await?;
+            this.update_user_contacts(user_id).await?;
 
             let handle_io = handle_io.fuse();
             futures::pin_mut!(handle_io);
@@ -475,7 +475,6 @@ impl Server {
             return Err(anyhow!("no such project"))?;
         }
 
-        let response_payload;
         {
             let state = &mut *self.store_mut().await;
             let joined = state.join_project(request.sender_id, guest_user_id, project_id)?;
@@ -515,13 +514,6 @@ impl Server {
                     });
                 }
             }
-            response_payload = proto::JoinProjectResponse {
-                worktrees,
-                replica_id: joined.replica_id as u32,
-                collaborators,
-                language_servers: joined.project.language_servers.clone(),
-            };
-
             broadcast(
                 request.sender_id,
                 joined.project.connection_ids(),
@@ -532,16 +524,21 @@ impl Server {
                             project_id,
                             collaborator: Some(proto::Collaborator {
                                 peer_id: request.sender_id.0,
-                                replica_id: response_payload.replica_id,
+                                replica_id: joined.replica_id as u32,
                                 user_id: guest_user_id.to_proto(),
                             }),
                         },
                     )
                 },
             );
+            response.send(proto::JoinProjectResponse {
+                worktrees,
+                replica_id: joined.replica_id as u32,
+                collaborators,
+                language_servers: joined.project.language_servers.clone(),
+            })?;
         }
         self.update_user_contacts(host_user_id).await?;
-        response.send(response_payload)?;
         Ok(())
     }
 
@@ -6187,8 +6184,8 @@ mod tests {
                     operations += 1;
                 }
                 20..=29 if clients.len() > 1 => {
-                    log::info!("Removing guest");
                     let guest_ix = rng.lock().gen_range(1..clients.len());
+                    log::info!("Removing guest {}", user_ids[guest_ix]);
                     let removed_guest_id = user_ids.remove(guest_ix);
                     let guest = clients.remove(guest_ix);
                     op_start_signals.remove(guest_ix);
