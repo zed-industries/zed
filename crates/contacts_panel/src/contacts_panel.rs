@@ -361,7 +361,7 @@ impl ContactsPanel {
                     cx.dispatch_action(RespondToContactRequest {
                         user_id,
                         accept: false,
-                    });
+                    })
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .flex_float()
@@ -378,7 +378,7 @@ impl ContactsPanel {
                     cx.dispatch_action(RespondToContactRequest {
                         user_id,
                         accept: true,
-                    });
+                    })
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .boxed(),
@@ -438,9 +438,7 @@ impl ContactsPanel {
                         .flex_float()
                         .boxed()
                 })
-                .on_click(move |_, cx| {
-                    cx.dispatch_action(RemoveContact(user_id));
-                })
+                .on_click(move |_, cx| cx.dispatch_action(RemoveContact(user_id)))
                 .with_cursor_style(CursorStyle::PointingHand)
                 .flex_float()
                 .boxed(),
@@ -488,9 +486,9 @@ impl ContactsPanel {
                             ContactRequestStatus::None | ContactRequestStatus::RequestReceived => {
                                 "+"
                             }
-                            ContactRequestStatus::Pending => "…",
                             ContactRequestStatus::RequestSent => "-",
-                            ContactRequestStatus::RequestAccepted => unreachable!(),
+                            ContactRequestStatus::Pending
+                            | ContactRequestStatus::RequestAccepted => "…",
                         };
 
                         Label::new(label.to_string(), theme.edit_contact.text.clone())
@@ -652,10 +650,6 @@ impl ContactsPanel {
         }
 
         self.list_state.reset(self.entries.len());
-
-        log::info!("UPDATE ENTRIES");
-        dbg!(&self.entries);
-
         cx.notify();
     }
 
