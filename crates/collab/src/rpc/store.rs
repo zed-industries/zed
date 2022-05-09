@@ -10,7 +10,6 @@ pub struct Store {
     connections: HashMap<ConnectionId, ConnectionState>,
     connections_by_user_id: HashMap<UserId, HashSet<ConnectionId>>,
     projects: HashMap<u64, Project>,
-    visible_projects_by_user_id: HashMap<UserId, HashSet<u64>>,
     channels: HashMap<ChannelId, Channel>,
     next_project_id: u64,
 }
@@ -30,7 +29,6 @@ pub struct Project {
 }
 
 pub struct Worktree {
-    pub authorized_user_ids: Vec<UserId>,
     pub root_name: String,
     pub visible: bool,
 }
@@ -69,18 +67,16 @@ pub struct JoinedProject<'a> {
     pub project: &'a Project,
 }
 
-pub struct SharedProject {
-    pub authorized_user_ids: Vec<UserId>,
-}
+pub struct SharedProject {}
 
 pub struct UnsharedProject {
     pub connection_ids: Vec<ConnectionId>,
-    pub authorized_user_ids: Vec<UserId>,
+    pub host_user_id: UserId,
 }
 
 pub struct LeftProject {
     pub connection_ids: Vec<ConnectionId>,
-    pub authorized_user_ids: Vec<UserId>,
+    pub host_user_id: UserId,
 }
 
 #[derive(Copy, Clone)]
@@ -155,13 +151,11 @@ impl Store {
         result.user_id = connection.user_id;
         for project_id in connection.projects.clone() {
             if let Ok(project) = self.unregister_project(project_id, connection_id) {
-                result.contact_ids.extend(project.authorized_user_ids());
                 result.hosted_projects.insert(project_id, project);
             } else if let Ok(project) = self.leave_project(connection_id, project_id) {
                 result
                     .guest_project_ids
                     .insert(project_id, project.connection_ids);
-                result.contact_ids.extend(project.authorized_user_ids);
             }
         }
 
@@ -215,6 +209,14 @@ impl Store {
             .copied()
     }
 
+    pub fn is_user_online(&self, user_id: UserId) -> bool {
+        !self
+            .connections_by_user_id
+            .get(&user_id)
+            .unwrap_or(&Default::default())
+            .is_empty()
+    }
+
     pub fn build_initial_contacts_update(&self, contacts: db::Contacts) -> proto::UpdateContacts {
         let mut update = proto::UpdateContacts::default();
         for user_id in contacts.current {
@@ -241,7 +243,7 @@ impl Store {
         proto::Contact {
             user_id: user_id.to_proto(),
             projects: self.project_metadata_for_user(user_id),
-            online: self.connection_ids_for_user(user_id).next().is_some(),
+            online: self.is_user_online(user_id),
         }
     }
 
@@ -359,13 +361,6 @@ impl Store {
             .get_mut(&project_id)
             .ok_or_else(|| anyhow!("no such project"))?;
         if project.host_connection_id == connection_id {
-            for authorized_user_id in &worktree.authorized_user_ids {
-                self.visible_projects_by_user_id
-                    .entry(*authorized_user_id)
-                    .or_default()
-                    .insert(project_id);
-            }
-
             project.worktrees.insert(worktree_id, worktree);
             if let Ok(share) = project.share_mut() {
                 share.worktrees.insert(worktree_id, Default::default());
@@ -385,14 +380,6 @@ impl Store {
         match self.projects.entry(project_id) {
             hash_map::Entry::Occupied(e) => {
                 if e.get().host_connection_id == connection_id {
-                    for user_id in e.get().authorized_user_ids() {
-                        if let hash_map::Entry::Occupied(mut projects) =
-                            self.visible_projects_by_user_id.entry(user_id)
-                        {
-                            projects.get_mut().remove(&project_id);
-                        }
-                    }
-
                     let project = e.remove();
 
                     if let Some(host_connection) = self.connections.get_mut(&connection_id) {
@@ -441,16 +428,6 @@ impl Store {
             share.worktrees.remove(&worktree_id);
         }
 
-        for authorized_user_id in &worktree.authorized_user_ids {
-            if let Some(visible_projects) =
-                self.visible_projects_by_user_id.get_mut(authorized_user_id)
-            {
-                if !project.has_authorized_user_id(*authorized_user_id) {
-                    visible_projects.remove(&project_id);
-                }
-            }
-        }
-
         Ok((worktree, guest_connection_ids))
     }
 
@@ -466,9 +443,7 @@ impl Store {
                     share.worktrees.insert(*worktree_id, Default::default());
                 }
                 project.share = Some(share);
-                return Ok(SharedProject {
-                    authorized_user_ids: project.authorized_user_ids(),
-                });
+                return Ok(SharedProject {});
             }
         }
         Err(anyhow!("no such project"))?
@@ -490,7 +465,6 @@ impl Store {
         }
 
         let connection_ids = project.connection_ids();
-        let authorized_user_ids = project.authorized_user_ids();
         if let Some(share) = project.share.take() {
             for connection_id in share.guests.into_keys() {
                 if let Some(connection) = self.connections.get_mut(&connection_id) {
@@ -500,7 +474,7 @@ impl Store {
 
             Ok(UnsharedProject {
                 connection_ids,
-                authorized_user_ids,
+                host_user_id: project.host_user_id,
             })
         } else {
             Err(anyhow!("project is not shared"))?
@@ -564,13 +538,6 @@ impl Store {
         let project = self
             .projects
             .get_mut(&project_id)
-            .and_then(|project| {
-                if project.has_authorized_user_id(user_id) {
-                    Some(project)
-                } else {
-                    None
-                }
-            })
             .ok_or_else(|| anyhow!("no such project"))?;
 
         let share = project.share_mut()?;
@@ -612,12 +579,9 @@ impl Store {
             connection.projects.remove(&project_id);
         }
 
-        let connection_ids = project.connection_ids();
-        let authorized_user_ids = project.authorized_user_ids();
-
         Ok(LeftProject {
-            connection_ids,
-            authorized_user_ids,
+            connection_ids: project.connection_ids(),
+            host_user_id: project.host_user_id,
         })
     }
 
@@ -767,14 +731,6 @@ impl Store {
             let host_connection = self.connections.get(&project.host_connection_id).unwrap();
             assert!(host_connection.projects.contains(project_id));
 
-            for authorized_user_ids in project.authorized_user_ids() {
-                let visible_project_ids = self
-                    .visible_projects_by_user_id
-                    .get(&authorized_user_ids)
-                    .unwrap();
-                assert!(visible_project_ids.contains(project_id));
-            }
-
             if let Some(share) = &project.share {
                 for guest_connection_id in share.guests.keys() {
                     let guest_connection = self.connections.get(guest_connection_id).unwrap();
@@ -792,13 +748,6 @@ impl Store {
             }
         }
 
-        for (user_id, visible_project_ids) in &self.visible_projects_by_user_id {
-            for project_id in visible_project_ids {
-                let project = self.projects.get(project_id).unwrap();
-                assert!(project.authorized_user_ids().contains(user_id));
-            }
-        }
-
         for (channel_id, channel) in &self.channels {
             for connection_id in &channel.connection_ids {
                 let connection = self.connections.get(connection_id).unwrap();
@@ -809,24 +758,6 @@ impl Store {
 }
 
 impl Project {
-    pub fn has_authorized_user_id(&self, user_id: UserId) -> bool {
-        self.worktrees
-            .values()
-            .any(|worktree| worktree.authorized_user_ids.contains(&user_id))
-    }
-
-    pub fn authorized_user_ids(&self) -> Vec<UserId> {
-        let mut ids = self
-            .worktrees
-            .values()
-            .flat_map(|worktree| worktree.authorized_user_ids.iter())
-            .copied()
-            .collect::<Vec<_>>();
-        ids.sort_unstable();
-        ids.dedup();
-        ids
-    }
-
     pub fn guest_connection_ids(&self) -> Vec<ConnectionId> {
         if let Some(share) = &self.share {
             share.guests.keys().copied().collect()

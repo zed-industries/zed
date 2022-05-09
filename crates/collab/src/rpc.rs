@@ -22,7 +22,7 @@ use axum::{
     routing::get,
     Extension, Router, TypedHeader,
 };
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use futures::{channel::mpsc, future::BoxFuture, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use lazy_static::lazy_static;
 use rpc::{
@@ -49,7 +49,7 @@ use tokio::{
     time::Sleep,
 };
 use tower::ServiceBuilder;
-use tracing::{info_span, instrument, Instrument};
+use tracing::{info_span, Instrument};
 
 type MessageHandler =
     Box<dyn Send + Sync + Fn(Arc<Server>, Box<dyn AnyTypedEnvelope>) -> BoxFuture<'static, ()>>;
@@ -335,14 +335,10 @@ impl Server {
 
         for (project_id, project) in removed_connection.hosted_projects {
             if let Some(share) = project.share {
-                broadcast(
-                    connection_id,
-                    share.guests.keys().copied().collect(),
-                    |conn_id| {
-                        self.peer
-                            .send(conn_id, proto::UnshareProject { project_id })
-                    },
-                );
+                broadcast(connection_id, share.guests.keys().copied(), |conn_id| {
+                    self.peer
+                        .send(conn_id, proto::UnshareProject { project_id })
+                });
             }
         }
 
@@ -363,14 +359,12 @@ impl Server {
             .db
             .get_contacts(removed_connection.user_id)
             .await?;
-        let mut update = proto::UpdateContacts::default();
-        update.contacts.push(proto::Contact {
-            user_id: removed_connection.user_id.to_proto(),
-            projects: Default::default(),
-            online: false,
-        });
-
         let store = self.store().await;
+        let mut update = proto::UpdateContacts::default();
+        update
+            .contacts
+            .push(store.contact_for_user(removed_connection.user_id));
+
         for user_id in contacts_to_update.current {
             for connection_id in store.connection_ids_for_user(user_id) {
                 self.peer.send(connection_id, update.clone()).trace_err();
@@ -407,10 +401,13 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::UnregisterProject>,
     ) -> Result<()> {
-        let mut state = self.store_mut().await;
-        let project = state.unregister_project(request.payload.project_id, request.sender_id)?;
-        // TODO
-        // self.update_contacts_for_users(&*state, &project.authorized_user_ids());
+        let user_id = {
+            let mut state = self.store_mut().await;
+            state.unregister_project(request.payload.project_id, request.sender_id)?;
+            state.user_id_for_connection(request.sender_id)?
+        };
+
+        self.update_user_contacts(user_id).await?;
         Ok(())
     }
 
@@ -419,11 +416,37 @@ impl Server {
         request: TypedEnvelope<proto::ShareProject>,
         response: Response<proto::ShareProject>,
     ) -> Result<()> {
-        let mut state = self.store_mut().await;
-        let project = state.share_project(request.payload.project_id, request.sender_id)?;
-        // TODO
-        // self.update_contacts_for_users(&mut *state, &project.authorized_user_ids);
+        let user_id = {
+            let mut state = self.store_mut().await;
+            state.share_project(request.payload.project_id, request.sender_id)?;
+            state.user_id_for_connection(request.sender_id)?
+        };
+        self.update_user_contacts(user_id).await?;
         response.send(proto::Ack {})?;
+        Ok(())
+    }
+
+    async fn update_user_contacts(self: &Arc<Server>, user_id: UserId) -> Result<()> {
+        let contacts = self.app_state.db.get_contacts(user_id).await?;
+        let store = self.store().await;
+        let updated_contact = store.contact_for_user(user_id);
+        for contact_user_id in contacts.current {
+            for contact_conn_id in store.connection_ids_for_user(contact_user_id) {
+                self.peer
+                    .send(
+                        contact_conn_id,
+                        proto::UpdateContacts {
+                            contacts: vec![updated_contact.clone()],
+                            remove_contacts: Default::default(),
+                            incoming_requests: Default::default(),
+                            remove_incoming_requests: Default::default(),
+                            outgoing_requests: Default::default(),
+                            remove_outgoing_requests: Default::default(),
+                        },
+                    )
+                    .trace_err();
+            }
+        }
         Ok(())
     }
 
@@ -432,14 +455,16 @@ impl Server {
         request: TypedEnvelope<proto::UnshareProject>,
     ) -> Result<()> {
         let project_id = request.payload.project_id;
-        let mut state = self.store_mut().await;
-        let project = state.unshare_project(project_id, request.sender_id)?;
-        broadcast(request.sender_id, project.connection_ids, |conn_id| {
-            self.peer
-                .send(conn_id, proto::UnshareProject { project_id })
-        });
-        // TODO
-        // self.update_contacts_for_users(&mut *state, &project.authorized_user_ids);
+        let project;
+        {
+            let mut state = self.store_mut().await;
+            project = state.unshare_project(project_id, request.sender_id)?;
+            broadcast(request.sender_id, project.connection_ids, |conn_id| {
+                self.peer
+                    .send(conn_id, proto::UnshareProject { project_id })
+            });
+        }
+        self.update_user_contacts(project.host_user_id).await?;
         Ok(())
     }
 
@@ -449,74 +474,74 @@ impl Server {
         response: Response<proto::JoinProject>,
     ) -> Result<()> {
         let project_id = request.payload.project_id;
-
-        let state = &mut *self.store_mut().await;
-        let user_id = state.user_id_for_connection(request.sender_id)?;
-        let (response_payload, connection_ids, contact_user_ids) = state
-            .join_project(request.sender_id, user_id, project_id)
-            .and_then(|joined| {
-                let share = joined.project.share()?;
-                let peer_count = share.guests.len();
-                let mut collaborators = Vec::with_capacity(peer_count);
-                collaborators.push(proto::Collaborator {
-                    peer_id: joined.project.host_connection_id.0,
-                    replica_id: 0,
-                    user_id: joined.project.host_user_id.to_proto(),
-                });
-                let worktrees = share
-                    .worktrees
-                    .iter()
-                    .filter_map(|(id, shared_worktree)| {
-                        let worktree = joined.project.worktrees.get(&id)?;
-                        Some(proto::Worktree {
-                            id: *id,
-                            root_name: worktree.root_name.clone(),
-                            entries: shared_worktree.entries.values().cloned().collect(),
-                            diagnostic_summaries: shared_worktree
-                                .diagnostic_summaries
-                                .values()
-                                .cloned()
-                                .collect(),
-                            visible: worktree.visible,
-                            scan_id: shared_worktree.scan_id,
-                        })
+        let response_payload;
+        let host_user_id;
+        {
+            let state = &mut *self.store_mut().await;
+            let user_id = state.user_id_for_connection(request.sender_id)?;
+            let joined = state.join_project(request.sender_id, user_id, project_id)?;
+            let share = joined.project.share()?;
+            let peer_count = share.guests.len();
+            let mut collaborators = Vec::with_capacity(peer_count);
+            collaborators.push(proto::Collaborator {
+                peer_id: joined.project.host_connection_id.0,
+                replica_id: 0,
+                user_id: joined.project.host_user_id.to_proto(),
+            });
+            let worktrees = share
+                .worktrees
+                .iter()
+                .filter_map(|(id, shared_worktree)| {
+                    let worktree = joined.project.worktrees.get(&id)?;
+                    Some(proto::Worktree {
+                        id: *id,
+                        root_name: worktree.root_name.clone(),
+                        entries: shared_worktree.entries.values().cloned().collect(),
+                        diagnostic_summaries: shared_worktree
+                            .diagnostic_summaries
+                            .values()
+                            .cloned()
+                            .collect(),
+                        visible: worktree.visible,
+                        scan_id: shared_worktree.scan_id,
                     })
-                    .collect();
-                for (peer_conn_id, (peer_replica_id, peer_user_id)) in &share.guests {
-                    if *peer_conn_id != request.sender_id {
-                        collaborators.push(proto::Collaborator {
-                            peer_id: peer_conn_id.0,
-                            replica_id: *peer_replica_id as u32,
-                            user_id: peer_user_id.to_proto(),
-                        });
-                    }
+                })
+                .collect();
+            for (peer_conn_id, (peer_replica_id, peer_user_id)) in &share.guests {
+                if *peer_conn_id != request.sender_id {
+                    collaborators.push(proto::Collaborator {
+                        peer_id: peer_conn_id.0,
+                        replica_id: *peer_replica_id as u32,
+                        user_id: peer_user_id.to_proto(),
+                    });
                 }
-                let response = proto::JoinProjectResponse {
-                    worktrees,
-                    replica_id: joined.replica_id as u32,
-                    collaborators,
-                    language_servers: joined.project.language_servers.clone(),
-                };
-                let connection_ids = joined.project.connection_ids();
-                let contact_user_ids = joined.project.authorized_user_ids();
-                Ok((response, connection_ids, contact_user_ids))
-            })?;
-
-        broadcast(request.sender_id, connection_ids, |conn_id| {
-            self.peer.send(
-                conn_id,
-                proto::AddProjectCollaborator {
-                    project_id,
-                    collaborator: Some(proto::Collaborator {
-                        peer_id: request.sender_id.0,
-                        replica_id: response_payload.replica_id,
-                        user_id: user_id.to_proto(),
-                    }),
+            }
+            response_payload = proto::JoinProjectResponse {
+                worktrees,
+                replica_id: joined.replica_id as u32,
+                collaborators,
+                language_servers: joined.project.language_servers.clone(),
+            };
+            host_user_id = joined.project.host_user_id;
+            broadcast(
+                request.sender_id,
+                joined.project.connection_ids(),
+                |conn_id| {
+                    self.peer.send(
+                        conn_id,
+                        proto::AddProjectCollaborator {
+                            project_id,
+                            collaborator: Some(proto::Collaborator {
+                                peer_id: request.sender_id.0,
+                                replica_id: response_payload.replica_id,
+                                user_id: user_id.to_proto(),
+                            }),
+                        },
+                    )
                 },
-            )
-        });
-        // TODO
-        // self.update_contacts_for_users(state, &contact_user_ids);
+            );
+        }
+        self.update_user_contacts(host_user_id).await?;
         response.send(response_payload)?;
         Ok(())
     }
@@ -527,19 +552,21 @@ impl Server {
     ) -> Result<()> {
         let sender_id = request.sender_id;
         let project_id = request.payload.project_id;
-        let mut state = self.store_mut().await;
-        let worktree = state.leave_project(sender_id, project_id)?;
-        broadcast(sender_id, worktree.connection_ids, |conn_id| {
-            self.peer.send(
-                conn_id,
-                proto::RemoveProjectCollaborator {
-                    project_id,
-                    peer_id: sender_id.0,
-                },
-            )
-        });
-        // TODO
-        // self.update_contacts_for_users(&*state, &worktree.authorized_user_ids);
+        let project;
+        {
+            let mut state = self.store_mut().await;
+            project = state.leave_project(sender_id, project_id)?;
+            broadcast(sender_id, project.connection_ids, |conn_id| {
+                self.peer.send(
+                    conn_id,
+                    proto::RemoveProjectCollaborator {
+                        project_id,
+                        peer_id: sender_id.0,
+                    },
+                )
+            });
+        }
+        self.update_user_contacts(project.host_user_id).await?;
         Ok(())
     }
 
@@ -548,37 +575,30 @@ impl Server {
         request: TypedEnvelope<proto::RegisterWorktree>,
         response: Response<proto::RegisterWorktree>,
     ) -> Result<()> {
-        let mut contact_user_ids = HashSet::default();
-        for github_login in &request.payload.authorized_logins {
-            let contact_user_id = self.app_state.db.create_user(github_login, false).await?;
-            contact_user_ids.insert(contact_user_id);
+        let host_user_id;
+        {
+            let mut state = self.store_mut().await;
+            host_user_id = state.user_id_for_connection(request.sender_id)?;
+
+            let guest_connection_ids = state
+                .read_project(request.payload.project_id, request.sender_id)?
+                .guest_connection_ids();
+            state.register_worktree(
+                request.payload.project_id,
+                request.payload.worktree_id,
+                request.sender_id,
+                Worktree {
+                    root_name: request.payload.root_name.clone(),
+                    visible: request.payload.visible,
+                },
+            )?;
+
+            broadcast(request.sender_id, guest_connection_ids, |connection_id| {
+                self.peer
+                    .forward_send(request.sender_id, connection_id, request.payload.clone())
+            });
         }
-
-        let mut state = self.store_mut().await;
-        let host_user_id = state.user_id_for_connection(request.sender_id)?;
-        contact_user_ids.insert(host_user_id);
-
-        let contact_user_ids = contact_user_ids.into_iter().collect::<Vec<_>>();
-        let guest_connection_ids = state
-            .read_project(request.payload.project_id, request.sender_id)?
-            .guest_connection_ids();
-        state.register_worktree(
-            request.payload.project_id,
-            request.payload.worktree_id,
-            request.sender_id,
-            Worktree {
-                authorized_user_ids: contact_user_ids.clone(),
-                root_name: request.payload.root_name.clone(),
-                visible: request.payload.visible,
-            },
-        )?;
-
-        broadcast(request.sender_id, guest_connection_ids, |connection_id| {
-            self.peer
-                .forward_send(request.sender_id, connection_id, request.payload.clone())
-        });
-        // TODO
-        // self.update_contacts_for_users(&*state, &contact_user_ids);
+        self.update_user_contacts(host_user_id).await?;
         response.send(proto::Ack {})?;
         Ok(())
     }
@@ -587,22 +607,25 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::UnregisterWorktree>,
     ) -> Result<()> {
+        let host_user_id;
         let project_id = request.payload.project_id;
         let worktree_id = request.payload.worktree_id;
-        let mut state = self.store_mut().await;
-        let (worktree, guest_connection_ids) =
-            state.unregister_worktree(project_id, worktree_id, request.sender_id)?;
-        broadcast(request.sender_id, guest_connection_ids, |conn_id| {
-            self.peer.send(
-                conn_id,
-                proto::UnregisterWorktree {
-                    project_id,
-                    worktree_id,
-                },
-            )
-        });
-        // TODO
-        // self.update_contacts_for_users(&*state, &worktree.authorized_user_ids);
+        {
+            let mut state = self.store_mut().await;
+            let (_, guest_connection_ids) =
+                state.unregister_worktree(project_id, worktree_id, request.sender_id)?;
+            host_user_id = state.user_id_for_connection(request.sender_id)?;
+            broadcast(request.sender_id, guest_connection_ids, |conn_id| {
+                self.peer.send(
+                    conn_id,
+                    proto::UnregisterWorktree {
+                        project_id,
+                        worktree_id,
+                    },
+                )
+            });
+        }
+        self.update_user_contacts(host_user_id).await?;
         Ok(())
     }
 
@@ -950,8 +973,7 @@ impl Server {
         response: Response<proto::RequestContact>,
     ) -> Result<()> {
         let requester_id = self
-            .store
-            .read()
+            .store()
             .await
             .user_id_for_connection(request.sender_id)?;
         let responder_id = UserId::from_proto(request.payload.responder_id);
@@ -989,8 +1011,7 @@ impl Server {
         response: Response<proto::RespondToContactRequest>,
     ) -> Result<()> {
         let responder_id = self
-            .store
-            .read()
+            .store()
             .await
             .user_id_for_connection(request.sender_id)?;
         let requester_id = UserId::from_proto(request.payload.requester_id);
@@ -1000,45 +1021,28 @@ impl Server {
             .respond_to_contact_request(responder_id, requester_id, accept)
             .await?;
 
+        let store = self.store().await;
         // Update responder with new contact
         let mut update = proto::UpdateContacts::default();
         if accept {
-            update.contacts.push(proto::Contact {
-                user_id: requester_id.to_proto(),
-                projects: Default::default(), // TODO
-                online: true,                 // TODO
-            });
+            update.contacts.push(store.contact_for_user(requester_id));
         }
         update
             .remove_incoming_requests
             .push(requester_id.to_proto());
-        for connection_id in self
-            .store
-            .read()
-            .await
-            .connection_ids_for_user(responder_id)
-        {
+        for connection_id in store.connection_ids_for_user(responder_id) {
             self.peer.send(connection_id, update.clone())?;
         }
 
         // Update requester with new contact
         let mut update = proto::UpdateContacts::default();
         if accept {
-            update.contacts.push(proto::Contact {
-                user_id: responder_id.to_proto(),
-                projects: Default::default(), // TODO
-                online: true,                 // TODO
-            });
+            update.contacts.push(store.contact_for_user(responder_id));
         }
         update
             .remove_outgoing_requests
             .push(responder_id.to_proto());
-        for connection_id in self
-            .store
-            .read()
-            .await
-            .connection_ids_for_user(requester_id)
-        {
+        for connection_id in store.connection_ids_for_user(requester_id) {
             self.peer.send(connection_id, update.clone())?;
         }
 
@@ -1312,9 +1316,11 @@ impl Executor for RealExecutor {
     }
 }
 
-#[instrument(skip(f))]
-fn broadcast<F>(sender_id: ConnectionId, receiver_ids: Vec<ConnectionId>, mut f: F)
-where
+fn broadcast<F>(
+    sender_id: ConnectionId,
+    receiver_ids: impl IntoIterator<Item = ConnectionId>,
+    mut f: F,
+) where
     F: FnMut(ConnectionId) -> anyhow::Result<()>,
 {
     for receiver_id in receiver_ids {
@@ -1461,7 +1467,7 @@ mod tests {
         self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Credentials,
         EstablishConnectionError, UserStore, RECEIVE_TIMEOUT,
     };
-    use collections::BTreeMap;
+    use collections::{BTreeMap, HashSet};
     use editor::{
         self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Input, Redo, Rename,
         ToOffset, ToggleCodeActions, Undo,
@@ -4890,6 +4896,7 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_contacts(
+        deterministic: Arc<Deterministic>,
         cx_a: &mut TestAppContext,
         cx_b: &mut TestAppContext,
         cx_c: &mut TestAppContext,
@@ -4903,15 +4910,26 @@ mod tests {
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
         let client_c = server.create_client(cx_c, "user_c").await;
+        server
+            .make_contacts(vec![
+                (&client_a, cx_a),
+                (&client_b, cx_b),
+                (&client_c, cx_c),
+            ])
+            .await;
+        deterministic.run_until_parked();
+        client_a.user_store.read_with(cx_a, |store, _| {
+            assert_eq!(contacts(store), [("user_b", vec![]), ("user_c", vec![])])
+        });
+        client_b.user_store.read_with(cx_b, |store, _| {
+            assert_eq!(contacts(store), [("user_a", vec![]), ("user_c", vec![])])
+        });
+        client_c.user_store.read_with(cx_c, |store, _| {
+            assert_eq!(contacts(store), [("user_a", vec![]), ("user_b", vec![])])
+        });
 
         // Share a worktree as client A.
-        fs.insert_tree(
-            "/a",
-            json!({
-                ".zed.toml": r#"collaborators = ["user_b", "user_c"]"#,
-            }),
-        )
-        .await;
+        fs.create_dir(Path::new("/a")).await.unwrap();
 
         let project_a = cx_a.update(|cx| {
             Project::local(
@@ -4932,24 +4950,22 @@ mod tests {
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
 
-        client_a
-            .user_store
-            .condition(&cx_a, |user_store, _| {
-                contacts(user_store) == vec![("user_a", vec![("a", false, vec![])])]
-            })
-            .await;
-        client_b
-            .user_store
-            .condition(&cx_b, |user_store, _| {
-                contacts(user_store) == vec![("user_a", vec![("a", false, vec![])])]
-            })
-            .await;
-        client_c
-            .user_store
-            .condition(&cx_c, |user_store, _| {
-                contacts(user_store) == vec![("user_a", vec![("a", false, vec![])])]
-            })
-            .await;
+        deterministic.run_until_parked();
+        client_a.user_store.read_with(cx_a, |store, _| {
+            assert_eq!(contacts(store), [("user_b", vec![]), ("user_c", vec![])])
+        });
+        client_b.user_store.read_with(cx_b, |store, _| {
+            assert_eq!(
+                contacts(store),
+                [("user_a", vec![("a", false, vec![])]), ("user_c", vec![])]
+            )
+        });
+        client_c.user_store.read_with(cx_c, |store, _| {
+            assert_eq!(
+                contacts(store),
+                [("user_a", vec![("a", false, vec![])]), ("user_b", vec![])]
+            )
+        });
 
         let project_id = project_a
             .update(cx_a, |project, _| project.next_remote_id())
@@ -4958,24 +4974,22 @@ mod tests {
             .update(cx_a, |project, cx| project.share(cx))
             .await
             .unwrap();
-        client_a
-            .user_store
-            .condition(&cx_a, |user_store, _| {
-                contacts(user_store) == vec![("user_a", vec![("a", true, vec![])])]
-            })
-            .await;
-        client_b
-            .user_store
-            .condition(&cx_b, |user_store, _| {
-                contacts(user_store) == vec![("user_a", vec![("a", true, vec![])])]
-            })
-            .await;
-        client_c
-            .user_store
-            .condition(&cx_c, |user_store, _| {
-                contacts(user_store) == vec![("user_a", vec![("a", true, vec![])])]
-            })
-            .await;
+        deterministic.run_until_parked();
+        client_a.user_store.read_with(cx_a, |store, _| {
+            assert_eq!(contacts(store), [("user_b", vec![]), ("user_c", vec![])])
+        });
+        client_b.user_store.read_with(cx_b, |store, _| {
+            assert_eq!(
+                contacts(store),
+                [("user_a", vec![("a", true, vec![])]), ("user_c", vec![])]
+            )
+        });
+        client_c.user_store.read_with(cx_c, |store, _| {
+            assert_eq!(
+                contacts(store),
+                [("user_a", vec![("a", true, vec![])]), ("user_b", vec![])]
+            )
+        });
 
         let _project_b = Project::remote(
             project_id,
@@ -4987,25 +5001,28 @@ mod tests {
         )
         .await
         .unwrap();
-
-        client_a
-            .user_store
-            .condition(&cx_a, |user_store, _| {
-                contacts(user_store) == vec![("user_a", vec![("a", true, vec!["user_b"])])]
-            })
-            .await;
-        client_b
-            .user_store
-            .condition(&cx_b, |user_store, _| {
-                contacts(user_store) == vec![("user_a", vec![("a", true, vec!["user_b"])])]
-            })
-            .await;
-        client_c
-            .user_store
-            .condition(&cx_c, |user_store, _| {
-                contacts(user_store) == vec![("user_a", vec![("a", true, vec!["user_b"])])]
-            })
-            .await;
+        deterministic.run_until_parked();
+        client_a.user_store.read_with(cx_a, |store, _| {
+            assert_eq!(contacts(store), [("user_b", vec![]), ("user_c", vec![])])
+        });
+        client_b.user_store.read_with(cx_b, |store, _| {
+            assert_eq!(
+                contacts(store),
+                [
+                    ("user_a", vec![("a", true, vec!["user_b"])]),
+                    ("user_c", vec![])
+                ]
+            )
+        });
+        client_c.user_store.read_with(cx_c, |store, _| {
+            assert_eq!(
+                contacts(store),
+                [
+                    ("user_a", vec![("a", true, vec!["user_b"])]),
+                    ("user_b", vec![])
+                ]
+            )
+        });
 
         project_a
             .condition(&cx_a, |project, _| {
@@ -5014,18 +5031,16 @@ mod tests {
             .await;
 
         cx_a.update(move |_| drop(project_a));
-        client_a
-            .user_store
-            .condition(&cx_a, |user_store, _| contacts(user_store) == vec![])
-            .await;
-        client_b
-            .user_store
-            .condition(&cx_b, |user_store, _| contacts(user_store) == vec![])
-            .await;
-        client_c
-            .user_store
-            .condition(&cx_c, |user_store, _| contacts(user_store) == vec![])
-            .await;
+        deterministic.run_until_parked();
+        client_a.user_store.read_with(cx_a, |store, _| {
+            assert_eq!(contacts(store), [("user_b", vec![]), ("user_c", vec![])])
+        });
+        client_b.user_store.read_with(cx_b, |store, _| {
+            assert_eq!(contacts(store), [("user_a", vec![]), ("user_c", vec![])])
+        });
+        client_c.user_store.read_with(cx_c, |store, _| {
+            assert_eq!(contacts(store), [("user_a", vec![]), ("user_b", vec![])])
+        });
 
         fn contacts(user_store: &UserStore) -> Vec<(&str, Vec<(&str, bool, Vec<&str>)>)> {
             user_store
@@ -6370,6 +6385,28 @@ mod tests {
             self.forbid_connections.store(false, SeqCst);
         }
 
+        async fn make_contacts(&self, mut clients: Vec<(&TestClient, &mut TestAppContext)>) {
+            while let Some((client_a, cx_a)) = clients.pop() {
+                for (client_b, cx_b) in &mut clients {
+                    client_a
+                        .user_store
+                        .update(cx_a, |store, _| {
+                            store.request_contact(client_b.user_id().unwrap())
+                        })
+                        .await
+                        .unwrap();
+                    cx_a.foreground().run_until_parked();
+                    client_b
+                        .user_store
+                        .update(*cx_b, |store, _| {
+                            store.respond_to_contact_request(client_a.user_id().unwrap(), true)
+                        })
+                        .await
+                        .unwrap();
+                }
+            }
+        }
+
         async fn build_app_state(test_db: &TestDb) -> Arc<AppState> {
             Arc::new(AppState {
                 db: test_db.db().clone(),
@@ -6457,7 +6494,7 @@ mod tests {
         }
 
         fn summarize_contacts(&self, cx: &TestAppContext) -> ContactsSummary {
-            self.user_store.read_with(cx, |store, cx| ContactsSummary {
+            self.user_store.read_with(cx, |store, _| ContactsSummary {
                 current: store
                     .contacts()
                     .iter()
