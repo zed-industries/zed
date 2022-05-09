@@ -5910,7 +5910,6 @@ mod tests {
         let mut clients = Vec::new();
         let mut user_ids = Vec::new();
         let mut op_start_signals = Vec::new();
-        let files = Arc::new(Mutex::new(Vec::new()));
 
         let mut next_entity_id = 100000;
         let mut host_cx = TestAppContext::new(
@@ -5964,7 +5963,7 @@ mod tests {
             capabilities: lsp::LanguageServer::full_capabilities(),
             initializer: Some(Box::new({
                 let rng = rng.clone();
-                let files = files.clone();
+                let fs = fs.clone();
                 let project = host_project.downgrade();
                 move |fake_server: &mut FakeLanguageServer| {
                     fake_server.handle_request::<lsp::request::Completion, _, _>(
@@ -6005,13 +6004,13 @@ mod tests {
                     );
 
                     fake_server.handle_request::<lsp::request::GotoDefinition, _, _>({
-                        let files = files.clone();
+                        let fs = fs.clone();
                         let rng = rng.clone();
                         move |_, _| {
-                            let files = files.clone();
+                            let fs = fs.clone();
                             let rng = rng.clone();
                             async move {
-                                let files = files.lock();
+                                let files = fs.files().await;
                                 let mut rng = rng.lock();
                                 let count = rng.gen_range::<usize, _>(1..3);
                                 let files = (0..count)
@@ -6082,7 +6081,6 @@ mod tests {
         op_start_signals.push(op_start_signal.0);
         clients.push(host_cx.foreground().spawn(host.simulate_host(
             host_project,
-            files,
             op_start_signal.1,
             rng.clone(),
             host_cx,
@@ -6696,7 +6694,6 @@ mod tests {
         async fn simulate_host(
             mut self,
             project: ModelHandle<Project>,
-            files: Arc<Mutex<Vec<PathBuf>>>,
             op_start_signal: futures::channel::mpsc::UnboundedReceiver<()>,
             rng: Arc<Mutex<StdRng>>,
             mut cx: TestAppContext,
@@ -6704,7 +6701,6 @@ mod tests {
             async fn simulate_host_internal(
                 client: &mut TestClient,
                 project: ModelHandle<Project>,
-                files: Arc<Mutex<Vec<PathBuf>>>,
                 mut op_start_signal: futures::channel::mpsc::UnboundedReceiver<()>,
                 rng: Arc<Mutex<StdRng>>,
                 cx: &mut TestAppContext,
@@ -6713,9 +6709,10 @@ mod tests {
 
                 while op_start_signal.next().await.is_some() {
                     let distribution = rng.lock().gen_range::<usize, _>(0..100);
+                    let files = fs.as_fake().files().await;
                     match distribution {
-                        0..=20 if !files.lock().is_empty() => {
-                            let path = files.lock().choose(&mut *rng.lock()).unwrap().clone();
+                        0..=20 if !files.is_empty() => {
+                            let path = files.choose(&mut *rng.lock()).unwrap();
                             let mut path = path.as_path();
                             while let Some(parent_path) = path.parent() {
                                 path = parent_path;
@@ -6734,9 +6731,9 @@ mod tests {
                                 find_or_create_worktree.await?;
                             }
                         }
-                        10..=80 if !files.lock().is_empty() => {
+                        10..=80 if !files.is_empty() => {
                             let buffer = if client.buffers.is_empty() || rng.lock().gen() {
-                                let file = files.lock().choose(&mut *rng.lock()).unwrap().clone();
+                                let file = files.choose(&mut *rng.lock()).unwrap();
                                 let (worktree, path) = project
                                     .update(cx, |project, cx| {
                                         project.find_or_create_local_worktree(
@@ -6810,7 +6807,6 @@ mod tests {
                             if fs.create_dir(&parent_path).await.is_ok()
                                 && fs.create_file(&path, Default::default()).await.is_ok()
                             {
-                                files.lock().push(path);
                                 break;
                             } else {
                                 log::info!("Host: cannot create file");
@@ -6824,15 +6820,9 @@ mod tests {
                 Ok(())
             }
 
-            let result = simulate_host_internal(
-                &mut self,
-                project.clone(),
-                files,
-                op_start_signal,
-                rng,
-                &mut cx,
-            )
-            .await;
+            let result =
+                simulate_host_internal(&mut self, project.clone(), op_start_signal, rng, &mut cx)
+                    .await;
             log::info!("Host done");
             self.project = Some(project);
             (self, cx, result.err())

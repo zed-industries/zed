@@ -376,6 +376,16 @@ impl FakeFs {
         .boxed()
     }
 
+    pub async fn files(&self) -> Vec<PathBuf> {
+        self.state
+            .lock()
+            .await
+            .entries
+            .iter()
+            .filter_map(|(path, entry)| entry.content.as_ref().map(|_| path.clone()))
+            .collect()
+    }
+
     async fn simulate_random_delay(&self) {
         self.executor
             .upgrade()
