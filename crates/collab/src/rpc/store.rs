@@ -629,9 +629,10 @@ impl Store {
             .connection_ids())
     }
 
-    #[cfg(test)]
-    pub fn project(&self, project_id: u64) -> Option<&Project> {
-        self.projects.get(&project_id)
+    pub fn project(&self, project_id: u64) -> Result<&Project> {
+        self.projects
+            .get(&project_id)
+            .ok_or_else(|| anyhow!("no such project"))
     }
 
     pub fn read_project(&self, project_id: u64, connection_id: ConnectionId) -> Result<&Project> {

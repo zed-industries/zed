@@ -474,12 +474,23 @@ impl Server {
         response: Response<proto::JoinProject>,
     ) -> Result<()> {
         let project_id = request.payload.project_id;
-        let response_payload;
         let host_user_id;
+        let guest_user_id;
+        {
+            let state = self.store().await;
+            host_user_id = state.project(project_id)?.host_user_id;
+            guest_user_id = state.user_id_for_connection(request.sender_id)?;
+        };
+
+        let guest_contacts = self.app_state.db.get_contacts(guest_user_id).await?;
+        if !guest_contacts.current.contains(&host_user_id) {
+            return Err(anyhow!("no such project"))?;
+        }
+
+        let response_payload;
         {
             let state = &mut *self.store_mut().await;
-            let user_id = state.user_id_for_connection(request.sender_id)?;
-            let joined = state.join_project(request.sender_id, user_id, project_id)?;
+            let joined = state.join_project(request.sender_id, guest_user_id, project_id)?;
             let share = joined.project.share()?;
             let peer_count = share.guests.len();
             let mut collaborators = Vec::with_capacity(peer_count);
@@ -522,7 +533,7 @@ impl Server {
                 collaborators,
                 language_servers: joined.project.language_servers.clone(),
             };
-            host_user_id = joined.project.host_user_id;
+
             broadcast(
                 request.sender_id,
                 joined.project.connection_ids(),
@@ -534,7 +545,7 @@ impl Server {
                             collaborator: Some(proto::Collaborator {
                                 peer_id: request.sender_id.0,
                                 replica_id: response_payload.replica_id,
-                                user_id: user_id.to_proto(),
+                                user_id: guest_user_id.to_proto(),
                             }),
                         },
                     )
@@ -1527,12 +1538,14 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         fs.insert_tree(
             "/a",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "a.txt": "a-contents",
                 "b.txt": "b-contents",
             }),
@@ -1649,12 +1662,14 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         fs.insert_tree(
             "/a",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "a.txt": "a-contents",
                 "b.txt": "b-contents",
             }),
@@ -1742,12 +1757,14 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         fs.insert_tree(
             "/a",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "a.txt": "a-contents",
                 "b.txt": "b-contents",
             }),
@@ -1848,12 +1865,18 @@ mod tests {
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
         let client_c = server.create_client(cx_c, "user_c").await;
+        server
+            .make_contacts(vec![
+                (&client_a, cx_a),
+                (&client_b, cx_b),
+                (&client_c, cx_c),
+            ])
+            .await;
 
         // Share a worktree as client A.
         fs.insert_tree(
             "/a",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b", "user_c"]"#,
                 "file1": "",
                 "file2": ""
             }),
@@ -1974,7 +1997,7 @@ mod tests {
                 tree.paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>()
-                    == [".zed.toml", "file1-renamed", "file3", "file4"]
+                    == ["file1-renamed", "file3", "file4"]
             })
             .await;
         worktree_b
@@ -1982,7 +2005,7 @@ mod tests {
                 tree.paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>()
-                    == [".zed.toml", "file1-renamed", "file3", "file4"]
+                    == ["file1-renamed", "file3", "file4"]
             })
             .await;
         worktree_c
@@ -1990,7 +2013,7 @@ mod tests {
                 tree.paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>()
-                    == [".zed.toml", "file1-renamed", "file3", "file4"]
+                    == ["file1-renamed", "file3", "file4"]
             })
             .await;
 
@@ -2025,12 +2048,14 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let mut client_a = server.create_client(cx_a, "user_a").await;
         let mut client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         fs.insert_tree(
             "/dir",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "a.txt": "a-contents",
                 "b.txt": "b-contents",
             }),
@@ -2065,7 +2090,7 @@ mod tests {
                     .paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                [".zed.toml", "a.txt", "b.txt", "c.txt"]
+                ["a.txt", "b.txt", "c.txt"]
             );
         });
         worktree_b.read_with(cx_b, |worktree, _| {
@@ -2074,7 +2099,7 @@ mod tests {
                     .paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                [".zed.toml", "a.txt", "b.txt", "c.txt"]
+                ["a.txt", "b.txt", "c.txt"]
             );
         });
 
@@ -2091,7 +2116,7 @@ mod tests {
                     .paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                [".zed.toml", "a.txt", "b.txt", "d.txt"]
+                ["a.txt", "b.txt", "d.txt"]
             );
         });
         worktree_b.read_with(cx_b, |worktree, _| {
@@ -2100,7 +2125,7 @@ mod tests {
                     .paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                [".zed.toml", "a.txt", "b.txt", "d.txt"]
+                ["a.txt", "b.txt", "d.txt"]
             );
         });
 
@@ -2118,7 +2143,7 @@ mod tests {
                     .paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                [".zed.toml", "DIR", "a.txt", "b.txt", "d.txt"]
+                ["DIR", "a.txt", "b.txt", "d.txt"]
             );
         });
         worktree_b.read_with(cx_b, |worktree, _| {
@@ -2127,7 +2152,7 @@ mod tests {
                     .paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                [".zed.toml", "DIR", "a.txt", "b.txt", "d.txt"]
+                ["DIR", "a.txt", "b.txt", "d.txt"]
             );
         });
 
@@ -2143,7 +2168,7 @@ mod tests {
                     .paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                [".zed.toml", "a.txt", "b.txt", "d.txt"]
+                ["a.txt", "b.txt", "d.txt"]
             );
         });
         worktree_b.read_with(cx_b, |worktree, _| {
@@ -2152,7 +2177,7 @@ mod tests {
                     .paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                [".zed.toml", "a.txt", "b.txt", "d.txt"]
+                ["a.txt", "b.txt", "d.txt"]
             );
         });
 
@@ -2168,7 +2193,7 @@ mod tests {
                     .paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                [".zed.toml", "a.txt", "b.txt"]
+                ["a.txt", "b.txt"]
             );
         });
         worktree_b.read_with(cx_b, |worktree, _| {
@@ -2177,7 +2202,7 @@ mod tests {
                     .paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                [".zed.toml", "a.txt", "b.txt"]
+                ["a.txt", "b.txt"]
             );
         });
     }
@@ -2192,12 +2217,14 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         fs.insert_tree(
             "/dir",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b", "user_c"]"#,
                 "a.txt": "a-contents",
             }),
         )
@@ -2274,12 +2301,14 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         fs.insert_tree(
             "/dir",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b", "user_c"]"#,
                 "a.txt": "a-contents",
             }),
         )
@@ -2356,12 +2385,14 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         fs.insert_tree(
             "/dir",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "a.txt": "a-contents",
             }),
         )
@@ -2435,12 +2466,14 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         fs.insert_tree(
             "/dir",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "a.txt": "a-contents",
             }),
         )
@@ -2507,12 +2540,14 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         fs.insert_tree(
             "/a",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "a.txt": "a-contents",
                 "b.txt": "b-contents",
             }),
@@ -2618,12 +2653,14 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         fs.insert_tree(
             "/a",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "a.rs": "let one = two",
                 "other.rs": "",
             }),
@@ -2866,12 +2903,14 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         fs.insert_tree(
             "/a",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "main.rs": "fn main() { a }",
                 "other.rs": "",
             }),
@@ -3047,12 +3086,14 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         fs.insert_tree(
             "/a",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "a.rs": "let one = 1;",
             }),
         )
@@ -3176,12 +3217,14 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         fs.insert_tree(
             "/a",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "a.rs": "let one = two",
             }),
         )
@@ -3260,7 +3303,6 @@ mod tests {
         fs.insert_tree(
             "/root-1",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "a.rs": "const ONE: usize = b::TWO + b::THREE;",
             }),
         )
@@ -3289,6 +3331,9 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         let project_a = cx_a.update(|cx| {
@@ -3404,7 +3449,6 @@ mod tests {
         fs.insert_tree(
             "/root-1",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "one.rs": "const ONE: usize = 1;",
                 "two.rs": "const TWO: usize = one::ONE + one::ONE;",
             }),
@@ -3434,6 +3478,9 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         let project_a = cx_a.update(|cx| {
@@ -3545,7 +3592,6 @@ mod tests {
         fs.insert_tree(
             "/root-1",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "a": "hello world",
                 "b": "goodnight moon",
                 "c": "a world of goo",
@@ -3565,6 +3611,9 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         let project_a = cx_a.update(|cx| {
@@ -3652,7 +3701,6 @@ mod tests {
         fs.insert_tree(
             "/root-1",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "main.rs": "fn double(number: i32) -> i32 { number + number }",
             }),
         )
@@ -3674,6 +3722,9 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         let project_a = cx_a.update(|cx| {
@@ -3790,7 +3841,6 @@ mod tests {
             "/code",
             json!({
                 "crate-1": {
-                    ".zed.toml": r#"collaborators = ["user_b"]"#,
                     "one.rs": "const ONE: usize = 1;",
                 },
                 "crate-2": {
@@ -3819,6 +3869,9 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         let project_a = cx_a.update(|cx| {
@@ -3926,7 +3979,6 @@ mod tests {
         fs.insert_tree(
             "/root",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "a.rs": "const ONE: usize = b::TWO;",
                 "b.rs": "const TWO: usize = 2",
             }),
@@ -3949,6 +4001,9 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         let project_a = cx_a.update(|cx| {
@@ -4046,12 +4101,14 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         fs.insert_tree(
             "/a",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "main.rs": "mod other;\nfn main() { let foo = other::foo(); }",
                 "other.rs": "pub fn foo() -> usize { 4 }",
             }),
@@ -4294,12 +4351,14 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
 
         // Share a project as client A
         fs.insert_tree(
             "/dir",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "one.rs": "const ONE: usize = 1;",
                 "two.rs": "const TWO: usize = one::ONE + one::ONE;"
             }),
@@ -5257,6 +5316,9 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let mut client_a = server.create_client(cx_a, "user_a").await;
         let mut client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
         cx_a.update(editor::init);
         cx_b.update(editor::init);
 
@@ -5264,7 +5326,6 @@ mod tests {
         fs.insert_tree(
             "/a",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "1.txt": "one",
                 "2.txt": "two",
                 "3.txt": "three",
@@ -5468,6 +5529,9 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let mut client_a = server.create_client(cx_a, "user_a").await;
         let mut client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
         cx_a.update(editor::init);
         cx_b.update(editor::init);
 
@@ -5475,7 +5539,6 @@ mod tests {
         fs.insert_tree(
             "/a",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "1.txt": "one",
                 "2.txt": "two",
                 "3.txt": "three",
@@ -5614,6 +5677,9 @@ mod tests {
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let mut client_a = server.create_client(cx_a, "user_a").await;
         let mut client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
         cx_a.update(editor::init);
         cx_b.update(editor::init);
 
@@ -5621,7 +5687,6 @@ mod tests {
         fs.insert_tree(
             "/a",
             json!({
-                ".zed.toml": r#"collaborators = ["user_b"]"#,
                 "1.txt": "one",
                 "2.txt": "two",
                 "3.txt": "three",
@@ -5802,6 +5867,24 @@ mod tests {
         .await;
 
         let mut server = TestServer::start(cx.foreground(), cx.background()).await;
+        let db = server.app_state.db.clone();
+        let host_user_id = db.create_user("host", false).await.unwrap();
+        for username in ["guest-1", "guest-2", "guest-3", "guest-4"] {
+            let guest_user_id = db.create_user(username, false).await.unwrap();
+            server
+                .app_state
+                .db
+                .send_contact_request(guest_user_id, host_user_id)
+                .await
+                .unwrap();
+            server
+                .app_state
+                .db
+                .respond_to_contact_request(host_user_id, guest_user_id, true)
+                .await
+                .unwrap();
+        }
+
         let mut clients = Vec::new();
         let mut user_ids = Vec::new();
         let mut op_start_signals = Vec::new();
