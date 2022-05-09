@@ -5,14 +5,18 @@ use gpui::{
     anyhow,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
+    impl_actions,
     platform::CursorStyle,
     Element, ElementBox, Entity, LayoutContext, ModelHandle, RenderContext, Subscription, Task,
     View, ViewContext, ViewHandle,
 };
+use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
 use util::ResultExt;
 use workspace::{AppState, JoinProject};
+
+impl_actions!(contacts_panel, [RequestContact]);
 
 pub struct ContactsPanel {
     list_state: ListState,
@@ -23,6 +27,9 @@ pub struct ContactsPanel {
     user_query_editor: ViewHandle<Editor>,
     _maintain_contacts: Subscription,
 }
+
+#[derive(Clone, Deserialize)]
+pub struct RequestContact(pub u64);
 
 impl ContactsPanel {
     pub fn new(app_state: Arc<AppState>, cx: &mut ViewContext<Self>) -> Self {
@@ -86,8 +93,10 @@ impl ContactsPanel {
                         } else {
                             let potential_contact_ix = ix - 2 - this.contacts.len();
                             Self::render_potential_contact(
-                                &this.potential_contacts[potential_contact_ix],
+                                this.potential_contacts[potential_contact_ix].clone(),
+                                this.user_store.clone(),
                                 theme,
+                                cx,
                             )
                         }
                     }
@@ -278,7 +287,16 @@ impl ContactsPanel {
             .boxed()
     }
 
-    fn render_potential_contact(contact: &User, theme: &theme::ContactsPanel) -> ElementBox {
+    fn render_potential_contact(
+        contact: Arc<User>,
+        user_store: ModelHandle<UserStore>,
+        theme: &theme::ContactsPanel,
+        cx: &mut LayoutContext,
+    ) -> ElementBox {
+        enum RequestContactButton {}
+
+        let requested_contact = user_store.read(cx).has_outgoing_contact_request(&contact);
+
         Flex::row()
             .with_children(contact.avatar.clone().map(|avatar| {
                 Image::new(avatar)
@@ -299,12 +317,26 @@ impl ContactsPanel {
                 .boxed(),
             )
             .with_child(
-                Label::new("+".to_string(), theme.edit_contact.text.clone())
-                    .contained()
-                    .with_style(theme.edit_contact.container)
-                    .aligned()
-                    .flex_float()
-                    .boxed(),
+                MouseEventHandler::new::<RequestContactButton, _, _>(
+                    contact.id as usize,
+                    cx,
+                    |_, _| {
+                        let label = if requested_contact { "-" } else { "+" };
+                        Label::new(label.to_string(), theme.edit_contact.text.clone())
+                            .contained()
+                            .with_style(theme.edit_contact.container)
+                            .aligned()
+                            .flex_float()
+                            .boxed()
+                    },
+                )
+                .on_click(move |_, cx| {
+                    if requested_contact {
+                    } else {
+                        cx.dispatch_action(RequestContact(contact.id));
+                    }
+                })
+                .boxed(),
             )
             .constrained()
             .with_height(theme.row_height)

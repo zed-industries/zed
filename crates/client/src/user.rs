@@ -237,6 +237,14 @@ impl UserStore {
         &self.outgoing_contact_requests
     }
 
+    pub fn has_outgoing_contact_request(&self, user: &User) -> bool {
+        self.outgoing_contact_requests
+            .binary_search_by_key(&&user.github_login, |requested_user| {
+                &requested_user.github_login
+            })
+            .is_ok()
+    }
+
     pub fn request_contact(&self, responder_id: u64) -> impl Future<Output = Result<()>> {
         let client = self.client.upgrade();
         async move {

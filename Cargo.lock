@@ -935,6 +935,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "postage",
+ "serde",
  "settings",
  "theme",
  "util",

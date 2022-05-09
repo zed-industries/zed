@@ -276,6 +276,7 @@ impl Server {
                 store.add_connection(connection_id, user_id);
                 this.peer.send(connection_id, store.build_initial_contacts_update(contacts))?;
             }
+            // this.update_user_contacts(user_id).await?;
 
             let handle_io = handle_io.fuse();
             futures::pin_mut!(handle_io);
@@ -354,22 +355,8 @@ impl Server {
             });
         }
 
-        let contacts_to_update = self
-            .app_state
-            .db
-            .get_contacts(removed_connection.user_id)
+        self.update_user_contacts(removed_connection.user_id)
             .await?;
-        let store = self.store().await;
-        let mut update = proto::UpdateContacts::default();
-        update
-            .contacts
-            .push(store.contact_for_user(removed_connection.user_id));
-
-        for user_id in contacts_to_update.current {
-            for connection_id in store.connection_ids_for_user(user_id) {
-                self.peer.send(connection_id, update.clone()).trace_err();
-            }
-        }
 
         Ok(())
     }
