@@ -269,19 +269,18 @@ impl Db for PostgresDb {
     }
 
     async fn remove_contact(&self, requester_id: UserId, responder_id: UserId) -> Result<()> {
-        let (id_a, id_b, a_to_b) = if responder_id < requester_id {
-            (responder_id, requester_id, false)
+        let (id_a, id_b) = if responder_id < requester_id {
+            (responder_id, requester_id)
         } else {
-            (requester_id, responder_id, true)
+            (requester_id, responder_id)
         };
         let query = "
             DELETE FROM contacts
-            WHERE user_id_a = $1 AND user_id_b = $2 AND a_to_b = $3;
+            WHERE user_id_a = $1 AND user_id_b = $2;
         ";
         let result = sqlx::query(query)
             .bind(id_a.0)
             .bind(id_b.0)
-            .bind(a_to_b)
             .execute(&self.pool)
             .await?;
 
