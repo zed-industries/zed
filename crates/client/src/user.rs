@@ -322,10 +322,10 @@ impl UserStore {
         cx.notify();
 
         cx.spawn(|this, mut cx| async move {
-            let request = client
+            let response = client
                 .ok_or_else(|| anyhow!("can't upgrade client reference"))?
-                .request(request);
-            request.await?;
+                .request(request)
+                .await;
             this.update(&mut cx, |this, cx| {
                 if let Entry::Occupied(mut request_count) =
                     this.pending_contact_requests.entry(user_id)
@@ -337,6 +337,7 @@ impl UserStore {
                 }
                 cx.notify();
             });
+            response?;
             Ok(())
         })
     }
