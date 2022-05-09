@@ -1,6 +1,6 @@
 use super::{http::HttpClient, proto, Client, Status, TypedEnvelope};
 use anyhow::{anyhow, Context, Result};
-use futures::{future, AsyncReadExt, Future};
+use futures::{future, AsyncReadExt};
 use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{prelude::Stream, sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
@@ -31,11 +31,12 @@ pub struct ProjectMetadata {
     pub guests: Vec<Arc<User>>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContactRequestStatus {
     None,
-    SendingRequest,
-    Requested,
+    Pending,
+    RequestSent,
+    RequestReceived,
     RequestAccepted,
 }
 
@@ -192,7 +193,6 @@ impl UserStore {
                         Err(ix) => this.contacts.insert(ix, updated_contact),
                     }
                 }
-                cx.notify();
 
                 // Remove incoming contact requests
                 this.incoming_contact_requests
@@ -223,6 +223,8 @@ impl UserStore {
                         Err(ix) => this.outgoing_contact_requests.insert(ix, request),
                     }
                 }
+
+                cx.notify();
             });
 
             Ok(())
@@ -248,7 +250,9 @@ impl UserStore {
     }
 
     pub fn contact_request_status(&self, user: &User) -> ContactRequestStatus {
-        if self
+        if self.pending_contact_requests.contains_key(&user.id) {
+            ContactRequestStatus::Pending
+        } else if self
             .contacts
             .binary_search_by_key(&&user.id, |contact| &contact.user.id)
             .is_ok()
@@ -259,9 +263,13 @@ impl UserStore {
             .binary_search_by_key(&&user.id, |user| &user.id)
             .is_ok()
         {
-            ContactRequestStatus::Requested
-        } else if self.pending_contact_requests.contains_key(&user.id) {
-            ContactRequestStatus::SendingRequest
+            ContactRequestStatus::RequestSent
+        } else if self
+            .incoming_contact_requests
+            .binary_search_by_key(&&user.id, |user| &user.id)
+            .is_ok()
+        {
+            ContactRequestStatus::RequestReceived
         } else {
             ContactRequestStatus::None
         }
@@ -272,36 +280,41 @@ impl UserStore {
         responder_id: u64,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let client = self.client.upgrade();
-        *self
-            .pending_contact_requests
-            .entry(responder_id)
-            .or_insert(0) += 1;
-        cx.notify();
-
-        cx.spawn(|this, mut cx| async move {
-            let request = client
-                .ok_or_else(|| anyhow!("can't upgrade client reference"))?
-                .request(proto::RequestContact { responder_id });
-            request.await?;
-            this.update(&mut cx, |this, cx| {
-                if let Entry::Occupied(mut request_count) =
-                    this.pending_contact_requests.entry(responder_id)
-                {
-                    *request_count.get_mut() -= 1;
-                    if *request_count.get() == 0 {
-                        request_count.remove();
-                    }
-                }
-                cx.notify();
-            });
-            Ok(())
-        })
+        self.perform_contact_request(responder_id, proto::RequestContact { responder_id }, cx)
     }
 
     pub fn remove_contact(
         &mut self,
         user_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        self.perform_contact_request(user_id, proto::RemoveContact { user_id }, cx)
+    }
+
+    pub fn respond_to_contact_request(
+        &mut self,
+        requester_id: u64,
+        accept: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        self.perform_contact_request(
+            requester_id,
+            proto::RespondToContactRequest {
+                requester_id,
+                response: if accept {
+                    proto::ContactRequestResponse::Accept
+                } else {
+                    proto::ContactRequestResponse::Reject
+                } as i32,
+            },
+            cx,
+        )
+    }
+
+    fn perform_contact_request<T: RequestMessage>(
+        &mut self,
+        user_id: u64,
+        request: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.upgrade();
@@ -311,7 +324,7 @@ impl UserStore {
         cx.spawn(|this, mut cx| async move {
             let request = client
                 .ok_or_else(|| anyhow!("can't upgrade client reference"))?
-                .request(proto::RemoveContact { user_id });
+                .request(request);
             request.await?;
             this.update(&mut cx, |this, cx| {
                 if let Entry::Occupied(mut request_count) =
@@ -326,28 +339,6 @@ impl UserStore {
             });
             Ok(())
         })
-    }
-
-    pub fn respond_to_contact_request(
-        &self,
-        requester_id: u64,
-        accept: bool,
-    ) -> impl Future<Output = Result<()>> {
-        let client = self.client.upgrade();
-        async move {
-            client
-                .ok_or_else(|| anyhow!("not logged in"))?
-                .request(proto::RespondToContactRequest {
-                    requester_id,
-                    response: if accept {
-                        proto::ContactRequestResponse::Accept
-                    } else {
-                        proto::ContactRequestResponse::Reject
-                    } as i32,
-                })
-                .await?;
-            Ok(())
-        }
     }
 
     #[cfg(any(test, feature = "test-support"))]

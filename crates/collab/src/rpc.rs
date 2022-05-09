@@ -5237,8 +5237,8 @@ mod tests {
         // User B accepts the request from user A.
         client_b
             .user_store
-            .read_with(cx_b, |store, _| {
-                store.respond_to_contact_request(client_a.user_id().unwrap(), true)
+            .update(cx_b, |store, cx| {
+                store.respond_to_contact_request(client_a.user_id().unwrap(), true, cx)
             })
             .await
             .unwrap();
@@ -5281,8 +5281,8 @@ mod tests {
         // User B rejects the request from user C.
         client_b
             .user_store
-            .read_with(cx_b, |store, _| {
-                store.respond_to_contact_request(client_c.user_id().unwrap(), false)
+            .update(cx_b, |store, cx| {
+                store.respond_to_contact_request(client_c.user_id().unwrap(), false, cx)
             })
             .await
             .unwrap();
@@ -6506,8 +6506,8 @@ mod tests {
                     cx_a.foreground().run_until_parked();
                     client_b
                         .user_store
-                        .update(*cx_b, |store, _| {
-                            store.respond_to_contact_request(client_a.user_id().unwrap(), true)
+                        .update(*cx_b, |store, cx| {
+                            store.respond_to_contact_request(client_a.user_id().unwrap(), true, cx)
                         })
                         .await
                         .unwrap();

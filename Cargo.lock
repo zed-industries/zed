@@ -934,6 +934,7 @@ dependencies = [
  "futures",
  "fuzzy",
  "gpui",
+ "log",
  "postage",
  "serde",
  "settings",

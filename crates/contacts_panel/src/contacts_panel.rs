@@ -1,8 +1,7 @@
 use client::{Contact, ContactRequestStatus, User, UserStore};
 use editor::Editor;
-use fuzzy::StringMatchCandidate;
+use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    anyhow,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     impl_actions,
@@ -13,15 +12,28 @@ use gpui::{
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
-use util::ResultExt;
+use util::TryFutureExt;
 use workspace::{AppState, JoinProject};
 
-impl_actions!(contacts_panel, [RequestContact, RemoveContact]);
+impl_actions!(
+    contacts_panel,
+    [RequestContact, RemoveContact, RespondToContactRequest]
+);
+
+#[derive(Debug)]
+enum ContactEntry {
+    Header(&'static str),
+    IncomingRequest(Arc<User>),
+    OutgoingRequest(Arc<User>),
+    Contact(Arc<Contact>),
+    PotentialContact(Arc<User>),
+}
 
 pub struct ContactsPanel {
-    list_state: ListState,
-    contacts: Vec<Arc<Contact>>,
+    entries: Vec<ContactEntry>,
+    match_candidates: Vec<StringMatchCandidate>,
     potential_contacts: Vec<Arc<User>>,
+    list_state: ListState,
     user_store: ModelHandle<UserStore>,
     contacts_search_task: Option<Task<Option<()>>>,
     user_query_editor: ViewHandle<Editor>,
@@ -34,9 +46,16 @@ pub struct RequestContact(pub u64);
 #[derive(Clone, Deserialize)]
 pub struct RemoveContact(pub u64);
 
+#[derive(Clone, Deserialize)]
+pub struct RespondToContactRequest {
+    pub user_id: u64,
+    pub accept: bool,
+}
+
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ContactsPanel::request_contact);
     cx.add_action(ContactsPanel::remove_contact);
+    cx.add_action(ContactsPanel::respond_to_contact_request);
 }
 
 impl ContactsPanel {
@@ -50,29 +69,26 @@ impl ContactsPanel {
 
         cx.subscribe(&user_query_editor, |this, _, event, cx| {
             if let editor::Event::BufferEdited = event {
-                this.filter_contacts(true, cx)
+                this.query_changed(cx)
             }
         })
         .detach();
 
-        Self {
-            list_state: ListState::new(
-                1 + app_state.user_store.read(cx).contacts().len(), // Add 1 for the "Contacts" header
-                Orientation::Top,
-                1000.,
-                {
-                    let this = cx.weak_handle();
-                    let app_state = app_state.clone();
-                    move |ix, cx| {
-                        let this = this.upgrade(cx).unwrap();
-                        let this = this.read(cx);
-                        let current_user_id =
-                            this.user_store.read(cx).current_user().map(|user| user.id);
-                        let theme = cx.global::<Settings>().theme.clone();
-                        let theme = &theme.contacts_panel;
+        let mut this = Self {
+            list_state: ListState::new(0, Orientation::Top, 1000., {
+                let this = cx.weak_handle();
+                let app_state = app_state.clone();
+                move |ix, cx| {
+                    let this = this.upgrade(cx).unwrap();
+                    let this = this.read(cx);
+                    let theme = cx.global::<Settings>().theme.clone();
+                    let theme = &theme.contacts_panel;
+                    let current_user_id =
+                        this.user_store.read(cx).current_user().map(|user| user.id);
 
-                        if ix == 0 {
-                            Label::new("contacts".to_string(), theme.header.text.clone())
+                    match &this.entries[ix] {
+                        ContactEntry::Header(text) => {
+                            Label::new(text.to_string(), theme.header.text.clone())
                                 .contained()
                                 .with_style(theme.header.container)
                                 .aligned()
@@ -80,55 +96,50 @@ impl ContactsPanel {
                                 .constrained()
                                 .with_height(theme.row_height)
                                 .boxed()
-                        } else if ix < this.contacts.len() + 1 {
-                            let contact_ix = ix - 1;
-                            Self::render_contact(
-                                this.contacts[contact_ix].clone(),
-                                current_user_id,
-                                app_state.clone(),
-                                theme,
-                                cx,
-                            )
-                        } else if ix == this.contacts.len() + 1 {
-                            Label::new("add contacts".to_string(), theme.header.text.clone())
-                                .contained()
-                                .with_style(theme.header.container)
-                                .aligned()
-                                .left()
-                                .constrained()
-                                .with_height(theme.row_height)
-                                .boxed()
-                        } else {
-                            let potential_contact_ix = ix - 2 - this.contacts.len();
-                            Self::render_potential_contact(
-                                this.potential_contacts[potential_contact_ix].clone(),
+                        }
+                        ContactEntry::IncomingRequest(user) => {
+                            Self::render_incoming_contact_request(
+                                user.clone(),
                                 this.user_store.clone(),
                                 theme,
                                 cx,
                             )
                         }
+                        ContactEntry::OutgoingRequest(user) => {
+                            Self::render_outgoing_contact_request(
+                                user.clone(),
+                                this.user_store.clone(),
+                                theme,
+                                cx,
+                            )
+                        }
+                        ContactEntry::Contact(contact) => Self::render_contact(
+                            contact.clone(),
+                            current_user_id,
+                            app_state.clone(),
+                            theme,
+                            cx,
+                        ),
+                        ContactEntry::PotentialContact(user) => Self::render_potential_contact(
+                            user.clone(),
+                            this.user_store.clone(),
+                            theme,
+                            cx,
+                        ),
                     }
-                },
-            ),
-            contacts: app_state.user_store.read(cx).contacts().into(),
-            potential_contacts: Default::default(),
-            user_query_editor,
-            _maintain_contacts: cx.observe(&app_state.user_store, |this, _, cx| {
-                this.filter_contacts(false, cx)
+                }
             }),
+            entries: Default::default(),
+            potential_contacts: Default::default(),
+            match_candidates: Default::default(),
+            user_query_editor,
+            _maintain_contacts: cx
+                .observe(&app_state.user_store, |this, _, cx| this.update_entries(cx)),
             contacts_search_task: None,
             user_store: app_state.user_store.clone(),
-        }
-    }
-
-    fn update_list_state(&mut self, cx: &mut ViewContext<Self>) {
-        let mut list_len = 1 + self.contacts.len();
-        if !self.potential_contacts.is_empty() {
-            list_len += 1 + self.potential_contacts.len();
-        }
-
-        self.list_state.reset(list_len);
-        cx.notify();
+        };
+        this.update_entries(cx);
+        this
     }
 
     fn render_contact(
@@ -295,6 +306,150 @@ impl ContactsPanel {
             .boxed()
     }
 
+    fn render_incoming_contact_request(
+        user: Arc<User>,
+        user_store: ModelHandle<UserStore>,
+        theme: &theme::ContactsPanel,
+        cx: &mut LayoutContext,
+    ) -> ElementBox {
+        enum Reject {}
+        enum Accept {}
+
+        let user_id = user.id;
+        let request_status = user_store.read(cx).contact_request_status(&user);
+
+        let mut row = Flex::row()
+            .with_children(user.avatar.clone().map(|avatar| {
+                Image::new(avatar)
+                    .with_style(theme.contact_avatar)
+                    .aligned()
+                    .left()
+                    .boxed()
+            }))
+            .with_child(
+                Label::new(
+                    user.github_login.clone(),
+                    theme.contact_username.text.clone(),
+                )
+                .contained()
+                .with_style(theme.contact_username.container)
+                .aligned()
+                .left()
+                .boxed(),
+            );
+
+        if request_status == ContactRequestStatus::Pending {
+            row.add_child(
+                Label::new("…".to_string(), theme.edit_contact.text.clone())
+                    .contained()
+                    .with_style(theme.edit_contact.container)
+                    .aligned()
+                    .flex_float()
+                    .boxed(),
+            );
+        } else {
+            row.add_children([
+                MouseEventHandler::new::<Reject, _, _>(user.id as usize, cx, |_, _| {
+                    Label::new("Reject".to_string(), theme.edit_contact.text.clone())
+                        .contained()
+                        .with_style(theme.edit_contact.container)
+                        .aligned()
+                        .flex_float()
+                        .boxed()
+                })
+                .on_click(move |_, cx| {
+                    cx.dispatch_action(RespondToContactRequest {
+                        user_id,
+                        accept: false,
+                    });
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .flex_float()
+                .boxed(),
+                MouseEventHandler::new::<Accept, _, _>(user.id as usize, cx, |_, _| {
+                    Label::new("Accept".to_string(), theme.edit_contact.text.clone())
+                        .contained()
+                        .with_style(theme.edit_contact.container)
+                        .aligned()
+                        .flex_float()
+                        .boxed()
+                })
+                .on_click(move |_, cx| {
+                    cx.dispatch_action(RespondToContactRequest {
+                        user_id,
+                        accept: true,
+                    });
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .boxed(),
+            ]);
+        }
+
+        row.constrained().with_height(theme.row_height).boxed()
+    }
+
+    fn render_outgoing_contact_request(
+        user: Arc<User>,
+        user_store: ModelHandle<UserStore>,
+        theme: &theme::ContactsPanel,
+        cx: &mut LayoutContext,
+    ) -> ElementBox {
+        enum Cancel {}
+
+        let user_id = user.id;
+        let request_status = user_store.read(cx).contact_request_status(&user);
+
+        let mut row = Flex::row()
+            .with_children(user.avatar.clone().map(|avatar| {
+                Image::new(avatar)
+                    .with_style(theme.contact_avatar)
+                    .aligned()
+                    .left()
+                    .boxed()
+            }))
+            .with_child(
+                Label::new(
+                    user.github_login.clone(),
+                    theme.contact_username.text.clone(),
+                )
+                .contained()
+                .with_style(theme.contact_username.container)
+                .aligned()
+                .left()
+                .boxed(),
+            );
+
+        if request_status == ContactRequestStatus::Pending {
+            row.add_child(
+                Label::new("…".to_string(), theme.edit_contact.text.clone())
+                    .contained()
+                    .with_style(theme.edit_contact.container)
+                    .aligned()
+                    .flex_float()
+                    .boxed(),
+            );
+        } else {
+            row.add_child(
+                MouseEventHandler::new::<Cancel, _, _>(user.id as usize, cx, |_, _| {
+                    Label::new("Cancel".to_string(), theme.edit_contact.text.clone())
+                        .contained()
+                        .with_style(theme.edit_contact.container)
+                        .aligned()
+                        .flex_float()
+                        .boxed()
+                })
+                .on_click(move |_, cx| {
+                    cx.dispatch_action(RemoveContact(user_id));
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .flex_float()
+                .boxed(),
+            );
+        }
+
+        row.constrained().with_height(theme.row_height).boxed()
+    }
+
     fn render_potential_contact(
         contact: Arc<User>,
         user_store: ModelHandle<UserStore>,
@@ -330,9 +485,11 @@ impl ContactsPanel {
                     cx,
                     |_, _| {
                         let label = match request_status {
-                            ContactRequestStatus::None => "+",
-                            ContactRequestStatus::SendingRequest => "…",
-                            ContactRequestStatus::Requested => "-",
+                            ContactRequestStatus::None | ContactRequestStatus::RequestReceived => {
+                                "+"
+                            }
+                            ContactRequestStatus::Pending => "…",
+                            ContactRequestStatus::RequestSent => "-",
                             ContactRequestStatus::RequestAccepted => unreachable!(),
                         };
 
@@ -348,7 +505,7 @@ impl ContactsPanel {
                     ContactRequestStatus::None => {
                         cx.dispatch_action(RequestContact(contact.id));
                     }
-                    ContactRequestStatus::Requested => {
+                    ContactRequestStatus::RequestSent => {
                         cx.dispatch_action(RemoveContact(contact.id));
                     }
                     _ => {}
@@ -361,77 +518,145 @@ impl ContactsPanel {
             .boxed()
     }
 
-    fn filter_contacts(&mut self, query_changed: bool, cx: &mut ViewContext<Self>) {
+    fn query_changed(&mut self, cx: &mut ViewContext<Self>) {
+        self.update_entries(cx);
+
         let query = self.user_query_editor.read(cx).text(cx);
+        let search_users = self
+            .user_store
+            .update(cx, |store, cx| store.fuzzy_search_users(query, cx));
 
-        if query.is_empty() {
-            self.contacts.clear();
-            self.contacts
-                .extend_from_slice(self.user_store.read(cx).contacts());
-
-            if query_changed {
-                self.potential_contacts.clear();
+        self.contacts_search_task = Some(cx.spawn(|this, mut cx| {
+            async move {
+                let potential_contacts = search_users.await?;
+                this.update(&mut cx, |this, cx| {
+                    this.potential_contacts = potential_contacts;
+                    this.update_entries(cx);
+                });
+                Ok(())
             }
+            .log_err()
+        }));
+    }
 
-            self.update_list_state(cx);
-            return;
+    fn update_entries(&mut self, cx: &mut ViewContext<Self>) {
+        let user_store = self.user_store.read(cx);
+        let query = self.user_query_editor.read(cx).text(cx);
+        let executor = cx.background().clone();
+
+        self.entries.clear();
+
+        let incoming = user_store.incoming_contact_requests();
+        if !incoming.is_empty() {
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(
+                    incoming
+                        .iter()
+                        .enumerate()
+                        .map(|(ix, user)| StringMatchCandidate {
+                            id: ix,
+                            string: user.github_login.clone(),
+                            char_bag: user.github_login.chars().collect(),
+                        }),
+                );
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+            if !matches.is_empty() {
+                self.entries.push(ContactEntry::Header("Requests Received"));
+                self.entries.extend(
+                    matches.iter().map(|mat| {
+                        ContactEntry::IncomingRequest(incoming[mat.candidate_id].clone())
+                    }),
+                );
+            }
         }
 
-        let contacts = self.user_store.read(cx).contacts().to_vec();
-        let candidates = contacts
-            .iter()
-            .enumerate()
-            .map(|(ix, contact)| StringMatchCandidate {
-                id: ix,
-                string: contact.user.github_login.clone(),
-                char_bag: contact.user.github_login.chars().collect(),
-            })
-            .collect::<Vec<_>>();
-        let cancel_flag = Default::default();
-        let background = cx.background().clone();
-
-        let search_users = if query_changed {
-            self.user_store
-                .update(cx, |store, cx| store.fuzzy_search_users(query.clone(), cx))
-        } else {
-            Task::ready(Ok(self.potential_contacts.clone()))
-        };
-
-        let match_contacts = async move {
-            anyhow::Ok(
-                fuzzy::match_strings(
-                    &candidates,
-                    query.as_str(),
-                    false,
-                    100,
-                    &cancel_flag,
-                    background,
-                )
-                .await,
-            )
-        };
-
-        self.contacts_search_task = Some(cx.spawn(|this, mut cx| async move {
-            let (contact_matches, users) =
-                futures::future::join(match_contacts, search_users).await;
-            let contact_matches = contact_matches.log_err()?;
-            let users = users.log_err()?;
-
-            this.update(&mut cx, |this, cx| {
-                let user_store = this.user_store.read(cx);
-                this.contacts.clear();
-                this.contacts.extend(
-                    contact_matches
+        let outgoing = user_store.outgoing_contact_requests();
+        if !outgoing.is_empty() {
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(
+                    outgoing
                         .iter()
-                        .map(|mat| contacts[mat.candidate_id].clone()),
+                        .enumerate()
+                        .map(|(ix, user)| StringMatchCandidate {
+                            id: ix,
+                            string: user.github_login.clone(),
+                            char_bag: user.github_login.chars().collect(),
+                        }),
                 );
-                this.potential_contacts = users;
-                this.potential_contacts
-                    .retain(|user| !user_store.has_contact(&user));
-                this.update_list_state(cx);
-            });
-            None
-        }));
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+            if !matches.is_empty() {
+                self.entries.push(ContactEntry::Header("Requests Sent"));
+                self.entries.extend(
+                    matches.iter().map(|mat| {
+                        ContactEntry::OutgoingRequest(outgoing[mat.candidate_id].clone())
+                    }),
+                );
+            }
+        }
+
+        let contacts = user_store.contacts();
+        if !contacts.is_empty() {
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(
+                    contacts
+                        .iter()
+                        .enumerate()
+                        .map(|(ix, contact)| StringMatchCandidate {
+                            id: ix,
+                            string: contact.user.github_login.clone(),
+                            char_bag: contact.user.github_login.chars().collect(),
+                        }),
+                );
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+            if !matches.is_empty() {
+                self.entries.push(ContactEntry::Header("Contacts"));
+                self.entries.extend(
+                    matches
+                        .iter()
+                        .map(|mat| ContactEntry::Contact(contacts[mat.candidate_id].clone())),
+                );
+            }
+        }
+
+        if !self.potential_contacts.is_empty() {
+            self.entries.push(ContactEntry::Header("Add Contacts"));
+            self.entries.extend(
+                self.potential_contacts
+                    .iter()
+                    .map(|user| ContactEntry::PotentialContact(user.clone())),
+            );
+        }
+
+        self.list_state.reset(self.entries.len());
+
+        log::info!("UPDATE ENTRIES");
+        dbg!(&self.entries);
+
+        cx.notify();
     }
 
     fn request_contact(&mut self, request: &RequestContact, cx: &mut ViewContext<Self>) {
@@ -443,6 +668,18 @@ impl ContactsPanel {
     fn remove_contact(&mut self, request: &RemoveContact, cx: &mut ViewContext<Self>) {
         self.user_store
             .update(cx, |store, cx| store.remove_contact(request.0, cx))
+            .detach();
+    }
+
+    fn respond_to_contact_request(
+        &mut self,
+        action: &RespondToContactRequest,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.user_store
+            .update(cx, |store, cx| {
+                store.respond_to_contact_request(action.user_id, action.accept, cx)
+            })
             .detach();
     }
 }
