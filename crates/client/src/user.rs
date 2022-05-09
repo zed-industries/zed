@@ -5,7 +5,7 @@ use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{prelude::Stream, sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{hash_map::Entry, HashMap, HashSet},
     sync::{Arc, Weak},
 };
 use util::TryFutureExt as _;
@@ -31,6 +31,14 @@ pub struct ProjectMetadata {
     pub guests: Vec<Arc<User>>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum ContactRequestStatus {
+    None,
+    SendingRequest,
+    Requested,
+    RequestAccepted,
+}
+
 pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
     update_contacts_tx: watch::Sender<Option<proto::UpdateContacts>>,
@@ -38,6 +46,7 @@ pub struct UserStore {
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
+    pending_contact_requests: HashMap<u64, usize>,
     client: Weak<Client>,
     http: Arc<dyn HttpClient>,
     _maintain_contacts: Task<()>,
@@ -100,6 +109,7 @@ impl UserStore {
                     }
                 }
             }),
+            pending_contact_requests: Default::default(),
         }
     }
 
@@ -237,23 +247,85 @@ impl UserStore {
         &self.outgoing_contact_requests
     }
 
-    pub fn has_outgoing_contact_request(&self, user: &User) -> bool {
-        self.outgoing_contact_requests
-            .binary_search_by_key(&&user.github_login, |requested_user| {
-                &requested_user.github_login
-            })
+    pub fn contact_request_status(&self, user: &User) -> ContactRequestStatus {
+        if self
+            .contacts
+            .binary_search_by_key(&&user.id, |contact| &contact.user.id)
             .is_ok()
+        {
+            ContactRequestStatus::RequestAccepted
+        } else if self
+            .outgoing_contact_requests
+            .binary_search_by_key(&&user.id, |user| &user.id)
+            .is_ok()
+        {
+            ContactRequestStatus::Requested
+        } else if self.pending_contact_requests.contains_key(&user.id) {
+            ContactRequestStatus::SendingRequest
+        } else {
+            ContactRequestStatus::None
+        }
     }
 
-    pub fn request_contact(&self, responder_id: u64) -> impl Future<Output = Result<()>> {
+    pub fn request_contact(
+        &mut self,
+        responder_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
         let client = self.client.upgrade();
-        async move {
-            client
-                .ok_or_else(|| anyhow!("not logged in"))?
-                .request(proto::RequestContact { responder_id })
-                .await?;
+        *self
+            .pending_contact_requests
+            .entry(responder_id)
+            .or_insert(0) += 1;
+        cx.notify();
+
+        cx.spawn(|this, mut cx| async move {
+            let request = client
+                .ok_or_else(|| anyhow!("can't upgrade client reference"))?
+                .request(proto::RequestContact { responder_id });
+            request.await?;
+            this.update(&mut cx, |this, cx| {
+                if let Entry::Occupied(mut request_count) =
+                    this.pending_contact_requests.entry(responder_id)
+                {
+                    *request_count.get_mut() -= 1;
+                    if *request_count.get() == 0 {
+                        request_count.remove();
+                    }
+                }
+                cx.notify();
+            });
             Ok(())
-        }
+        })
+    }
+
+    pub fn remove_contact(
+        &mut self,
+        user_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.upgrade();
+        *self.pending_contact_requests.entry(user_id).or_insert(0) += 1;
+        cx.notify();
+
+        cx.spawn(|this, mut cx| async move {
+            let request = client
+                .ok_or_else(|| anyhow!("can't upgrade client reference"))?
+                .request(proto::RemoveContact { user_id });
+            request.await?;
+            this.update(&mut cx, |this, cx| {
+                if let Entry::Occupied(mut request_count) =
+                    this.pending_contact_requests.entry(user_id)
+                {
+                    *request_count.get_mut() -= 1;
+                    if *request_count.get() == 0 {
+                        request_count.remove();
+                    }
+                }
+                cx.notify();
+            });
+            Ok(())
+        })
     }
 
     pub fn respond_to_contact_request(

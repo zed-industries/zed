@@ -1,4 +1,4 @@
-use client::{Contact, User, UserStore};
+use client::{Contact, ContactRequestStatus, User, UserStore};
 use editor::Editor;
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -7,8 +7,8 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     impl_actions,
     platform::CursorStyle,
-    Element, ElementBox, Entity, LayoutContext, ModelHandle, RenderContext, Subscription, Task,
-    View, ViewContext, ViewHandle,
+    Element, ElementBox, Entity, LayoutContext, ModelHandle, MutableAppContext, RenderContext,
+    Subscription, Task, View, ViewContext, ViewHandle,
 };
 use serde::Deserialize;
 use settings::Settings;
@@ -16,7 +16,7 @@ use std::sync::Arc;
 use util::ResultExt;
 use workspace::{AppState, JoinProject};
 
-impl_actions!(contacts_panel, [RequestContact]);
+impl_actions!(contacts_panel, [RequestContact, RemoveContact]);
 
 pub struct ContactsPanel {
     list_state: ListState,
@@ -30,6 +30,14 @@ pub struct ContactsPanel {
 
 #[derive(Clone, Deserialize)]
 pub struct RequestContact(pub u64);
+
+#[derive(Clone, Deserialize)]
+pub struct RemoveContact(pub u64);
+
+pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action(ContactsPanel::request_contact);
+    cx.add_action(ContactsPanel::remove_contact);
+}
 
 impl ContactsPanel {
     pub fn new(app_state: Arc<AppState>, cx: &mut ViewContext<Self>) -> Self {
@@ -295,7 +303,7 @@ impl ContactsPanel {
     ) -> ElementBox {
         enum RequestContactButton {}
 
-        let requested_contact = user_store.read(cx).has_outgoing_contact_request(&contact);
+        let request_status = user_store.read(cx).contact_request_status(&contact);
 
         Flex::row()
             .with_children(contact.avatar.clone().map(|avatar| {
@@ -321,7 +329,13 @@ impl ContactsPanel {
                     contact.id as usize,
                     cx,
                     |_, _| {
-                        let label = if requested_contact { "-" } else { "+" };
+                        let label = match request_status {
+                            ContactRequestStatus::None => "+",
+                            ContactRequestStatus::SendingRequest => "…",
+                            ContactRequestStatus::Requested => "-",
+                            ContactRequestStatus::RequestAccepted => unreachable!(),
+                        };
+
                         Label::new(label.to_string(), theme.edit_contact.text.clone())
                             .contained()
                             .with_style(theme.edit_contact.container)
@@ -330,12 +344,16 @@ impl ContactsPanel {
                             .boxed()
                     },
                 )
-                .on_click(move |_, cx| {
-                    if requested_contact {
-                    } else {
+                .on_click(move |_, cx| match request_status {
+                    ContactRequestStatus::None => {
                         cx.dispatch_action(RequestContact(contact.id));
                     }
+                    ContactRequestStatus::Requested => {
+                        cx.dispatch_action(RemoveContact(contact.id));
+                    }
+                    _ => {}
                 })
+                .with_cursor_style(CursorStyle::PointingHand)
                 .boxed(),
             )
             .constrained()
@@ -414,6 +432,18 @@ impl ContactsPanel {
             });
             None
         }));
+    }
+
+    fn request_contact(&mut self, request: &RequestContact, cx: &mut ViewContext<Self>) {
+        self.user_store
+            .update(cx, |store, cx| store.request_contact(request.0, cx))
+            .detach();
+    }
+
+    fn remove_contact(&mut self, request: &RemoveContact, cx: &mut ViewContext<Self>) {
+        self.user_store
+            .update(cx, |store, cx| store.remove_contact(request.0, cx))
+            .detach();
     }
 }
 

@@ -91,11 +91,12 @@ message Envelope {
         UsersResponse users_response = 78;
         RequestContact request_contact = 79;
         RespondToContactRequest respond_to_contact_request = 80;
+        RemoveContact remove_contact = 81;
 
-        Follow follow = 81;
-        FollowResponse follow_response = 82;
-        UpdateFollowers update_followers = 83;
-        Unfollow unfollow = 84;
+        Follow follow = 82;
+        FollowResponse follow_response = 83;
+        UpdateFollowers update_followers = 84;
+        Unfollow unfollow = 85;
     }
 }
 
@@ -551,6 +552,10 @@ message UsersResponse {
 
 message RequestContact {
     uint64 responder_id = 1;
+}
+
+message RemoveContact {
+    uint64 user_id = 1;
 }
 
 message RespondToContactRequest {

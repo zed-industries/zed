@@ -155,6 +155,7 @@ impl Server {
             .add_request_handler(Server::get_users)
             .add_request_handler(Server::fuzzy_search_users)
             .add_request_handler(Server::request_contact)
+            .add_request_handler(Server::remove_contact)
             .add_request_handler(Server::respond_to_contact_request)
             .add_request_handler(Server::join_channel)
             .add_message_handler(Server::leave_channel)
@@ -1041,6 +1042,43 @@ impl Server {
             .remove_outgoing_requests
             .push(responder_id.to_proto());
         for connection_id in store.connection_ids_for_user(requester_id) {
+            self.peer.send(connection_id, update.clone())?;
+        }
+
+        response.send(proto::Ack {})?;
+        Ok(())
+    }
+
+    async fn remove_contact(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::RemoveContact>,
+        response: Response<proto::RemoveContact>,
+    ) -> Result<()> {
+        let requester_id = self
+            .store()
+            .await
+            .user_id_for_connection(request.sender_id)?;
+        let responder_id = UserId::from_proto(request.payload.user_id);
+        self.app_state
+            .db
+            .remove_contact(requester_id, responder_id)
+            .await?;
+
+        // Update outgoing contact requests of requester
+        let mut update = proto::UpdateContacts::default();
+        update
+            .remove_outgoing_requests
+            .push(responder_id.to_proto());
+        for connection_id in self.store().await.connection_ids_for_user(requester_id) {
+            self.peer.send(connection_id, update.clone())?;
+        }
+
+        // Update incoming contact requests of responder
+        let mut update = proto::UpdateContacts::default();
+        update
+            .remove_incoming_requests
+            .push(requester_id.to_proto());
+        for connection_id in self.store().await.connection_ids_for_user(responder_id) {
             self.peer.send(connection_id, update.clone())?;
         }
 
@@ -5138,15 +5176,15 @@ mod tests {
         // User A and User C request that user B become their contact.
         client_a
             .user_store
-            .read_with(cx_a, |store, _| {
-                store.request_contact(client_b.user_id().unwrap())
+            .update(cx_a, |store, cx| {
+                store.request_contact(client_b.user_id().unwrap(), cx)
             })
             .await
             .unwrap();
         client_c
             .user_store
-            .read_with(cx_c, |store, _| {
-                store.request_contact(client_b.user_id().unwrap())
+            .update(cx_c, |store, cx| {
+                store.request_contact(client_b.user_id().unwrap(), cx)
             })
             .await
             .unwrap();
@@ -6460,8 +6498,8 @@ mod tests {
                 for (client_b, cx_b) in &mut clients {
                     client_a
                         .user_store
-                        .update(cx_a, |store, _| {
-                            store.request_contact(client_b.user_id().unwrap())
+                        .update(cx_a, |store, cx| {
+                            store.request_contact(client_b.user_id().unwrap(), cx)
                         })
                         .await
                         .unwrap();

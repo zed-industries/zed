@@ -19,6 +19,7 @@ pub trait Db: Send + Sync {
 
     async fn get_contacts(&self, id: UserId) -> Result<Contacts>;
     async fn send_contact_request(&self, requester_id: UserId, responder_id: UserId) -> Result<()>;
+    async fn remove_contact(&self, requester_id: UserId, responder_id: UserId) -> Result<()>;
     async fn dismiss_contact_request(
         &self,
         responder_id: UserId,
@@ -264,6 +265,30 @@ impl Db for PostgresDb {
             Ok(())
         } else {
             Err(anyhow!("contact already requested"))
+        }
+    }
+
+    async fn remove_contact(&self, requester_id: UserId, responder_id: UserId) -> Result<()> {
+        let (id_a, id_b, a_to_b) = if responder_id < requester_id {
+            (responder_id, requester_id, false)
+        } else {
+            (requester_id, responder_id, true)
+        };
+        let query = "
+            DELETE FROM contacts
+            WHERE user_id_a = $1 AND user_id_b = $2 AND a_to_b = $3;
+        ";
+        let result = sqlx::query(query)
+            .bind(id_a.0)
+            .bind(id_b.0)
+            .bind(a_to_b)
+            .execute(&self.pool)
+            .await?;
+
+        if result.rows_affected() == 1 {
+            Ok(())
+        } else {
+            Err(anyhow!("no such contact"))
         }
     }
 
@@ -1244,6 +1269,13 @@ pub mod tests {
                 responder_id,
                 accepted: false,
                 should_notify: true,
+            });
+            Ok(())
+        }
+
+        async fn remove_contact(&self, requester_id: UserId, responder_id: UserId) -> Result<()> {
+            self.contacts.lock().retain(|contact| {
+                !(contact.requester_id == requester_id && contact.responder_id == responder_id)
             });
             Ok(())
         }
