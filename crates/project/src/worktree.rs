@@ -32,7 +32,6 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-use serde::Deserialize;
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
@@ -64,7 +63,6 @@ pub enum Worktree {
 
 pub struct LocalWorktree {
     snapshot: LocalSnapshot,
-    config: WorktreeConfig,
     background_snapshot: Arc<Mutex<LocalSnapshot>>,
     last_scan_state_rx: watch::Receiver<ScanState>,
     _background_scanner_task: Option<Task<()>>,
@@ -141,11 +139,6 @@ struct ShareState {
     project_id: u64,
     snapshots_tx: Sender<LocalSnapshot>,
     _maintain_remote_snapshot: Option<Task<Option<()>>>,
-}
-
-#[derive(Default, Deserialize)]
-struct WorktreeConfig {
-    collaborators: Vec<String>,
 }
 
 pub enum Event {
@@ -460,13 +453,6 @@ impl LocalWorktree {
             .await
             .context("failed to stat worktree path")?;
 
-        let mut config = WorktreeConfig::default();
-        if let Ok(zed_toml) = fs.load(&abs_path.join(".zed.toml")).await {
-            if let Ok(parsed) = toml::from_str(&zed_toml) {
-                config = parsed;
-            }
-        }
-
         let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
         let (mut last_scan_state_tx, last_scan_state_rx) = watch::channel_with(ScanState::Scanning);
         let tree = cx.add_model(move |cx: &mut ModelContext<Worktree>| {
@@ -496,7 +482,6 @@ impl LocalWorktree {
 
             let tree = Self {
                 snapshot: snapshot.clone(),
-                config,
                 background_snapshot: Arc::new(Mutex::new(snapshot)),
                 last_scan_state_rx,
                 _background_scanner_task: None,
@@ -542,10 +527,6 @@ impl LocalWorktree {
         } else {
             self.abs_path.to_path_buf()
         }
-    }
-
-    pub fn authorized_logins(&self) -> Vec<String> {
-        self.config.collaborators.clone()
     }
 
     pub(crate) fn load_buffer(
@@ -879,7 +860,6 @@ impl LocalWorktree {
             project_id,
             worktree_id: self.id().to_proto(),
             root_name: self.root_name().to_string(),
-            authorized_logins: self.authorized_logins(),
             visible: self.visible,
         };
         let request = client.request(register_message);

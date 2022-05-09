@@ -5880,13 +5880,7 @@ mod tests {
         let host_language_registry = Arc::new(LanguageRegistry::test());
 
         let fs = FakeFs::new(cx.background());
-        fs.insert_tree(
-            "/_collab",
-            json!({
-                ".zed.toml": r#"collaborators = ["guest-1", "guest-2", "guest-3", "guest-4"]"#
-            }),
-        )
-        .await;
+        fs.insert_tree("/_collab", json!({"init": ""})).await;
 
         let mut server = TestServer::start(cx.foreground(), cx.background()).await;
         let db = server.app_state.db.clone();
