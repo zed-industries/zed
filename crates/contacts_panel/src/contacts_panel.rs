@@ -90,11 +90,12 @@ impl ContactsPanel {
                         ContactEntry::Header(text) => {
                             Label::new(text.to_string(), theme.header.text.clone())
                                 .contained()
-                                .with_style(theme.header.container)
                                 .aligned()
                                 .left()
                                 .constrained()
                                 .with_height(theme.row_height)
+                                .contained()
+                                .with_style(theme.header.container)
                                 .boxed()
                         }
                         ContactEntry::IncomingRequest(user) => {
@@ -302,6 +303,8 @@ impl ContactsPanel {
                             .boxed()
                     }),
             )
+            .contained()
+            .with_style(theme.row.clone())
             .boxed()
     }
 
@@ -380,7 +383,11 @@ impl ContactsPanel {
             .boxed(),
         ]);
 
-        row.constrained().with_height(theme.row_height).boxed()
+        row.constrained()
+            .with_height(theme.row_height)
+            .contained()
+            .with_style(theme.row.clone())
+            .boxed()
     }
 
     fn render_outgoing_contact_request(
@@ -434,7 +441,11 @@ impl ContactsPanel {
             .boxed(),
         );
 
-        row.constrained().with_height(theme.row_height).boxed()
+        row.constrained()
+            .with_height(theme.row_height)
+            .contained()
+            .with_style(theme.row)
+            .boxed()
     }
 
     fn update_entries(&mut self, cx: &mut ViewContext<Self>) {
@@ -643,7 +654,7 @@ impl View for ContactsPanel {
                             .boxed(),
                         )
                         .constrained()
-                        .with_height(32.)
+                        .with_height(theme.user_query_editor_height)
                         .boxed(),
                 )
                 .with_child(List::new(self.list_state.clone()).flex(1., false).boxed())

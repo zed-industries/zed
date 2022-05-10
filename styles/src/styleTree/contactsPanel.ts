@@ -55,13 +55,21 @@ export default function contactsPanel(theme: Theme) {
         top: 4,
       },
     },
+    userQueryEditorHeight: 32,
     addContactButton: {
       margin: { left: 6 },
       color: iconColor(theme, "primary"),
       buttonWidth: 8,
       iconWidth: 8,
     },
+    row: {
+      padding: { left: 8 },
+    },
     rowHeight: 28,
+    header: {
+      ...text(theme, "mono", "secondary", { size: "sm" }),
+      margin: { top: 8 },
+    },
     treeBranchColor: borderColor(theme, "muted"),
     treeBranchWidth: 1,
     contactAvatar: {
@@ -84,12 +92,6 @@ export default function contactsPanel(theme: Theme) {
       ...contactButton,
       background: backgroundColor(theme, 100),
       color: iconColor(theme, "muted"),
-    },
-    header: {
-      ...text(theme, "mono", "secondary", { size: "sm" }),
-      // padding: {
-      //   left: 8,
-      // }
     },
     project,
     sharedProject,
