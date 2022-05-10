@@ -21,6 +21,7 @@ pub struct Theme {
     pub workspace: Workspace,
     pub chat_panel: ChatPanel,
     pub contacts_panel: ContactsPanel,
+    pub contact_finder: ContactFinder,
     pub project_panel: ProjectPanel,
     pub command_palette: CommandPalette,
     pub picker: Picker,
@@ -240,13 +241,26 @@ pub struct ContactsPanel {
     pub row_height: f32,
     pub contact_avatar: ImageStyle,
     pub contact_username: ContainedText,
-    pub edit_contact: ContainedText,
+    pub contact_button: ContainedText,
     pub tree_branch_width: f32,
     pub tree_branch_color: Color,
     pub shared_project: ProjectRow,
     pub hovered_shared_project: ProjectRow,
     pub unshared_project: ProjectRow,
     pub hovered_unshared_project: ProjectRow,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ContactFinder {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub max_width: f32,
+    pub max_height: f32,
+    pub query_editor: FieldEditor,
+    pub row_height: f32,
+    pub contact_avatar: ImageStyle,
+    pub contact_username: ContainedText,
+    pub contact_button: ContainedText,
 }
 
 #[derive(Deserialize, Default)]

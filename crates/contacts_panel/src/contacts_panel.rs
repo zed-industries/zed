@@ -1,20 +1,24 @@
+mod contact_finder;
+
 use client::{Contact, ContactRequestStatus, User, UserStore};
+use contact_finder::ContactFinder;
 use editor::Editor;
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
+    actions,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     impl_actions,
     platform::CursorStyle,
     Element, ElementBox, Entity, LayoutContext, ModelHandle, MutableAppContext, RenderContext,
-    Subscription, Task, View, ViewContext, ViewHandle,
+    Subscription, View, ViewContext, ViewHandle,
 };
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
-use util::TryFutureExt;
-use workspace::{AppState, JoinProject};
+use workspace::{AppState, JoinProject, Workspace};
 
+actions!(contacts_panel, [FindNewContacts]);
 impl_actions!(
     contacts_panel,
     [RequestContact, RemoveContact, RespondToContactRequest]
@@ -26,16 +30,13 @@ enum ContactEntry {
     IncomingRequest(Arc<User>),
     OutgoingRequest(Arc<User>),
     Contact(Arc<Contact>),
-    PotentialContact(Arc<User>),
 }
 
 pub struct ContactsPanel {
     entries: Vec<ContactEntry>,
     match_candidates: Vec<StringMatchCandidate>,
-    potential_contacts: Vec<Arc<User>>,
     list_state: ListState,
     user_store: ModelHandle<UserStore>,
-    contacts_search_task: Option<Task<Option<()>>>,
     user_query_editor: ViewHandle<Editor>,
     _maintain_contacts: Subscription,
 }
@@ -56,6 +57,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ContactsPanel::request_contact);
     cx.add_action(ContactsPanel::remove_contact);
     cx.add_action(ContactsPanel::respond_to_contact_request);
+    cx.add_action(ContactsPanel::find_new_contacts);
 }
 
 impl ContactsPanel {
@@ -69,7 +71,7 @@ impl ContactsPanel {
 
         cx.subscribe(&user_query_editor, |this, _, event, cx| {
             if let editor::Event::BufferEdited = event {
-                this.query_changed(cx)
+                this.update_entries(cx)
             }
         })
         .detach();
@@ -120,22 +122,14 @@ impl ContactsPanel {
                             theme,
                             cx,
                         ),
-                        ContactEntry::PotentialContact(user) => Self::render_potential_contact(
-                            user.clone(),
-                            this.user_store.clone(),
-                            theme,
-                            cx,
-                        ),
                     }
                 }
             }),
             entries: Default::default(),
-            potential_contacts: Default::default(),
             match_candidates: Default::default(),
             user_query_editor,
             _maintain_contacts: cx
                 .observe(&app_state.user_store, |this, _, cx| this.update_entries(cx)),
-            contacts_search_task: None,
             user_store: app_state.user_store.clone(),
         };
         this.update_entries(cx);
@@ -347,9 +341,9 @@ impl ContactsPanel {
 
         if request_status == ContactRequestStatus::Pending {
             row.add_child(
-                Label::new("…".to_string(), theme.edit_contact.text.clone())
+                Label::new("…".to_string(), theme.contact_button.text.clone())
                     .contained()
-                    .with_style(theme.edit_contact.container)
+                    .with_style(theme.contact_button.container)
                     .aligned()
                     .flex_float()
                     .boxed(),
@@ -357,9 +351,9 @@ impl ContactsPanel {
         } else {
             row.add_children([
                 MouseEventHandler::new::<Reject, _, _>(user.id as usize, cx, |_, _| {
-                    Label::new("Reject".to_string(), theme.edit_contact.text.clone())
+                    Label::new("Reject".to_string(), theme.contact_button.text.clone())
                         .contained()
-                        .with_style(theme.edit_contact.container)
+                        .with_style(theme.contact_button.container)
                         .aligned()
                         .flex_float()
                         .boxed()
@@ -374,9 +368,9 @@ impl ContactsPanel {
                 .flex_float()
                 .boxed(),
                 MouseEventHandler::new::<Accept, _, _>(user.id as usize, cx, |_, _| {
-                    Label::new("Accept".to_string(), theme.edit_contact.text.clone())
+                    Label::new("Accept".to_string(), theme.contact_button.text.clone())
                         .contained()
-                        .with_style(theme.edit_contact.container)
+                        .with_style(theme.contact_button.container)
                         .aligned()
                         .boxed()
                 })
@@ -427,9 +421,9 @@ impl ContactsPanel {
 
         if request_status == ContactRequestStatus::Pending {
             row.add_child(
-                Label::new("…".to_string(), theme.edit_contact.text.clone())
+                Label::new("…".to_string(), theme.contact_button.text.clone())
                     .contained()
-                    .with_style(theme.edit_contact.container)
+                    .with_style(theme.contact_button.container)
                     .aligned()
                     .flex_float()
                     .boxed(),
@@ -437,9 +431,9 @@ impl ContactsPanel {
         } else {
             row.add_child(
                 MouseEventHandler::new::<Cancel, _, _>(user.id as usize, cx, |_, _| {
-                    Label::new("Cancel".to_string(), theme.edit_contact.text.clone())
+                    Label::new("Cancel".to_string(), theme.contact_button.text.clone())
                         .contained()
-                        .with_style(theme.edit_contact.container)
+                        .with_style(theme.contact_button.container)
                         .aligned()
                         .flex_float()
                         .boxed()
@@ -452,95 +446,6 @@ impl ContactsPanel {
         }
 
         row.constrained().with_height(theme.row_height).boxed()
-    }
-
-    fn render_potential_contact(
-        contact: Arc<User>,
-        user_store: ModelHandle<UserStore>,
-        theme: &theme::ContactsPanel,
-        cx: &mut LayoutContext,
-    ) -> ElementBox {
-        enum RequestContactButton {}
-
-        let request_status = user_store.read(cx).contact_request_status(&contact);
-
-        Flex::row()
-            .with_children(contact.avatar.clone().map(|avatar| {
-                Image::new(avatar)
-                    .with_style(theme.contact_avatar)
-                    .aligned()
-                    .left()
-                    .boxed()
-            }))
-            .with_child(
-                Label::new(
-                    contact.github_login.clone(),
-                    theme.contact_username.text.clone(),
-                )
-                .contained()
-                .with_style(theme.contact_username.container)
-                .aligned()
-                .left()
-                .boxed(),
-            )
-            .with_child(
-                MouseEventHandler::new::<RequestContactButton, _, _>(
-                    contact.id as usize,
-                    cx,
-                    |_, _| {
-                        let label = match request_status {
-                            ContactRequestStatus::None | ContactRequestStatus::RequestReceived => {
-                                "+"
-                            }
-                            ContactRequestStatus::RequestSent => "-",
-                            ContactRequestStatus::Pending
-                            | ContactRequestStatus::RequestAccepted => "…",
-                        };
-
-                        Label::new(label.to_string(), theme.edit_contact.text.clone())
-                            .contained()
-                            .with_style(theme.edit_contact.container)
-                            .aligned()
-                            .flex_float()
-                            .boxed()
-                    },
-                )
-                .on_click(move |_, cx| match request_status {
-                    ContactRequestStatus::None => {
-                        cx.dispatch_action(RequestContact(contact.id));
-                    }
-                    ContactRequestStatus::RequestSent => {
-                        cx.dispatch_action(RemoveContact(contact.id));
-                    }
-                    _ => {}
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .boxed(),
-            )
-            .constrained()
-            .with_height(theme.row_height)
-            .boxed()
-    }
-
-    fn query_changed(&mut self, cx: &mut ViewContext<Self>) {
-        self.update_entries(cx);
-
-        let query = self.user_query_editor.read(cx).text(cx);
-        let search_users = self
-            .user_store
-            .update(cx, |store, cx| store.fuzzy_search_users(query, cx));
-
-        self.contacts_search_task = Some(cx.spawn(|this, mut cx| {
-            async move {
-                let potential_contacts = search_users.await?;
-                this.update(&mut cx, |this, cx| {
-                    this.potential_contacts = potential_contacts;
-                    this.update_entries(cx);
-                });
-                Ok(())
-            }
-            .log_err()
-        }));
     }
 
     fn update_entries(&mut self, cx: &mut ViewContext<Self>) {
@@ -656,15 +561,6 @@ impl ContactsPanel {
             }
         }
 
-        if !self.potential_contacts.is_empty() {
-            self.entries.push(ContactEntry::Header("Add Contacts"));
-            self.entries.extend(
-                self.potential_contacts
-                    .iter()
-                    .map(|user| ContactEntry::PotentialContact(user.clone())),
-            );
-        }
-
         self.list_state.reset(self.entries.len());
         cx.notify();
     }
@@ -692,6 +588,16 @@ impl ContactsPanel {
             })
             .detach();
     }
+
+    fn find_new_contacts(
+        workspace: &mut Workspace,
+        _: &FindNewContacts,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        workspace.toggle_modal(cx, |cx, workspace| {
+            cx.add_view(|cx| ContactFinder::new(workspace.user_store().clone(), cx))
+        });
+    }
 }
 
 pub enum Event {}
@@ -706,7 +612,10 @@ impl View for ContactsPanel {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &cx.global::<Settings>().theme.contacts_panel;
+        enum AddContact {}
+
+        let theme = cx.global::<Settings>().theme.clone();
+        let theme = &theme.contacts_panel;
         Container::new(
             Flex::column()
                 .with_child(
@@ -719,14 +628,18 @@ impl View for ContactsPanel {
                                 .boxed(),
                         )
                         .with_child(
-                            Svg::new("icons/add-contact.svg")
-                                .with_color(theme.add_contact_icon.color)
-                                .constrained()
-                                .with_height(12.)
-                                .contained()
-                                .with_style(theme.add_contact_icon.container)
-                                .aligned()
-                                .boxed(),
+                            MouseEventHandler::new::<AddContact, _, _>(0, cx, |_, _| {
+                                Svg::new("icons/add-contact.svg")
+                                    .with_color(theme.add_contact_icon.color)
+                                    .constrained()
+                                    .with_height(12.)
+                                    .contained()
+                                    .with_style(theme.add_contact_icon.container)
+                                    .aligned()
+                                    .boxed()
+                            })
+                            .on_click(|_, cx| cx.dispatch_action(FindNewContacts))
+                            .boxed(),
                         )
                         .constrained()
                         .with_height(32.)

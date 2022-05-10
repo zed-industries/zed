@@ -2,7 +2,7 @@ import Theme from "../themes/theme";
 import { panel } from "./app";
 import { backgroundColor, border, borderColor, iconColor, player, text } from "./components";
 
-export default function(theme: Theme) {
+export default function contactsPanel(theme: Theme) {
   const project = {
     guestAvatarSpacing: 4,
     height: 24,
@@ -64,7 +64,7 @@ export default function(theme: Theme) {
         left: 8,
       },
     },
-    editContact: {
+    contactButton: {
       ...text(theme, "mono", "primary", { size: "sm" }),
       background: backgroundColor(theme, 100),
       cornerRadius: 12,

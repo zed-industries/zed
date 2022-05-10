@@ -824,6 +824,10 @@ impl Workspace {
         &self.status_bar
     }
 
+    pub fn user_store(&self) -> &ModelHandle<UserStore> {
+        &self.user_store
+    }
+
     pub fn project(&self) -> &ModelHandle<Project> {
         &self.project
     }
@@ -931,7 +935,7 @@ impl Workspace {
         })
     }
 
-    // Returns the model that was toggled closed if it was open
+    /// Returns the modal that was toggled closed if it was open.
     pub fn toggle_modal<V, F>(
         &mut self,
         cx: &mut ViewContext<Self>,
