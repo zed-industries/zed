@@ -106,10 +106,12 @@ impl Sidebar {
         .with_cursor_style(CursorStyle::ResizeLeftRight)
         .on_drag(move |delta, cx| {
             let prev_width = *actual_width.borrow();
-            match side {
-                Side::Left => *custom_width.borrow_mut() = 0f32.max(prev_width + delta.x()),
-                Side::Right => *custom_width.borrow_mut() = 0f32.max(prev_width - delta.x()),
-            }
+            *custom_width.borrow_mut() = 0f32
+                .max(match side {
+                    Side::Left => prev_width + delta.x(),
+                    Side::Right => prev_width - delta.x(),
+                })
+                .round();
 
             cx.notify();
         })
