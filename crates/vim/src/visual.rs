@@ -56,6 +56,7 @@ pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspac
 
 pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
+        vim.switch_mode(Mode::Normal, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             editor.move_selections(cx, |map, selection| {
@@ -67,8 +68,15 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
                 }
             });
             editor.insert("", cx);
+
+            // Fixup cursor position after the deletion
+            editor.set_clip_at_line_ends(true, cx);
+            editor.move_selections(cx, |map, selection| {
+                let mut cursor = selection.head();
+                cursor = map.clip_point(cursor, Bias::Left);
+                selection.collapse_to(cursor, selection.goal)
+            });
         });
-        vim.switch_mode(Mode::Normal, cx);
     });
 }
 
@@ -213,7 +221,7 @@ mod test {
     #[gpui::test]
     async fn test_visual_change(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["v", "w", "x"]).mode_after(Mode::Insert);
+        let mut cx = cx.binding(["v", "w", "c"]).mode_after(Mode::Insert);
         cx.assert("The quick |brown", "The quick |");
         let mut cx = cx.binding(["v", "w", "j", "c"]).mode_after(Mode::Insert);
         cx.assert(
