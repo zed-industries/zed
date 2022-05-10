@@ -113,7 +113,7 @@ impl PickerDelegate for ContactFinder {
         let label = match request_status {
             ContactRequestStatus::None | ContactRequestStatus::RequestReceived => "+",
             ContactRequestStatus::RequestSent => "-",
-            ContactRequestStatus::Pending | ContactRequestStatus::RequestAccepted => "…",
+            ContactRequestStatus::Pending | ContactRequestStatus::RequestAccepted => "•",
         };
         let style = theme.picker.item.style_for(mouse_state, selected);
         Flex::row()
