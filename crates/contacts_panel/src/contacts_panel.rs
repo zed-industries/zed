@@ -378,7 +378,6 @@ impl ContactsPanel {
                         .contained()
                         .with_style(theme.edit_contact.container)
                         .aligned()
-                        .flex_float()
                         .boxed()
                 })
                 .on_click(move |_, cx| {

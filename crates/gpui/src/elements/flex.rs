@@ -117,14 +117,15 @@ impl Element for Flex {
     ) -> (Vector2F, Self::LayoutState) {
         let mut total_flex = None;
         let mut fixed_space = 0.0;
+        let mut contains_float = false;
 
         let cross_axis = self.axis.invert();
         let mut cross_axis_max: f32 = 0.0;
         for child in &mut self.children {
-            if let Some(flex) = child
-                .metadata::<FlexParentData>()
-                .and_then(|metadata| metadata.flex.map(|(flex, _)| flex))
-            {
+            let metadata = child.metadata::<FlexParentData>();
+            contains_float |= metadata.map_or(false, |metadata| metadata.float);
+
+            if let Some(flex) = metadata.and_then(|metadata| metadata.flex.map(|(flex, _)| flex)) {
                 *total_flex.get_or_insert(0.) += flex;
             } else {
                 let child_constraint = match self.axis {
@@ -176,6 +177,13 @@ impl Element for Flex {
                 Axis::Vertical => vec2f(cross_axis_max, fixed_space),
             }
         };
+
+        if contains_float {
+            match self.axis {
+                Axis::Horizontal => size.set_x(size.x().max(constraint.max.x())),
+                Axis::Vertical => size.set_y(size.y().max(constraint.max.y())),
+            }
+        }
 
         if constraint.min.x().is_finite() {
             size.set_x(size.x().max(constraint.min.x()));
