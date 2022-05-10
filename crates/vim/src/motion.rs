@@ -11,6 +11,7 @@ use workspace::Workspace;
 use crate::{
     normal::normal_motion,
     state::{Mode, Operator},
+    visual::visual_motion,
     Vim,
 };
 
@@ -110,6 +111,7 @@ fn motion(motion: Motion, cx: &mut MutableAppContext) {
     });
     match Vim::read(cx).state.mode {
         Mode::Normal => normal_motion(motion, cx),
+        Mode::Visual => visual_motion(motion, cx),
         Mode::Insert => {
             // Shouldn't execute a motion in insert mode. Ignoring
         }

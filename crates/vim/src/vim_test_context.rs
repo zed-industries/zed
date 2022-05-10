@@ -1,9 +1,16 @@
-use std::ops::Deref;
+use std::ops::{Deref, Range};
 
-use editor::{display_map::ToDisplayPoint, Bias, DisplayPoint};
+use collections::BTreeMap;
+use itertools::{Either, Itertools};
+
+use editor::display_map::ToDisplayPoint;
 use gpui::{json::json, keymap::Keystroke, ViewHandle};
-use language::{Point, Selection};
-use util::test::marked_text;
+use indoc::indoc;
+use language::Selection;
+use util::{
+    set_eq,
+    test::{marked_text, marked_text_ranges_by, SetEqError},
+};
 use workspace::{WorkspaceHandle, WorkspaceParams};
 
 use crate::{state::Operator, *};
@@ -83,15 +90,6 @@ impl<'a> VimTestContext<'a> {
         })
     }
 
-    pub fn newest_selection(&mut self) -> Selection<DisplayPoint> {
-        self.editor.update(self.cx, |editor, cx| {
-            let snapshot = editor.snapshot(cx);
-            editor
-                .newest_selection::<Point>(cx)
-                .map(|point| point.to_display_point(&snapshot.display_snapshot))
-        })
-    }
-
     pub fn mode(&mut self) -> Mode {
         self.cx.read(|cx| cx.global::<Vim>().state.mode)
     }
@@ -134,51 +132,183 @@ impl<'a> VimTestContext<'a> {
         })
     }
 
-    pub fn assert_newest_selection_head_offset(&mut self, expected_offset: usize) {
-        let actual_head = self.newest_selection().head();
-        let (actual_offset, expected_head) = self.editor.update(self.cx, |editor, cx| {
-            let snapshot = editor.snapshot(cx);
-            (
-                actual_head.to_offset(&snapshot, Bias::Left),
-                expected_offset.to_display_point(&snapshot),
-            )
-        });
-        let mut actual_position_text = self.editor_text();
-        let mut expected_position_text = actual_position_text.clone();
-        actual_position_text.insert(actual_offset, '|');
-        expected_position_text.insert(expected_offset, '|');
-        assert_eq!(
-            actual_head, expected_head,
-            "\nActual Position: {}\nExpected Position: {}",
-            actual_position_text, expected_position_text
-        )
-    }
-
+    // Asserts the editor state via a marked string.
+    // `|` characters represent empty selections
+    // `[` to `}` represents a non empty selection with the head at `}`
+    // `{` to `]` represents a non empty selection with the head at `{`
     pub fn assert_editor_state(&mut self, text: &str) {
-        let (unmarked_text, markers) = marked_text(&text);
+        let (text_with_ranges, expected_empty_selections) = marked_text(&text);
+        let (unmarked_text, mut selection_ranges) =
+            marked_text_ranges_by(&text_with_ranges, vec![('[', '}'), ('{', ']')]);
         let editor_text = self.editor_text();
         assert_eq!(
             editor_text, unmarked_text,
             "Unmarked text doesn't match editor text"
         );
-        let expected_offset = markers[0];
-        let actual_head = self.newest_selection().head();
-        let (actual_offset, expected_head) = self.editor.update(self.cx, |editor, cx| {
-            let snapshot = editor.snapshot(cx);
-            (
-                actual_head.to_offset(&snapshot, Bias::Left),
-                expected_offset.to_display_point(&snapshot),
+
+        let expected_reverse_selections = selection_ranges.remove(&('{', ']')).unwrap_or_default();
+        let expected_forward_selections = selection_ranges.remove(&('[', '}')).unwrap_or_default();
+
+        self.assert_selections(
+            expected_empty_selections,
+            expected_reverse_selections,
+            expected_forward_selections,
+            Some(text.to_string()),
+        )
+    }
+
+    pub fn assert_editor_selections(&mut self, expected_selections: Vec<Selection<usize>>) {
+        let (expected_empty_selections, expected_non_empty_selections): (Vec<_>, Vec<_>) =
+            expected_selections.into_iter().partition_map(|selection| {
+                if selection.is_empty() {
+                    Either::Left(selection.head())
+                } else {
+                    Either::Right(selection)
+                }
+            });
+
+        let (expected_reverse_selections, expected_forward_selections): (Vec<_>, Vec<_>) =
+            expected_non_empty_selections
+                .into_iter()
+                .partition_map(|selection| {
+                    let range = selection.start..selection.end;
+                    if selection.reversed {
+                        Either::Left(range)
+                    } else {
+                        Either::Right(range)
+                    }
+                });
+
+        self.assert_selections(
+            expected_empty_selections,
+            expected_reverse_selections,
+            expected_forward_selections,
+            None,
+        )
+    }
+
+    fn assert_selections(
+        &mut self,
+        expected_empty_selections: Vec<usize>,
+        expected_reverse_selections: Vec<Range<usize>>,
+        expected_forward_selections: Vec<Range<usize>>,
+        asserted_text: Option<String>,
+    ) {
+        let (empty_selections, reverse_selections, forward_selections) =
+            self.editor.read_with(self.cx, |editor, cx| {
+                let (empty_selections, non_empty_selections): (Vec<_>, Vec<_>) = editor
+                    .local_selections::<usize>(cx)
+                    .into_iter()
+                    .partition_map(|selection| {
+                        if selection.is_empty() {
+                            Either::Left(selection.head())
+                        } else {
+                            Either::Right(selection)
+                        }
+                    });
+
+                let (reverse_selections, forward_selections): (Vec<_>, Vec<_>) =
+                    non_empty_selections.into_iter().partition_map(|selection| {
+                        let range = selection.start..selection.end;
+                        if selection.reversed {
+                            Either::Left(range)
+                        } else {
+                            Either::Right(range)
+                        }
+                    });
+                (empty_selections, reverse_selections, forward_selections)
+            });
+
+        let asserted_selections = asserted_text.unwrap_or_else(|| {
+            self.insert_markers(
+                &expected_empty_selections,
+                &expected_reverse_selections,
+                &expected_forward_selections,
             )
         });
-        let mut actual_position_text = self.editor_text();
-        let mut expected_position_text = actual_position_text.clone();
-        actual_position_text.insert(actual_offset, '|');
-        expected_position_text.insert(expected_offset, '|');
-        assert_eq!(
-            actual_head, expected_head,
-            "\nActual Position: {}\nExpected Position: {}",
-            actual_position_text, expected_position_text
-        )
+        let actual_selections =
+            self.insert_markers(&empty_selections, &reverse_selections, &forward_selections);
+
+        let unmarked_text = self.editor_text();
+        let all_eq: Result<(), SetEqError<String>> =
+            set_eq!(expected_empty_selections, empty_selections)
+                .map_err(|err| {
+                    err.map(|missing| {
+                        let mut error_text = unmarked_text.clone();
+                        error_text.insert(missing, '|');
+                        error_text
+                    })
+                })
+                .and_then(|_| {
+                    set_eq!(expected_reverse_selections, reverse_selections).map_err(|err| {
+                        err.map(|missing| {
+                            let mut error_text = unmarked_text.clone();
+                            error_text.insert(missing.start, '{');
+                            error_text.insert(missing.end, ']');
+                            error_text
+                        })
+                    })
+                })
+                .and_then(|_| {
+                    set_eq!(expected_forward_selections, forward_selections).map_err(|err| {
+                        err.map(|missing| {
+                            let mut error_text = unmarked_text.clone();
+                            error_text.insert(missing.start, '[');
+                            error_text.insert(missing.end, '}');
+                            error_text
+                        })
+                    })
+                });
+
+        match all_eq {
+            Err(SetEqError::LeftMissing(location_text)) => {
+                panic!(
+                    indoc! {"
+                        Editor has extra selection
+                        Extra Selection Location: {}
+                        Asserted selections: {}
+                        Actual selections: {}"},
+                    location_text, asserted_selections, actual_selections,
+                );
+            }
+            Err(SetEqError::RightMissing(location_text)) => {
+                panic!(
+                    indoc! {"
+                        Editor is missing empty selection
+                        Missing Selection Location: {}
+                        Asserted selections: {}
+                        Actual selections: {}"},
+                    location_text, asserted_selections, actual_selections,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    fn insert_markers(
+        &mut self,
+        empty_selections: &Vec<usize>,
+        reverse_selections: &Vec<Range<usize>>,
+        forward_selections: &Vec<Range<usize>>,
+    ) -> String {
+        let mut editor_text_with_selections = self.editor_text();
+        let mut selection_marks = BTreeMap::new();
+        for offset in empty_selections {
+            selection_marks.insert(offset, '|');
+        }
+        for range in reverse_selections {
+            selection_marks.insert(&range.start, '{');
+            selection_marks.insert(&range.end, ']');
+        }
+        for range in forward_selections {
+            selection_marks.insert(&range.start, '[');
+            selection_marks.insert(&range.end, '}');
+        }
+        for (offset, mark) in selection_marks.into_iter().rev() {
+            editor_text_with_selections.insert(*offset, mark);
+        }
+
+        editor_text_with_selections
     }
 
     pub fn assert_binding<const COUNT: usize>(
@@ -216,21 +346,21 @@ impl<'a> Deref for VimTestContext<'a> {
 pub struct VimBindingTestContext<'a, const COUNT: usize> {
     cx: VimTestContext<'a>,
     keystrokes_under_test: [&'static str; COUNT],
-    initial_mode: Mode,
+    mode_before: Mode,
     mode_after: Mode,
 }
 
 impl<'a, const COUNT: usize> VimBindingTestContext<'a, COUNT> {
     pub fn new(
         keystrokes_under_test: [&'static str; COUNT],
-        initial_mode: Mode,
+        mode_before: Mode,
         mode_after: Mode,
         cx: VimTestContext<'a>,
     ) -> Self {
         Self {
             cx,
             keystrokes_under_test,
-            initial_mode,
+            mode_before,
             mode_after,
         }
     }
@@ -242,7 +372,7 @@ impl<'a, const COUNT: usize> VimBindingTestContext<'a, COUNT> {
         VimBindingTestContext {
             keystrokes_under_test,
             cx: self.cx,
-            initial_mode: self.initial_mode,
+            mode_before: self.mode_before,
             mode_after: self.mode_after,
         }
     }
@@ -256,7 +386,7 @@ impl<'a, const COUNT: usize> VimBindingTestContext<'a, COUNT> {
         self.cx.assert_binding(
             self.keystrokes_under_test,
             initial_state,
-            self.initial_mode,
+            self.mode_before,
             state_after,
             self.mode_after,
         )

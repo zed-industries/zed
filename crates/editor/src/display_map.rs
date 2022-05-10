@@ -355,11 +355,19 @@ impl DisplaySnapshot {
 
     pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
         let mut clipped = self.blocks_snapshot.clip_point(point.0, bias);
-        if self.clip_at_line_ends && clipped.column == self.line_len(clipped.row) {
-            clipped.column = clipped.column.saturating_sub(1);
-            clipped = self.blocks_snapshot.clip_point(clipped, Bias::Left);
+        if self.clip_at_line_ends {
+            clipped = self.clip_at_line_end(DisplayPoint(clipped)).0
         }
         DisplayPoint(clipped)
+    }
+
+    pub fn clip_at_line_end(&self, point: DisplayPoint) -> DisplayPoint {
+        let mut point = point.0;
+        if point.column == self.line_len(point.row) {
+            point.column = point.column.saturating_sub(1);
+            point = self.blocks_snapshot.clip_point(point, Bias::Left);
+        }
+        DisplayPoint(point)
     }
 
     pub fn folds_in_range<'a, T>(

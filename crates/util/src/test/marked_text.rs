@@ -21,22 +21,44 @@ pub fn marked_text_by(
 
 pub fn marked_text(marked_text: &str) -> (String, Vec<usize>) {
     let (unmarked_text, mut markers) = marked_text_by(marked_text, vec!['|']);
-    (unmarked_text, markers.remove(&'|').unwrap_or_else(Vec::new))
+    (unmarked_text, markers.remove(&'|').unwrap_or_default())
+}
+
+pub fn marked_text_ranges_by(
+    marked_text: &str,
+    delimiters: Vec<(char, char)>,
+) -> (String, HashMap<(char, char), Vec<Range<usize>>>) {
+    let all_markers = delimiters
+        .iter()
+        .flat_map(|(start, end)| [*start, *end])
+        .collect();
+    let (unmarked_text, mut markers) = marked_text_by(marked_text, all_markers);
+    let range_lookup = delimiters
+        .into_iter()
+        .map(|(start_marker, end_marker)| {
+            let starts = markers.remove(&start_marker).unwrap_or_default();
+            let ends = markers.remove(&end_marker).unwrap_or_default();
+            assert_eq!(starts.len(), ends.len(), "marked ranges are unbalanced");
+
+            let ranges = starts
+                .into_iter()
+                .zip(ends)
+                .map(|(start, end)| {
+                    assert!(end >= start, "marked ranges must be disjoint");
+                    start..end
+                })
+                .collect::<Vec<Range<usize>>>();
+            ((start_marker, end_marker), ranges)
+        })
+        .collect();
+
+    (unmarked_text, range_lookup)
 }
 
 pub fn marked_text_ranges(marked_text: &str) -> (String, Vec<Range<usize>>) {
-    let (unmarked_text, mut markers) = marked_text_by(marked_text, vec!['[', ']']);
-    let opens = markers.remove(&'[').unwrap_or_default();
-    let closes = markers.remove(&']').unwrap_or_default();
-    assert_eq!(opens.len(), closes.len(), "marked ranges are unbalanced");
-
-    let ranges = opens
-        .into_iter()
-        .zip(closes)
-        .map(|(open, close)| {
-            assert!(close >= open, "marked ranges must be disjoint");
-            open..close
-        })
-        .collect();
-    (unmarked_text, ranges)
+    let (unmarked_text, mut ranges) = marked_text_ranges_by(marked_text, vec![('[', ']')]);
+    (
+        unmarked_text,
+        ranges.remove(&('[', ']')).unwrap_or_else(Vec::new),
+    )
 }

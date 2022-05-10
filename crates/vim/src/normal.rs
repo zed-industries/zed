@@ -136,7 +136,7 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
                     new_text.push('\n');
                     (start_of_line..start_of_line, new_text)
                 });
-                editor.edit(edits, cx);
+                editor.edit_with_autoindent(edits, cx);
                 editor.move_cursors(cx, |map, mut cursor, _| {
                     *cursor.row_mut() -= 1;
                     *cursor.column_mut() = map.line_len(cursor.row());
@@ -169,7 +169,7 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
                 editor.move_cursors(cx, |map, cursor, goal| {
                     Motion::EndOfLine.move_point(map, cursor, goal)
                 });
-                editor.edit(edits, cx);
+                editor.edit_with_autoindent(edits, cx);
             });
         });
     });
@@ -178,6 +178,7 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
 #[cfg(test)]
 mod test {
     use indoc::indoc;
+    use language::Selection;
     use util::test::marked_text;
 
     use crate::{
@@ -420,7 +421,7 @@ mod test {
 
         for cursor_offset in cursor_offsets {
             cx.simulate_keystroke("w");
-            cx.assert_newest_selection_head_offset(cursor_offset);
+            cx.assert_editor_selections(vec![Selection::from_offset(cursor_offset)]);
         }
 
         // Reset and test ignoring punctuation
@@ -442,7 +443,7 @@ mod test {
 
         for cursor_offset in cursor_offsets {
             cx.simulate_keystroke("shift-W");
-            cx.assert_newest_selection_head_offset(cursor_offset);
+            cx.assert_editor_selections(vec![Selection::from_offset(cursor_offset)]);
         }
     }
 
@@ -467,7 +468,7 @@ mod test {
 
         for cursor_offset in cursor_offsets {
             cx.simulate_keystroke("e");
-            cx.assert_newest_selection_head_offset(cursor_offset);
+            cx.assert_editor_selections(vec![Selection::from_offset(cursor_offset)]);
         }
 
         // Reset and test ignoring punctuation
@@ -488,7 +489,7 @@ mod test {
         );
         for cursor_offset in cursor_offsets {
             cx.simulate_keystroke("shift-E");
-            cx.assert_newest_selection_head_offset(cursor_offset);
+            cx.assert_editor_selections(vec![Selection::from_offset(cursor_offset)]);
         }
     }
 
@@ -513,7 +514,7 @@ mod test {
 
         for cursor_offset in cursor_offsets.into_iter().rev() {
             cx.simulate_keystroke("b");
-            cx.assert_newest_selection_head_offset(cursor_offset);
+            cx.assert_editor_selections(vec![Selection::from_offset(cursor_offset)]);
         }
 
         // Reset and test ignoring punctuation
@@ -534,7 +535,7 @@ mod test {
         );
         for cursor_offset in cursor_offsets.into_iter().rev() {
             cx.simulate_keystroke("shift-B");
-            cx.assert_newest_selection_head_offset(cursor_offset);
+            cx.assert_editor_selections(vec![Selection::from_offset(cursor_offset)]);
         }
     }
 
@@ -821,25 +822,21 @@ mod test {
         );
         cx.assert(
             indoc! {"
-                fn test() {
-                    println!(|);
-                }"},
+                fn test()
+                    println!(|);"},
             indoc! {"
-                fn test() {
+                fn test()
                     println!();
-                    |
-                }"},
+                    |"},
         );
         cx.assert(
             indoc! {"
-                fn test(|) {
-                    println!();
-                }"},
+                fn test(|)
+                    println!();"},
             indoc! {"
-                fn test() {
+                fn test()
                 |
-                    println!();
-                }"},
+                    println!();"},
         );
     }
 
@@ -906,25 +903,21 @@ mod test {
         );
         cx.assert(
             indoc! {"
-                fn test() {
-                    println!(|);
-                }"},
+                fn test()
+                    println!(|);"},
             indoc! {"
-                fn test() {
+                fn test()
                     |
-                    println!();
-                }"},
+                    println!();"},
         );
         cx.assert(
             indoc! {"
-                fn test(|) {
-                    println!();
-                }"},
+                fn test(|)
+                    println!();"},
             indoc! {"
                 |
-                fn test() {
-                    println!();
-                }"},
+                fn test()
+                    println!();"},
         );
     }
 
