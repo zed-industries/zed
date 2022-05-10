@@ -201,7 +201,7 @@ impl Db for PostgresDb {
             .bind(user_id)
             .fetch(&self.pool);
 
-        let mut current = Vec::new();
+        let mut current = vec![user_id];
         let mut outgoing_requests = Vec::new();
         let mut incoming_requests = Vec::new();
         while let Some(row) = rows.next().await {
@@ -231,6 +231,10 @@ impl Db for PostgresDb {
                 }
             }
         }
+
+        current.sort_unstable();
+        outgoing_requests.sort_unstable();
+        incoming_requests.sort_unstable();
 
         Ok(Contacts {
             current,
@@ -704,7 +708,7 @@ pub struct Contacts {
     pub outgoing_requests: Vec<UserId>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct IncomingContactRequest {
     pub requester_id: UserId,
     pub should_notify: bool,
@@ -944,7 +948,7 @@ pub mod tests {
             assert_eq!(
                 db.get_contacts(user_1).await.unwrap(),
                 Contacts {
-                    current: vec![],
+                    current: vec![user_1],
                     outgoing_requests: vec![],
                     incoming_requests: vec![],
                 },
@@ -955,7 +959,7 @@ pub mod tests {
             assert_eq!(
                 db.get_contacts(user_1).await.unwrap(),
                 Contacts {
-                    current: vec![],
+                    current: vec![user_1],
                     outgoing_requests: vec![user_2],
                     incoming_requests: vec![],
                 },
@@ -963,7 +967,7 @@ pub mod tests {
             assert_eq!(
                 db.get_contacts(user_2).await.unwrap(),
                 Contacts {
-                    current: vec![],
+                    current: vec![user_2],
                     outgoing_requests: vec![],
                     incoming_requests: vec![IncomingContactRequest {
                         requester_id: user_1,
@@ -981,7 +985,7 @@ pub mod tests {
             assert_eq!(
                 db.get_contacts(user_2).await.unwrap(),
                 Contacts {
-                    current: vec![],
+                    current: vec![user_2],
                     outgoing_requests: vec![],
                     incoming_requests: vec![IncomingContactRequest {
                         requester_id: user_1,
@@ -1002,7 +1006,7 @@ pub mod tests {
             assert_eq!(
                 db.get_contacts(user_1).await.unwrap(),
                 Contacts {
-                    current: vec![user_2],
+                    current: vec![user_1, user_2],
                     outgoing_requests: vec![],
                     incoming_requests: vec![],
                 },
@@ -1010,7 +1014,7 @@ pub mod tests {
             assert_eq!(
                 db.get_contacts(user_2).await.unwrap(),
                 Contacts {
-                    current: vec![user_1],
+                    current: vec![user_1, user_2],
                     outgoing_requests: vec![],
                     incoming_requests: vec![],
                 },
@@ -1027,7 +1031,7 @@ pub mod tests {
             assert_eq!(
                 db.get_contacts(user_1).await.unwrap(),
                 Contacts {
-                    current: vec![user_2, user_3],
+                    current: vec![user_1, user_2, user_3],
                     outgoing_requests: vec![],
                     incoming_requests: vec![],
                 },
@@ -1035,7 +1039,7 @@ pub mod tests {
             assert_eq!(
                 db.get_contacts(user_3).await.unwrap(),
                 Contacts {
-                    current: vec![user_1],
+                    current: vec![user_1, user_3],
                     outgoing_requests: vec![],
                     incoming_requests: vec![],
                 },
@@ -1049,7 +1053,7 @@ pub mod tests {
             assert_eq!(
                 db.get_contacts(user_2).await.unwrap(),
                 Contacts {
-                    current: vec![user_1],
+                    current: vec![user_1, user_2],
                     outgoing_requests: vec![],
                     incoming_requests: vec![],
                 },
@@ -1057,7 +1061,7 @@ pub mod tests {
             assert_eq!(
                 db.get_contacts(user_3).await.unwrap(),
                 Contacts {
-                    current: vec![user_1],
+                    current: vec![user_1, user_3],
                     outgoing_requests: vec![],
                     incoming_requests: vec![],
                 },
@@ -1217,7 +1221,7 @@ pub mod tests {
 
         async fn get_contacts(&self, id: UserId) -> Result<Contacts> {
             self.background.simulate_random_delay().await;
-            let mut current = Vec::new();
+            let mut current = vec![id];
             let mut outgoing_requests = Vec::new();
             let mut incoming_requests = Vec::new();
 
@@ -1239,6 +1243,10 @@ pub mod tests {
                     }
                 }
             }
+
+            current.sort_unstable();
+            outgoing_requests.sort_unstable();
+            incoming_requests.sort_unstable();
 
             Ok(Contacts {
                 current,
