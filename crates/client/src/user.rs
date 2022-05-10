@@ -376,9 +376,17 @@ impl UserStore {
         &mut self,
         mut user_ids: Vec<u64>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Arc<User>>>> {
+    ) -> Task<Result<()>> {
         user_ids.retain(|id| !self.users.contains_key(id));
-        self.load_users(proto::GetUsers { user_ids }, cx)
+        if user_ids.is_empty() {
+            Task::ready(Ok(()))
+        } else {
+            let load = self.load_users(proto::GetUsers { user_ids }, cx);
+            cx.foreground().spawn(async move {
+                load.await?;
+                Ok(())
+            })
+        }
     }
 
     pub fn fuzzy_search_users(
