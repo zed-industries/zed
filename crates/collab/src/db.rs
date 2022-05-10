@@ -125,7 +125,7 @@ impl Db for PostgresDb {
         let query = "
             SELECT users.*
             FROM users
-            WHERE github_login like $1
+            WHERE github_login ILIKE $1
             ORDER BY github_login <-> $2
             LIMIT $3
         ";
@@ -898,7 +898,7 @@ pub mod tests {
         let test_db = TestDb::postgres().await;
         let db = test_db.db();
         for github_login in [
-            "california",
+            "California",
             "colorado",
             "oregon",
             "washington",
@@ -911,7 +911,7 @@ pub mod tests {
 
         assert_eq!(
             fuzzy_search_user_names(db, "clr").await,
-            &["colorado", "california"]
+            &["colorado", "California"]
         );
         assert_eq!(
             fuzzy_search_user_names(db, "ro").await,
