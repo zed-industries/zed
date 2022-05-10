@@ -943,7 +943,7 @@ impl Workspace {
     ) -> Option<ViewHandle<V>>
     where
         V: 'static + View,
-        F: FnOnce(&mut ViewContext<Self>, &mut Self) -> ViewHandle<V>,
+        F: FnOnce(&mut Self, &mut ViewContext<Self>) -> ViewHandle<V>,
     {
         cx.notify();
         // Whatever modal was visible is getting clobbered. If its the same type as V, then return
@@ -953,7 +953,7 @@ impl Workspace {
             cx.focus_self();
             Some(already_open_modal)
         } else {
-            let modal = add_view(cx, self);
+            let modal = add_view(self, cx);
             cx.focus(&modal);
             self.modal = Some(modal.into());
             None

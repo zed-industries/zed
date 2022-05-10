@@ -159,7 +159,7 @@ impl PickerDelegate for ContactFinder {
 
 impl ContactFinder {
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
-        workspace.toggle_modal(cx, |cx, workspace| {
+        workspace.toggle_modal(cx, |workspace, cx| {
             let finder = cx.add_view(|cx| Self::new(workspace.user_store().clone(), cx));
             cx.subscribe(&finder, Self::on_event).detach();
             finder

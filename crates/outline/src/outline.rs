@@ -87,7 +87,7 @@ impl OutlineView {
                 .read(cx)
                 .outline(Some(cx.global::<Settings>().theme.editor.syntax.as_ref()));
             if let Some(outline) = buffer {
-                workspace.toggle_modal(cx, |cx, _| {
+                workspace.toggle_modal(cx, |_, cx| {
                     let view = cx.add_view(|cx| OutlineView::new(outline, editor, cx));
                     cx.subscribe(&view, Self::on_event).detach();
                     view

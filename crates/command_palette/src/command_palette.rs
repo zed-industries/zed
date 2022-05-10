@@ -71,7 +71,7 @@ impl CommandPalette {
         cx.as_mut().defer(move |cx| {
             let this = cx.add_view(window_id, |cx| Self::new(focused_view_id, cx));
             workspace.update(cx, |workspace, cx| {
-                workspace.toggle_modal(cx, |cx, _| {
+                workspace.toggle_modal(cx, |_, cx| {
                     cx.subscribe(&this, Self::on_event).detach();
                     this
                 });
