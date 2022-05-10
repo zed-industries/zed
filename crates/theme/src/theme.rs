@@ -237,11 +237,12 @@ pub struct ContactsPanel {
     pub container: ContainerStyle,
     pub header: ContainedText,
     pub user_query_editor: FieldEditor,
-    pub add_contact_icon: AddContactIcon,
+    pub add_contact_button: IconButton,
     pub row_height: f32,
     pub contact_avatar: ImageStyle,
     pub contact_username: ContainedText,
-    pub contact_button: ContainedText,
+    pub contact_button: IconButton,
+    pub disabled_contact_button: IconButton,
     pub tree_branch_width: f32,
     pub tree_branch_color: Color,
     pub shared_project: ProjectRow,
@@ -255,14 +256,17 @@ pub struct ContactFinder {
     pub row_height: f32,
     pub contact_avatar: ImageStyle,
     pub contact_username: ContainerStyle,
-    pub contact_button: ContainedText,
+    pub contact_button: IconButton,
+    pub disabled_contact_button: IconButton,
 }
 
 #[derive(Deserialize, Default)]
-pub struct AddContactIcon {
+pub struct IconButton {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub color: Color,
+    pub icon_width: f32,
+    pub button_width: f32,
 }
 
 #[derive(Deserialize, Default)]

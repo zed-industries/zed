@@ -31,6 +31,14 @@ export default function contactsPanel(theme: Theme) {
     },
   };
 
+  const contactButton = {
+    background: backgroundColor(theme, 100),
+    color: iconColor(theme, "primary"),
+    iconWidth: 8,
+    buttonWidth: 16,
+    cornerRadius: 8,
+  };
+
   return {
     ...panel,
     userQueryEditor: {
@@ -47,9 +55,10 @@ export default function contactsPanel(theme: Theme) {
         top: 4,
       },
     },
-    addContactIcon: {
+    addContactButton: {
       margin: { left: 6 },
-      color: iconColor(theme, "primary")
+      color: iconColor(theme, "primary"),
+      width: 8,
     },
     rowHeight: 28,
     treeBranchColor: borderColor(theme, "muted"),
@@ -64,11 +73,11 @@ export default function contactsPanel(theme: Theme) {
         left: 8,
       },
     },
-    contactButton: {
-      ...text(theme, "mono", "primary", { size: "sm" }),
+    contactButton,
+    disabledContactButton: {
+      ...contactButton,
       background: backgroundColor(theme, 100),
-      cornerRadius: 12,
-      padding: { left: 7, right: 7 }
+      color: iconColor(theme, "muted"),
     },
     header: {
       ...text(theme, "mono", "secondary", { size: "sm" }),

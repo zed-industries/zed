@@ -108,16 +108,25 @@ impl PickerDelegate for ContactFinder {
         cx: &gpui::AppContext,
     ) -> ElementBox {
         let theme = &cx.global::<Settings>().theme;
-        let contact = &self.potential_contacts[ix];
-        let request_status = self.user_store.read(cx).contact_request_status(&contact);
-        let label = match request_status {
-            ContactRequestStatus::None | ContactRequestStatus::RequestReceived => "+",
-            ContactRequestStatus::RequestSent => "-",
-            ContactRequestStatus::Pending | ContactRequestStatus::RequestAccepted => "•",
+        let user = &self.potential_contacts[ix];
+        let request_status = self.user_store.read(cx).contact_request_status(&user);
+
+        let icon_path = match request_status {
+            ContactRequestStatus::None | ContactRequestStatus::RequestReceived => {
+                "icons/accept.svg"
+            }
+            ContactRequestStatus::RequestSent | ContactRequestStatus::RequestAccepted => {
+                "icons/reject.svg"
+            }
+        };
+        let button_style = if self.user_store.read(cx).is_contact_request_pending(&user) {
+            &theme.contact_finder.disabled_contact_button
+        } else {
+            &theme.contact_finder.contact_button
         };
         let style = theme.picker.item.style_for(mouse_state, selected);
         Flex::row()
-            .with_children(contact.avatar.clone().map(|avatar| {
+            .with_children(user.avatar.clone().map(|avatar| {
                 Image::new(avatar)
                     .with_style(theme.contact_finder.contact_avatar)
                     .aligned()
@@ -125,7 +134,7 @@ impl PickerDelegate for ContactFinder {
                     .boxed()
             }))
             .with_child(
-                Label::new(contact.github_login.clone(), style.label.clone())
+                Label::new(user.github_login.clone(), style.label.clone())
                     .contained()
                     .with_style(theme.contact_finder.contact_username)
                     .aligned()
@@ -133,15 +142,19 @@ impl PickerDelegate for ContactFinder {
                     .boxed(),
             )
             .with_child(
-                Label::new(
-                    label.to_string(),
-                    theme.contact_finder.contact_button.text.clone(),
-                )
-                .contained()
-                .with_style(theme.contact_finder.contact_button.container)
-                .aligned()
-                .flex_float()
-                .boxed(),
+                Svg::new(icon_path)
+                    .with_color(button_style.color)
+                    .constrained()
+                    .with_width(button_style.icon_width)
+                    .aligned()
+                    .constrained()
+                    .with_width(button_style.button_width)
+                    .with_height(button_style.button_width)
+                    .contained()
+                    .with_style(button_style.container)
+                    .aligned()
+                    .flex_float()
+                    .boxed(),
             )
             .contained()
             .with_style(style.container)

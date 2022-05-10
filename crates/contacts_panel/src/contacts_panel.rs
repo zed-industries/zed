@@ -1,6 +1,6 @@
 mod contact_finder;
 
-use client::{Contact, ContactRequestStatus, User, UserStore};
+use client::{Contact, User, UserStore};
 use editor::Editor;
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
@@ -314,7 +314,6 @@ impl ContactsPanel {
         enum Accept {}
 
         let user_id = user.id;
-        let request_status = user_store.read(cx).contact_request_status(&user);
 
         let mut row = Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
@@ -336,51 +335,60 @@ impl ContactsPanel {
                 .boxed(),
             );
 
-        if request_status == ContactRequestStatus::Pending {
-            row.add_child(
-                Label::new("…".to_string(), theme.contact_button.text.clone())
-                    .contained()
-                    .with_style(theme.contact_button.container)
-                    .aligned()
-                    .flex_float()
-                    .boxed(),
-            );
+        let button_style = if user_store.read(cx).is_contact_request_pending(&user) {
+            &theme.disabled_contact_button
         } else {
-            row.add_children([
-                MouseEventHandler::new::<Reject, _, _>(user.id as usize, cx, |_, _| {
-                    Label::new("Reject".to_string(), theme.contact_button.text.clone())
-                        .contained()
-                        .with_style(theme.contact_button.container)
-                        .aligned()
-                        .flex_float()
-                        .boxed()
+            &theme.contact_button
+        };
+
+        row.add_children([
+            MouseEventHandler::new::<Reject, _, _>(user.id as usize, cx, |_, _| {
+                Svg::new("icons/reject.svg")
+                    .with_color(button_style.color)
+                    .constrained()
+                    .with_width(button_style.icon_width)
+                    .aligned()
+                    .constrained()
+                    .with_width(button_style.button_width)
+                    .with_height(button_style.button_width)
+                    .contained()
+                    .with_style(button_style.container)
+                    .aligned()
+                    .boxed()
+            })
+            .on_click(move |_, cx| {
+                cx.dispatch_action(RespondToContactRequest {
+                    user_id,
+                    accept: false,
                 })
-                .on_click(move |_, cx| {
-                    cx.dispatch_action(RespondToContactRequest {
-                        user_id,
-                        accept: false,
-                    })
+            })
+            .with_cursor_style(CursorStyle::PointingHand)
+            .flex_float()
+            .boxed(),
+            MouseEventHandler::new::<Accept, _, _>(user.id as usize, cx, |_, _| {
+                Svg::new("icons/accept.svg")
+                    .with_color(button_style.color)
+                    .constrained()
+                    .with_width(button_style.icon_width)
+                    .with_height(button_style.icon_width)
+                    .aligned()
+                    .constrained()
+                    .with_width(button_style.button_width)
+                    .with_height(button_style.button_width)
+                    .contained()
+                    .with_style(button_style.container)
+                    .aligned()
+                    .boxed()
+            })
+            .on_click(move |_, cx| {
+                cx.dispatch_action(RespondToContactRequest {
+                    user_id,
+                    accept: true,
                 })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .flex_float()
-                .boxed(),
-                MouseEventHandler::new::<Accept, _, _>(user.id as usize, cx, |_, _| {
-                    Label::new("Accept".to_string(), theme.contact_button.text.clone())
-                        .contained()
-                        .with_style(theme.contact_button.container)
-                        .aligned()
-                        .boxed()
-                })
-                .on_click(move |_, cx| {
-                    cx.dispatch_action(RespondToContactRequest {
-                        user_id,
-                        accept: true,
-                    })
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .boxed(),
-            ]);
-        }
+            })
+            .with_cursor_style(CursorStyle::PointingHand)
+            .boxed(),
+        ]);
 
         row.constrained().with_height(theme.row_height).boxed()
     }
@@ -394,7 +402,11 @@ impl ContactsPanel {
         enum Cancel {}
 
         let user_id = user.id;
-        let request_status = user_store.read(cx).contact_request_status(&user);
+        let button_style = if user_store.read(cx).is_contact_request_pending(&user) {
+            &theme.disabled_contact_button
+        } else {
+            &theme.contact_button
+        };
 
         let mut row = Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
@@ -416,31 +428,23 @@ impl ContactsPanel {
                 .boxed(),
             );
 
-        if request_status == ContactRequestStatus::Pending {
-            row.add_child(
-                Label::new("…".to_string(), theme.contact_button.text.clone())
+        row.add_child(
+            MouseEventHandler::new::<Cancel, _, _>(user.id as usize, cx, |_, _| {
+                Svg::new("icons/reject.svg")
+                    .with_color(button_style.color)
+                    .constrained()
+                    .with_width(button_style.icon_width)
+                    .with_height(button_style.icon_width)
                     .contained()
-                    .with_style(theme.contact_button.container)
+                    .with_style(button_style.container)
                     .aligned()
-                    .flex_float()
-                    .boxed(),
-            );
-        } else {
-            row.add_child(
-                MouseEventHandler::new::<Cancel, _, _>(user.id as usize, cx, |_, _| {
-                    Label::new("Cancel".to_string(), theme.contact_button.text.clone())
-                        .contained()
-                        .with_style(theme.contact_button.container)
-                        .aligned()
-                        .flex_float()
-                        .boxed()
-                })
-                .on_click(move |_, cx| cx.dispatch_action(RemoveContact(user_id)))
-                .with_cursor_style(CursorStyle::PointingHand)
-                .flex_float()
-                .boxed(),
-            );
-        }
+                    .boxed()
+            })
+            .on_click(move |_, cx| cx.dispatch_action(RemoveContact(user_id)))
+            .with_cursor_style(CursorStyle::PointingHand)
+            .flex_float()
+            .boxed(),
+        );
 
         row.constrained().with_height(theme.row_height).boxed()
     }
@@ -452,6 +456,7 @@ impl ContactsPanel {
 
         self.entries.clear();
 
+        let mut request_entries = Vec::new();
         let incoming = user_store.incoming_contact_requests();
         if !incoming.is_empty() {
             self.match_candidates.clear();
@@ -475,8 +480,7 @@ impl ContactsPanel {
                 executor.clone(),
             ));
             if !matches.is_empty() {
-                self.entries.push(ContactEntry::Header("Requests Received"));
-                self.entries.extend(
+                request_entries.extend(
                     matches.iter().map(|mat| {
                         ContactEntry::IncomingRequest(incoming[mat.candidate_id].clone())
                     }),
@@ -507,13 +511,17 @@ impl ContactsPanel {
                 executor.clone(),
             ));
             if !matches.is_empty() {
-                self.entries.push(ContactEntry::Header("Requests Sent"));
-                self.entries.extend(
+                request_entries.extend(
                     matches.iter().map(|mat| {
                         ContactEntry::OutgoingRequest(outgoing[mat.candidate_id].clone())
                     }),
                 );
             }
+        }
+
+        if !request_entries.is_empty() {
+            self.entries.push(ContactEntry::Header("Requests"));
+            self.entries.append(&mut request_entries);
         }
 
         let contacts = user_store.contacts();
@@ -617,11 +625,11 @@ impl View for ContactsPanel {
                         .with_child(
                             MouseEventHandler::new::<AddContact, _, _>(0, cx, |_, _| {
                                 Svg::new("icons/add-contact.svg")
-                                    .with_color(theme.add_contact_icon.color)
+                                    .with_color(theme.add_contact_button.color)
                                     .constrained()
                                     .with_height(12.)
                                     .contained()
-                                    .with_style(theme.add_contact_icon.container)
+                                    .with_style(theme.add_contact_button.container)
                                     .aligned()
                                     .boxed()
                             })

@@ -1,8 +1,16 @@
 import Theme from "../themes/theme";
 import picker from "./picker";
-import { backgroundColor, text } from "./components";
+import { backgroundColor, iconColor } from "./components";
 
 export default function contactFinder(theme: Theme) {
+  const contactButton = {
+    background: backgroundColor(theme, 100),
+    color: iconColor(theme, "primary"),
+    iconWidth: 8,
+    buttonWidth: 16,
+    cornerRadius: 8,
+  };
+
   return {
     ...picker(theme),
     rowHeight: 28,
@@ -15,11 +23,11 @@ export default function contactFinder(theme: Theme) {
         left: 8,
       },
     },
-    contactButton: {
-      ...text(theme, "mono", "primary", { size: "sm" }),
+    contactButton,
+    disabledContactButton: {
+      ...contactButton,
       background: backgroundColor(theme, 100),
-      cornerRadius: 12,
-      padding: { left: 7, right: 7 }
+      color: iconColor(theme, "muted"),
     },
   }
 }

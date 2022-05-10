@@ -35,7 +35,6 @@ pub struct ProjectMetadata {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContactRequestStatus {
     None,
-    Pending,
     RequestSent,
     RequestReceived,
     RequestAccepted,
@@ -278,10 +277,12 @@ impl UserStore {
         &self.outgoing_contact_requests
     }
 
+    pub fn is_contact_request_pending(&self, user: &User) -> bool {
+        self.pending_contact_requests.contains_key(&user.id)
+    }
+
     pub fn contact_request_status(&self, user: &User) -> ContactRequestStatus {
-        if self.pending_contact_requests.contains_key(&user.id) {
-            ContactRequestStatus::Pending
-        } else if self
+        if self
             .contacts
             .binary_search_by_key(&&user.github_login, |contact| &contact.user.github_login)
             .is_ok()

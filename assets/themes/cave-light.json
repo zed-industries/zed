@@ -1240,11 +1240,12 @@
         "top": 4
       }
     },
-    "add_contact_icon": {
+    "add_contact_button": {
       "margin": {
         "left": 6
       },
-      "color": "#26232a"
+      "color": "#26232a",
+      "width": 8
     },
     "row_height": 28,
     "tree_branch_color": "#7e7887",
@@ -1262,15 +1263,18 @@
       }
     },
     "contact_button": {
-      "family": "Zed Mono",
-      "color": "#26232a",
-      "size": 14,
       "background": "#e2dfe7",
-      "corner_radius": 12,
-      "padding": {
-        "left": 7,
-        "right": 7
-      }
+      "corner_radius": 8,
+      "padding": 4,
+      "color": "#26232a",
+      "width": 8
+    },
+    "disabled_contact_button": {
+      "background": "#e2dfe7",
+      "corner_radius": 8,
+      "padding": 4,
+      "color": "#585260",
+      "width": 8
     },
     "header": {
       "family": "Zed Mono",
@@ -1477,15 +1481,18 @@
       }
     },
     "contact_button": {
-      "family": "Zed Mono",
-      "color": "#26232a",
-      "size": 14,
       "background": "#e2dfe7",
-      "corner_radius": 12,
-      "padding": {
-        "left": 7,
-        "right": 7
-      }
+      "corner_radius": 9,
+      "padding": 4,
+      "color": "#26232a",
+      "width": 10
+    },
+    "disabled_contact_button": {
+      "background": "#e2dfe7",
+      "corner_radius": 9,
+      "padding": 4,
+      "color": "#585260",
+      "width": 10
     }
   },
   "search": {
