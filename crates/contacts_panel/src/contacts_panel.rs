@@ -14,6 +14,7 @@ use gpui::{
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
+use theme::IconButton;
 use workspace::{AppState, JoinProject};
 
 impl_actions!(
@@ -335,49 +336,38 @@ impl ContactsPanel {
                 .boxed(),
             );
 
-        let button_style = if user_store.read(cx).is_contact_request_pending(&user) {
-            &theme.disabled_contact_button
-        } else {
-            &theme.contact_button
-        };
+        let is_contact_request_pending = user_store.read(cx).is_contact_request_pending(&user);
 
         row.add_children([
-            MouseEventHandler::new::<Reject, _, _>(user.id as usize, cx, |_, _| {
-                Svg::new("icons/reject.svg")
-                    .with_color(button_style.color)
-                    .constrained()
-                    .with_width(button_style.icon_width)
+            MouseEventHandler::new::<Reject, _, _>(user.id as usize, cx, |mouse_state, _| {
+                let button_style = if is_contact_request_pending {
+                    &theme.disabled_contact_button
+                } else {
+                    &theme.contact_button.style_for(mouse_state, false)
+                };
+                render_icon_button(button_style, "icons/reject.svg")
                     .aligned()
-                    .constrained()
-                    .with_width(button_style.button_width)
-                    .with_height(button_style.button_width)
-                    .contained()
-                    .with_style(button_style.container)
-                    .aligned()
+                    .flex_float()
                     .boxed()
             })
+            .with_cursor_style(CursorStyle::PointingHand)
             .on_click(move |_, cx| {
                 cx.dispatch_action(RespondToContactRequest {
                     user_id,
                     accept: false,
                 })
             })
-            .with_cursor_style(CursorStyle::PointingHand)
             .flex_float()
             .boxed(),
-            MouseEventHandler::new::<Accept, _, _>(user.id as usize, cx, |_, _| {
-                Svg::new("icons/accept.svg")
-                    .with_color(button_style.color)
-                    .constrained()
-                    .with_width(button_style.icon_width)
-                    .with_height(button_style.icon_width)
+            MouseEventHandler::new::<Accept, _, _>(user.id as usize, cx, |mouse_state, _| {
+                let button_style = if is_contact_request_pending {
+                    &theme.disabled_contact_button
+                } else {
+                    &theme.contact_button.style_for(mouse_state, false)
+                };
+                render_icon_button(button_style, "icons/accept.svg")
                     .aligned()
-                    .constrained()
-                    .with_width(button_style.button_width)
-                    .with_height(button_style.button_width)
-                    .contained()
-                    .with_style(button_style.container)
-                    .aligned()
+                    .flex_float()
                     .boxed()
             })
             .on_click(move |_, cx| {
@@ -402,11 +392,7 @@ impl ContactsPanel {
         enum Cancel {}
 
         let user_id = user.id;
-        let button_style = if user_store.read(cx).is_contact_request_pending(&user) {
-            &theme.disabled_contact_button
-        } else {
-            &theme.contact_button
-        };
+        let is_contact_request_pending = user_store.read(cx).is_contact_request_pending(&user);
 
         let mut row = Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
@@ -429,19 +415,21 @@ impl ContactsPanel {
             );
 
         row.add_child(
-            MouseEventHandler::new::<Cancel, _, _>(user.id as usize, cx, |_, _| {
-                Svg::new("icons/reject.svg")
-                    .with_color(button_style.color)
-                    .constrained()
-                    .with_width(button_style.icon_width)
-                    .with_height(button_style.icon_width)
-                    .contained()
-                    .with_style(button_style.container)
+            MouseEventHandler::new::<Cancel, _, _>(user.id as usize, cx, |mouse_state, _| {
+                let button_style = if is_contact_request_pending {
+                    &theme.disabled_contact_button
+                } else {
+                    &theme.contact_button.style_for(mouse_state, false)
+                };
+
+                render_icon_button(button_style, "icons/reject.svg")
                     .aligned()
+                    .flex_float()
                     .boxed()
             })
-            .on_click(move |_, cx| cx.dispatch_action(RemoveContact(user_id)))
+            .with_padding(Padding::uniform(2.))
             .with_cursor_style(CursorStyle::PointingHand)
+            .on_click(move |_, cx| cx.dispatch_action(RemoveContact(user_id)))
             .flex_float()
             .boxed(),
         );
@@ -546,17 +534,21 @@ impl ContactsPanel {
                 &Default::default(),
                 executor.clone(),
             ));
-            if !matches.is_empty() {
-                let (online_contacts, offline_contacts) = matches
-                    .iter()
-                    .partition::<Vec<_>, _>(|mat| contacts[mat.candidate_id].online);
 
+            let (online_contacts, offline_contacts) = matches
+                .iter()
+                .partition::<Vec<_>, _>(|mat| contacts[mat.candidate_id].online);
+
+            if !online_contacts.is_empty() {
                 self.entries.push(ContactEntry::Header("Online"));
                 self.entries.extend(
                     online_contacts
                         .into_iter()
                         .map(|mat| ContactEntry::Contact(contacts[mat.candidate_id].clone())),
                 );
+            }
+
+            if !offline_contacts.is_empty() {
                 self.entries.push(ContactEntry::Header("Offline"));
                 self.entries.extend(
                     offline_contacts
@@ -593,6 +585,19 @@ impl ContactsPanel {
             })
             .detach();
     }
+}
+
+fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Element {
+    Svg::new(svg_path)
+        .with_color(style.color)
+        .constrained()
+        .with_width(style.icon_width)
+        .aligned()
+        .contained()
+        .with_style(style.container)
+        .constrained()
+        .with_width(style.button_width)
+        .with_height(style.button_width)
 }
 
 pub enum Event {}

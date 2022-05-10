@@ -58,7 +58,8 @@ export default function contactsPanel(theme: Theme) {
     addContactButton: {
       margin: { left: 6 },
       color: iconColor(theme, "primary"),
-      width: 8,
+      buttonWidth: 8,
+      iconWidth: 8,
     },
     rowHeight: 28,
     treeBranchColor: borderColor(theme, "muted"),
@@ -73,7 +74,12 @@ export default function contactsPanel(theme: Theme) {
         left: 8,
       },
     },
-    contactButton,
+    contactButton: {
+      ...contactButton,
+      hover: {
+        background: backgroundColor(theme, 100, "hovered"),
+      },
+    },
     disabledContactButton: {
       ...contactButton,
       background: backgroundColor(theme, 100),

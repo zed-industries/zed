@@ -241,7 +241,7 @@ pub struct ContactsPanel {
     pub row_height: f32,
     pub contact_avatar: ImageStyle,
     pub contact_username: ContainedText,
-    pub contact_button: IconButton,
+    pub contact_button: Interactive<IconButton>,
     pub disabled_contact_button: IconButton,
     pub tree_branch_width: f32,
     pub tree_branch_color: Color,

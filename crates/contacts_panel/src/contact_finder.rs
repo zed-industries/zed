@@ -9,6 +9,8 @@ use std::sync::Arc;
 use util::TryFutureExt;
 use workspace::Workspace;
 
+use crate::render_icon_button;
+
 actions!(contact_finder, [Toggle]);
 
 pub fn init(cx: &mut MutableAppContext) {
@@ -142,16 +144,7 @@ impl PickerDelegate for ContactFinder {
                     .boxed(),
             )
             .with_child(
-                Svg::new(icon_path)
-                    .with_color(button_style.color)
-                    .constrained()
-                    .with_width(button_style.icon_width)
-                    .aligned()
-                    .constrained()
-                    .with_width(button_style.button_width)
-                    .with_height(button_style.button_width)
-                    .contained()
-                    .with_style(button_style.container)
+                render_icon_button(button_style, icon_path)
                     .aligned()
                     .flex_float()
                     .boxed(),

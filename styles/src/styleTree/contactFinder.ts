@@ -23,7 +23,12 @@ export default function contactFinder(theme: Theme) {
         left: 8,
       },
     },
-    contactButton,
+    contactButton: {
+      ...contactButton,
+      hover: {
+        background: backgroundColor(theme, 100, "hovered")
+      }
+    },
     disabledContactButton: {
       ...contactButton,
       background: backgroundColor(theme, 100),
