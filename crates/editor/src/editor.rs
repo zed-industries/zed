@@ -9801,65 +9801,49 @@ mod tests {
     #[gpui::test]
     fn test_editing_overlapping_excerpts(cx: &mut gpui::MutableAppContext) {
         cx.set_global(Settings::test(cx));
-        let buffer = cx.add_model(|cx| {
-            Buffer::new(
-                0,
-                indoc! {"
-                    aaaa
-                    bbbb
-                    cccc"},
-                cx,
-            )
-        });
-
+        let (initial_text, excerpt_ranges) = marked_text_ranges(indoc! {"
+                [aaaa
+                (bbbb]
+                cccc)"});
+        let buffer = cx.add_model(|cx| Buffer::new(0, initial_text, cx));
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
-            multibuffer.push_excerpts(
-                buffer,
-                [
-                    Point::new(0, 0)..Point::new(1, 4),
-                    Point::new(1, 0)..Point::new(2, 4),
-                ],
-                cx,
-            );
+            multibuffer.push_excerpts(buffer, excerpt_ranges, cx);
             multibuffer
         });
 
-        assert_eq!(
-            multibuffer.read(cx).read(cx).text(),
-            "aaaa\nbbbb\nbbbb\ncccc"
-        );
-
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(multibuffer, cx));
         view.update(cx, |view, cx| {
-            view.select_ranges(
-                [
-                    Point::new(1, 1)..Point::new(1, 1),
-                    Point::new(2, 3)..Point::new(2, 3),
-                ],
-                None,
-                cx,
-            );
+            let (expected_text, selection_ranges) = marked_text_ranges(indoc! {"
+                aaaa
+                b|bbb
+                b|bb|b
+                cccc"});
+            assert_eq!(view.text(cx), expected_text);
+            view.select_ranges(selection_ranges, None, cx);
 
             view.handle_input(&Input("X".to_string()), cx);
-            assert_eq!(view.text(cx), "aaaa\nbXbbXb\nbXbbXb\ncccc");
-            assert_eq!(
-                view.selected_ranges(cx),
-                [
-                    Point::new(1, 2)..Point::new(1, 2),
-                    Point::new(2, 5)..Point::new(2, 5),
-                ]
-            );
+
+            let (expected_text, expected_selections) = marked_text_ranges(indoc! {"
+                aaaa
+                bX|bbXb
+                bX|bbX|b
+                cccc"});
+            assert_eq!(view.text(cx), expected_text);
+            assert_eq!(view.selected_ranges(cx), expected_selections);
 
             view.newline(&Newline, cx);
-            assert_eq!(view.text(cx), "aaaa\nbX\nbbX\nb\nbX\nbbX\nb\ncccc");
-            assert_eq!(
-                view.selected_ranges(cx),
-                [
-                    Point::new(2, 0)..Point::new(2, 0),
-                    Point::new(6, 0)..Point::new(6, 0),
-                ]
-            );
+            let (expected_text, expected_selections) = marked_text_ranges(indoc! {"
+                aaaa
+                bX
+                |bbX
+                b
+                bX
+                |bbX
+                |b
+                cccc"});
+            assert_eq!(view.text(cx), expected_text);
+            assert_eq!(view.selected_ranges(cx), expected_selections);
         });
     }
 
