@@ -1,6 +1,6 @@
 import Theme from "../themes/theme";
 import { panel } from "./app";
-import { backgroundColor, border, borderColor, player, text } from "./components";
+import { backgroundColor, border, borderColor, iconColor, player, text } from "./components";
 
 export default function(theme: Theme) {
   const project = {
@@ -41,11 +41,15 @@ export default function(theme: Theme) {
       selection: player(theme, 1).selection,
       border: border(theme, "secondary"),
       padding: {
-        bottom: 7,
+        bottom: 4,
         left: 8,
         right: 8,
-        top: 7,
+        top: 4,
       },
+    },
+    addContactIcon: {
+      margin: { left: 6 },
+      color: iconColor(theme, "primary")
     },
     rowHeight: 28,
     treeBranchColor: borderColor(theme, "muted"),

@@ -711,8 +711,26 @@ impl View for ContactsPanel {
         Container::new(
             Flex::column()
                 .with_child(
-                    Container::new(ChildView::new(self.user_query_editor.clone()).boxed())
-                        .with_style(theme.user_query_editor.container)
+                    Flex::row()
+                        .with_child(
+                            ChildView::new(self.user_query_editor.clone())
+                                .contained()
+                                .with_style(theme.user_query_editor.container)
+                                .flex(1., true)
+                                .boxed(),
+                        )
+                        .with_child(
+                            Svg::new("icons/add-contact.svg")
+                                .with_color(theme.add_contact_icon.color)
+                                .constrained()
+                                .with_height(12.)
+                                .contained()
+                                .with_style(theme.add_contact_icon.container)
+                                .aligned()
+                                .boxed(),
+                        )
+                        .constrained()
+                        .with_height(32.)
                         .boxed(),
                 )
                 .with_child(List::new(self.list_state.clone()).flex(1., false).boxed())

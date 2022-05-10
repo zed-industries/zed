@@ -1234,11 +1234,17 @@
         "width": 1
       },
       "padding": {
-        "bottom": 7,
+        "bottom": 4,
         "left": 8,
         "right": 8,
-        "top": 7
+        "top": 4
       }
+    },
+    "add_contact_icon": {
+      "margin": {
+        "left": 6
+      },
+      "color": "#dfe2f1"
     },
     "row_height": 28,
     "tree_branch_color": "#6b7394",

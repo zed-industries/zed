@@ -236,6 +236,7 @@ pub struct ContactsPanel {
     pub container: ContainerStyle,
     pub header: ContainedText,
     pub user_query_editor: FieldEditor,
+    pub add_contact_icon: AddContactIcon,
     pub row_height: f32,
     pub contact_avatar: ImageStyle,
     pub contact_username: ContainedText,
@@ -246,6 +247,13 @@ pub struct ContactsPanel {
     pub hovered_shared_project: ProjectRow,
     pub unshared_project: ProjectRow,
     pub hovered_unshared_project: ProjectRow,
+}
+
+#[derive(Deserialize, Default)]
+pub struct AddContactIcon {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub color: Color,
 }
 
 #[derive(Deserialize, Default)]
