@@ -319,15 +319,20 @@ mod tests {
                         .into_iter()
                         .map(|name| StringMatchCandidate::new(0, name.into()))
                         .collect::<Vec<_>>();
-                    let matches = fuzzy::match_strings(
-                        &candidates,
-                        &params.query,
-                        true,
-                        100,
-                        &Default::default(),
-                        executor.clone(),
-                    )
-                    .await;
+                    let matches = if params.query.is_empty() {
+                        Vec::new()
+                    } else {
+                        fuzzy::match_strings(
+                            &candidates,
+                            &params.query,
+                            true,
+                            100,
+                            &Default::default(),
+                            executor.clone(),
+                        )
+                        .await
+                    };
+
                     Ok(Some(
                         matches.into_iter().map(|mat| symbol(&mat.string)).collect(),
                     ))
