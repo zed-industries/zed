@@ -5000,13 +5000,22 @@ mod tests {
             .await;
         deterministic.run_until_parked();
         client_a.user_store.read_with(cx_a, |store, _| {
-            assert_eq!(contacts(store), [("user_b", vec![]), ("user_c", vec![])])
+            assert_eq!(
+                contacts(store),
+                [("user_b", true, vec![]), ("user_c", true, vec![])]
+            )
         });
         client_b.user_store.read_with(cx_b, |store, _| {
-            assert_eq!(contacts(store), [("user_a", vec![]), ("user_c", vec![])])
+            assert_eq!(
+                contacts(store),
+                [("user_a", true, vec![]), ("user_c", true, vec![])]
+            )
         });
         client_c.user_store.read_with(cx_c, |store, _| {
-            assert_eq!(contacts(store), [("user_a", vec![]), ("user_b", vec![])])
+            assert_eq!(
+                contacts(store),
+                [("user_a", true, vec![]), ("user_b", true, vec![])]
+            )
         });
 
         // Share a worktree as client A.
@@ -5033,18 +5042,27 @@ mod tests {
 
         deterministic.run_until_parked();
         client_a.user_store.read_with(cx_a, |store, _| {
-            assert_eq!(contacts(store), [("user_b", vec![]), ("user_c", vec![])])
+            assert_eq!(
+                contacts(store),
+                [("user_b", true, vec![]), ("user_c", true, vec![])]
+            )
         });
         client_b.user_store.read_with(cx_b, |store, _| {
             assert_eq!(
                 contacts(store),
-                [("user_a", vec![("a", false, vec![])]), ("user_c", vec![])]
+                [
+                    ("user_a", true, vec![("a", false, vec![])]),
+                    ("user_c", true, vec![])
+                ]
             )
         });
         client_c.user_store.read_with(cx_c, |store, _| {
             assert_eq!(
                 contacts(store),
-                [("user_a", vec![("a", false, vec![])]), ("user_b", vec![])]
+                [
+                    ("user_a", true, vec![("a", false, vec![])]),
+                    ("user_b", true, vec![])
+                ]
             )
         });
 
@@ -5057,18 +5075,27 @@ mod tests {
             .unwrap();
         deterministic.run_until_parked();
         client_a.user_store.read_with(cx_a, |store, _| {
-            assert_eq!(contacts(store), [("user_b", vec![]), ("user_c", vec![])])
+            assert_eq!(
+                contacts(store),
+                [("user_b", true, vec![]), ("user_c", true, vec![])]
+            )
         });
         client_b.user_store.read_with(cx_b, |store, _| {
             assert_eq!(
                 contacts(store),
-                [("user_a", vec![("a", true, vec![])]), ("user_c", vec![])]
+                [
+                    ("user_a", true, vec![("a", true, vec![])]),
+                    ("user_c", true, vec![])
+                ]
             )
         });
         client_c.user_store.read_with(cx_c, |store, _| {
             assert_eq!(
                 contacts(store),
-                [("user_a", vec![("a", true, vec![])]), ("user_b", vec![])]
+                [
+                    ("user_a", true, vec![("a", true, vec![])]),
+                    ("user_b", true, vec![])
+                ]
             )
         });
 
@@ -5084,14 +5111,17 @@ mod tests {
         .unwrap();
         deterministic.run_until_parked();
         client_a.user_store.read_with(cx_a, |store, _| {
-            assert_eq!(contacts(store), [("user_b", vec![]), ("user_c", vec![])])
+            assert_eq!(
+                contacts(store),
+                [("user_b", true, vec![]), ("user_c", true, vec![])]
+            )
         });
         client_b.user_store.read_with(cx_b, |store, _| {
             assert_eq!(
                 contacts(store),
                 [
-                    ("user_a", vec![("a", true, vec!["user_b"])]),
-                    ("user_c", vec![])
+                    ("user_a", true, vec![("a", true, vec!["user_b"])]),
+                    ("user_c", true, vec![])
                 ]
             )
         });
@@ -5099,8 +5129,8 @@ mod tests {
             assert_eq!(
                 contacts(store),
                 [
-                    ("user_a", vec![("a", true, vec!["user_b"])]),
-                    ("user_b", vec![])
+                    ("user_a", true, vec![("a", true, vec!["user_b"])]),
+                    ("user_b", true, vec![])
                 ]
             )
         });
@@ -5114,16 +5144,70 @@ mod tests {
         cx_a.update(move |_| drop(project_a));
         deterministic.run_until_parked();
         client_a.user_store.read_with(cx_a, |store, _| {
-            assert_eq!(contacts(store), [("user_b", vec![]), ("user_c", vec![])])
+            assert_eq!(
+                contacts(store),
+                [("user_b", true, vec![]), ("user_c", true, vec![])]
+            )
         });
         client_b.user_store.read_with(cx_b, |store, _| {
-            assert_eq!(contacts(store), [("user_a", vec![]), ("user_c", vec![])])
+            assert_eq!(
+                contacts(store),
+                [("user_a", true, vec![]), ("user_c", true, vec![])]
+            )
         });
         client_c.user_store.read_with(cx_c, |store, _| {
-            assert_eq!(contacts(store), [("user_a", vec![]), ("user_b", vec![])])
+            assert_eq!(
+                contacts(store),
+                [("user_a", true, vec![]), ("user_b", true, vec![])]
+            )
         });
 
-        fn contacts(user_store: &UserStore) -> Vec<(&str, Vec<(&str, bool, Vec<&str>)>)> {
+        server.disconnect_client(client_c.current_user_id(cx_c));
+        server.forbid_connections();
+        deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
+
+        client_a.user_store.read_with(cx_a, |store, _| {
+            assert_eq!(
+                contacts(store),
+                [("user_b", true, vec![]), ("user_c", false, vec![])]
+            )
+        });
+        client_b.user_store.read_with(cx_b, |store, _| {
+            assert_eq!(
+                contacts(store),
+                [("user_a", true, vec![]), ("user_c", false, vec![])]
+            )
+        });
+        client_c
+            .user_store
+            .read_with(cx_c, |store, _| assert_eq!(contacts(store), []));
+
+        server.allow_connections();
+        client_c
+            .authenticate_and_connect(false, &cx_c.to_async())
+            .await
+            .unwrap();
+        deterministic.run_until_parked();
+        client_a.user_store.read_with(cx_a, |store, _| {
+            assert_eq!(
+                contacts(store),
+                [("user_b", true, vec![]), ("user_c", true, vec![])]
+            )
+        });
+        client_b.user_store.read_with(cx_b, |store, _| {
+            assert_eq!(
+                contacts(store),
+                [("user_a", true, vec![]), ("user_c", true, vec![])]
+            )
+        });
+        client_c.user_store.read_with(cx_c, |store, _| {
+            assert_eq!(
+                contacts(store),
+                [("user_a", true, vec![]), ("user_b", true, vec![])]
+            )
+        });
+
+        fn contacts(user_store: &UserStore) -> Vec<(&str, bool, Vec<(&str, bool, Vec<&str>)>)> {
             user_store
                 .contacts()
                 .iter()
@@ -5139,7 +5223,11 @@ mod tests {
                             )
                         })
                         .collect();
-                    (contact.user.github_login.as_str(), worktrees)
+                    (
+                        contact.user.github_login.as_str(),
+                        contact.online,
+                        worktrees,
+                    )
                 })
                 .collect()
         }

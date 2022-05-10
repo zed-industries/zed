@@ -638,10 +638,20 @@ impl ContactsPanel {
                 executor.clone(),
             ));
             if !matches.is_empty() {
-                self.entries.push(ContactEntry::Header("Contacts"));
+                let (online_contacts, offline_contacts) = matches
+                    .iter()
+                    .partition::<Vec<_>, _>(|mat| contacts[mat.candidate_id].online);
+
+                self.entries.push(ContactEntry::Header("Online"));
                 self.entries.extend(
-                    matches
-                        .iter()
+                    online_contacts
+                        .into_iter()
+                        .map(|mat| ContactEntry::Contact(contacts[mat.candidate_id].clone())),
+                );
+                self.entries.push(ContactEntry::Header("Offline"));
+                self.entries.extend(
+                    offline_contacts
+                        .into_iter()
                         .map(|mat| ContactEntry::Contact(contacts[mat.candidate_id].clone())),
                 );
             }

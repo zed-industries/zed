@@ -20,6 +20,7 @@ pub struct User {
 #[derive(Debug)]
 pub struct Contact {
     pub user: Arc<User>,
+    pub online: bool,
     pub projects: Vec<ProjectMetadata>,
 }
 
@@ -109,6 +110,14 @@ impl UserStore {
                         }
                         Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
+                            if let Some(this) = this.upgrade(&cx) {
+                                this.update(&mut cx, |this, _| this.clear_contacts()).await;
+                            }
+                        }
+                        Status::ConnectionLost => {
+                            if let Some(this) = this.upgrade(&cx) {
+                                this.update(&mut cx, |this, _| this.clear_contacts()).await;
+                            }
                         }
                         _ => {}
                     }
@@ -499,7 +508,11 @@ impl Contact {
                 guests,
             });
         }
-        Ok(Self { user, projects })
+        Ok(Self {
+            user,
+            online: contact.online,
+            projects,
+        })
     }
 
     pub fn non_empty_projects(&self) -> impl Iterator<Item = &ProjectMetadata> {
