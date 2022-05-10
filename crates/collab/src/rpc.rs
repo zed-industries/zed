@@ -940,6 +940,10 @@ impl Server {
         request: TypedEnvelope<proto::FuzzySearchUsers>,
         response: Response<proto::FuzzySearchUsers>,
     ) -> Result<()> {
+        let user_id = self
+            .store()
+            .await
+            .user_id_for_connection(request.sender_id)?;
         let query = request.payload.query;
         let db = &self.app_state.db;
         let users = match query.len() {
@@ -953,6 +957,7 @@ impl Server {
         };
         let users = users
             .into_iter()
+            .filter(|user| user.id != user_id)
             .map(|user| proto::User {
                 id: user.id.to_proto(),
                 avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
@@ -973,6 +978,10 @@ impl Server {
             .await
             .user_id_for_connection(request.sender_id)?;
         let responder_id = UserId::from_proto(request.payload.responder_id);
+        if requester_id == responder_id {
+            return Err(anyhow!("cannot add yourself as a contact"))?;
+        }
+
         self.app_state
             .db
             .send_contact_request(requester_id, responder_id)
