@@ -1,7 +1,7 @@
 mod contact_finder;
 
 use client::{Contact, User, UserStore};
-use editor::Editor;
+use editor::{Cancel, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     elements::*,
@@ -35,7 +35,7 @@ pub struct ContactsPanel {
     match_candidates: Vec<StringMatchCandidate>,
     list_state: ListState,
     user_store: ModelHandle<UserStore>,
-    user_query_editor: ViewHandle<Editor>,
+    filter_editor: ViewHandle<Editor>,
     _maintain_contacts: Subscription,
 }
 
@@ -56,6 +56,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ContactsPanel::request_contact);
     cx.add_action(ContactsPanel::remove_contact);
     cx.add_action(ContactsPanel::respond_to_contact_request);
+    cx.add_action(ContactsPanel::clear_filter);
 }
 
 impl ContactsPanel {
@@ -126,7 +127,7 @@ impl ContactsPanel {
             }),
             entries: Default::default(),
             match_candidates: Default::default(),
-            user_query_editor,
+            filter_editor: user_query_editor,
             _maintain_contacts: cx
                 .observe(&app_state.user_store, |this, _, cx| this.update_entries(cx)),
             user_store: app_state.user_store.clone(),
@@ -450,7 +451,7 @@ impl ContactsPanel {
 
     fn update_entries(&mut self, cx: &mut ViewContext<Self>) {
         let user_store = self.user_store.read(cx);
-        let query = self.user_query_editor.read(cx).text(cx);
+        let query = self.filter_editor.read(cx).text(cx);
         let executor = cx.background().clone();
 
         self.entries.clear();
@@ -596,6 +597,11 @@ impl ContactsPanel {
             })
             .detach();
     }
+
+    fn clear_filter(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        self.filter_editor
+            .update(cx, |editor, cx| editor.set_text("", cx));
+    }
 }
 
 fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Element {
@@ -632,7 +638,7 @@ impl View for ContactsPanel {
                 .with_child(
                     Flex::row()
                         .with_child(
-                            ChildView::new(self.user_query_editor.clone())
+                            ChildView::new(self.filter_editor.clone())
                                 .contained()
                                 .with_style(theme.user_query_editor.container)
                                 .flex(1., true)
