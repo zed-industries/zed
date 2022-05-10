@@ -12,10 +12,10 @@ pub struct AtlasAllocator {
     device: Device,
     texture_descriptor: TextureDescriptor,
     atlases: Vec<Atlas>,
-    free_atlases: Vec<Atlas>,
+    last_used_atlas_id: usize,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct AllocId {
     pub atlas_id: usize,
     alloc_id: etagere::AllocId,
@@ -23,15 +23,15 @@ pub struct AllocId {
 
 impl AtlasAllocator {
     pub fn new(device: Device, texture_descriptor: TextureDescriptor) -> Self {
-        let mut me = Self {
+        let mut this = Self {
             device,
             texture_descriptor,
-            atlases: Vec::new(),
-            free_atlases: Vec::new(),
+            atlases: vec![],
+            last_used_atlas_id: 0,
         };
-        let atlas = me.new_atlas(Vector2I::zero());
-        me.atlases.push(atlas);
-        me
+        let atlas = this.new_atlas(Vector2I::zero());
+        this.atlases.push(atlas);
+        this
     }
 
     pub fn default_atlas_size(&self) -> Vector2I {
@@ -42,17 +42,27 @@ impl AtlasAllocator {
     }
 
     pub fn allocate(&mut self, requested_size: Vector2I) -> Option<(AllocId, Vector2I)> {
-        let allocation = self
-            .atlases
-            .last_mut()
-            .unwrap()
+        let atlas_id = self.last_used_atlas_id;
+        if let Some((alloc_id, origin)) = self.atlases[atlas_id].allocate(requested_size) {
+            return Some((AllocId { atlas_id, alloc_id }, origin));
+        }
+
+        for (atlas_id, atlas) in self.atlases.iter_mut().enumerate() {
+            if atlas_id == self.last_used_atlas_id {
+                continue;
+            }
+            if let Some((alloc_id, origin)) = atlas.allocate(requested_size) {
+                self.last_used_atlas_id = atlas_id;
+                return Some((AllocId { atlas_id, alloc_id }, origin));
+            }
+        }
+
+        let atlas_id = self.atlases.len();
+        let mut atlas = self.new_atlas(requested_size);
+        let allocation = atlas
             .allocate(requested_size)
-            .or_else(|| {
-                let mut atlas = self.new_atlas(requested_size);
-                let (id, origin) = atlas.allocate(requested_size)?;
-                self.atlases.push(atlas);
-                Some((id, origin))
-            });
+            .map(|(alloc_id, origin)| (AllocId { atlas_id, alloc_id }, origin));
+        self.atlases.push(atlas);
 
         if allocation.is_none() {
             warn!(
@@ -61,13 +71,7 @@ impl AtlasAllocator {
             );
         }
 
-        let (alloc_id, origin) = allocation?;
-
-        let id = AllocId {
-            atlas_id: self.atlases.len() - 1,
-            alloc_id,
-        };
-        Some((id, origin))
+        allocation
     }
 
     pub fn upload(&mut self, size: Vector2I, bytes: &[u8]) -> Option<(AllocId, RectI)> {
@@ -80,9 +84,6 @@ impl AtlasAllocator {
     pub fn deallocate(&mut self, id: AllocId) {
         if let Some(atlas) = self.atlases.get_mut(id.atlas_id) {
             atlas.deallocate(id.alloc_id);
-            if atlas.is_empty() {
-                self.free_atlases.push(self.atlases.remove(id.atlas_id));
-            }
         }
     }
 
@@ -90,7 +91,6 @@ impl AtlasAllocator {
         for atlas in &mut self.atlases {
             atlas.clear();
         }
-        self.free_atlases.extend(self.atlases.drain(1..));
     }
 
     pub fn texture(&self, atlas_id: usize) -> Option<&metal::TextureRef> {
@@ -98,28 +98,22 @@ impl AtlasAllocator {
     }
 
     fn new_atlas(&mut self, required_size: Vector2I) -> Atlas {
-        if let Some(i) = self.free_atlases.iter().rposition(|atlas| {
-            atlas.size().x() >= required_size.x() && atlas.size().y() >= required_size.y()
-        }) {
-            self.free_atlases.remove(i)
-        } else {
-            let size = self.default_atlas_size().max(required_size);
-            let texture = if size.x() as u64 > self.texture_descriptor.width()
-                || size.y() as u64 > self.texture_descriptor.height()
-            {
-                let descriptor = unsafe {
-                    let descriptor_ptr: *mut metal::MTLTextureDescriptor =
-                        msg_send![self.texture_descriptor, copy];
-                    metal::TextureDescriptor::from_ptr(descriptor_ptr)
-                };
-                descriptor.set_width(size.x() as u64);
-                descriptor.set_height(size.y() as u64);
-                self.device.new_texture(&descriptor)
-            } else {
-                self.device.new_texture(&self.texture_descriptor)
+        let size = self.default_atlas_size().max(required_size);
+        let texture = if size.x() as u64 > self.texture_descriptor.width()
+            || size.y() as u64 > self.texture_descriptor.height()
+        {
+            let descriptor = unsafe {
+                let descriptor_ptr: *mut metal::MTLTextureDescriptor =
+                    msg_send![self.texture_descriptor, copy];
+                metal::TextureDescriptor::from_ptr(descriptor_ptr)
             };
-            Atlas::new(size, texture)
-        }
+            descriptor.set_width(size.x() as u64);
+            descriptor.set_height(size.y() as u64);
+            self.device.new_texture(&descriptor)
+        } else {
+            self.device.new_texture(&self.texture_descriptor)
+        };
+        Atlas::new(size, texture)
     }
 }
 
@@ -134,11 +128,6 @@ impl Atlas {
             allocator: BucketedAtlasAllocator::new(etagere::Size::new(size.x(), size.y())),
             texture,
         }
-    }
-
-    fn size(&self) -> Vector2I {
-        let size = self.allocator.size();
-        vec2i(size.width, size.height)
     }
 
     fn allocate(&mut self, size: Vector2I) -> Option<(etagere::AllocId, Vector2I)> {
@@ -175,10 +164,6 @@ impl Atlas {
 
     fn deallocate(&mut self, id: etagere::AllocId) {
         self.allocator.deallocate(id);
-    }
-
-    fn is_empty(&self) -> bool {
-        self.allocator.is_empty()
     }
 
     fn clear(&mut self) {

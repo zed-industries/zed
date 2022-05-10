@@ -21,6 +21,7 @@ pub struct Theme {
     pub workspace: Workspace,
     pub chat_panel: ChatPanel,
     pub contacts_panel: ContactsPanel,
+    pub contact_finder: ContactFinder,
     pub project_panel: ProjectPanel,
     pub command_palette: CommandPalette,
     pub picker: Picker,
@@ -234,19 +235,44 @@ pub struct CommandPalette {
 pub struct ContactsPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub host_row_height: f32,
-    pub host_avatar: ImageStyle,
-    pub host_username: ContainedText,
+    pub header: ContainedText,
+    pub user_query_editor: FieldEditor,
+    pub user_query_editor_height: f32,
+    pub add_contact_button: IconButton,
+    pub row: ContainerStyle,
+    pub row_height: f32,
+    pub contact_avatar: ImageStyle,
+    pub contact_username: ContainedText,
+    pub contact_button: Interactive<IconButton>,
+    pub disabled_contact_button: IconButton,
     pub tree_branch_width: f32,
     pub tree_branch_color: Color,
-    pub shared_project: WorktreeRow,
-    pub hovered_shared_project: WorktreeRow,
-    pub unshared_project: WorktreeRow,
-    pub hovered_unshared_project: WorktreeRow,
+    pub shared_project: ProjectRow,
+    pub hovered_shared_project: ProjectRow,
+    pub unshared_project: ProjectRow,
+    pub hovered_unshared_project: ProjectRow,
 }
 
 #[derive(Deserialize, Default)]
-pub struct WorktreeRow {
+pub struct ContactFinder {
+    pub row_height: f32,
+    pub contact_avatar: ImageStyle,
+    pub contact_username: ContainerStyle,
+    pub contact_button: IconButton,
+    pub disabled_contact_button: IconButton,
+}
+
+#[derive(Deserialize, Default)]
+pub struct IconButton {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub color: Color,
+    pub icon_width: f32,
+    pub button_width: f32,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ProjectRow {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub height: f32,

@@ -289,10 +289,13 @@ impl LanguageRegistry {
                 let servers_tx = servers_tx.clone();
                 cx.background()
                     .spawn(async move {
-                        fake_server
-                            .receive_notification::<lsp::notification::Initialized>()
-                            .await;
-                        servers_tx.unbounded_send(fake_server).ok();
+                        if fake_server
+                            .try_receive_notification::<lsp::notification::Initialized>()
+                            .await
+                            .is_some()
+                        {
+                            servers_tx.unbounded_send(fake_server).ok();
+                        }
                     })
                     .detach();
                 Ok(server)

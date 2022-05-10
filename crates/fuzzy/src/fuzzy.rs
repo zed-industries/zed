@@ -185,6 +185,18 @@ pub async fn match_strings(
         return Default::default();
     }
 
+    if query.is_empty() {
+        return candidates
+            .iter()
+            .map(|candidate| StringMatch {
+                candidate_id: candidate.id,
+                score: 0.,
+                positions: Default::default(),
+                string: candidate.string.clone(),
+            })
+            .collect();
+    }
+
     let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
     let query = query.chars().collect::<Vec<_>>();
 
@@ -195,7 +207,7 @@ pub async fn match_strings(
     let num_cpus = background.num_cpus().min(candidates.len());
     let segment_size = (candidates.len() + num_cpus - 1) / num_cpus;
     let mut segment_results = (0..num_cpus)
-        .map(|_| Vec::with_capacity(max_results))
+        .map(|_| Vec::with_capacity(max_results.min(candidates.len())))
         .collect::<Vec<_>>();
 
     background

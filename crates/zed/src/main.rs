@@ -146,6 +146,7 @@ fn main() {
         go_to_line::init(cx);
         file_finder::init(cx);
         chat_panel::init(cx);
+        contacts_panel::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(cx);

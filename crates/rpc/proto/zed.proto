@@ -87,12 +87,16 @@ message Envelope {
         UpdateContacts update_contacts = 75;
 
         GetUsers get_users = 76;
-        GetUsersResponse get_users_response = 77;
+        FuzzySearchUsers fuzzy_search_users = 77;
+        UsersResponse users_response = 78;
+        RequestContact request_contact = 79;
+        RespondToContactRequest respond_to_contact_request = 80;
+        RemoveContact remove_contact = 81;
 
-        Follow follow = 78;
-        FollowResponse follow_response = 79;
-        UpdateFollowers update_followers = 80;
-        Unfollow unfollow = 81;
+        Follow follow = 82;
+        FollowResponse follow_response = 83;
+        UpdateFollowers update_followers = 84;
+        Unfollow unfollow = 85;
     }
 }
 
@@ -147,8 +151,7 @@ message RegisterWorktree {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     string root_name = 3;
-    repeated string authorized_logins = 4;
-    bool visible = 5;
+    bool visible = 4;
 }
 
 message UnregisterWorktree {
@@ -538,8 +541,31 @@ message GetUsers {
     repeated uint64 user_ids = 1;
 }
 
-message GetUsersResponse {
+message FuzzySearchUsers {
+    string query = 1;
+}
+
+message UsersResponse {
     repeated User users = 1;
+}
+
+message RequestContact {
+    uint64 responder_id = 1;
+}
+
+message RemoveContact {
+    uint64 user_id = 1;
+}
+
+message RespondToContactRequest {
+    uint64 requester_id = 1;
+    ContactRequestResponse response = 2;
+}
+
+enum ContactRequestResponse {
+    Accept = 0;
+    Reject = 1;
+    Block = 2;
 }
 
 message SendChannelMessage {
@@ -569,6 +595,16 @@ message GetChannelMessagesResponse {
 
 message UpdateContacts {
     repeated Contact contacts = 1;
+    repeated uint64 remove_contacts = 2;
+    repeated IncomingContactRequest incoming_requests = 3;
+    repeated uint64 remove_incoming_requests = 4;
+    repeated uint64 outgoing_requests = 5;
+    repeated uint64 remove_outgoing_requests = 6;
+}
+
+message IncomingContactRequest {
+    uint64 requester_id = 1;
+    bool should_notify = 2;
 }
 
 message UpdateDiagnostics {
@@ -839,6 +875,7 @@ message ChannelMessage {
 message Contact {
     uint64 user_id = 1;
     repeated ProjectMetadata projects = 2;
+    bool online = 3;
 }
 
 message ProjectMetadata {

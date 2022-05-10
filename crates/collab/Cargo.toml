@@ -22,6 +22,7 @@ async-trait = "0.1.50"
 async-tungstenite = "0.16"
 axum = { version = "0.5", features = ["json", "headers", "ws"] }
 base64 = "0.13"
+clap = { version = "3.1", features = ["derive"], optional = true }
 envy = "0.4.2"
 env_logger = "0.8"
 futures = "0.3"
@@ -32,6 +33,7 @@ opentelemetry = { version = "0.17", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.10", features = ["tls-roots"] }
 parking_lot = "0.11.1"
 rand = "0.8"
+reqwest = { version = "0.11", features = ["json"], optional = true }
 scrypt = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -69,4 +71,4 @@ lazy_static = "1.4"
 serde_json = { version = "1.0.64", features = ["preserve_order"] }
 
 [features]
-seed-support = ["lipsum"]
+seed-support = ["clap", "lipsum", "reqwest"]

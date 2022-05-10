@@ -9,8 +9,15 @@ doctest = false
 
 [dependencies]
 client = { path = "../client" }
+editor = { path = "../editor" }
+fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
+picker = { path = "../picker" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
+util = { path = "../util" }
 workspace = { path = "../workspace" }
+futures = "0.3"
+log = "0.4"
 postage = { version = "0.4.1", features = ["futures-traits"] }
+serde = { version = "1", features = ["derive"] }

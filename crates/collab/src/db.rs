@@ -1,6 +1,6 @@
-use anyhow::Context;
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use futures::StreamExt;
 use serde::Serialize;
 pub use sqlx::postgres::PgPoolOptions as DbOptions;
 use sqlx::{types::Uuid, FromRow};
@@ -10,11 +10,28 @@ use time::OffsetDateTime;
 pub trait Db: Send + Sync {
     async fn create_user(&self, github_login: &str, admin: bool) -> Result<UserId>;
     async fn get_all_users(&self) -> Result<Vec<User>>;
+    async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>>;
     async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>>;
     async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>>;
     async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>>;
     async fn set_user_is_admin(&self, id: UserId, is_admin: bool) -> Result<()>;
     async fn destroy_user(&self, id: UserId) -> Result<()>;
+
+    async fn get_contacts(&self, id: UserId) -> Result<Contacts>;
+    async fn send_contact_request(&self, requester_id: UserId, responder_id: UserId) -> Result<()>;
+    async fn remove_contact(&self, requester_id: UserId, responder_id: UserId) -> Result<()>;
+    async fn dismiss_contact_request(
+        &self,
+        responder_id: UserId,
+        requester_id: UserId,
+    ) -> Result<()>;
+    async fn respond_to_contact_request(
+        &self,
+        responder_id: UserId,
+        requester_id: UserId,
+        accept: bool,
+    ) -> Result<()>;
+
     async fn create_access_token_hash(
         &self,
         user_id: UserId,
@@ -23,6 +40,7 @@ pub trait Db: Send + Sync {
     ) -> Result<()>;
     async fn get_access_token_hashes(&self, user_id: UserId) -> Result<Vec<String>>;
     #[cfg(any(test, feature = "seed-support"))]
+
     async fn find_org_by_slug(&self, slug: &str) -> Result<Option<Org>>;
     #[cfg(any(test, feature = "seed-support"))]
     async fn create_org(&self, name: &str, slug: &str) -> Result<OrgId>;
@@ -31,6 +49,7 @@ pub trait Db: Send + Sync {
     #[cfg(any(test, feature = "seed-support"))]
     async fn create_org_channel(&self, org_id: OrgId, name: &str) -> Result<ChannelId>;
     #[cfg(any(test, feature = "seed-support"))]
+
     async fn get_org_channels(&self, org_id: OrgId) -> Result<Vec<Channel>>;
     async fn get_accessible_channels(&self, user_id: UserId) -> Result<Vec<Channel>>;
     async fn can_user_access_channel(&self, user_id: UserId, channel_id: ChannelId)
@@ -58,6 +77,8 @@ pub trait Db: Send + Sync {
     ) -> Result<Vec<ChannelMessage>>;
     #[cfg(test)]
     async fn teardown(&self, url: &str);
+    #[cfg(test)]
+    fn as_fake<'a>(&'a self) -> Option<&'a tests::FakeDb>;
 }
 
 pub struct PostgresDb {
@@ -97,6 +118,23 @@ impl Db for PostgresDb {
     async fn get_all_users(&self) -> Result<Vec<User>> {
         let query = "SELECT * FROM users ORDER BY github_login ASC";
         Ok(sqlx::query_as(query).fetch_all(&self.pool).await?)
+    }
+
+    async fn fuzzy_search_users(&self, name_query: &str, limit: u32) -> Result<Vec<User>> {
+        let like_string = fuzzy_like_string(name_query);
+        let query = "
+            SELECT users.*
+            FROM users
+            WHERE github_login ILIKE $1
+            ORDER BY github_login <-> $2
+            LIMIT $3
+        ";
+        Ok(sqlx::query_as(query)
+            .bind(like_string)
+            .bind(name_query)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?)
     }
 
     async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>> {
@@ -148,6 +186,188 @@ impl Db for PostgresDb {
             .execute(&self.pool)
             .await
             .map(drop)?)
+    }
+
+    // contacts
+
+    async fn get_contacts(&self, user_id: UserId) -> Result<Contacts> {
+        let query = "
+            SELECT user_id_a, user_id_b, a_to_b, accepted, should_notify
+            FROM contacts
+            WHERE user_id_a = $1 OR user_id_b = $1;
+        ";
+
+        let mut rows = sqlx::query_as::<_, (UserId, UserId, bool, bool, bool)>(query)
+            .bind(user_id)
+            .fetch(&self.pool);
+
+        let mut current = vec![user_id];
+        let mut outgoing_requests = Vec::new();
+        let mut incoming_requests = Vec::new();
+        while let Some(row) = rows.next().await {
+            let (user_id_a, user_id_b, a_to_b, accepted, should_notify) = row?;
+
+            if user_id_a == user_id {
+                if accepted {
+                    current.push(user_id_b);
+                } else if a_to_b {
+                    outgoing_requests.push(user_id_b);
+                } else {
+                    incoming_requests.push(IncomingContactRequest {
+                        requester_id: user_id_b,
+                        should_notify,
+                    });
+                }
+            } else {
+                if accepted {
+                    current.push(user_id_a);
+                } else if a_to_b {
+                    incoming_requests.push(IncomingContactRequest {
+                        requester_id: user_id_a,
+                        should_notify,
+                    });
+                } else {
+                    outgoing_requests.push(user_id_a);
+                }
+            }
+        }
+
+        current.sort_unstable();
+        outgoing_requests.sort_unstable();
+        incoming_requests.sort_unstable();
+
+        Ok(Contacts {
+            current,
+            outgoing_requests,
+            incoming_requests,
+        })
+    }
+
+    async fn send_contact_request(&self, sender_id: UserId, receiver_id: UserId) -> Result<()> {
+        let (id_a, id_b, a_to_b) = if sender_id < receiver_id {
+            (sender_id, receiver_id, true)
+        } else {
+            (receiver_id, sender_id, false)
+        };
+        let query = "
+            INSERT into contacts (user_id_a, user_id_b, a_to_b, accepted, should_notify)
+            VALUES ($1, $2, $3, 'f', 't')
+            ON CONFLICT (user_id_a, user_id_b) DO UPDATE
+            SET
+                accepted = 't'
+            WHERE
+                NOT contacts.accepted AND
+                ((contacts.a_to_b = excluded.a_to_b AND contacts.user_id_a = excluded.user_id_b) OR
+                (contacts.a_to_b != excluded.a_to_b AND contacts.user_id_a = excluded.user_id_a));
+        ";
+        let result = sqlx::query(query)
+            .bind(id_a.0)
+            .bind(id_b.0)
+            .bind(a_to_b)
+            .execute(&self.pool)
+            .await?;
+
+        if result.rows_affected() == 1 {
+            Ok(())
+        } else {
+            Err(anyhow!("contact already requested"))
+        }
+    }
+
+    async fn remove_contact(&self, requester_id: UserId, responder_id: UserId) -> Result<()> {
+        let (id_a, id_b) = if responder_id < requester_id {
+            (responder_id, requester_id)
+        } else {
+            (requester_id, responder_id)
+        };
+        let query = "
+            DELETE FROM contacts
+            WHERE user_id_a = $1 AND user_id_b = $2;
+        ";
+        let result = sqlx::query(query)
+            .bind(id_a.0)
+            .bind(id_b.0)
+            .execute(&self.pool)
+            .await?;
+
+        if result.rows_affected() == 1 {
+            Ok(())
+        } else {
+            Err(anyhow!("no such contact"))
+        }
+    }
+
+    async fn dismiss_contact_request(
+        &self,
+        responder_id: UserId,
+        requester_id: UserId,
+    ) -> Result<()> {
+        let (id_a, id_b, a_to_b) = if responder_id < requester_id {
+            (responder_id, requester_id, false)
+        } else {
+            (requester_id, responder_id, true)
+        };
+
+        let query = "
+            UPDATE contacts
+            SET should_notify = 'f'
+            WHERE user_id_a = $1 AND user_id_b = $2 AND a_to_b = $3;
+        ";
+
+        let result = sqlx::query(query)
+            .bind(id_a.0)
+            .bind(id_b.0)
+            .bind(a_to_b)
+            .execute(&self.pool)
+            .await?;
+
+        if result.rows_affected() == 0 {
+            Err(anyhow!("no such contact request"))?;
+        }
+
+        Ok(())
+    }
+
+    async fn respond_to_contact_request(
+        &self,
+        responder_id: UserId,
+        requester_id: UserId,
+        accept: bool,
+    ) -> Result<()> {
+        let (id_a, id_b, a_to_b) = if responder_id < requester_id {
+            (responder_id, requester_id, false)
+        } else {
+            (requester_id, responder_id, true)
+        };
+        let result = if accept {
+            let query = "
+                UPDATE contacts
+                SET accepted = 't', should_notify = 'f'
+                WHERE user_id_a = $1 AND user_id_b = $2 AND a_to_b = $3;
+            ";
+            sqlx::query(query)
+                .bind(id_a.0)
+                .bind(id_b.0)
+                .bind(a_to_b)
+                .execute(&self.pool)
+                .await?
+        } else {
+            let query = "
+                DELETE FROM contacts
+                WHERE user_id_a = $1 AND user_id_b = $2 AND a_to_b = $3 AND NOT accepted;
+            ";
+            sqlx::query(query)
+                .bind(id_a.0)
+                .bind(id_b.0)
+                .bind(a_to_b)
+                .execute(&self.pool)
+                .await?
+        };
+        if result.rows_affected() == 1 {
+            Ok(())
+        } else {
+            Err(anyhow!("no such contact request"))
+        }
     }
 
     // access tokens
@@ -406,12 +626,17 @@ impl Db for PostgresDb {
             .await
             .log_err();
     }
+
+    #[cfg(test)]
+    fn as_fake(&self) -> Option<&tests::FakeDb> {
+        None
+    }
 }
 
 macro_rules! id_type {
     ($name:ident) => {
         #[derive(
-            Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, sqlx::Type, Serialize,
+            Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, sqlx::Type, Serialize,
         )]
         #[sqlx(transparent)]
         #[serde(transparent)]
@@ -474,6 +699,31 @@ pub struct ChannelMessage {
     pub body: String,
     pub sent_at: OffsetDateTime,
     pub nonce: Uuid,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Contacts {
+    pub current: Vec<UserId>,
+    pub incoming_requests: Vec<IncomingContactRequest>,
+    pub outgoing_requests: Vec<UserId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct IncomingContactRequest {
+    pub requester_id: UserId,
+    pub should_notify: bool,
+}
+
+fn fuzzy_like_string(string: &str) -> String {
+    let mut result = String::with_capacity(string.len() * 2 + 1);
+    for c in string.chars() {
+        if c.is_alphanumeric() {
+            result.push('%');
+            result.push(c);
+        }
+    }
+    result.push('%');
+    result
 }
 
 #[cfg(test)]
@@ -640,6 +890,185 @@ pub mod tests {
         );
     }
 
+    #[test]
+    fn test_fuzzy_like_string() {
+        assert_eq!(fuzzy_like_string("abcd"), "%a%b%c%d%");
+        assert_eq!(fuzzy_like_string("x y"), "%x%y%");
+        assert_eq!(fuzzy_like_string(" z  "), "%z%");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_fuzzy_search_users() {
+        let test_db = TestDb::postgres().await;
+        let db = test_db.db();
+        for github_login in [
+            "California",
+            "colorado",
+            "oregon",
+            "washington",
+            "florida",
+            "delaware",
+            "rhode-island",
+        ] {
+            db.create_user(github_login, false).await.unwrap();
+        }
+
+        assert_eq!(
+            fuzzy_search_user_names(db, "clr").await,
+            &["colorado", "California"]
+        );
+        assert_eq!(
+            fuzzy_search_user_names(db, "ro").await,
+            &["rhode-island", "colorado", "oregon"],
+        );
+
+        async fn fuzzy_search_user_names(db: &Arc<dyn Db>, query: &str) -> Vec<String> {
+            db.fuzzy_search_users(query, 10)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|user| user.github_login)
+                .collect::<Vec<_>>()
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_add_contacts() {
+        for test_db in [
+            TestDb::postgres().await,
+            TestDb::fake(Arc::new(gpui::executor::Background::new())),
+        ] {
+            let db = test_db.db();
+
+            let user_1 = db.create_user("user1", false).await.unwrap();
+            let user_2 = db.create_user("user2", false).await.unwrap();
+            let user_3 = db.create_user("user3", false).await.unwrap();
+
+            // User starts with no contacts
+            assert_eq!(
+                db.get_contacts(user_1).await.unwrap(),
+                Contacts {
+                    current: vec![user_1],
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![],
+                },
+            );
+
+            // User requests a contact. Both users see the pending request.
+            db.send_contact_request(user_1, user_2).await.unwrap();
+            assert_eq!(
+                db.get_contacts(user_1).await.unwrap(),
+                Contacts {
+                    current: vec![user_1],
+                    outgoing_requests: vec![user_2],
+                    incoming_requests: vec![],
+                },
+            );
+            assert_eq!(
+                db.get_contacts(user_2).await.unwrap(),
+                Contacts {
+                    current: vec![user_2],
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![IncomingContactRequest {
+                        requester_id: user_1,
+                        should_notify: true
+                    }],
+                },
+            );
+
+            // User 2 dismisses the contact request notification without accepting or rejecting.
+            // We shouldn't notify them again.
+            db.dismiss_contact_request(user_1, user_2)
+                .await
+                .unwrap_err();
+            db.dismiss_contact_request(user_2, user_1).await.unwrap();
+            assert_eq!(
+                db.get_contacts(user_2).await.unwrap(),
+                Contacts {
+                    current: vec![user_2],
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![IncomingContactRequest {
+                        requester_id: user_1,
+                        should_notify: false
+                    }],
+                },
+            );
+
+            // User can't accept their own contact request
+            db.respond_to_contact_request(user_1, user_2, true)
+                .await
+                .unwrap_err();
+
+            // User accepts a contact request. Both users see the contact.
+            db.respond_to_contact_request(user_2, user_1, true)
+                .await
+                .unwrap();
+            assert_eq!(
+                db.get_contacts(user_1).await.unwrap(),
+                Contacts {
+                    current: vec![user_1, user_2],
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![],
+                },
+            );
+            assert_eq!(
+                db.get_contacts(user_2).await.unwrap(),
+                Contacts {
+                    current: vec![user_1, user_2],
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![],
+                },
+            );
+
+            // Users cannot re-request existing contacts.
+            db.send_contact_request(user_1, user_2).await.unwrap_err();
+            db.send_contact_request(user_2, user_1).await.unwrap_err();
+
+            // Users send each other concurrent contact requests and
+            // see that they are immediately accepted.
+            db.send_contact_request(user_1, user_3).await.unwrap();
+            db.send_contact_request(user_3, user_1).await.unwrap();
+            assert_eq!(
+                db.get_contacts(user_1).await.unwrap(),
+                Contacts {
+                    current: vec![user_1, user_2, user_3],
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![],
+                },
+            );
+            assert_eq!(
+                db.get_contacts(user_3).await.unwrap(),
+                Contacts {
+                    current: vec![user_1, user_3],
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![],
+                },
+            );
+
+            // User declines a contact request. Both users see that it is gone.
+            db.send_contact_request(user_2, user_3).await.unwrap();
+            db.respond_to_contact_request(user_3, user_2, false)
+                .await
+                .unwrap();
+            assert_eq!(
+                db.get_contacts(user_2).await.unwrap(),
+                Contacts {
+                    current: vec![user_1, user_2],
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![],
+                },
+            );
+            assert_eq!(
+                db.get_contacts(user_3).await.unwrap(),
+                Contacts {
+                    current: vec![user_1, user_3],
+                    outgoing_requests: vec![],
+                    incoming_requests: vec![],
+                },
+            );
+        }
+    }
+
     pub struct TestDb {
         pub db: Option<Arc<dyn Db>>,
         pub url: String,
@@ -690,16 +1119,25 @@ pub mod tests {
 
     pub struct FakeDb {
         background: Arc<Background>,
-        users: Mutex<BTreeMap<UserId, User>>,
-        next_user_id: Mutex<i32>,
-        orgs: Mutex<BTreeMap<OrgId, Org>>,
-        next_org_id: Mutex<i32>,
-        org_memberships: Mutex<BTreeMap<(OrgId, UserId), bool>>,
-        channels: Mutex<BTreeMap<ChannelId, Channel>>,
-        next_channel_id: Mutex<i32>,
-        channel_memberships: Mutex<BTreeMap<(ChannelId, UserId), bool>>,
-        channel_messages: Mutex<BTreeMap<MessageId, ChannelMessage>>,
+        pub users: Mutex<BTreeMap<UserId, User>>,
+        pub orgs: Mutex<BTreeMap<OrgId, Org>>,
+        pub org_memberships: Mutex<BTreeMap<(OrgId, UserId), bool>>,
+        pub channels: Mutex<BTreeMap<ChannelId, Channel>>,
+        pub channel_memberships: Mutex<BTreeMap<(ChannelId, UserId), bool>>,
+        pub channel_messages: Mutex<BTreeMap<MessageId, ChannelMessage>>,
+        pub contacts: Mutex<Vec<FakeContact>>,
         next_channel_message_id: Mutex<i32>,
+        next_user_id: Mutex<i32>,
+        next_org_id: Mutex<i32>,
+        next_channel_id: Mutex<i32>,
+    }
+
+    #[derive(Debug)]
+    pub struct FakeContact {
+        pub requester_id: UserId,
+        pub responder_id: UserId,
+        pub accepted: bool,
+        pub should_notify: bool,
     }
 
     impl FakeDb {
@@ -716,6 +1154,7 @@ pub mod tests {
                 channel_memberships: Default::default(),
                 channel_messages: Default::default(),
                 next_channel_message_id: Mutex::new(1),
+                contacts: Default::default(),
             }
         }
     }
@@ -749,6 +1188,10 @@ pub mod tests {
             unimplemented!()
         }
 
+        async fn fuzzy_search_users(&self, _: &str, _: u32) -> Result<Vec<User>> {
+            unimplemented!()
+        }
+
         async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>> {
             Ok(self.get_users_by_ids(vec![id]).await?.into_iter().next())
         }
@@ -759,8 +1202,13 @@ pub mod tests {
             Ok(ids.iter().filter_map(|id| users.get(id).cloned()).collect())
         }
 
-        async fn get_user_by_github_login(&self, _github_login: &str) -> Result<Option<User>> {
-            unimplemented!()
+        async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
+            Ok(self
+                .users
+                .lock()
+                .values()
+                .find(|user| user.github_login == github_login)
+                .cloned())
         }
 
         async fn set_user_is_admin(&self, _id: UserId, _is_admin: bool) -> Result<()> {
@@ -769,6 +1217,122 @@ pub mod tests {
 
         async fn destroy_user(&self, _id: UserId) -> Result<()> {
             unimplemented!()
+        }
+
+        async fn get_contacts(&self, id: UserId) -> Result<Contacts> {
+            self.background.simulate_random_delay().await;
+            let mut current = vec![id];
+            let mut outgoing_requests = Vec::new();
+            let mut incoming_requests = Vec::new();
+
+            for contact in self.contacts.lock().iter() {
+                if contact.requester_id == id {
+                    if contact.accepted {
+                        current.push(contact.responder_id);
+                    } else {
+                        outgoing_requests.push(contact.responder_id);
+                    }
+                } else if contact.responder_id == id {
+                    if contact.accepted {
+                        current.push(contact.requester_id);
+                    } else {
+                        incoming_requests.push(IncomingContactRequest {
+                            requester_id: contact.requester_id,
+                            should_notify: contact.should_notify,
+                        });
+                    }
+                }
+            }
+
+            current.sort_unstable();
+            outgoing_requests.sort_unstable();
+            incoming_requests.sort_unstable();
+
+            Ok(Contacts {
+                current,
+                outgoing_requests,
+                incoming_requests,
+            })
+        }
+
+        async fn send_contact_request(
+            &self,
+            requester_id: UserId,
+            responder_id: UserId,
+        ) -> Result<()> {
+            let mut contacts = self.contacts.lock();
+            for contact in contacts.iter_mut() {
+                if contact.requester_id == requester_id && contact.responder_id == responder_id {
+                    if contact.accepted {
+                        Err(anyhow!("contact already exists"))?;
+                    } else {
+                        Err(anyhow!("contact already requested"))?;
+                    }
+                }
+                if contact.responder_id == requester_id && contact.requester_id == responder_id {
+                    if contact.accepted {
+                        Err(anyhow!("contact already exists"))?;
+                    } else {
+                        contact.accepted = true;
+                        return Ok(());
+                    }
+                }
+            }
+            contacts.push(FakeContact {
+                requester_id,
+                responder_id,
+                accepted: false,
+                should_notify: true,
+            });
+            Ok(())
+        }
+
+        async fn remove_contact(&self, requester_id: UserId, responder_id: UserId) -> Result<()> {
+            self.contacts.lock().retain(|contact| {
+                !(contact.requester_id == requester_id && contact.responder_id == responder_id)
+            });
+            Ok(())
+        }
+
+        async fn dismiss_contact_request(
+            &self,
+            responder_id: UserId,
+            requester_id: UserId,
+        ) -> Result<()> {
+            let mut contacts = self.contacts.lock();
+            for contact in contacts.iter_mut() {
+                if contact.requester_id == requester_id && contact.responder_id == responder_id {
+                    if contact.accepted {
+                        return Err(anyhow!("contact already confirmed"));
+                    }
+                    contact.should_notify = false;
+                    return Ok(());
+                }
+            }
+            Err(anyhow!("no such contact request"))
+        }
+
+        async fn respond_to_contact_request(
+            &self,
+            responder_id: UserId,
+            requester_id: UserId,
+            accept: bool,
+        ) -> Result<()> {
+            let mut contacts = self.contacts.lock();
+            for (ix, contact) in contacts.iter_mut().enumerate() {
+                if contact.requester_id == requester_id && contact.responder_id == responder_id {
+                    if contact.accepted {
+                        return Err(anyhow!("contact already confirmed"));
+                    }
+                    if accept {
+                        contact.accepted = true;
+                    } else {
+                        contacts.remove(ix);
+                    }
+                    return Ok(());
+                }
+            }
+            Err(anyhow!("no such contact request"))
         }
 
         async fn create_access_token_hash(
@@ -965,5 +1529,10 @@ pub mod tests {
         }
 
         async fn teardown(&self, _: &str) {}
+
+        #[cfg(test)]
+        fn as_fake(&self) -> Option<&FakeDb> {
+            Some(self)
+        }
     }
 }

@@ -1,31 +1,87 @@
+use clap::Parser;
 use db::{Db, PostgresDb, UserId};
 use rand::prelude::*;
+use serde::Deserialize;
+use std::fmt::Write;
 use time::{Duration, OffsetDateTime};
 
 #[allow(unused)]
 #[path = "../db.rs"]
 mod db;
 
+#[derive(Parser)]
+struct Args {
+    /// Seed users from GitHub.
+    #[clap(short, long)]
+    github_users: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubUser {
+    id: usize,
+    login: String,
+}
+
 #[tokio::main]
 async fn main() {
+    let args = Args::parse();
     let mut rng = StdRng::from_entropy();
     let database_url = std::env::var("DATABASE_URL").expect("missing DATABASE_URL env var");
     let db = PostgresDb::new(&database_url, 5)
         .await
         .expect("failed to connect to postgres database");
 
-    let zed_users = ["nathansobo", "maxbrunsfeld", "as-cii", "iamnbutler"];
+    let mut zed_users = vec![
+        "nathansobo".to_string(),
+        "maxbrunsfeld".to_string(),
+        "as-cii".to_string(),
+        "iamnbutler".to_string(),
+        "gibusu".to_string(),
+        "Kethku".to_string(),
+    ];
+
+    if args.github_users {
+        let github_token = std::env::var("GITHUB_TOKEN").expect("missing GITHUB_TOKEN env var");
+        let client = reqwest::Client::new();
+        let mut last_user_id = None;
+        for page in 0..20 {
+            println!("Downloading users from GitHub, page {}", page);
+            let mut uri = "https://api.github.com/users?per_page=100".to_string();
+            if let Some(last_user_id) = last_user_id {
+                write!(&mut uri, "&since={}", last_user_id).unwrap();
+            }
+            let response = client
+                .get(uri)
+                .bearer_auth(&github_token)
+                .header("user-agent", "zed")
+                .send()
+                .await
+                .expect("failed to fetch github users");
+            let users = response
+                .json::<Vec<GitHubUser>>()
+                .await
+                .expect("failed to deserialize github user");
+            zed_users.extend(users.iter().map(|user| user.login.clone()));
+
+            if let Some(last_user) = users.last() {
+                last_user_id = Some(last_user.id);
+            } else {
+                break;
+            }
+        }
+    }
+
     let mut zed_user_ids = Vec::<UserId>::new();
     for zed_user in zed_users {
         if let Some(user) = db
-            .get_user_by_github_login(zed_user)
+            .get_user_by_github_login(&zed_user)
             .await
             .expect("failed to fetch user")
         {
             zed_user_ids.push(user.id);
         } else {
             zed_user_ids.push(
-                db.create_user(zed_user, true)
+                db.create_user(&zed_user, true)
                     .await
                     .expect("failed to insert user"),
             );

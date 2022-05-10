@@ -443,7 +443,7 @@ impl Project {
             .map(|peer| peer.user_id)
             .collect();
         user_store
-            .update(cx, |user_store, cx| user_store.load_users(user_ids, cx))
+            .update(cx, |user_store, cx| user_store.get_users(user_ids, cx))
             .await?;
         let mut collaborators = HashMap::default();
         for message in response.collaborators {
@@ -6550,7 +6550,7 @@ mod tests {
         assert!(results.is_empty());
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_definition(cx: &mut gpui::TestAppContext) {
         let mut language = Language::new(
             LanguageConfig {
