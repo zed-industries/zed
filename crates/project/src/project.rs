@@ -6550,7 +6550,7 @@ mod tests {
         assert!(results.is_empty());
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_definition(cx: &mut gpui::TestAppContext) {
         let mut language = Language::new(
             LanguageConfig {
