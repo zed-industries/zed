@@ -501,6 +501,12 @@ impl Contact {
         }
         Ok(Self { user, projects })
     }
+
+    pub fn non_empty_projects(&self) -> impl Iterator<Item = &ProjectMetadata> {
+        self.projects
+            .iter()
+            .filter(|project| !project.worktree_root_names.is_empty())
+    }
 }
 
 async fn fetch_avatar(http: &dyn HttpClient, url: &str) -> Result<Arc<ImageData>> {
