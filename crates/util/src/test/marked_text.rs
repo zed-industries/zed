@@ -55,10 +55,18 @@ pub fn marked_text_ranges_by(
     (unmarked_text, range_lookup)
 }
 
-pub fn marked_text_ranges(marked_text: &str) -> (String, Vec<Range<usize>>) {
-    let (unmarked_text, mut ranges) = marked_text_ranges_by(marked_text, vec![('[', ']')]);
+// Returns ranges delimited by (), [], and <> ranges. Ranges using the same markers
+// must not be overlapping. May also include | for empty ranges
+pub fn marked_text_ranges(full_marked_text: &str) -> (String, Vec<Range<usize>>) {
+    let (range_marked_text, empty_offsets) = marked_text(full_marked_text);
+    let (unmarked, range_lookup) =
+        marked_text_ranges_by(&range_marked_text, vec![('[', ']'), ('(', ')'), ('<', '>')]);
     (
-        unmarked_text,
-        ranges.remove(&('[', ']')).unwrap_or_else(Vec::new),
+        unmarked,
+        range_lookup
+            .into_values()
+            .flatten()
+            .chain(empty_offsets.into_iter().map(|offset| offset..offset))
+            .collect(),
     )
 }
