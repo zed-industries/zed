@@ -378,13 +378,11 @@ impl MultiBuffer {
                     let mut insertions = Vec::new();
                     let mut deletions = Vec::new();
                     let empty_str: Arc<str> = "".into();
-                    while let Some((mut range, mut new_text, mut is_insertion)) = edits.next() {
-                        while let Some((next_range, next_new_text, next_is_insertion)) =
-                            edits.peek()
-                        {
+                    while let Some((mut range, new_text, mut is_insertion)) = edits.next() {
+                        while let Some((next_range, _, next_is_insertion)) = edits.peek() {
                             if range.end >= next_range.start {
                                 range.end = cmp::max(next_range.end, range.end);
-                                new_text = format!("{new_text}{next_new_text}").into();
+
                                 is_insertion |= *next_is_insertion;
                                 edits.next();
                             } else {
@@ -395,7 +393,7 @@ impl MultiBuffer {
                         if is_insertion {
                             insertions.push((
                                 buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
-                                new_text,
+                                new_text.clone(),
                             ));
                         } else if !range.is_empty() {
                             deletions.push((

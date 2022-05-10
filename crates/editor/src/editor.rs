@@ -9801,7 +9801,17 @@ mod tests {
     #[gpui::test]
     fn test_editing_overlapping_excerpts(cx: &mut gpui::MutableAppContext) {
         cx.set_global(Settings::test(cx));
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
+        let buffer = cx.add_model(|cx| {
+            Buffer::new(
+                0,
+                indoc! {"
+                    aaaa
+                    bbbb
+                    cccc"},
+                cx,
+            )
+        });
+
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
             multibuffer.push_excerpts(
