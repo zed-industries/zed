@@ -470,6 +470,19 @@
       "color": "#202746",
       "size": 14,
       "background": "#000000aa"
+    },
+    "notification": {
+      "margin": {
+        "top": 10
+      }
+    },
+    "notifications": {
+      "width": 256,
+      "margin": {
+        "right": 10,
+        "bottom": 10
+      },
+      "background": "#ff0000"
     }
   },
   "editor": {

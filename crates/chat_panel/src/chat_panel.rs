@@ -69,7 +69,7 @@ impl ChatPanel {
             .with_style(move |cx| {
                 let theme = &cx.global::<Settings>().theme.chat_panel.channel_select;
                 SelectStyle {
-                    header: theme.header.container.clone(),
+                    header: theme.header.container,
                     menu: theme.menu.clone(),
                 }
             })

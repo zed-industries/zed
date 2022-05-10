@@ -45,6 +45,8 @@ pub struct Workspace {
     pub toolbar: Toolbar,
     pub disconnected_overlay: ContainedText,
     pub modal: ContainerStyle,
+    pub notification: ContainerStyle,
+    pub notifications: Notifications,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -107,6 +109,13 @@ pub struct Toolbar {
     pub container: ContainerStyle,
     pub height: f32,
     pub item_spacing: f32,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Notifications {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub width: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]

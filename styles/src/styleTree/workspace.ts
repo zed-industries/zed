@@ -146,5 +146,13 @@ export default function workspace(theme: Theme) {
       ...text(theme, "sans", "active"),
       background: "#000000aa",
     },
+    notification: {
+      margin: { top: 10 },
+    },
+    notifications: {
+      width: 256,
+      margin: { right: 10, bottom: 10 },
+      background: "#ff0000",
+    }
   };
 }

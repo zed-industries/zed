@@ -604,6 +604,24 @@ impl<T: Item> WeakItemHandle for WeakViewHandle<T> {
     }
 }
 
+pub trait Notification: View {}
+
+pub trait NotificationHandle {
+    fn to_any(&self) -> AnyViewHandle;
+}
+
+impl<T: Notification> NotificationHandle for ViewHandle<T> {
+    fn to_any(&self) -> AnyViewHandle {
+        self.into()
+    }
+}
+
+impl Into<AnyViewHandle> for &dyn NotificationHandle {
+    fn into(self) -> AnyViewHandle {
+        self.to_any()
+    }
+}
+
 #[derive(Clone)]
 pub struct WorkspaceParams {
     pub project: ModelHandle<Project>,
@@ -683,6 +701,7 @@ pub struct Workspace {
     panes: Vec<ViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
     status_bar: ViewHandle<StatusBar>,
+    notifications: Vec<Box<dyn NotificationHandle>>,
     project: ModelHandle<Project>,
     leader_state: LeaderState,
     follower_states_by_leader: FollowerStatesByLeader,
@@ -791,6 +810,7 @@ impl Workspace {
             panes: vec![pane.clone()],
             active_pane: pane.clone(),
             status_bar,
+            notifications: Default::default(),
             client: params.client.clone(),
             remote_entity_subscription: None,
             user_store: params.user_store.clone(),
@@ -969,6 +989,15 @@ impl Workspace {
             cx.focus(&self.active_pane);
             cx.notify();
         }
+    }
+
+    pub fn show_notification<V: Notification>(
+        &mut self,
+        notification: ViewHandle<V>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.notifications.push(Box::new(notification));
+        cx.notify();
     }
 
     pub fn items<'a>(
@@ -1703,6 +1732,34 @@ impl Workspace {
         }
     }
 
+    fn render_notifications(
+        &self,
+        theme: &theme::Workspace,
+        cx: &mut RenderContext<Self>,
+    ) -> Option<ElementBox> {
+        if self.notifications.is_empty() {
+            None
+        } else {
+            Some(
+                Flex::column()
+                    .with_children(self.notifications.iter().map(|notification| {
+                        ChildView::new(notification.as_ref())
+                            .contained()
+                            .with_style(theme.notification)
+                            .boxed()
+                    }))
+                    .constrained()
+                    .with_width(250.)
+                    .contained()
+                    .with_style(theme.notifications.container)
+                    .aligned()
+                    .bottom()
+                    .right()
+                    .boxed(),
+            )
+        }
+    }
+
     // RPC handlers
 
     async fn handle_follow(
@@ -2037,6 +2094,7 @@ impl View for Workspace {
                                     .top()
                                     .boxed()
                             }))
+                            .with_children(self.render_notifications(&theme.workspace, cx))
                             .flex(1.0, true)
                             .boxed(),
                     )
