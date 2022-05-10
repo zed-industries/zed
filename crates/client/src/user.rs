@@ -283,19 +283,19 @@ impl UserStore {
             ContactRequestStatus::Pending
         } else if self
             .contacts
-            .binary_search_by_key(&&user.id, |contact| &contact.user.id)
+            .binary_search_by_key(&&user.github_login, |contact| &contact.user.github_login)
             .is_ok()
         {
             ContactRequestStatus::RequestAccepted
         } else if self
             .outgoing_contact_requests
-            .binary_search_by_key(&&user.id, |user| &user.id)
+            .binary_search_by_key(&&user.github_login, |user| &user.github_login)
             .is_ok()
         {
             ContactRequestStatus::RequestSent
         } else if self
             .incoming_contact_requests
-            .binary_search_by_key(&&user.id, |user| &user.id)
+            .binary_search_by_key(&&user.github_login, |user| &user.github_login)
             .is_ok()
         {
             ContactRequestStatus::RequestReceived
