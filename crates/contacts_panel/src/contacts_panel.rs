@@ -62,10 +62,12 @@ pub fn init(cx: &mut MutableAppContext) {
 impl ContactsPanel {
     pub fn new(app_state: Arc<AppState>, cx: &mut ViewContext<Self>) -> Self {
         let user_query_editor = cx.add_view(|cx| {
-            Editor::single_line(
+            let mut editor = Editor::single_line(
                 Some(|theme| theme.contacts_panel.user_query_editor.clone()),
                 cx,
-            )
+            );
+            editor.set_placeholder_text("Filter contacts", cx);
+            editor
         });
 
         cx.subscribe(&user_query_editor, |this, _, event, cx| {
