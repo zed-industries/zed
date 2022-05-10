@@ -5321,7 +5321,7 @@ mod tests {
 
         async fn disconnect_and_reconnect(client: &TestClient, cx: &mut TestAppContext) {
             client.disconnect(&cx.to_async()).unwrap();
-            client.clear_contacts(cx);
+            client.clear_contacts(cx).await;
             client
                 .authenticate_and_connect(false, &cx.to_async())
                 .await
@@ -6584,10 +6584,10 @@ mod tests {
             while authed_user.next().await.unwrap().is_none() {}
         }
 
-        fn clear_contacts(&self, cx: &mut TestAppContext) {
-            self.user_store.update(cx, |store, _| {
-                store.clear_contacts();
-            });
+        async fn clear_contacts(&self, cx: &mut TestAppContext) {
+            self.user_store
+                .update(cx, |store, _| store.clear_contacts())
+                .await;
         }
 
         fn summarize_contacts(&self, cx: &TestAppContext) -> ContactsSummary {

@@ -1,6 +1,6 @@
 use super::{http::HttpClient, proto, Client, Status, TypedEnvelope};
 use anyhow::{anyhow, Context, Result};
-use futures::{future, AsyncReadExt};
+use futures::{channel::mpsc, future, AsyncReadExt, Future, StreamExt};
 use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{prelude::Stream, sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
@@ -42,7 +42,7 @@ pub enum ContactRequestStatus {
 
 pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
-    update_contacts_tx: watch::Sender<Option<proto::UpdateContacts>>,
+    update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
@@ -60,6 +60,11 @@ impl Entity for UserStore {
     type Event = Event;
 }
 
+enum UpdateContacts {
+    Update(proto::UpdateContacts),
+    Clear(postage::barrier::Sender),
+}
+
 impl UserStore {
     pub fn new(
         client: Arc<Client>,
@@ -67,8 +72,7 @@ impl UserStore {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
-        let (update_contacts_tx, mut update_contacts_rx) =
-            watch::channel::<Option<proto::UpdateContacts>>();
+        let (update_contacts_tx, mut update_contacts_rx) = mpsc::unbounded();
         let rpc_subscription =
             client.add_message_handler(cx.handle(), Self::handle_update_contacts);
         Self {
@@ -82,8 +86,8 @@ impl UserStore {
             http,
             _maintain_contacts: cx.spawn_weak(|this, mut cx| async move {
                 let _subscription = rpc_subscription;
-                while let Some(message) = update_contacts_rx.recv().await {
-                    if let Some((message, this)) = message.zip(this.upgrade(&cx)) {
+                while let Some(message) = update_contacts_rx.next().await {
+                    if let Some(this) = this.upgrade(&cx) {
                         this.update(&mut cx, |this, cx| this.update_contacts(message, cx))
                             .log_err()
                             .await;
@@ -121,114 +125,130 @@ impl UserStore {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, _| {
-            *this.update_contacts_tx.borrow_mut() = Some(msg.payload);
+            this.update_contacts_tx
+                .unbounded_send(UpdateContacts::Update(msg.payload))
+                .unwrap();
         });
         Ok(())
     }
 
     fn update_contacts(
         &mut self,
-        message: proto::UpdateContacts,
+        message: UpdateContacts,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        log::info!("update contacts on client {:?}", message);
-        let mut user_ids = HashSet::new();
-        for contact in &message.contacts {
-            user_ids.insert(contact.user_id);
-            user_ids.extend(contact.projects.iter().flat_map(|w| &w.guests).copied());
-        }
-        user_ids.extend(message.incoming_requests.iter().map(|req| req.requester_id));
-        user_ids.extend(message.outgoing_requests.iter());
-
-        let load_users = self.get_users(user_ids.into_iter().collect(), cx);
-        cx.spawn(|this, mut cx| async move {
-            load_users.await?;
-
-            // Users are fetched in parallel above and cached in call to get_users
-            // No need to paralellize here
-            let mut updated_contacts = Vec::new();
-            for contact in message.contacts {
-                updated_contacts.push(Arc::new(
-                    Contact::from_proto(contact, &this, &mut cx).await?,
-                ));
+        match message {
+            UpdateContacts::Clear(barrier) => {
+                self.contacts.clear();
+                self.incoming_contact_requests.clear();
+                self.outgoing_contact_requests.clear();
+                drop(barrier);
+                Task::ready(Ok(()))
             }
+            UpdateContacts::Update(message) => {
+                log::info!(
+                    "update contacts on client {}: {:?}",
+                    self.client.upgrade().unwrap().id,
+                    message
+                );
+                let mut user_ids = HashSet::new();
+                for contact in &message.contacts {
+                    user_ids.insert(contact.user_id);
+                    user_ids.extend(contact.projects.iter().flat_map(|w| &w.guests).copied());
+                }
+                user_ids.extend(message.incoming_requests.iter().map(|req| req.requester_id));
+                user_ids.extend(message.outgoing_requests.iter());
 
-            let mut incoming_requests = Vec::new();
-            for request in message.incoming_requests {
-                incoming_requests.push(
+                let load_users = self.get_users(user_ids.into_iter().collect(), cx);
+                cx.spawn(|this, mut cx| async move {
+                    load_users.await?;
+
+                    // Users are fetched in parallel above and cached in call to get_users
+                    // No need to paralellize here
+                    let mut updated_contacts = Vec::new();
+                    for contact in message.contacts {
+                        updated_contacts.push(Arc::new(
+                            Contact::from_proto(contact, &this, &mut cx).await?,
+                        ));
+                    }
+
+                    let mut incoming_requests = Vec::new();
+                    for request in message.incoming_requests {
+                        incoming_requests.push(
+                            this.update(&mut cx, |this, cx| {
+                                this.fetch_user(request.requester_id, cx)
+                            })
+                            .await?,
+                        );
+                    }
+
+                    let mut outgoing_requests = Vec::new();
+                    for requested_user_id in message.outgoing_requests {
+                        outgoing_requests.push(
+                            this.update(&mut cx, |this, cx| this.fetch_user(requested_user_id, cx))
+                                .await?,
+                        );
+                    }
+
+                    let removed_contacts =
+                        HashSet::<u64>::from_iter(message.remove_contacts.iter().copied());
+                    let removed_incoming_requests =
+                        HashSet::<u64>::from_iter(message.remove_incoming_requests.iter().copied());
+                    let removed_outgoing_requests =
+                        HashSet::<u64>::from_iter(message.remove_outgoing_requests.iter().copied());
+
                     this.update(&mut cx, |this, cx| {
-                        this.fetch_user(request.requester_id, cx)
-                    })
-                    .await?,
-                );
+                        // Remove contacts
+                        this.contacts
+                            .retain(|contact| !removed_contacts.contains(&contact.user.id));
+                        // Update existing contacts and insert new ones
+                        for updated_contact in updated_contacts {
+                            match this.contacts.binary_search_by_key(
+                                &&updated_contact.user.github_login,
+                                |contact| &contact.user.github_login,
+                            ) {
+                                Ok(ix) => this.contacts[ix] = updated_contact,
+                                Err(ix) => this.contacts.insert(ix, updated_contact),
+                            }
+                        }
+
+                        // Remove incoming contact requests
+                        this.incoming_contact_requests
+                            .retain(|user| !removed_incoming_requests.contains(&user.id));
+                        // Update existing incoming requests and insert new ones
+                        for request in incoming_requests {
+                            match this
+                                .incoming_contact_requests
+                                .binary_search_by_key(&&request.github_login, |contact| {
+                                    &contact.github_login
+                                }) {
+                                Ok(ix) => this.incoming_contact_requests[ix] = request,
+                                Err(ix) => this.incoming_contact_requests.insert(ix, request),
+                            }
+                        }
+
+                        // Remove outgoing contact requests
+                        this.outgoing_contact_requests
+                            .retain(|user| !removed_outgoing_requests.contains(&user.id));
+                        // Update existing incoming requests and insert new ones
+                        for request in outgoing_requests {
+                            match this
+                                .outgoing_contact_requests
+                                .binary_search_by_key(&&request.github_login, |contact| {
+                                    &contact.github_login
+                                }) {
+                                Ok(ix) => this.outgoing_contact_requests[ix] = request,
+                                Err(ix) => this.outgoing_contact_requests.insert(ix, request),
+                            }
+                        }
+
+                        cx.notify();
+                    });
+
+                    Ok(())
+                })
             }
-
-            let mut outgoing_requests = Vec::new();
-            for requested_user_id in message.outgoing_requests {
-                outgoing_requests.push(
-                    this.update(&mut cx, |this, cx| this.fetch_user(requested_user_id, cx))
-                        .await?,
-                );
-            }
-
-            let removed_contacts =
-                HashSet::<u64>::from_iter(message.remove_contacts.iter().copied());
-            let removed_incoming_requests =
-                HashSet::<u64>::from_iter(message.remove_incoming_requests.iter().copied());
-            let removed_outgoing_requests =
-                HashSet::<u64>::from_iter(message.remove_outgoing_requests.iter().copied());
-
-            this.update(&mut cx, |this, cx| {
-                // Remove contacts
-                this.contacts
-                    .retain(|contact| !removed_contacts.contains(&contact.user.id));
-                // Update existing contacts and insert new ones
-                for updated_contact in updated_contacts {
-                    match this
-                        .contacts
-                        .binary_search_by_key(&&updated_contact.user.github_login, |contact| {
-                            &contact.user.github_login
-                        }) {
-                        Ok(ix) => this.contacts[ix] = updated_contact,
-                        Err(ix) => this.contacts.insert(ix, updated_contact),
-                    }
-                }
-
-                // Remove incoming contact requests
-                this.incoming_contact_requests
-                    .retain(|user| !removed_incoming_requests.contains(&user.id));
-                // Update existing incoming requests and insert new ones
-                for request in incoming_requests {
-                    match this
-                        .incoming_contact_requests
-                        .binary_search_by_key(&&request.github_login, |contact| {
-                            &contact.github_login
-                        }) {
-                        Ok(ix) => this.incoming_contact_requests[ix] = request,
-                        Err(ix) => this.incoming_contact_requests.insert(ix, request),
-                    }
-                }
-
-                // Remove outgoing contact requests
-                this.outgoing_contact_requests
-                    .retain(|user| !removed_outgoing_requests.contains(&user.id));
-                // Update existing incoming requests and insert new ones
-                for request in outgoing_requests {
-                    match this
-                        .outgoing_contact_requests
-                        .binary_search_by_key(&&request.github_login, |contact| {
-                            &contact.github_login
-                        }) {
-                        Ok(ix) => this.outgoing_contact_requests[ix] = request,
-                        Err(ix) => this.outgoing_contact_requests.insert(ix, request),
-                    }
-                }
-
-                cx.notify();
-            });
-
-            Ok(())
-        })
+        }
     }
 
     pub fn contacts(&self) -> &[Arc<Contact>] {
@@ -342,11 +362,14 @@ impl UserStore {
         })
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn clear_contacts(&mut self) {
-        self.contacts.clear();
-        self.incoming_contact_requests.clear();
-        self.outgoing_contact_requests.clear();
+    pub fn clear_contacts(&mut self) -> impl Future<Output = ()> {
+        let (tx, mut rx) = postage::barrier::channel();
+        self.update_contacts_tx
+            .unbounded_send(UpdateContacts::Clear(tx))
+            .unwrap();
+        async move {
+            rx.recv().await;
+        }
     }
 
     pub fn get_users(

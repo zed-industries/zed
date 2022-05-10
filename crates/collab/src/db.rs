@@ -77,6 +77,8 @@ pub trait Db: Send + Sync {
     ) -> Result<Vec<ChannelMessage>>;
     #[cfg(test)]
     async fn teardown(&self, url: &str);
+    #[cfg(test)]
+    fn as_fake<'a>(&'a self) -> Option<&'a tests::FakeDb>;
 }
 
 pub struct PostgresDb {
@@ -291,6 +293,37 @@ impl Db for PostgresDb {
         }
     }
 
+    async fn dismiss_contact_request(
+        &self,
+        responder_id: UserId,
+        requester_id: UserId,
+    ) -> Result<()> {
+        let (id_a, id_b, a_to_b) = if responder_id < requester_id {
+            (responder_id, requester_id, false)
+        } else {
+            (requester_id, responder_id, true)
+        };
+
+        let query = "
+            UPDATE contacts
+            SET should_notify = 'f'
+            WHERE user_id_a = $1 AND user_id_b = $2 AND a_to_b = $3;
+        ";
+
+        let result = sqlx::query(query)
+            .bind(id_a.0)
+            .bind(id_b.0)
+            .bind(a_to_b)
+            .execute(&self.pool)
+            .await?;
+
+        if result.rows_affected() == 0 {
+            Err(anyhow!("no such contact request"))?;
+        }
+
+        Ok(())
+    }
+
     async fn respond_to_contact_request(
         &self,
         responder_id: UserId,
@@ -331,37 +364,6 @@ impl Db for PostgresDb {
         } else {
             Err(anyhow!("no such contact request"))
         }
-    }
-
-    async fn dismiss_contact_request(
-        &self,
-        responder_id: UserId,
-        requester_id: UserId,
-    ) -> Result<()> {
-        let (id_a, id_b, a_to_b) = if responder_id < requester_id {
-            (responder_id, requester_id, false)
-        } else {
-            (requester_id, responder_id, true)
-        };
-
-        let query = "
-            UPDATE contacts
-            SET should_notify = 'f'
-            WHERE user_id_a = $1 AND user_id_b = $2 AND a_to_b = $3;
-        ";
-
-        let result = sqlx::query(query)
-            .bind(id_a.0)
-            .bind(id_b.0)
-            .bind(a_to_b)
-            .execute(&self.pool)
-            .await?;
-
-        if result.rows_affected() == 0 {
-            Err(anyhow!("no such contact request"))?;
-        }
-
-        Ok(())
     }
 
     // access tokens
@@ -619,6 +621,11 @@ impl Db for PostgresDb {
         <sqlx::Postgres as sqlx::migrate::MigrateDatabase>::drop_database(url)
             .await
             .log_err();
+    }
+
+    #[cfg(test)]
+    fn as_fake(&self) -> Option<&tests::FakeDb> {
+        None
     }
 }
 
@@ -1108,25 +1115,25 @@ pub mod tests {
 
     pub struct FakeDb {
         background: Arc<Background>,
-        users: Mutex<BTreeMap<UserId, User>>,
-        next_user_id: Mutex<i32>,
-        orgs: Mutex<BTreeMap<OrgId, Org>>,
-        next_org_id: Mutex<i32>,
-        org_memberships: Mutex<BTreeMap<(OrgId, UserId), bool>>,
-        channels: Mutex<BTreeMap<ChannelId, Channel>>,
-        next_channel_id: Mutex<i32>,
-        channel_memberships: Mutex<BTreeMap<(ChannelId, UserId), bool>>,
-        channel_messages: Mutex<BTreeMap<MessageId, ChannelMessage>>,
+        pub users: Mutex<BTreeMap<UserId, User>>,
+        pub orgs: Mutex<BTreeMap<OrgId, Org>>,
+        pub org_memberships: Mutex<BTreeMap<(OrgId, UserId), bool>>,
+        pub channels: Mutex<BTreeMap<ChannelId, Channel>>,
+        pub channel_memberships: Mutex<BTreeMap<(ChannelId, UserId), bool>>,
+        pub channel_messages: Mutex<BTreeMap<MessageId, ChannelMessage>>,
+        pub contacts: Mutex<Vec<FakeContact>>,
         next_channel_message_id: Mutex<i32>,
-        contacts: Mutex<Vec<FakeContact>>,
+        next_user_id: Mutex<i32>,
+        next_org_id: Mutex<i32>,
+        next_channel_id: Mutex<i32>,
     }
 
     #[derive(Debug)]
-    struct FakeContact {
-        requester_id: UserId,
-        responder_id: UserId,
-        accepted: bool,
-        should_notify: bool,
+    pub struct FakeContact {
+        pub requester_id: UserId,
+        pub responder_id: UserId,
+        pub accepted: bool,
+        pub should_notify: bool,
     }
 
     impl FakeDb {
@@ -1514,5 +1521,10 @@ pub mod tests {
         }
 
         async fn teardown(&self, _: &str) {}
+
+        #[cfg(test)]
+        fn as_fake(&self) -> Option<&FakeDb> {
+            Some(self)
+        }
     }
 }
