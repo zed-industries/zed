@@ -252,14 +252,9 @@ pub struct ContactsPanel {
 
 #[derive(Deserialize, Default)]
 pub struct ContactFinder {
-    #[serde(flatten)]
-    pub container: ContainerStyle,
-    pub max_width: f32,
-    pub max_height: f32,
-    pub query_editor: FieldEditor,
     pub row_height: f32,
     pub contact_avatar: ImageStyle,
-    pub contact_username: ContainedText,
+    pub contact_username: ContainerStyle,
     pub contact_button: ContainedText,
 }
 

@@ -1466,45 +1466,12 @@
         2
       ]
     },
-    "max_width": 540,
-    "max_height": 420,
-    "query_editor": {
-      "background": "#f5f7ff",
-      "corner_radius": 6,
-      "text": {
-        "family": "Zed Mono",
-        "color": "#293256",
-        "size": 14
-      },
-      "placeholder_text": {
-        "family": "Zed Mono",
-        "color": "#6b7394",
-        "size": 14
-      },
-      "selection": {
-        "cursor": "#3d8fd1",
-        "selection": "#3d8fd13d"
-      },
-      "border": {
-        "color": "#dfe2f1",
-        "width": 1
-      },
-      "padding": {
-        "bottom": 4,
-        "left": 8,
-        "right": 8,
-        "top": 4
-      }
-    },
     "row_height": 28,
     "contact_avatar": {
       "corner_radius": 10,
       "width": 18
     },
     "contact_username": {
-      "family": "Zed Mono",
-      "color": "#293256",
-      "size": 14,
       "padding": {
         "left": 8
       }

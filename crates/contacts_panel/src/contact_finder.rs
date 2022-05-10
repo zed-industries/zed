@@ -1,25 +1,34 @@
 use client::{ContactRequestStatus, User, UserStore};
-use editor::Editor;
 use gpui::{
-    color::Color, elements::*, platform::CursorStyle, Entity, LayoutContext, ModelHandle,
-    RenderContext, Task, View, ViewContext, ViewHandle,
+    actions, elements::*, Entity, ModelHandle, MutableAppContext, RenderContext, Task, View,
+    ViewContext, ViewHandle,
 };
+use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use std::sync::Arc;
 use util::TryFutureExt;
+use workspace::Workspace;
 
-use crate::{RemoveContact, RequestContact};
+actions!(contact_finder, [Toggle]);
+
+pub fn init(cx: &mut MutableAppContext) {
+    Picker::<ContactFinder>::init(cx);
+    cx.add_action(ContactFinder::toggle);
+}
 
 pub struct ContactFinder {
-    query_editor: ViewHandle<Editor>,
-    list_state: UniformListState,
+    picker: ViewHandle<Picker<Self>>,
     potential_contacts: Arc<[Arc<User>]>,
     user_store: ModelHandle<UserStore>,
-    contacts_search_task: Option<Task<Option<()>>>,
+    selected_index: usize,
+}
+
+pub enum Event {
+    Dismissed,
 }
 
 impl Entity for ContactFinder {
-    type Event = ();
+    type Event = Event;
 }
 
 impl View for ContactFinder {
@@ -27,141 +36,35 @@ impl View for ContactFinder {
         "ContactFinder"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = cx.global::<Settings>().theme.clone();
-        let user_store = self.user_store.clone();
-        let potential_contacts = self.potential_contacts.clone();
-        Flex::column()
-            .with_child(
-                ChildView::new(self.query_editor.clone())
-                    .contained()
-                    .with_style(theme.contact_finder.query_editor.container)
-                    .boxed(),
-            )
-            .with_child(
-                UniformList::new(self.list_state.clone(), self.potential_contacts.len(), {
-                    let theme = theme.clone();
-                    move |range, items, cx| {
-                        items.extend(range.map(|ix| {
-                            Self::render_potential_contact(
-                                &potential_contacts[ix],
-                                &user_store,
-                                &theme.contact_finder,
-                                cx,
-                            )
-                        }))
-                    }
-                })
-                .flex(1., false)
-                .boxed(),
-            )
-            .contained()
-            .with_style(theme.contact_finder.container)
-            .constrained()
-            .with_max_width(theme.contact_finder.max_width)
-            .with_max_height(theme.contact_finder.max_height)
-            .boxed()
+    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+        ChildView::new(self.picker.clone()).boxed()
+    }
+
+    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+        cx.focus(&self.picker);
     }
 }
 
-impl ContactFinder {
-    pub fn new(user_store: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) -> Self {
-        let query_editor = cx.add_view(|cx| {
-            Editor::single_line(Some(|theme| theme.contact_finder.query_editor.clone()), cx)
-        });
-
-        cx.subscribe(&query_editor, |this, _, event, cx| {
-            if let editor::Event::BufferEdited = event {
-                this.query_changed(cx)
-            }
-        })
-        .detach();
-        Self {
-            query_editor,
-            list_state: Default::default(),
-            potential_contacts: Arc::from([]),
-            user_store,
-            contacts_search_task: None,
-        }
+impl PickerDelegate for ContactFinder {
+    fn match_count(&self) -> usize {
+        self.potential_contacts.len()
     }
 
-    fn render_potential_contact(
-        contact: &User,
-        user_store: &ModelHandle<UserStore>,
-        theme: &theme::ContactFinder,
-        cx: &mut LayoutContext,
-    ) -> ElementBox {
-        enum RequestContactButton {}
-
-        let contact_id = contact.id;
-        let request_status = user_store.read(cx).contact_request_status(&contact);
-
-        Flex::row()
-            .with_children(contact.avatar.clone().map(|avatar| {
-                Image::new(avatar)
-                    .with_style(theme.contact_avatar)
-                    .aligned()
-                    .left()
-                    .boxed()
-            }))
-            .with_child(
-                Label::new(
-                    contact.github_login.clone(),
-                    theme.contact_username.text.clone(),
-                )
-                .contained()
-                .with_style(theme.contact_username.container)
-                .aligned()
-                .left()
-                .boxed(),
-            )
-            .with_child(
-                MouseEventHandler::new::<RequestContactButton, _, _>(
-                    contact.id as usize,
-                    cx,
-                    |_, _| {
-                        let label = match request_status {
-                            ContactRequestStatus::None | ContactRequestStatus::RequestReceived => {
-                                "+"
-                            }
-                            ContactRequestStatus::RequestSent => "-",
-                            ContactRequestStatus::Pending
-                            | ContactRequestStatus::RequestAccepted => "…",
-                        };
-
-                        Label::new(label.to_string(), theme.contact_button.text.clone())
-                            .contained()
-                            .with_style(theme.contact_button.container)
-                            .aligned()
-                            .flex_float()
-                            .boxed()
-                    },
-                )
-                .on_click(move |_, cx| match request_status {
-                    ContactRequestStatus::None => {
-                        cx.dispatch_action(RequestContact(contact_id));
-                    }
-                    ContactRequestStatus::RequestSent => {
-                        cx.dispatch_action(RemoveContact(contact_id));
-                    }
-                    _ => {}
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .boxed(),
-            )
-            .constrained()
-            .with_height(theme.row_height)
-            .boxed()
+    fn selected_index(&self) -> usize {
+        self.selected_index
     }
 
-    fn query_changed(&mut self, cx: &mut ViewContext<Self>) {
-        let query = self.query_editor.read(cx).text(cx);
+    fn set_selected_index(&mut self, ix: usize, _: &mut ViewContext<Self>) {
+        self.selected_index = ix;
+    }
+
+    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) -> Task<()> {
         let search_users = self
             .user_store
             .update(cx, |store, cx| store.fuzzy_search_users(query, cx));
 
-        self.contacts_search_task = Some(cx.spawn(|this, mut cx| {
-            async move {
+        cx.spawn(|this, mut cx| async move {
+            async {
                 let potential_contacts = search_users.await?;
                 this.update(&mut cx, |this, cx| {
                     this.potential_contacts = potential_contacts.into();
@@ -170,6 +73,113 @@ impl ContactFinder {
                 Ok(())
             }
             .log_err()
-        }));
+            .await;
+        })
+    }
+
+    fn confirm(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(user) = self.potential_contacts.get(self.selected_index) {
+            let user_store = self.user_store.read(cx);
+            match user_store.contact_request_status(user) {
+                ContactRequestStatus::None | ContactRequestStatus::RequestReceived => {
+                    self.user_store
+                        .update(cx, |store, cx| store.request_contact(user.id, cx))
+                        .detach();
+                }
+                ContactRequestStatus::RequestSent => {
+                    self.user_store
+                        .update(cx, |store, cx| store.remove_contact(user.id, cx))
+                        .detach();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Dismissed);
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        mouse_state: &MouseState,
+        selected: bool,
+        cx: &gpui::AppContext,
+    ) -> ElementBox {
+        let theme = &cx.global::<Settings>().theme;
+        let contact = &self.potential_contacts[ix];
+        let request_status = self.user_store.read(cx).contact_request_status(&contact);
+        let label = match request_status {
+            ContactRequestStatus::None | ContactRequestStatus::RequestReceived => "+",
+            ContactRequestStatus::RequestSent => "-",
+            ContactRequestStatus::Pending | ContactRequestStatus::RequestAccepted => "…",
+        };
+        let style = theme.picker.item.style_for(mouse_state, selected);
+        Flex::row()
+            .with_children(contact.avatar.clone().map(|avatar| {
+                Image::new(avatar)
+                    .with_style(theme.contact_finder.contact_avatar)
+                    .aligned()
+                    .left()
+                    .boxed()
+            }))
+            .with_child(
+                Label::new(contact.github_login.clone(), style.label.clone())
+                    .contained()
+                    .with_style(theme.contact_finder.contact_username)
+                    .aligned()
+                    .left()
+                    .boxed(),
+            )
+            .with_child(
+                Label::new(
+                    label.to_string(),
+                    theme.contact_finder.contact_button.text.clone(),
+                )
+                .contained()
+                .with_style(theme.contact_finder.contact_button.container)
+                .aligned()
+                .flex_float()
+                .boxed(),
+            )
+            .contained()
+            .with_style(style.container)
+            .constrained()
+            .with_height(theme.contact_finder.row_height)
+            .boxed()
+    }
+}
+
+impl ContactFinder {
+    fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
+        workspace.toggle_modal(cx, |cx, workspace| {
+            let finder = cx.add_view(|cx| Self::new(workspace.user_store().clone(), cx));
+            cx.subscribe(&finder, Self::on_event).detach();
+            finder
+        });
+    }
+
+    pub fn new(user_store: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) -> Self {
+        let this = cx.weak_handle();
+        Self {
+            picker: cx.add_view(|cx| Picker::new(this, cx)),
+            potential_contacts: Arc::from([]),
+            user_store,
+            selected_index: 0,
+        }
+    }
+
+    fn on_event(
+        workspace: &mut Workspace,
+        _: ViewHandle<Self>,
+        event: &Event,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        match event {
+            Event::Dismissed => {
+                workspace.dismiss_modal(cx);
+            }
+        }
     }
 }

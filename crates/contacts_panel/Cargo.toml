@@ -12,6 +12,7 @@ client = { path = "../client" }
 editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
+picker = { path = "../picker" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }

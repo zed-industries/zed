@@ -1,11 +1,9 @@
 mod contact_finder;
 
 use client::{Contact, ContactRequestStatus, User, UserStore};
-use contact_finder::ContactFinder;
 use editor::Editor;
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     impl_actions,
@@ -16,9 +14,8 @@ use gpui::{
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
-use workspace::{AppState, JoinProject, Workspace};
+use workspace::{AppState, JoinProject};
 
-actions!(contacts_panel, [FindNewContacts]);
 impl_actions!(
     contacts_panel,
     [RequestContact, RemoveContact, RespondToContactRequest]
@@ -54,10 +51,10 @@ pub struct RespondToContactRequest {
 }
 
 pub fn init(cx: &mut MutableAppContext) {
+    contact_finder::init(cx);
     cx.add_action(ContactsPanel::request_contact);
     cx.add_action(ContactsPanel::remove_contact);
     cx.add_action(ContactsPanel::respond_to_contact_request);
-    cx.add_action(ContactsPanel::find_new_contacts);
 }
 
 impl ContactsPanel {
@@ -588,16 +585,6 @@ impl ContactsPanel {
             })
             .detach();
     }
-
-    fn find_new_contacts(
-        workspace: &mut Workspace,
-        _: &FindNewContacts,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        workspace.toggle_modal(cx, |cx, workspace| {
-            cx.add_view(|cx| ContactFinder::new(workspace.user_store().clone(), cx))
-        });
-    }
 }
 
 pub enum Event {}
@@ -638,7 +625,8 @@ impl View for ContactsPanel {
                                     .aligned()
                                     .boxed()
                             })
-                            .on_click(|_, cx| cx.dispatch_action(FindNewContacts))
+                            .with_cursor_style(CursorStyle::PointingHand)
+                            .on_click(|_, cx| cx.dispatch_action(contact_finder::Toggle))
                             .boxed(),
                         )
                         .constrained()
