@@ -285,7 +285,7 @@ impl ContactsPanel {
                                             .boxed()
                                     },
                                 )
-                                .with_cursor_style(if is_host || is_shared {
+                                .with_cursor_style(if !is_host && is_shared {
                                     CursorStyle::PointingHand
                                 } else {
                                     CursorStyle::Arrow
