@@ -101,22 +101,20 @@ impl ContactsPanel {
                                 .with_style(theme.header.container)
                                 .boxed()
                         }
-                        ContactEntry::IncomingRequest(user) => {
-                            Self::render_incoming_contact_request(
-                                user.clone(),
-                                this.user_store.clone(),
-                                theme,
-                                cx,
-                            )
-                        }
-                        ContactEntry::OutgoingRequest(user) => {
-                            Self::render_outgoing_contact_request(
-                                user.clone(),
-                                this.user_store.clone(),
-                                theme,
-                                cx,
-                            )
-                        }
+                        ContactEntry::IncomingRequest(user) => Self::render_contact_request(
+                            user.clone(),
+                            this.user_store.clone(),
+                            theme,
+                            true,
+                            cx,
+                        ),
+                        ContactEntry::OutgoingRequest(user) => Self::render_contact_request(
+                            user.clone(),
+                            this.user_store.clone(),
+                            theme,
+                            false,
+                            cx,
+                        ),
                         ContactEntry::Contact(contact) => Self::render_contact(
                             contact.clone(),
                             current_user_id,
@@ -311,99 +309,17 @@ impl ContactsPanel {
             .boxed()
     }
 
-    fn render_incoming_contact_request(
+    fn render_contact_request(
         user: Arc<User>,
         user_store: ModelHandle<UserStore>,
         theme: &theme::ContactsPanel,
+        is_incoming: bool,
         cx: &mut LayoutContext,
     ) -> ElementBox {
         enum Reject {}
         enum Accept {}
-
-        let user_id = user.id;
-
-        let mut row = Flex::row()
-            .with_children(user.avatar.clone().map(|avatar| {
-                Image::new(avatar)
-                    .with_style(theme.contact_avatar)
-                    .aligned()
-                    .left()
-                    .boxed()
-            }))
-            .with_child(
-                Label::new(
-                    user.github_login.clone(),
-                    theme.contact_username.text.clone(),
-                )
-                .contained()
-                .with_style(theme.contact_username.container)
-                .aligned()
-                .left()
-                .boxed(),
-            );
-
-        let is_contact_request_pending = user_store.read(cx).is_contact_request_pending(&user);
-
-        row.add_children([
-            MouseEventHandler::new::<Reject, _, _>(user.id as usize, cx, |mouse_state, _| {
-                let button_style = if is_contact_request_pending {
-                    &theme.disabled_contact_button
-                } else {
-                    &theme.contact_button.style_for(mouse_state, false)
-                };
-                render_icon_button(button_style, "icons/reject.svg")
-                    .aligned()
-                    .flex_float()
-                    .boxed()
-            })
-            .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(move |_, cx| {
-                cx.dispatch_action(RespondToContactRequest {
-                    user_id,
-                    accept: false,
-                })
-            })
-            .flex_float()
-            .boxed(),
-            MouseEventHandler::new::<Accept, _, _>(user.id as usize, cx, |mouse_state, _| {
-                let button_style = if is_contact_request_pending {
-                    &theme.disabled_contact_button
-                } else {
-                    &theme.contact_button.style_for(mouse_state, false)
-                };
-                render_icon_button(button_style, "icons/accept.svg")
-                    .aligned()
-                    .flex_float()
-                    .boxed()
-            })
-            .on_click(move |_, cx| {
-                cx.dispatch_action(RespondToContactRequest {
-                    user_id,
-                    accept: true,
-                })
-            })
-            .with_cursor_style(CursorStyle::PointingHand)
-            .boxed(),
-        ]);
-
-        row.constrained()
-            .with_height(theme.row_height)
-            .contained()
-            .with_style(theme.row.clone())
-            .boxed()
-    }
-
-    fn render_outgoing_contact_request(
-        user: Arc<User>,
-        user_store: ModelHandle<UserStore>,
-        theme: &theme::ContactsPanel,
-        cx: &mut LayoutContext,
-    ) -> ElementBox {
         enum Cancel {}
 
-        let user_id = user.id;
-        let is_contact_request_pending = user_store.read(cx).is_contact_request_pending(&user);
-
         let mut row = Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
                 Image::new(avatar)
@@ -424,25 +340,71 @@ impl ContactsPanel {
                 .boxed(),
             );
 
-        row.add_child(
-            MouseEventHandler::new::<Cancel, _, _>(user.id as usize, cx, |mouse_state, _| {
-                let button_style = if is_contact_request_pending {
-                    &theme.disabled_contact_button
-                } else {
-                    &theme.contact_button.style_for(mouse_state, false)
-                };
+        let user_id = user.id;
+        let is_contact_request_pending = user_store.read(cx).is_contact_request_pending(&user);
 
-                render_icon_button(button_style, "icons/reject.svg")
-                    .aligned()
-                    .flex_float()
-                    .boxed()
-            })
-            .with_padding(Padding::uniform(2.))
-            .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(move |_, cx| cx.dispatch_action(RemoveContact(user_id)))
-            .flex_float()
-            .boxed(),
-        );
+        if is_incoming {
+            row.add_children([
+                MouseEventHandler::new::<Reject, _, _>(user.id as usize, cx, |mouse_state, _| {
+                    let button_style = if is_contact_request_pending {
+                        &theme.disabled_contact_button
+                    } else {
+                        &theme.contact_button.style_for(mouse_state, false)
+                    };
+                    render_icon_button(button_style, "icons/reject.svg")
+                        .aligned()
+                        .flex_float()
+                        .boxed()
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(move |_, cx| {
+                    cx.dispatch_action(RespondToContactRequest {
+                        user_id,
+                        accept: false,
+                    })
+                })
+                .flex_float()
+                .boxed(),
+                MouseEventHandler::new::<Accept, _, _>(user.id as usize, cx, |mouse_state, _| {
+                    let button_style = if is_contact_request_pending {
+                        &theme.disabled_contact_button
+                    } else {
+                        &theme.contact_button.style_for(mouse_state, false)
+                    };
+                    render_icon_button(button_style, "icons/accept.svg")
+                        .aligned()
+                        .flex_float()
+                        .boxed()
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(move |_, cx| {
+                    cx.dispatch_action(RespondToContactRequest {
+                        user_id,
+                        accept: true,
+                    })
+                })
+                .boxed(),
+            ]);
+        } else {
+            row.add_child(
+                MouseEventHandler::new::<Cancel, _, _>(user.id as usize, cx, |mouse_state, _| {
+                    let button_style = if is_contact_request_pending {
+                        &theme.disabled_contact_button
+                    } else {
+                        &theme.contact_button.style_for(mouse_state, false)
+                    };
+                    render_icon_button(button_style, "icons/reject.svg")
+                        .aligned()
+                        .flex_float()
+                        .boxed()
+                })
+                .with_padding(Padding::uniform(2.))
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(move |_, cx| cx.dispatch_action(RemoveContact(user_id)))
+                .flex_float()
+                .boxed(),
+            );
+        }
 
         row.constrained()
             .with_height(theme.row_height)
