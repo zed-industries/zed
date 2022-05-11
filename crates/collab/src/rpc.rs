@@ -2,7 +2,7 @@ mod store;
 
 use crate::{
     auth,
-    db::{ChannelId, MessageId, UserId},
+    db::{self, ChannelId, MessageId, UserId},
     AppState, Result,
 };
 use anyhow::anyhow;
@@ -421,21 +421,27 @@ impl Server {
         let contacts = self.app_state.db.get_contacts(user_id).await?;
         let store = self.store().await;
         let updated_contact = store.contact_for_user(user_id);
-        for contact_user_id in contacts.current {
-            for contact_conn_id in store.connection_ids_for_user(contact_user_id) {
-                self.peer
-                    .send(
-                        contact_conn_id,
-                        proto::UpdateContacts {
-                            contacts: vec![updated_contact.clone()],
-                            remove_contacts: Default::default(),
-                            incoming_requests: Default::default(),
-                            remove_incoming_requests: Default::default(),
-                            outgoing_requests: Default::default(),
-                            remove_outgoing_requests: Default::default(),
-                        },
-                    )
-                    .trace_err();
+        for contact in contacts {
+            if let db::Contact::Accepted {
+                user_id: contact_user_id,
+                ..
+            } = contact
+            {
+                for contact_conn_id in store.connection_ids_for_user(contact_user_id) {
+                    self.peer
+                        .send(
+                            contact_conn_id,
+                            proto::UpdateContacts {
+                                contacts: vec![updated_contact.clone()],
+                                remove_contacts: Default::default(),
+                                incoming_requests: Default::default(),
+                                remove_incoming_requests: Default::default(),
+                                outgoing_requests: Default::default(),
+                                remove_outgoing_requests: Default::default(),
+                            },
+                        )
+                        .trace_err();
+                }
             }
         }
         Ok(())
@@ -473,8 +479,12 @@ impl Server {
             guest_user_id = state.user_id_for_connection(request.sender_id)?;
         };
 
-        let guest_contacts = self.app_state.db.get_contacts(guest_user_id).await?;
-        if !guest_contacts.current.contains(&host_user_id) {
+        let has_contact = self
+            .app_state
+            .db
+            .has_contact(guest_user_id, host_user_id)
+            .await?;
+        if !has_contact {
             return Err(anyhow!("no such project"))?;
         }
 
@@ -1026,7 +1036,7 @@ impl Server {
         if request.payload.response == proto::ContactRequestResponse::Dismiss as i32 {
             self.app_state
                 .db
-                .dismiss_contact_request(responder_id, requester_id)
+                .dismiss_contact_notification(responder_id, requester_id)
                 .await?;
         } else {
             let accept = request.payload.response == proto::ContactRequestResponse::Accept as i32;
