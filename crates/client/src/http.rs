@@ -8,6 +8,7 @@ pub use isahc::{
     http::{Method, Uri},
     Error,
 };
+use smol::future::FutureExt;
 use std::sync::Arc;
 pub use url::Url;
 
@@ -23,18 +24,19 @@ pub trait HttpClient: Send + Sync {
         body: AsyncBody,
         follow_redirects: bool,
     ) -> BoxFuture<'a, Result<Response, Error>> {
-        self.send(
-            isahc::Request::builder()
-                .redirect_policy(if follow_redirects {
-                    RedirectPolicy::Follow
-                } else {
-                    RedirectPolicy::None
-                })
-                .method(Method::GET)
-                .uri(uri)
-                .body(body)
-                .unwrap(),
-        )
+        let request = isahc::Request::builder()
+            .redirect_policy(if follow_redirects {
+                RedirectPolicy::Follow
+            } else {
+                RedirectPolicy::None
+            })
+            .method(Method::GET)
+            .uri(uri)
+            .body(body);
+        match request {
+            Ok(request) => self.send(request),
+            Err(error) => async move { Err(error.into()) }.boxed(),
+        }
     }
 }
 
