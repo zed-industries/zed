@@ -356,6 +356,24 @@ impl UserStore {
         )
     }
 
+    pub fn dismiss_contact_request(
+        &mut self,
+        requester_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.upgrade();
+        cx.spawn_weak(|_, _| async move {
+            client
+                .ok_or_else(|| anyhow!("can't upgrade client reference"))?
+                .request(proto::RespondToContactRequest {
+                    requester_id,
+                    response: proto::ContactRequestResponse::Dismiss as i32,
+                })
+                .await?;
+            Ok(())
+        })
+    }
+
     fn perform_contact_request<T: RequestMessage>(
         &mut self,
         user_id: u64,

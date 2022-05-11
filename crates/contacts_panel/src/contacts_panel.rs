@@ -55,6 +55,7 @@ pub struct RespondToContactRequest {
 
 pub fn init(cx: &mut MutableAppContext) {
     contact_finder::init(cx);
+    contact_notifications::init(cx);
     cx.add_action(ContactsPanel::request_contact);
     cx.add_action(ContactsPanel::remove_contact);
     cx.add_action(ContactsPanel::respond_to_contact_request);

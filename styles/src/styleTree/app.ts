@@ -10,6 +10,7 @@ import search from "./search";
 import picker from "./picker";
 import workspace from "./workspace";
 import projectDiagnostics from "./projectDiagnostics";
+import incomingRequestNotification from "./incomingRequestNotification";
 
 export const panel = {
   padding: { top: 12, left: 12, bottom: 12, right: 12 },
@@ -32,6 +33,7 @@ export default function app(theme: Theme): Object {
       padding: {
         left: 6,
       },
-    }
+    },
+    incomingRequestNotification: incomingRequestNotification(theme),
   };
 }

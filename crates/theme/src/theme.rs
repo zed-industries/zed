@@ -29,6 +29,7 @@ pub struct Theme {
     pub search: Search,
     pub project_diagnostics: ProjectDiagnostics,
     pub breadcrumbs: ContainedText,
+    pub incoming_request_notification: IncomingRequestNotification,
 }
 
 #[derive(Deserialize, Default)]
@@ -352,6 +353,16 @@ pub struct ProjectDiagnostics {
     pub tab_icon_width: f32,
     pub tab_icon_spacing: f32,
     pub tab_summary_spacing: f32,
+}
+
+#[derive(Deserialize, Default)]
+pub struct IncomingRequestNotification {
+    pub header_avatar: ImageStyle,
+    pub header_message: ContainedText,
+    pub header_height: f32,
+    pub body_message: ContainedText,
+    pub button: ContainedText,
+    pub dismiss_button: IconButton,
 }
 
 #[derive(Clone, Deserialize, Default)]

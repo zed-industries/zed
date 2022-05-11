@@ -566,6 +566,7 @@ enum ContactRequestResponse {
     Accept = 0;
     Reject = 1;
     Block = 2;
+    Dismiss = 3;
 }
 
 message SendChannelMessage {

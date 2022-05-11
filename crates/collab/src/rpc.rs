@@ -1023,35 +1023,42 @@ impl Server {
             .await
             .user_id_for_connection(request.sender_id)?;
         let requester_id = UserId::from_proto(request.payload.requester_id);
-        let accept = request.payload.response == proto::ContactRequestResponse::Accept as i32;
-        self.app_state
-            .db
-            .respond_to_contact_request(responder_id, requester_id, accept)
-            .await?;
+        if request.payload.response == proto::ContactRequestResponse::Dismiss as i32 {
+            self.app_state
+                .db
+                .dismiss_contact_request(responder_id, requester_id)
+                .await?;
+        } else {
+            let accept = request.payload.response == proto::ContactRequestResponse::Accept as i32;
+            self.app_state
+                .db
+                .respond_to_contact_request(responder_id, requester_id, accept)
+                .await?;
 
-        let store = self.store().await;
-        // Update responder with new contact
-        let mut update = proto::UpdateContacts::default();
-        if accept {
-            update.contacts.push(store.contact_for_user(requester_id));
-        }
-        update
-            .remove_incoming_requests
-            .push(requester_id.to_proto());
-        for connection_id in store.connection_ids_for_user(responder_id) {
-            self.peer.send(connection_id, update.clone())?;
-        }
+            let store = self.store().await;
+            // Update responder with new contact
+            let mut update = proto::UpdateContacts::default();
+            if accept {
+                update.contacts.push(store.contact_for_user(requester_id));
+            }
+            update
+                .remove_incoming_requests
+                .push(requester_id.to_proto());
+            for connection_id in store.connection_ids_for_user(responder_id) {
+                self.peer.send(connection_id, update.clone())?;
+            }
 
-        // Update requester with new contact
-        let mut update = proto::UpdateContacts::default();
-        if accept {
-            update.contacts.push(store.contact_for_user(responder_id));
-        }
-        update
-            .remove_outgoing_requests
-            .push(responder_id.to_proto());
-        for connection_id in store.connection_ids_for_user(requester_id) {
-            self.peer.send(connection_id, update.clone())?;
+            // Update requester with new contact
+            let mut update = proto::UpdateContacts::default();
+            if accept {
+                update.contacts.push(store.contact_for_user(responder_id));
+            }
+            update
+                .remove_outgoing_requests
+                .push(responder_id.to_proto());
+            for connection_id in store.connection_ids_for_user(requester_id) {
+                self.peer.send(connection_id, update.clone())?;
+            }
         }
 
         response.send(proto::Ack {})?;

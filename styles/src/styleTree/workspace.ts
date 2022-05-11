@@ -1,5 +1,5 @@
 import Theme from "../themes/theme";
-import { backgroundColor, border, iconColor, text } from "./components";
+import { backgroundColor, border, iconColor, shadow, text } from "./components";
 import statusBar from "./statusBar";
 
 export default function workspace(theme: Theme) {
@@ -148,11 +148,15 @@ export default function workspace(theme: Theme) {
     },
     notification: {
       margin: { top: 10 },
+      background: backgroundColor(theme, 300),
+      cornerRadius: 6,
+      padding: 12,
+      border: border(theme, "primary"),
+      shadow: shadow(theme),
     },
     notifications: {
       width: 256,
       margin: { right: 10, bottom: 10 },
-      background: "#ff0000",
     }
   };
 }
