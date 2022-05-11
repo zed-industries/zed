@@ -371,7 +371,7 @@ impl UserStore {
                 response: if accept {
                     proto::ContactRequestResponse::Accept
                 } else {
-                    proto::ContactRequestResponse::Reject
+                    proto::ContactRequestResponse::Decline
                 } as i32,
             },
             cx,

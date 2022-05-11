@@ -118,7 +118,7 @@ impl PickerDelegate for ContactFinder {
                 "icons/accept.svg"
             }
             ContactRequestStatus::RequestSent | ContactRequestStatus::RequestAccepted => {
-                "icons/reject.svg"
+                "icons/decline.svg"
             }
         };
         let button_style = if self.user_store.read(cx).is_contact_request_pending(&user) {

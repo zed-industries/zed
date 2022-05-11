@@ -344,7 +344,7 @@ impl ContactsPanel {
         is_incoming: bool,
         cx: &mut LayoutContext,
     ) -> ElementBox {
-        enum Reject {}
+        enum Decline {}
         enum Accept {}
         enum Cancel {}
 
@@ -373,13 +373,13 @@ impl ContactsPanel {
 
         if is_incoming {
             row.add_children([
-                MouseEventHandler::new::<Reject, _, _>(user.id as usize, cx, |mouse_state, _| {
+                MouseEventHandler::new::<Decline, _, _>(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {
                         &theme.disabled_contact_button
                     } else {
                         &theme.contact_button.style_for(mouse_state, false)
                     };
-                    render_icon_button(button_style, "icons/reject.svg")
+                    render_icon_button(button_style, "icons/decline.svg")
                         .aligned()
                         .flex_float()
                         .boxed()
@@ -421,7 +421,7 @@ impl ContactsPanel {
                     } else {
                         &theme.contact_button.style_for(mouse_state, false)
                     };
-                    render_icon_button(button_style, "icons/reject.svg")
+                    render_icon_button(button_style, "icons/decline.svg")
                         .aligned()
                         .flex_float()
                         .boxed()

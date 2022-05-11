@@ -362,8 +362,8 @@ pub struct ContactNotification {
     pub header_message: ContainedText,
     pub header_height: f32,
     pub body_message: ContainedText,
-    pub button: ContainedText,
-    pub dismiss_button: IconButton,
+    pub button: Interactive<ContainedText>,
+    pub dismiss_button: Interactive<IconButton>,
 }
 
 #[derive(Clone, Deserialize, Default)]

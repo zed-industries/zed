@@ -505,7 +505,7 @@
       }
     },
     "notifications": {
-      "width": 256,
+      "width": 380,
       "margin": {
         "right": 10,
         "bottom": 10
@@ -1698,7 +1698,8 @@
       "color": "#293256",
       "size": 12,
       "margin": {
-        "left": 4
+        "left": 8,
+        "right": 8
       }
     },
     "header_height": 18,
@@ -1707,6 +1708,7 @@
       "color": "#5e6687",
       "size": 12,
       "margin": {
+        "left": 20,
         "top": 6,
         "bottom": 6
       }
@@ -1720,6 +1722,9 @@
       "corner_radius": 6,
       "margin": {
         "left": 6
+      },
+      "hover": {
+        "background": "#dfe2f11f"
       }
     },
     "dismiss_button": {
@@ -1727,7 +1732,10 @@
       "icon_width": 8,
       "icon_height": 8,
       "button_width": 8,
-      "button_height": 8
+      "button_height": 8,
+      "hover": {
+        "color": "#293256"
+      }
     }
   }
 }

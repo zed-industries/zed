@@ -564,7 +564,7 @@ message RespondToContactRequest {
 
 enum ContactRequestResponse {
     Accept = 0;
-    Reject = 1;
+    Decline = 1;
     Block = 2;
     Dismiss = 3;
 }

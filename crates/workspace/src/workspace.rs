@@ -1769,7 +1769,7 @@ impl Workspace {
                             .boxed()
                     }))
                     .constrained()
-                    .with_width(250.)
+                    .with_width(theme.notifications.width)
                     .contained()
                     .with_style(theme.notifications.container)
                     .aligned()

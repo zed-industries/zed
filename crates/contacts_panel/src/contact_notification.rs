@@ -6,6 +6,8 @@ use gpui::{
 use settings::Settings;
 use workspace::Notification;
 
+use crate::render_icon_button;
+
 impl_internal_actions!(contact_notifications, [Dismiss, RespondToContactRequest]);
 
 pub fn init(cx: &mut MutableAppContext) {
@@ -31,7 +33,7 @@ pub enum Event {
     Dismiss,
 }
 
-enum Reject {}
+enum Decline {}
 enum Accept {}
 
 impl Entity for ContactNotification {
@@ -87,7 +89,7 @@ impl ContactNotification {
         let user_id = user.id;
 
         Flex::column()
-            .with_child(self.render_header("added you", theme, cx))
+            .with_child(self.render_header("wants to add you as a contact.", theme, cx))
             .with_child(
                 Label::new(
                     "They won't know if you decline.".to_string(),
@@ -100,13 +102,14 @@ impl ContactNotification {
             .with_child(
                 Flex::row()
                     .with_child(
-                        MouseEventHandler::new::<Reject, _, _>(
+                        MouseEventHandler::new::<Decline, _, _>(
                             self.event.user.id as usize,
                             cx,
-                            |_, _| {
-                                Label::new("Reject".to_string(), theme.button.text.clone())
+                            |state, _| {
+                                let button = theme.button.style_for(state, false);
+                                Label::new("Decline".to_string(), button.text.clone())
                                     .contained()
-                                    .with_style(theme.button.container)
+                                    .with_style(button.container)
                                     .boxed()
                             },
                         )
@@ -120,10 +123,11 @@ impl ContactNotification {
                         .boxed(),
                     )
                     .with_child(
-                        MouseEventHandler::new::<Accept, _, _>(user.id as usize, cx, |_, _| {
-                            Label::new("Accept".to_string(), theme.button.text.clone())
+                        MouseEventHandler::new::<Accept, _, _>(user.id as usize, cx, |state, _| {
+                            let button = theme.button.style_for(state, false);
+                            Label::new("Accept".to_string(), button.text.clone())
                                 .contained()
-                                .with_style(theme.button.container)
+                                .with_style(button.container)
                                 .boxed()
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
@@ -163,42 +167,51 @@ impl ContactNotification {
                 Image::new(avatar)
                     .with_style(theme.header_avatar)
                     .aligned()
-                    .left()
+                    .constrained()
+                    .with_height(
+                        cx.font_cache()
+                            .line_height(theme.header_message.text.font_size),
+                    )
+                    .aligned()
+                    .top()
                     .boxed()
             }))
             .with_child(
-                Label::new(
+                Text::new(
                     format!("{} {}", user.github_login, message),
                     theme.header_message.text.clone(),
                 )
                 .contained()
                 .with_style(theme.header_message.container)
                 .aligned()
+                .top()
+                .left()
+                .flex(1., true)
                 .boxed(),
             )
             .with_child(
-                MouseEventHandler::new::<Dismiss, _, _>(user.id as usize, cx, |_, _| {
-                    Svg::new("icons/reject.svg")
-                        .with_color(theme.dismiss_button.color)
-                        .constrained()
-                        .with_width(theme.dismiss_button.icon_width)
-                        .aligned()
-                        .contained()
-                        .with_style(theme.dismiss_button.container)
-                        .constrained()
-                        .with_width(theme.dismiss_button.button_width)
-                        .with_height(theme.dismiss_button.button_width)
-                        .aligned()
-                        .boxed()
+                MouseEventHandler::new::<Dismiss, _, _>(user.id as usize, cx, |state, _| {
+                    render_icon_button(
+                        theme.dismiss_button.style_for(state, false),
+                        "icons/decline.svg",
+                    )
+                    .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
+                .with_padding(Padding::uniform(5.))
                 .on_click(move |_, cx| cx.dispatch_action(Dismiss(user_id)))
+                .aligned()
+                .constrained()
+                .with_height(
+                    cx.font_cache()
+                        .line_height(theme.header_message.text.font_size),
+                )
+                .aligned()
+                .top()
                 .flex_float()
                 .boxed(),
             )
-            .constrained()
-            .with_height(theme.header_height)
-            .boxed()
+            .named("contact notification header")
     }
 
     fn dismiss(&mut self, _: &Dismiss, cx: &mut ViewContext<Self>) {

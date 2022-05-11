@@ -159,7 +159,7 @@ export default function workspace(theme: Theme) {
       shadow: shadow(theme),
     },
     notifications: {
-      width: 256,
+      width: 380,
       margin: { right: 10, bottom: 10 },
     }
   };
