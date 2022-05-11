@@ -186,6 +186,7 @@ impl ContactsPanel {
                 .with_style(theme.contact_username.container)
                 .aligned()
                 .left()
+                .flex(1., true)
                 .boxed(),
             )
             .constrained()
@@ -211,6 +212,13 @@ impl ContactsPanel {
     ) -> ElementBox {
         let project = &contact.projects[project_ix];
         let project_id = project.id;
+        let is_host = Some(contact.user.id) == current_user_id;
+        let is_guest = !is_host
+            && project
+                .guests
+                .iter()
+                .any(|guest| Some(guest.id) == current_user_id);
+        let is_shared = project.is_shared;
 
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
@@ -219,120 +227,103 @@ impl ContactsPanel {
             .or(theme.contact_avatar.height)
             .unwrap_or(0.);
         let row = &theme.unshared_project_row.default;
+        let tree_branch = theme.tree_branch.clone();
         let line_height = row.name.text.line_height(font_cache);
         let cap_height = row.name.text.cap_height(font_cache);
         let baseline_offset =
-            row.name.text.baseline_offset(font_cache) + (row.height - line_height) / 2.;
-        let tree_branch_width = theme.tree_branch_width;
-        let tree_branch_color = theme.tree_branch_color;
+            row.name.text.baseline_offset(font_cache) + (theme.row_height - line_height) / 2.;
 
-        Flex::row()
-            .with_child(
-                Canvas::new(move |bounds, _, cx| {
-                    let start_x = bounds.min_x() + (bounds.width() / 2.) - (tree_branch_width / 2.);
-                    let end_x = bounds.max_x();
-                    let start_y = bounds.min_y();
-                    let end_y = bounds.min_y() + baseline_offset - (cap_height / 2.);
+        MouseEventHandler::new::<JoinProject, _, _>(project_id as usize, cx, |mouse_state, _| {
+            let tree_branch = *tree_branch.style_for(mouse_state, is_selected);
+            let row = if project.is_shared {
+                &theme.shared_project_row
+            } else {
+                &theme.unshared_project_row
+            }
+            .style_for(mouse_state, is_selected);
 
-                    cx.scene.push_quad(gpui::Quad {
-                        bounds: RectF::from_points(
-                            vec2f(start_x, start_y),
-                            vec2f(
-                                start_x + tree_branch_width,
-                                if is_last_project {
-                                    end_y
-                                } else {
-                                    bounds.max_y()
-                                },
+            Flex::row()
+                .with_child(
+                    Canvas::new(move |bounds, _, cx| {
+                        let start_x =
+                            bounds.min_x() + (bounds.width() / 2.) - (tree_branch.width / 2.);
+                        let end_x = bounds.max_x();
+                        let start_y = bounds.min_y();
+                        let end_y = bounds.min_y() + baseline_offset - (cap_height / 2.);
+
+                        cx.scene.push_quad(gpui::Quad {
+                            bounds: RectF::from_points(
+                                vec2f(start_x, start_y),
+                                vec2f(
+                                    start_x + tree_branch.width,
+                                    if is_last_project {
+                                        end_y
+                                    } else {
+                                        bounds.max_y()
+                                    },
+                                ),
                             ),
-                        ),
-                        background: Some(tree_branch_color),
-                        border: gpui::Border::default(),
-                        corner_radius: 0.,
-                    });
-                    cx.scene.push_quad(gpui::Quad {
-                        bounds: RectF::from_points(
-                            vec2f(start_x, end_y),
-                            vec2f(end_x, end_y + tree_branch_width),
-                        ),
-                        background: Some(tree_branch_color),
-                        border: gpui::Border::default(),
-                        corner_radius: 0.,
-                    });
-                })
-                .constrained()
-                .with_width(host_avatar_height)
-                .boxed(),
-            )
-            .with_child({
-                let is_host = Some(contact.user.id) == current_user_id;
-                let is_guest = !is_host
-                    && project
-                        .guests
-                        .iter()
-                        .any(|guest| Some(guest.id) == current_user_id);
-                let is_shared = project.is_shared;
-                let app_state = app_state.clone();
-
-                MouseEventHandler::new::<JoinProject, _, _>(
-                    project_id as usize,
-                    cx,
-                    |mouse_state, _| {
-                        let style = if project.is_shared {
-                            &theme.shared_project_row
-                        } else {
-                            &theme.unshared_project_row
-                        }
-                        .style_for(mouse_state, is_selected);
-                        Flex::row()
-                            .with_child(
-                                Label::new(
-                                    project.worktree_root_names.join(", "),
-                                    style.name.text.clone(),
-                                )
-                                .aligned()
-                                .left()
-                                .contained()
-                                .with_style(style.name.container)
-                                .boxed(),
-                            )
-                            .with_children(project.guests.iter().filter_map(|participant| {
-                                participant.avatar.clone().map(|avatar| {
-                                    Image::new(avatar)
-                                        .with_style(style.guest_avatar)
-                                        .aligned()
-                                        .left()
-                                        .contained()
-                                        .with_margin_right(style.guest_avatar_spacing)
-                                        .boxed()
-                                })
-                            }))
-                            .contained()
-                            .with_style(style.container)
-                            .constrained()
-                            .with_height(style.height)
-                            .boxed()
-                    },
-                )
-                .with_cursor_style(if !is_host && is_shared {
-                    CursorStyle::PointingHand
-                } else {
-                    CursorStyle::Arrow
-                })
-                .on_click(move |_, cx| {
-                    if !is_host && !is_guest {
-                        cx.dispatch_global_action(JoinProject {
-                            project_id,
-                            app_state: app_state.clone(),
+                            background: Some(tree_branch.color),
+                            border: gpui::Border::default(),
+                            corner_radius: 0.,
                         });
-                    }
-                })
-                .flex(1., true)
+                        cx.scene.push_quad(gpui::Quad {
+                            bounds: RectF::from_points(
+                                vec2f(start_x, end_y),
+                                vec2f(end_x, end_y + tree_branch.width),
+                            ),
+                            background: Some(tree_branch.color),
+                            border: gpui::Border::default(),
+                            corner_radius: 0.,
+                        });
+                    })
+                    .constrained()
+                    .with_width(host_avatar_height)
+                    .boxed(),
+                )
+                .with_child(
+                    Label::new(
+                        project.worktree_root_names.join(", "),
+                        row.name.text.clone(),
+                    )
+                    .aligned()
+                    .left()
+                    .contained()
+                    .with_style(row.name.container)
+                    .flex(1., false)
+                    .boxed(),
+                )
+                .with_children(project.guests.iter().filter_map(|participant| {
+                    participant.avatar.clone().map(|avatar| {
+                        Image::new(avatar)
+                            .with_style(row.guest_avatar)
+                            .aligned()
+                            .left()
+                            .contained()
+                            .with_margin_right(row.guest_avatar_spacing)
+                            .boxed()
+                    })
+                }))
+                .constrained()
+                .with_height(theme.row_height)
+                .contained()
+                .with_style(row.container)
                 .boxed()
-            })
-            .constrained()
-            .with_height(row.height)
-            .boxed()
+        })
+        .with_cursor_style(if !is_host && is_shared {
+            CursorStyle::PointingHand
+        } else {
+            CursorStyle::Arrow
+        })
+        .on_click(move |_, cx| {
+            if !is_host && !is_guest {
+                cx.dispatch_global_action(JoinProject {
+                    project_id,
+                    app_state: app_state.clone(),
+                });
+            }
+        })
+        .boxed()
     }
 
     fn render_contact_request(
@@ -364,11 +355,13 @@ impl ContactsPanel {
                 .with_style(theme.contact_username.container)
                 .aligned()
                 .left()
+                .flex(1., true)
                 .boxed(),
             );
 
         let user_id = user.id;
         let is_contact_request_pending = user_store.read(cx).is_contact_request_pending(&user);
+        let button_spacing = theme.contact_button_spacing;
 
         if is_incoming {
             row.add_children([
@@ -380,7 +373,7 @@ impl ContactsPanel {
                     };
                     render_icon_button(button_style, "icons/reject.svg")
                         .aligned()
-                        .flex_float()
+                        // .flex_float()
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
@@ -390,7 +383,9 @@ impl ContactsPanel {
                         accept: false,
                     })
                 })
-                .flex_float()
+                // .flex_float()
+                .contained()
+                .with_margin_right(button_spacing)
                 .boxed(),
                 MouseEventHandler::new::<Accept, _, _>(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {

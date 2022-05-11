@@ -12,7 +12,7 @@ import workspace from "./workspace";
 import projectDiagnostics from "./projectDiagnostics";
 
 export const panel = {
-  padding: { top: 12, left: 12, bottom: 12, right: 12 },
+  padding: { top: 12, bottom: 12 },
 };
 
 export default function app(theme: Theme): Object {
