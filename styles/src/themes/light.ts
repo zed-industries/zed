@@ -65,6 +65,7 @@ const borderColor = {
   muted: colors.neutral[100],
   focused: colors.indigo[500],
   active: colors.neutral[250],
+  onMedia: withOpacity(colors.neutral[250], 0.3),
   ok: withOpacity(colors.green[600], 0.15),
   error: withOpacity(colors.red[500], 0.15),
   warning: withOpacity(colors.amber[400], 0.15),

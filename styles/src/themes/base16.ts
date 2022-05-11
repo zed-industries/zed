@@ -82,6 +82,7 @@ export function createTheme(name: string, isLight: boolean, neutral: ColorToken[
     muted: neutral[3],
     focused: neutral[3],
     active: neutral[3],
+    onMedia: withOpacity(neutral[0], 0.1),
     ok: withOpacity(accent.green, 0.15),
     error: withOpacity(accent.red, 0.15),
     warning: withOpacity(accent.yellow, 0.15),
