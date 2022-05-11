@@ -7,10 +7,11 @@ use settings::Settings;
 use std::sync::Arc;
 use workspace::Notification;
 
-impl_internal_actions!(contact_notifications, [Dismiss]);
+impl_internal_actions!(contact_notifications, [Dismiss, RespondToContactRequest]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(IncomingRequestNotification::dismiss);
+    cx.add_action(IncomingRequestNotification::respond_to_contact_request);
 }
 
 pub struct IncomingRequestNotification {
@@ -20,6 +21,12 @@ pub struct IncomingRequestNotification {
 
 #[derive(Clone)]
 struct Dismiss(u64);
+
+#[derive(Clone)]
+pub struct RespondToContactRequest {
+    pub user_id: u64,
+    pub accept: bool,
+}
 
 pub enum Event {
     Dismiss,
@@ -103,16 +110,44 @@ impl View for IncomingRequestNotification {
             .with_child(
                 Flex::row()
                     .with_child(
-                        Label::new("Decline".to_string(), theme.button.text.clone())
-                            .contained()
-                            .with_style(theme.button.container)
-                            .boxed(),
+                        MouseEventHandler::new::<Reject, _, _>(
+                            self.user.id as usize,
+                            cx,
+                            |_, _| {
+                                Label::new("Reject".to_string(), theme.button.text.clone())
+                                    .contained()
+                                    .with_style(theme.button.container)
+                                    .boxed()
+                            },
+                        )
+                        .with_cursor_style(CursorStyle::PointingHand)
+                        .on_click(move |_, cx| {
+                            cx.dispatch_action(RespondToContactRequest {
+                                user_id,
+                                accept: false,
+                            });
+                        })
+                        .boxed(),
                     )
                     .with_child(
-                        Label::new("Accept".to_string(), theme.button.text.clone())
-                            .contained()
-                            .with_style(theme.button.container)
-                            .boxed(),
+                        MouseEventHandler::new::<Accept, _, _>(
+                            self.user.id as usize,
+                            cx,
+                            |_, _| {
+                                Label::new("Accept".to_string(), theme.button.text.clone())
+                                    .contained()
+                                    .with_style(theme.button.container)
+                                    .boxed()
+                            },
+                        )
+                        .with_cursor_style(CursorStyle::PointingHand)
+                        .on_click(move |_, cx| {
+                            cx.dispatch_action(RespondToContactRequest {
+                                user_id,
+                                accept: true,
+                            });
+                        })
+                        .boxed(),
                     )
                     .aligned()
                     .right()
@@ -155,5 +190,17 @@ impl IncomingRequestNotification {
                 .detach_and_log_err(cx);
         });
         cx.emit(Event::Dismiss);
+    }
+
+    fn respond_to_contact_request(
+        &mut self,
+        action: &RespondToContactRequest,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.user_store
+            .update(cx, |store, cx| {
+                store.respond_to_contact_request(action.user_id, action.accept, cx)
+            })
+            .detach();
     }
 }
