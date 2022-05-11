@@ -1,4 +1,5 @@
 mod contact_finder;
+mod notifications;
 
 use client::{Contact, User, UserStore};
 use editor::{Cancel, Editor};
@@ -9,13 +10,14 @@ use gpui::{
     impl_actions,
     platform::CursorStyle,
     Element, ElementBox, Entity, LayoutContext, ModelHandle, MutableAppContext, RenderContext,
-    Subscription, View, ViewContext, ViewHandle,
+    Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
+use notifications::IncomingRequestNotification;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
 use theme::IconButton;
-use workspace::{AppState, JoinProject};
+use workspace::{AppState, JoinProject, Workspace};
 
 impl_actions!(
     contacts_panel,
@@ -60,7 +62,11 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 impl ContactsPanel {
-    pub fn new(app_state: Arc<AppState>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        app_state: Arc<AppState>,
+        workspace: WeakViewHandle<Workspace>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let user_query_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(
                 Some(|theme| theme.contacts_panel.user_query_editor.clone()),
@@ -73,6 +79,28 @@ impl ContactsPanel {
         cx.subscribe(&user_query_editor, |this, _, event, cx| {
             if let editor::Event::BufferEdited = event {
                 this.update_entries(cx)
+            }
+        })
+        .detach();
+
+        cx.subscribe(&app_state.user_store, {
+            let user_store = app_state.user_store.clone();
+            move |_, _, event, cx| match event {
+                client::Event::NotifyIncomingRequest(user) => {
+                    if let Some(workspace) = workspace.upgrade(cx) {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.show_notification(
+                                cx.add_view(|_| {
+                                    IncomingRequestNotification::new(
+                                        user.clone(),
+                                        user_store.clone(),
+                                    )
+                                }),
+                                cx,
+                            )
+                        })
+                    }
+                }
             }
         })
         .detach();

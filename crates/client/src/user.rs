@@ -54,7 +54,9 @@ pub struct UserStore {
     _maintain_current_user: Task<()>,
 }
 
-pub enum Event {}
+pub enum Event {
+    NotifyIncomingRequest(Arc<User>),
+}
 
 impl Entity for UserStore {
     type Event = Event;
@@ -182,12 +184,14 @@ impl UserStore {
 
                     let mut incoming_requests = Vec::new();
                     for request in message.incoming_requests {
-                        incoming_requests.push(
-                            this.update(&mut cx, |this, cx| {
-                                this.fetch_user(request.requester_id, cx)
-                            })
-                            .await?,
-                        );
+                        incoming_requests.push({
+                            let user = this
+                                .update(&mut cx, |this, cx| {
+                                    this.fetch_user(request.requester_id, cx)
+                                })
+                                .await?;
+                            (user, request.should_notify)
+                        });
                     }
 
                     let mut outgoing_requests = Vec::new();
@@ -224,14 +228,18 @@ impl UserStore {
                         this.incoming_contact_requests
                             .retain(|user| !removed_incoming_requests.contains(&user.id));
                         // Update existing incoming requests and insert new ones
-                        for request in incoming_requests {
+                        for (user, should_notify) in incoming_requests {
+                            if should_notify {
+                                cx.emit(Event::NotifyIncomingRequest(user.clone()));
+                            }
+
                             match this
                                 .incoming_contact_requests
-                                .binary_search_by_key(&&request.github_login, |contact| {
+                                .binary_search_by_key(&&user.github_login, |contact| {
                                     &contact.github_login
                                 }) {
-                                Ok(ix) => this.incoming_contact_requests[ix] = request,
-                                Err(ix) => this.incoming_contact_requests.insert(ix, request),
+                                Ok(ix) => this.incoming_contact_requests[ix] = user,
+                                Err(ix) => this.incoming_contact_requests.insert(ix, user),
                             }
                         }
 

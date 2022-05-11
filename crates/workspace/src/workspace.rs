@@ -1732,11 +1732,7 @@ impl Workspace {
         }
     }
 
-    fn render_notifications(
-        &self,
-        theme: &theme::Workspace,
-        cx: &mut RenderContext<Self>,
-    ) -> Option<ElementBox> {
+    fn render_notifications(&self, theme: &theme::Workspace) -> Option<ElementBox> {
         if self.notifications.is_empty() {
             None
         } else {
@@ -2094,7 +2090,7 @@ impl View for Workspace {
                                     .top()
                                     .boxed()
                             }))
-                            .with_children(self.render_notifications(&theme.workspace, cx))
+                            .with_children(self.render_notifications(&theme.workspace))
                             .flex(1.0, true)
                             .boxed(),
                     )
