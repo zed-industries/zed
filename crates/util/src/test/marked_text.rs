@@ -61,12 +61,12 @@ pub fn marked_text_ranges(full_marked_text: &str) -> (String, Vec<Range<usize>>)
     let (range_marked_text, empty_offsets) = marked_text(full_marked_text);
     let (unmarked, range_lookup) =
         marked_text_ranges_by(&range_marked_text, vec![('[', ']'), ('(', ')'), ('<', '>')]);
-    (
-        unmarked,
-        range_lookup
-            .into_values()
-            .flatten()
-            .chain(empty_offsets.into_iter().map(|offset| offset..offset))
-            .collect(),
-    )
+    let mut combined_ranges: Vec<_> = range_lookup
+        .into_values()
+        .flatten()
+        .chain(empty_offsets.into_iter().map(|offset| offset..offset))
+        .collect();
+
+    combined_ranges.sort_by_key(|range| range.start);
+    (unmarked, combined_ranges)
 }
