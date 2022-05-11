@@ -21,16 +21,6 @@ export default function contactsPanel(theme: Theme) {
     },
   };
 
-  const sharedProject = {
-    ...project,
-    background: backgroundColor(theme, 300),
-    cornerRadius: 6,
-    name: {
-      ...project.name,
-      ...text(theme, "mono", "secondary", { size: "sm" }),
-    },
-  };
-
   const contactButton = {
     background: backgroundColor(theme, 100),
     color: iconColor(theme, "primary"),
@@ -62,14 +52,21 @@ export default function contactsPanel(theme: Theme) {
       buttonWidth: 8,
       iconWidth: 8,
     },
-    row: {
-      padding: { left: 8 },
-    },
-    rowHeight: 28,
-    header: {
+    headerRow: {
       ...text(theme, "mono", "secondary", { size: "sm" }),
       margin: { top: 8 },
+      active: {
+        ...text(theme, "mono", "primary", { size: "sm" }),
+        background: backgroundColor(theme, 100, "active"),
+      }
     },
+    contactRow: {
+      padding: { left: 8 },
+      active: {
+        background: backgroundColor(theme, 100, "active"),
+      }
+    },
+    rowHeight: 28,
     treeBranchColor: borderColor(theme, "muted"),
     treeBranchWidth: 1,
     contactAvatar: {
@@ -93,17 +90,35 @@ export default function contactsPanel(theme: Theme) {
       background: backgroundColor(theme, 100),
       color: iconColor(theme, "muted"),
     },
-    project,
-    sharedProject,
-    hoveredSharedProject: {
-      ...sharedProject,
-      background: backgroundColor(theme, 300, "hovered"),
-      cornerRadius: 6,
-    },
-    unsharedProject: project,
-    hoveredUnsharedProject: {
+    sharedProjectRow: {
       ...project,
+      background: backgroundColor(theme, 300),
       cornerRadius: 6,
+      name: {
+        ...project.name,
+        ...text(theme, "mono", "secondary", { size: "sm" }),
+      },
+      hover: {
+        background: backgroundColor(theme, 300, "hovered"),
+      },
+      active: {
+        background: backgroundColor(theme, 300, "active"),
+      }
     },
+    unsharedProjectRow: {
+      ...project,
+      background: backgroundColor(theme, 300),
+      cornerRadius: 6,
+      name: {
+        ...project.name,
+        ...text(theme, "mono", "secondary", { size: "sm" }),
+      },
+      hover: {
+        background: backgroundColor(theme, 300, "hovered"),
+      },
+      active: {
+        background: backgroundColor(theme, 300, "active"),
+      }
+    }
   }
 }
