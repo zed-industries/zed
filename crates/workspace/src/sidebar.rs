@@ -1,13 +1,40 @@
+use crate::StatusItemView;
 use gpui::{
-    elements::*, impl_actions, platform::CursorStyle, AnyViewHandle, Entity, RenderContext, View,
-    ViewContext, ViewHandle,
+    elements::*, impl_actions, platform::CursorStyle, AnyViewHandle, AppContext, Entity,
+    RenderContext, Subscription, View, ViewContext, ViewHandle,
 };
 use serde::Deserialize;
 use settings::Settings;
 use std::{cell::RefCell, rc::Rc};
 use theme::Theme;
 
-use crate::StatusItemView;
+pub trait SidebarItem: View {
+    fn should_show_badge(&self, cx: &AppContext) -> bool;
+}
+
+pub trait SidebarItemHandle {
+    fn should_show_badge(&self, cx: &AppContext) -> bool;
+    fn to_any(&self) -> AnyViewHandle;
+}
+
+impl<T> SidebarItemHandle for ViewHandle<T>
+where
+    T: SidebarItem,
+{
+    fn should_show_badge(&self, cx: &AppContext) -> bool {
+        self.read(cx).should_show_badge(cx)
+    }
+
+    fn to_any(&self) -> AnyViewHandle {
+        self.into()
+    }
+}
+
+impl Into<AnyViewHandle> for &dyn SidebarItemHandle {
+    fn into(self) -> AnyViewHandle {
+        self.to_any()
+    }
+}
 
 pub struct Sidebar {
     side: Side,
@@ -23,10 +50,10 @@ pub enum Side {
     Right,
 }
 
-#[derive(Clone)]
 struct Item {
     icon_path: &'static str,
-    view: AnyViewHandle,
+    view: Rc<dyn SidebarItemHandle>,
+    _observation: Subscription,
 }
 
 pub struct SidebarButtons {
@@ -58,13 +85,18 @@ impl Sidebar {
         }
     }
 
-    pub fn add_item(
+    pub fn add_item<T: SidebarItem>(
         &mut self,
         icon_path: &'static str,
-        view: AnyViewHandle,
+        view: ViewHandle<T>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.items.push(Item { icon_path, view });
+        let subscription = cx.observe(&view, |_, _, cx| cx.notify());
+        self.items.push(Item {
+            icon_path,
+            view: Rc::new(view),
+            _observation: subscription,
+        });
         cx.notify()
     }
 
@@ -82,10 +114,10 @@ impl Sidebar {
         cx.notify();
     }
 
-    pub fn active_item(&self) -> Option<&AnyViewHandle> {
+    pub fn active_item(&self) -> Option<&dyn SidebarItemHandle> {
         self.active_item_ix
             .and_then(|ix| self.items.get(ix))
-            .map(|item| &item.view)
+            .map(|item| item.view.as_ref())
     }
 
     fn render_resize_handle(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
@@ -185,34 +217,62 @@ impl View for SidebarButtons {
             .sidebar_buttons;
         let sidebar = self.sidebar.read(cx);
         let item_style = theme.item;
+        let badge_style = theme.badge;
         let active_ix = sidebar.active_item_ix;
         let side = sidebar.side;
         let group_style = match side {
             Side::Left => theme.group_left,
             Side::Right => theme.group_right,
         };
-        let items = sidebar.items.clone();
+        let items = sidebar
+            .items
+            .iter()
+            .map(|item| (item.icon_path, item.view.clone()))
+            .collect::<Vec<_>>();
         Flex::row()
-            .with_children(items.iter().enumerate().map(|(ix, item)| {
-                MouseEventHandler::new::<Self, _, _>(ix, cx, move |state, _| {
-                    let style = item_style.style_for(state, Some(ix) == active_ix);
-                    Svg::new(item.icon_path)
-                        .with_color(style.icon_color)
-                        .constrained()
-                        .with_height(style.icon_size)
-                        .contained()
-                        .with_style(style.container)
+            .with_children(
+                items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, (icon_path, item_view))| {
+                        MouseEventHandler::new::<Self, _, _>(ix, cx, move |state, cx| {
+                            let is_active = Some(ix) == active_ix;
+                            let style = item_style.style_for(state, is_active);
+                            Stack::new()
+                                .with_child(
+                                    Svg::new(icon_path).with_color(style.icon_color).boxed(),
+                                )
+                                .with_children(if !is_active && item_view.should_show_badge(cx) {
+                                    Some(
+                                        Empty::new()
+                                            .collapsed()
+                                            .contained()
+                                            .with_style(badge_style)
+                                            .aligned()
+                                            .bottom()
+                                            .right()
+                                            .boxed(),
+                                    )
+                                } else {
+                                    None
+                                })
+                                .constrained()
+                                .with_width(style.icon_size)
+                                .with_height(style.icon_size)
+                                .contained()
+                                .with_style(style.container)
+                                .boxed()
+                        })
+                        .with_cursor_style(CursorStyle::PointingHand)
+                        .on_click(move |_, cx| {
+                            cx.dispatch_action(ToggleSidebarItem {
+                                side,
+                                item_index: ix,
+                            })
+                        })
                         .boxed()
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(move |_, cx| {
-                    cx.dispatch_action(ToggleSidebarItem {
-                        side,
-                        item_index: ix,
-                    })
-                })
-                .boxed()
-            }))
+                    }),
+            )
             .contained()
             .with_style(group_style)
             .boxed()

@@ -162,6 +162,7 @@ pub struct StatusBarSidebarButtons {
     pub group_left: ContainerStyle,
     pub group_right: ContainerStyle,
     pub item: Interactive<SidebarItem>,
+    pub badge: ContainerStyle,
 }
 
 #[derive(Deserialize, Default)]

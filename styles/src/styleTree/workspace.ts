@@ -2,11 +2,15 @@ import Theme from "../themes/theme";
 import { backgroundColor, border, iconColor, shadow, text } from "./components";
 import statusBar from "./statusBar";
 
+export function workspaceBackground(theme: Theme) {
+  return backgroundColor(theme, 300)
+}
+
 export default function workspace(theme: Theme) {
 
   const tab = {
     height: 32,
-    background: backgroundColor(theme, 300),
+    background: workspaceBackground(theme),
     iconClose: iconColor(theme, "muted"),
     iconCloseActive: iconColor(theme, "active"),
     iconConflict: iconColor(theme, "warning"),

@@ -7264,7 +7264,7 @@ mod tests {
         }
 
         fn render(&mut self, _: &mut gpui::RenderContext<Self>) -> gpui::ElementBox {
-            gpui::Element::boxed(gpui::elements::Empty)
+            gpui::Element::boxed(gpui::elements::Empty::new())
         }
     }
 }

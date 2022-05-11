@@ -10,14 +10,14 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     impl_actions,
     platform::CursorStyle,
-    Element, ElementBox, Entity, LayoutContext, ModelHandle, MutableAppContext, RenderContext,
-    Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, Element, ElementBox, Entity, LayoutContext, ModelHandle, MutableAppContext,
+    RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
 use theme::IconButton;
-use workspace::{AppState, JoinProject, Workspace};
+use workspace::{sidebar::SidebarItem, AppState, JoinProject, Workspace};
 
 impl_actions!(
     contacts_panel,
@@ -596,6 +596,16 @@ impl ContactsPanel {
     fn clear_filter(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         self.filter_editor
             .update(cx, |editor, cx| editor.set_text("", cx));
+    }
+}
+
+impl SidebarItem for ContactsPanel {
+    fn should_show_badge(&self, cx: &AppContext) -> bool {
+        !self
+            .user_store
+            .read(cx)
+            .incoming_contact_requests()
+            .is_empty()
     }
 }
 

@@ -1102,7 +1102,7 @@ impl Workspace {
         };
         let active_item = sidebar.update(cx, |sidebar, cx| {
             sidebar.toggle_item(action.item_index, cx);
-            sidebar.active_item().cloned()
+            sidebar.active_item().map(|item| item.to_any())
         });
         if let Some(active_item) = active_item {
             cx.focus(active_item);
@@ -1123,7 +1123,7 @@ impl Workspace {
         };
         let active_item = sidebar.update(cx, |sidebar, cx| {
             sidebar.activate_item(action.item_index, cx);
-            sidebar.active_item().cloned()
+            sidebar.active_item().map(|item| item.to_any())
         });
         if let Some(active_item) = active_item {
             if active_item.is_focused(cx) {

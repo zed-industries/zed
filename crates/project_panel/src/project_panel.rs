@@ -900,6 +900,12 @@ impl Entity for ProjectPanel {
     type Event = Event;
 }
 
+impl workspace::sidebar::SidebarItem for ProjectPanel {
+    fn should_show_badge(&self, _: &AppContext) -> bool {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
