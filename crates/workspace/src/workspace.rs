@@ -604,13 +604,20 @@ impl<T: Item> WeakItemHandle for WeakViewHandle<T> {
     }
 }
 
-pub trait Notification: View {}
+pub trait Notification: View {
+    fn should_dismiss_notification_on_event(&self, event: &<Self as Entity>::Event) -> bool;
+}
 
 pub trait NotificationHandle {
+    fn id(&self) -> usize;
     fn to_any(&self) -> AnyViewHandle;
 }
 
 impl<T: Notification> NotificationHandle for ViewHandle<T> {
+    fn id(&self) -> usize {
+        self.id()
+    }
+
     fn to_any(&self) -> AnyViewHandle {
         self.into()
     }
@@ -996,8 +1003,25 @@ impl Workspace {
         notification: ViewHandle<V>,
         cx: &mut ViewContext<Self>,
     ) {
+        cx.subscribe(&notification, |this, handle, event, cx| {
+            if handle.read(cx).should_dismiss_notification_on_event(event) {
+                this.dismiss_notification(handle.id(), cx);
+            }
+        })
+        .detach();
         self.notifications.push(Box::new(notification));
         cx.notify();
+    }
+
+    fn dismiss_notification(&mut self, id: usize, cx: &mut ViewContext<Self>) {
+        self.notifications.retain(|handle| {
+            if handle.id() == id {
+                cx.notify();
+                false
+            } else {
+                true
+            }
+        });
     }
 
     pub fn items<'a>(

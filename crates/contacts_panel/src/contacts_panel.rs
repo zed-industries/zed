@@ -1,7 +1,8 @@
 mod contact_finder;
-mod notifications;
+mod contact_notifications;
 
 use client::{Contact, User, UserStore};
+use contact_notifications::IncomingRequestNotification;
 use editor::{Cancel, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
@@ -12,7 +13,6 @@ use gpui::{
     Element, ElementBox, Entity, LayoutContext, ModelHandle, MutableAppContext, RenderContext,
     Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use notifications::IncomingRequestNotification;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
@@ -86,14 +86,15 @@ impl ContactsPanel {
         cx.subscribe(&app_state.user_store, {
             let user_store = app_state.user_store.clone();
             move |_, _, event, cx| match event {
-                client::Event::NotifyIncomingRequest(user) => {
+                client::Event::ContactRequested(user) => {
                     if let Some(workspace) = workspace.upgrade(cx) {
                         workspace.update(cx, |workspace, cx| {
                             workspace.show_notification(
-                                cx.add_view(|_| {
+                                cx.add_view(|cx| {
                                     IncomingRequestNotification::new(
                                         user.clone(),
                                         user_store.clone(),
+                                        cx,
                                     )
                                 }),
                                 cx,
@@ -101,6 +102,7 @@ impl ContactsPanel {
                         })
                     }
                 }
+                _ => {}
             }
         })
         .detach();

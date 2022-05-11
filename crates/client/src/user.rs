@@ -55,7 +55,8 @@ pub struct UserStore {
 }
 
 pub enum Event {
-    NotifyIncomingRequest(Arc<User>),
+    ContactRequested(Arc<User>),
+    ContactRequestCancelled(Arc<User>),
 }
 
 impl Entity for UserStore {
@@ -225,12 +226,18 @@ impl UserStore {
                         }
 
                         // Remove incoming contact requests
-                        this.incoming_contact_requests
-                            .retain(|user| !removed_incoming_requests.contains(&user.id));
+                        this.incoming_contact_requests.retain(|user| {
+                            if removed_incoming_requests.contains(&user.id) {
+                                cx.emit(Event::ContactRequestCancelled(user.clone()));
+                                false
+                            } else {
+                                true
+                            }
+                        });
                         // Update existing incoming requests and insert new ones
                         for (user, should_notify) in incoming_requests {
                             if should_notify {
-                                cx.emit(Event::NotifyIncomingRequest(user.clone()));
+                                cx.emit(Event::ContactRequested(user.clone()));
                             }
 
                             match this
