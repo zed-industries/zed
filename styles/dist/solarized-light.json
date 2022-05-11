@@ -271,6 +271,10 @@
       "value": "#839496",
       "type": "color"
     },
+    "onMedia": {
+      "value": "#fdf6e31a",
+      "type": "color"
+    },
     "ok": {
       "value": "#85990026",
       "type": "color"
