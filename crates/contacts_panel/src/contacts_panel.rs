@@ -1,8 +1,8 @@
 mod contact_finder;
-mod contact_notifications;
+mod contact_notification;
 
-use client::{Contact, User, UserStore};
-use contact_notifications::IncomingRequestNotification;
+use client::{Contact, ContactEventKind, User, UserStore};
+use contact_notification::ContactNotification;
 use editor::{Cancel, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
@@ -55,7 +55,7 @@ pub struct RespondToContactRequest {
 
 pub fn init(cx: &mut MutableAppContext) {
     contact_finder::init(cx);
-    contact_notifications::init(cx);
+    contact_notification::init(cx);
     cx.add_action(ContactsPanel::request_contact);
     cx.add_action(ContactsPanel::remove_contact);
     cx.add_action(ContactsPanel::respond_to_contact_request);
@@ -85,25 +85,22 @@ impl ContactsPanel {
         .detach();
 
         cx.subscribe(&app_state.user_store, {
-            let user_store = app_state.user_store.clone();
-            move |_, _, event, cx| match event {
-                client::Event::ContactRequested(user) => {
-                    if let Some(workspace) = workspace.upgrade(cx) {
-                        workspace.update(cx, |workspace, cx| {
-                            workspace.show_notification(
+            let user_store = app_state.user_store.downgrade();
+            move |_, _, event, cx| {
+                if let Some((workspace, user_store)) =
+                    workspace.upgrade(cx).zip(user_store.upgrade(cx))
+                {
+                    workspace.update(cx, |workspace, cx| match event.kind {
+                        ContactEventKind::Requested | ContactEventKind::Accepted => workspace
+                            .show_notification(
                                 cx.add_view(|cx| {
-                                    IncomingRequestNotification::new(
-                                        user.clone(),
-                                        user_store.clone(),
-                                        cx,
-                                    )
+                                    ContactNotification::new(event.clone(), user_store, cx)
                                 }),
                                 cx,
-                            )
-                        })
-                    }
+                            ),
+                        _ => {}
+                    });
                 }
-                _ => {}
             }
         })
         .detach();

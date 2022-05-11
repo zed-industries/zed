@@ -1,7 +1,7 @@
 import Theme from "../themes/theme";
 import { backgroundColor, iconColor, text } from "./components";
 
-export default function incomingRequestNotification(theme: Theme): Object {
+export default function contactNotification(theme: Theme): Object {
   return {
     headerAvatar: {
       height: 12,

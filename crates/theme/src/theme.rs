@@ -29,7 +29,7 @@ pub struct Theme {
     pub search: Search,
     pub project_diagnostics: ProjectDiagnostics,
     pub breadcrumbs: ContainedText,
-    pub incoming_request_notification: IncomingRequestNotification,
+    pub contact_notification: ContactNotification,
 }
 
 #[derive(Deserialize, Default)]
@@ -357,7 +357,7 @@ pub struct ProjectDiagnostics {
 }
 
 #[derive(Deserialize, Default)]
-pub struct IncomingRequestNotification {
+pub struct ContactNotification {
     pub header_avatar: ImageStyle,
     pub header_message: ContainedText,
     pub header_height: f32,

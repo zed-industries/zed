@@ -420,7 +420,7 @@ impl Server {
     async fn update_user_contacts(self: &Arc<Server>, user_id: UserId) -> Result<()> {
         let contacts = self.app_state.db.get_contacts(user_id).await?;
         let store = self.store().await;
-        let updated_contact = store.contact_for_user(user_id);
+        let updated_contact = store.contact_for_user(user_id, false);
         for contact in contacts {
             if let db::Contact::Accepted {
                 user_id: contact_user_id,
@@ -1049,7 +1049,9 @@ impl Server {
             // Update responder with new contact
             let mut update = proto::UpdateContacts::default();
             if accept {
-                update.contacts.push(store.contact_for_user(requester_id));
+                update
+                    .contacts
+                    .push(store.contact_for_user(requester_id, false));
             }
             update
                 .remove_incoming_requests
@@ -1061,7 +1063,9 @@ impl Server {
             // Update requester with new contact
             let mut update = proto::UpdateContacts::default();
             if accept {
-                update.contacts.push(store.contact_for_user(responder_id));
+                update
+                    .contacts
+                    .push(store.contact_for_user(responder_id, true));
             }
             update
                 .remove_outgoing_requests

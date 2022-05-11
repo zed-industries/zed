@@ -54,13 +54,21 @@ pub struct UserStore {
     _maintain_current_user: Task<()>,
 }
 
-pub enum Event {
-    ContactRequested(Arc<User>),
-    ContactRequestCancelled(Arc<User>),
+#[derive(Clone)]
+pub struct ContactEvent {
+    pub user: Arc<User>,
+    pub kind: ContactEventKind,
+}
+
+#[derive(Clone, Copy)]
+pub enum ContactEventKind {
+    Requested,
+    Accepted,
+    Cancelled,
 }
 
 impl Entity for UserStore {
-    type Event = Event;
+    type Event = ContactEvent;
 }
 
 enum UpdateContacts {
@@ -178,8 +186,10 @@ impl UserStore {
                     // No need to paralellize here
                     let mut updated_contacts = Vec::new();
                     for contact in message.contacts {
-                        updated_contacts.push(Arc::new(
-                            Contact::from_proto(contact, &this, &mut cx).await?,
+                        let should_notify = contact.should_notify;
+                        updated_contacts.push((
+                            Arc::new(Contact::from_proto(contact, &this, &mut cx).await?),
+                            should_notify,
                         ));
                     }
 
@@ -215,7 +225,13 @@ impl UserStore {
                         this.contacts
                             .retain(|contact| !removed_contacts.contains(&contact.user.id));
                         // Update existing contacts and insert new ones
-                        for updated_contact in updated_contacts {
+                        for (updated_contact, should_notify) in updated_contacts {
+                            if should_notify {
+                                cx.emit(ContactEvent {
+                                    user: updated_contact.user.clone(),
+                                    kind: ContactEventKind::Accepted,
+                                });
+                            }
                             match this.contacts.binary_search_by_key(
                                 &&updated_contact.user.github_login,
                                 |contact| &contact.user.github_login,
@@ -228,7 +244,10 @@ impl UserStore {
                         // Remove incoming contact requests
                         this.incoming_contact_requests.retain(|user| {
                             if removed_incoming_requests.contains(&user.id) {
-                                cx.emit(Event::ContactRequestCancelled(user.clone()));
+                                cx.emit(ContactEvent {
+                                    user: user.clone(),
+                                    kind: ContactEventKind::Cancelled,
+                                });
                                 false
                             } else {
                                 true
@@ -237,7 +256,10 @@ impl UserStore {
                         // Update existing incoming requests and insert new ones
                         for (user, should_notify) in incoming_requests {
                             if should_notify {
-                                cx.emit(Event::ContactRequested(user.clone()));
+                                cx.emit(ContactEvent {
+                                    user: user.clone(),
+                                    kind: ContactEventKind::Requested,
+                                });
                             }
 
                             match this

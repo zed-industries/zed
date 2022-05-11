@@ -225,8 +225,13 @@ impl Store {
 
         for contact in contacts {
             match contact {
-                db::Contact::Accepted { user_id, .. } => {
-                    update.contacts.push(self.contact_for_user(user_id));
+                db::Contact::Accepted {
+                    user_id,
+                    should_notify,
+                } => {
+                    update
+                        .contacts
+                        .push(self.contact_for_user(user_id, should_notify));
                 }
                 db::Contact::Outgoing { user_id } => {
                     update.outgoing_requests.push(user_id.to_proto())
@@ -246,11 +251,12 @@ impl Store {
         update
     }
 
-    pub fn contact_for_user(&self, user_id: UserId) -> proto::Contact {
+    pub fn contact_for_user(&self, user_id: UserId, should_notify: bool) -> proto::Contact {
         proto::Contact {
             user_id: user_id.to_proto(),
             projects: self.project_metadata_for_user(user_id),
             online: self.is_user_online(user_id),
+            should_notify,
         }
     }
 

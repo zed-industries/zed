@@ -10,7 +10,7 @@ import search from "./search";
 import picker from "./picker";
 import workspace from "./workspace";
 import projectDiagnostics from "./projectDiagnostics";
-import incomingRequestNotification from "./incomingRequestNotification";
+import contactNotification from "./contactNotification";
 
 export const panel = {
   padding: { top: 12, left: 12, bottom: 12, right: 12 },
@@ -34,6 +34,6 @@ export default function app(theme: Theme): Object {
         left: 6,
       },
     },
-    incomingRequestNotification: incomingRequestNotification(theme),
+    contactNotification: contactNotification(theme),
   };
 }
