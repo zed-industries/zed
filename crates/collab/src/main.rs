@@ -119,7 +119,7 @@ pub fn init_tracing(config: &Config) -> Option<()> {
     use std::str::FromStr;
     use tracing_opentelemetry::OpenTelemetryLayer;
     use tracing_subscriber::layer::SubscriberExt;
-    let rust_trace = config.rust_log.clone()?;
+    let rust_log = config.rust_log.clone()?;
 
     LogTracer::init().log_err()?;
 
@@ -156,7 +156,7 @@ pub fn init_tracing(config: &Config) -> Option<()> {
             tracing_subscriber::fmt::layer()
                 .event_format(tracing_subscriber::fmt::format().pretty()),
         )
-        .with(EnvFilter::from_str(rust_trace.as_str()).log_err()?);
+        .with(EnvFilter::from_str(rust_log.as_str()).log_err()?);
 
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
