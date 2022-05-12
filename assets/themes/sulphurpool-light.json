@@ -1251,6 +1251,7 @@
       "icon_width": 8
     },
     "row_height": 28,
+    "section_icon_size": 8,
     "header_row": {
       "family": "Zed Mono",
       "color": "#5e6687",

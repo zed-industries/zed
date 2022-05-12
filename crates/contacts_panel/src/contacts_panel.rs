@@ -15,7 +15,7 @@ use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
 use theme::IconButton;
-use workspace::menu::{SelectNext, SelectPrev};
+use workspace::menu::{Confirm, SelectNext, SelectPrev};
 use workspace::{AppState, JoinProject};
 
 impl_actions!(
@@ -23,9 +23,16 @@ impl_actions!(
     [RequestContact, RemoveContact, RespondToContactRequest]
 );
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
+enum Section {
+    Requests,
+    Online,
+    Offline,
+}
+
 #[derive(Clone, Debug)]
 enum ContactEntry {
-    Header(&'static str),
+    Header(Section),
     IncomingRequest(Arc<User>),
     OutgoingRequest(Arc<User>),
     Contact(Arc<Contact>),
@@ -38,7 +45,9 @@ pub struct ContactsPanel {
     list_state: ListState,
     user_store: ModelHandle<UserStore>,
     filter_editor: ViewHandle<Editor>,
+    collapsed_sections: Vec<Section>,
     selection: Option<usize>,
+    app_state: Arc<AppState>,
     _maintain_contacts: Subscription,
 }
 
@@ -62,6 +71,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ContactsPanel::clear_filter);
     cx.add_action(ContactsPanel::select_next);
     cx.add_action(ContactsPanel::select_prev);
+    cx.add_action(ContactsPanel::confirm);
 }
 
 impl ContactsPanel {
@@ -97,18 +107,9 @@ impl ContactsPanel {
                     let is_selected = this.selection == Some(ix);
 
                     match &this.entries[ix] {
-                        ContactEntry::Header(text) => {
-                            let header_style =
-                                theme.header_row.style_for(&Default::default(), is_selected);
-                            Label::new(text.to_string(), header_style.text.clone())
-                                .contained()
-                                .aligned()
-                                .left()
-                                .constrained()
-                                .with_height(theme.row_height)
-                                .contained()
-                                .with_style(header_style.container)
-                                .boxed()
+                        ContactEntry::Header(section) => {
+                            let is_collapsed = this.collapsed_sections.contains(&section);
+                            Self::render_header(*section, theme, is_selected, is_collapsed)
                         }
                         ContactEntry::IncomingRequest(user) => Self::render_contact_request(
                             user.clone(),
@@ -153,15 +154,62 @@ impl ContactsPanel {
                 }
             }),
             selection: None,
+            collapsed_sections: Default::default(),
             entries: Default::default(),
             match_candidates: Default::default(),
             filter_editor: user_query_editor,
             _maintain_contacts: cx
                 .observe(&app_state.user_store, |this, _, cx| this.update_entries(cx)),
             user_store: app_state.user_store.clone(),
+            app_state,
         };
         this.update_entries(cx);
         this
+    }
+
+    fn render_header(
+        section: Section,
+        theme: &theme::ContactsPanel,
+        is_selected: bool,
+        is_collapsed: bool,
+    ) -> ElementBox {
+        let header_style = theme.header_row.style_for(&Default::default(), is_selected);
+        let text = match section {
+            Section::Requests => "Requests",
+            Section::Online => "Online",
+            Section::Offline => "Offline",
+        };
+        let icon_size = theme.section_icon_size;
+        Flex::row()
+            .with_child(
+                Svg::new(if is_collapsed {
+                    "icons/disclosure-closed.svg"
+                } else {
+                    "icons/disclosure-open.svg"
+                })
+                .with_color(header_style.text.color)
+                .constrained()
+                .with_max_width(icon_size)
+                .with_max_height(icon_size)
+                .aligned()
+                .constrained()
+                .with_width(icon_size)
+                .boxed(),
+            )
+            .with_child(
+                Label::new(text.to_string(), header_style.text.clone())
+                    .aligned()
+                    .left()
+                    .contained()
+                    .with_margin_left(theme.contact_username.container.margin.left)
+                    .flex(1., true)
+                    .boxed(),
+            )
+            .constrained()
+            .with_height(theme.row_height)
+            .contained()
+            .with_style(header_style.container)
+            .boxed()
     }
 
     fn render_contact(
@@ -507,8 +555,10 @@ impl ContactsPanel {
         }
 
         if !request_entries.is_empty() {
-            self.entries.push(ContactEntry::Header("Requests"));
-            self.entries.append(&mut request_entries);
+            self.entries.push(ContactEntry::Header(Section::Requests));
+            if !self.collapsed_sections.contains(&Section::Requests) {
+                self.entries.append(&mut request_entries);
+            }
         }
 
         let contacts = user_store.contacts();
@@ -538,22 +588,27 @@ impl ContactsPanel {
                 .iter()
                 .partition::<Vec<_>, _>(|mat| contacts[mat.candidate_id].online);
 
-            for (matches, name) in [(online_contacts, "Online"), (offline_contacts, "Offline")] {
+            for (matches, section) in [
+                (online_contacts, Section::Online),
+                (offline_contacts, Section::Offline),
+            ] {
                 if !matches.is_empty() {
-                    self.entries.push(ContactEntry::Header(name));
-                    for mat in matches {
-                        let contact = &contacts[mat.candidate_id];
-                        self.entries.push(ContactEntry::Contact(contact.clone()));
-                        self.entries
-                            .extend(contact.projects.iter().enumerate().filter_map(
-                                |(ix, project)| {
-                                    if project.worktree_root_names.is_empty() {
-                                        None
-                                    } else {
-                                        Some(ContactEntry::ContactProject(contact.clone(), ix))
-                                    }
-                                },
-                            ));
+                    self.entries.push(ContactEntry::Header(section));
+                    if !self.collapsed_sections.contains(&section) {
+                        for mat in matches {
+                            let contact = &contacts[mat.candidate_id];
+                            self.entries.push(ContactEntry::Contact(contact.clone()));
+                            self.entries
+                                .extend(contact.projects.iter().enumerate().filter_map(
+                                    |(ix, project)| {
+                                        if project.worktree_root_names.is_empty() {
+                                            None
+                                        } else {
+                                            Some(ContactEntry::ContactProject(contact.clone(), ix))
+                                        }
+                                    },
+                                ));
+                        }
                     }
                 }
             }
@@ -623,6 +678,32 @@ impl ContactsPanel {
         }
         cx.notify();
         self.list_state.reset(self.entries.len());
+    }
+
+    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+        if let Some(selection) = self.selection {
+            if let Some(entry) = self.entries.get(selection) {
+                match entry {
+                    ContactEntry::Header(section) => {
+                        if let Some(ix) = self.collapsed_sections.iter().position(|s| s == section)
+                        {
+                            self.collapsed_sections.remove(ix);
+                        } else {
+                            self.collapsed_sections.push(*section);
+                        }
+                        self.update_entries(cx);
+                    }
+                    ContactEntry::ContactProject(contact, project_ix) => {
+                        cx.dispatch_global_action(JoinProject {
+                            project_id: contact.projects[*project_ix].id,
+                            app_state: self.app_state.clone(),
+                        })
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+        }
     }
 }
 
@@ -706,9 +787,9 @@ impl View for ContactsPanel {
 impl PartialEq for ContactEntry {
     fn eq(&self, other: &Self) -> bool {
         match self {
-            ContactEntry::Header(name_1) => {
-                if let ContactEntry::Header(name_2) = other {
-                    return name_1 == name_2;
+            ContactEntry::Header(section_1) => {
+                if let ContactEntry::Header(section_2) = other {
+                    return section_1 == section_2;
                 }
             }
             ContactEntry::IncomingRequest(user_1) => {
@@ -816,7 +897,7 @@ mod tests {
             &[
                 "+",
                 "v Requests",
-                "  incoming user_one  <=== selected",
+                "  incoming user_one",
                 "  outgoing user_two",
                 "v Online",
                 "  user_four",
@@ -838,41 +919,41 @@ mod tests {
             render_to_strings(&panel, cx),
             &[
                 "+",
-                "Online",
+                "v Online",
+                "  user_four",
+                "    dir2",
+                "v Offline",
+                "  user_five",
+            ]
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.select_next(&Default::default(), cx);
+        });
+        assert_eq!(
+            render_to_strings(&panel, cx),
+            &[
+                "+",
+                "v Online  <=== selected",
+                "  user_four",
+                "    dir2",
+                "v Offline",
+                "  user_five",
+            ]
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.select_next(&Default::default(), cx);
+        });
+        assert_eq!(
+            render_to_strings(&panel, cx),
+            &[
+                "+",
+                "v Online",
                 "  user_four  <=== selected",
                 "    dir2",
-                "Offline",
+                "v Offline",
                 "  user_five",
-            ]
-        );
-
-        panel.update(cx, |panel, cx| {
-            panel.select_next(&Default::default(), cx);
-        });
-        assert_eq!(
-            render_to_strings(&panel, cx),
-            &[
-                "+",
-                "Online",
-                "  user_four",
-                "    dir2  <=== selected",
-                "Offline",
-                "  user_five",
-            ]
-        );
-
-        panel.update(cx, |panel, cx| {
-            panel.select_next(&Default::default(), cx);
-        });
-        assert_eq!(
-            render_to_strings(&panel, cx),
-            &[
-                "+",
-                "Online",
-                "  user_four",
-                "    dir2",
-                "Offline",
-                "  user_five  <=== selected",
             ]
         );
     }
@@ -881,25 +962,38 @@ mod tests {
         panel.read_with(cx, |panel, _| {
             let mut entries = Vec::new();
             entries.push("+".to_string());
-            entries.extend(panel.entries.iter().map(|entry| match entry {
-                ContactEntry::Header(name) => {
-                    format!("{}", name)
+            entries.extend(panel.entries.iter().enumerate().map(|(ix, entry)| {
+                let mut string = match entry {
+                    ContactEntry::Header(name) => {
+                        let icon = if panel.collapsed_sections.contains(name) {
+                            ">"
+                        } else {
+                            "v"
+                        };
+                        format!("{} {:?}", icon, name)
+                    }
+                    ContactEntry::IncomingRequest(user) => {
+                        format!("  incoming {}", user.github_login)
+                    }
+                    ContactEntry::OutgoingRequest(user) => {
+                        format!("  outgoing {}", user.github_login)
+                    }
+                    ContactEntry::Contact(contact) => {
+                        format!("  {}", contact.user.github_login)
+                    }
+                    ContactEntry::ContactProject(contact, project_ix) => {
+                        format!(
+                            "    {}",
+                            contact.projects[*project_ix].worktree_root_names.join(", ")
+                        )
+                    }
+                };
+
+                if panel.selection == Some(ix) {
+                    string.push_str("  <=== selected");
                 }
-                ContactEntry::IncomingRequest(user) => {
-                    format!("  incoming {}", user.github_login)
-                }
-                ContactEntry::OutgoingRequest(user) => {
-                    format!("  outgoing {}", user.github_login)
-                }
-                ContactEntry::Contact(contact) => {
-                    format!("  {}", contact.user.github_login)
-                }
-                ContactEntry::ContactProject(contact, project_ix) => {
-                    format!(
-                        "    {}",
-                        contact.projects[*project_ix].worktree_root_names.join(", ")
-                    )
-                }
+
+                string
             }));
             entries
         })

@@ -68,6 +68,7 @@ export default function contactsPanel(theme: Theme) {
       iconWidth: 8,
     },
     rowHeight: 28,
+    sectionIconSize: 8,
     headerRow: {
       ...text(theme, "mono", "secondary", { size: "sm" }),
       margin: { top: 14 },
