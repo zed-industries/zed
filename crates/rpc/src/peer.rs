@@ -190,8 +190,8 @@ impl Peer {
                             },
                         },
                         incoming = read_message => {
+                            let incoming = incoming.context("error reading rpc message from socket")?;
                             tracing::debug!(%connection_id, "incoming rpc message: received");
-                            let incoming = incoming.context("received invalid RPC message")?;
                             tracing::debug!(%connection_id, "receive timeout: resetting");
                             receive_timeout.set(create_timer(RECEIVE_TIMEOUT).fuse());
                             if let proto::Message::Envelope(incoming) = incoming {

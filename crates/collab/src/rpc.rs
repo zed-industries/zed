@@ -289,7 +289,7 @@ impl Server {
                 futures::select_biased! {
                     result = handle_io => {
                         if let Err(error) = result {
-                            tracing::error!(%error, %user_id, %login, %connection_id, %address, "error handling I/O");
+                            tracing::error!(?error, %user_id, %login, %connection_id, %address, "error handling I/O");
                         }
                         break;
                     }
@@ -327,7 +327,7 @@ impl Server {
 
             tracing::info!(%user_id, %login, %connection_id, %address, "signing out");
             if let Err(error) = this.sign_out(connection_id).await {
-                tracing::error!(%user_id, %login, %connection_id, %address, %error, "error signing out");
+                tracing::error!(%user_id, %login, %connection_id, %address, ?error, "error signing out");
             }
 
             Ok(())
