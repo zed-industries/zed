@@ -3,7 +3,7 @@ use std::ops::{Deref, Range};
 use collections::BTreeMap;
 use itertools::{Either, Itertools};
 
-use editor::display_map::ToDisplayPoint;
+use editor::{display_map::ToDisplayPoint, Autoscroll};
 use gpui::{json::json, keymap::Keystroke, ViewHandle};
 use indoc::indoc;
 use language::Selection;
@@ -128,7 +128,7 @@ impl<'a> VimTestContext<'a> {
             let (unmarked_text, markers) = marked_text(&text);
             editor.set_text(unmarked_text, cx);
             let cursor_offset = markers[0];
-            editor.change_selections(true, cx, |s| {
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.replace_cursors_with(|map| vec![cursor_offset.to_display_point(map)])
             });
         })

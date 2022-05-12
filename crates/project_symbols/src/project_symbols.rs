@@ -145,8 +145,8 @@ impl ProjectSymbolsView {
 
                         let editor = workspace.open_project_item::<Editor>(buffer, cx);
                         editor.update(cx, |editor, cx| {
-                            editor.change_selections(true, cx, |s| {
-                                s.select_ranges([position..position], Some(Autoscroll::Center))
+                            editor.change_selections(Some(Autoscroll::Center), cx, |s| {
+                                s.select_ranges([position..position])
                             });
                         });
                     });

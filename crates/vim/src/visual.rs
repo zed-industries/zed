@@ -1,4 +1,4 @@
-use editor::Bias;
+use editor::{Autoscroll, Bias};
 use gpui::{actions, MutableAppContext, ViewContext};
 use workspace::Workspace;
 
@@ -14,7 +14,7 @@ pub fn init(cx: &mut MutableAppContext) {
 pub fn visual_motion(motion: Motion, cx: &mut MutableAppContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
-            editor.change_selections(true, cx, |s| {
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
                     let (new_head, goal) = motion.move_point(map, selection.head(), selection.goal);
                     let new_head = map.clip_at_line_end(new_head);
@@ -42,7 +42,7 @@ pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspac
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
-            editor.change_selections(true, cx, |s| {
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
                     if !selection.reversed {
                         // Head was at the end of the selection, and now is at the start. We need to move the end
@@ -63,7 +63,7 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
         vim.switch_mode(Mode::Normal, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
-            editor.change_selections(true, cx, |s| {
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
                     if !selection.reversed {
                         // Head was at the end of the selection, and now is at the start. We need to move the end
@@ -77,7 +77,7 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
 
             // Fixup cursor position after the deletion
             editor.set_clip_at_line_ends(true, cx);
-            editor.change_selections(true, cx, |s| {
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
                     let mut cursor = selection.head();
                     cursor = map.clip_point(cursor, Bias::Left);

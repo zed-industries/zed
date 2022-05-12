@@ -462,8 +462,8 @@ impl ProjectSearchView {
             let range_to_select = model.match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
                 editor.unfold_ranges([range_to_select.clone()], false, cx);
-                editor.change_selections(true, cx, |s| {
-                    s.select_ranges([range_to_select], Some(Autoscroll::Fit))
+                editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                    s.select_ranges([range_to_select])
                 });
             });
         }
@@ -479,9 +479,7 @@ impl ProjectSearchView {
     fn focus_results_editor(&self, cx: &mut ViewContext<Self>) {
         self.query_editor.update(cx, |query_editor, cx| {
             let cursor = query_editor.selections.newest_anchor().head();
-            query_editor.change_selections(true, cx, |s| {
-                s.select_ranges([cursor.clone()..cursor], None)
-            });
+            query_editor.change_selections(None, cx, |s| s.select_ranges([cursor.clone()..cursor]));
         });
         cx.focus(&self.results_editor);
     }
@@ -493,8 +491,8 @@ impl ProjectSearchView {
         } else {
             self.results_editor.update(cx, |editor, cx| {
                 if reset_selections {
-                    editor.change_selections(true, cx, |s| {
-                        s.select_ranges(match_ranges.first().cloned(), Some(Autoscroll::Fit))
+                    editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                        s.select_ranges(match_ranges.first().cloned())
                     });
                 }
                 editor.highlight_background::<Self>(

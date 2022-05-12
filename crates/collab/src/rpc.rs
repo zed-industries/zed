@@ -3001,7 +3001,7 @@ mod tests {
 
         // Type a completion trigger character as the guest.
         editor_b.update(cx_b, |editor, cx| {
-            editor.change_selections(true, cx, |s| s.select_ranges([13..13], None));
+            editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
             editor.handle_input(&Input(".".into()), cx);
             cx.focus(&editor_b);
         });
@@ -4213,8 +4213,8 @@ mod tests {
 
         // Move cursor to a location that contains code actions.
         editor_b.update(cx_b, |editor, cx| {
-            editor.change_selections(true, cx, |s| {
-                s.select_ranges([Point::new(1, 31)..Point::new(1, 31)], None)
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges([Point::new(1, 31)..Point::new(1, 31)])
             });
             cx.focus(&editor_b);
         });
@@ -4452,7 +4452,7 @@ mod tests {
 
         // Move cursor to a location that can be renamed.
         let prepare_rename = editor_b.update(cx_b, |editor, cx| {
-            editor.change_selections(true, cx, |s| s.select_ranges([7..7], None));
+            editor.change_selections(None, cx, |s| s.select_ranges([7..7]));
             editor.rename(&Rename, cx).unwrap()
         });
 
@@ -5473,10 +5473,10 @@ mod tests {
 
         // When client B starts following client A, all visible view states are replicated to client B.
         editor_a1.update(cx_a, |editor, cx| {
-            editor.change_selections(true, cx, |s| s.select_ranges([0..1], None))
+            editor.change_selections(None, cx, |s| s.select_ranges([0..1]))
         });
         editor_a2.update(cx_a, |editor, cx| {
-            editor.change_selections(true, cx, |s| s.select_ranges([2..3], None))
+            editor.change_selections(None, cx, |s| s.select_ranges([2..3]))
         });
         workspace_b
             .update(cx_b, |workspace, cx| {
@@ -5542,7 +5542,7 @@ mod tests {
 
         // Changes to client A's editor are reflected on client B.
         editor_a1.update(cx_a, |editor, cx| {
-            editor.change_selections(true, cx, |s| s.select_ranges([1..1, 2..2], None));
+            editor.change_selections(None, cx, |s| s.select_ranges([1..1, 2..2]));
         });
         editor_b1
             .condition(cx_b, |editor, cx| {
@@ -5556,7 +5556,7 @@ mod tests {
             .await;
 
         editor_a1.update(cx_a, |editor, cx| {
-            editor.change_selections(true, cx, |s| s.select_ranges([3..3], None));
+            editor.change_selections(None, cx, |s| s.select_ranges([3..3]));
             editor.set_scroll_position(vec2f(0., 100.), cx);
         });
         editor_b1

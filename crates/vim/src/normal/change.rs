@@ -1,5 +1,5 @@
 use crate::{motion::Motion, state::Mode, Vim};
-use editor::{char_kind, movement};
+use editor::{char_kind, movement, Autoscroll};
 use gpui::{impl_actions, MutableAppContext, ViewContext};
 use serde::Deserialize;
 use workspace::Workspace;
@@ -22,7 +22,7 @@ pub fn change_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
         editor.transact(cx, |editor, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
             editor.set_clip_at_line_ends(false, cx);
-            editor.change_selections(true, cx, |s| {
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
                     motion.expand_selection(map, selection, false);
                 });
@@ -48,7 +48,7 @@ fn change_word(
             editor.transact(cx, |editor, cx| {
                 // We are swapping to insert mode anyway. Just set the line end clipping behavior now
                 editor.set_clip_at_line_ends(false, cx);
-                editor.change_selections(true, cx, |s| {
+                editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                     s.move_with(|map, selection| {
                         if selection.end.column() == map.line_len(selection.end.row()) {
                             return;

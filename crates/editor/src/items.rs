@@ -276,8 +276,8 @@ impl Item for Editor {
                 let nav_history = self.nav_history.take();
                 self.scroll_position = data.scroll_position;
                 self.scroll_top_anchor = scroll_top_anchor;
-                self.change_selections(true, cx, |s| {
-                    s.select_ranges([offset..offset], Some(Autoscroll::Fit))
+                self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                    s.select_ranges([offset..offset])
                 });
                 self.nav_history = nav_history;
                 true

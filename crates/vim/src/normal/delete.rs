@@ -1,6 +1,6 @@
 use crate::{motion::Motion, Vim};
 use collections::HashMap;
-use editor::Bias;
+use editor::{Autoscroll, Bias};
 use gpui::MutableAppContext;
 
 pub fn delete_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
@@ -8,7 +8,7 @@ pub fn delete_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
         editor.transact(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             let mut original_columns: HashMap<_, _> = Default::default();
-            editor.change_selections(true, cx, |s| {
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
                     let original_head = selection.head();
                     motion.expand_selection(map, selection, true);
@@ -19,7 +19,7 @@ pub fn delete_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
 
             // Fixup cursor position after the deletion
             editor.set_clip_at_line_ends(true, cx);
-            editor.change_selections(true, cx, |s| {
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
                     let mut cursor = selection.head();
                     if motion.linewise() {

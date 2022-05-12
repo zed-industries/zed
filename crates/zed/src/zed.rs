@@ -309,7 +309,7 @@ fn open_config_file(
 mod tests {
     use super::*;
     use assets::Assets;
-    use editor::{DisplayPoint, Editor};
+    use editor::{Autoscroll, DisplayPoint, Editor};
     use gpui::{AssetSource, MutableAppContext, TestAppContext, ViewHandle};
     use project::{Fs, ProjectPath};
     use serde_json::json;
@@ -962,7 +962,7 @@ mod tests {
             .downcast::<Editor>()
             .unwrap();
         editor1.update(cx, |editor, cx| {
-            editor.change_selections(true, cx, |s| {
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(10, 0)..DisplayPoint::new(10, 0)])
             });
         });
@@ -981,7 +981,7 @@ mod tests {
 
         editor3
             .update(cx, |editor, cx| {
-                editor.change_selections(true, cx, |s| {
+                editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                     s.select_display_ranges([DisplayPoint::new(12, 0)..DisplayPoint::new(12, 0)])
                 });
                 editor.newline(&Default::default(), cx);
@@ -1124,19 +1124,19 @@ mod tests {
         // Modify file to collapse multiple nav history entries into the same location.
         // Ensure we don't visit the same location twice when navigating.
         editor1.update(cx, |editor, cx| {
-            editor.change_selections(true, cx, |s| {
+            editor.change_selections(None, cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)])
             })
         });
 
         for _ in 0..5 {
             editor1.update(cx, |editor, cx| {
-                editor.change_selections(true, cx, |s| {
+                editor.change_selections(None, cx, |s| {
                     s.select_display_ranges([DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)])
                 });
             });
             editor1.update(cx, |editor, cx| {
-                editor.change_selections(true, cx, |s| {
+                editor.change_selections(None, cx, |s| {
                     s.select_display_ranges([DisplayPoint::new(13, 0)..DisplayPoint::new(13, 0)])
                 })
             });
@@ -1144,7 +1144,7 @@ mod tests {
 
         editor1.update(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
-                editor.change_selections(true, cx, |s| {
+                editor.change_selections(None, cx, |s| {
                     s.select_display_ranges([DisplayPoint::new(2, 0)..DisplayPoint::new(14, 0)])
                 });
                 editor.insert("", cx);
@@ -1152,7 +1152,7 @@ mod tests {
         });
 
         editor1.update(cx, |editor, cx| {
-            editor.change_selections(true, cx, |s| {
+            editor.change_selections(None, cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
             })
         });

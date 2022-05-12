@@ -215,8 +215,8 @@ impl PickerDelegate for OutlineView {
             if let Some(rows) = active_editor.highlighted_rows() {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
                 let position = DisplayPoint::new(rows.start, 0).to_point(&snapshot);
-                active_editor.change_selections(true, cx, |s| {
-                    s.select_ranges([position..position], Some(Autoscroll::Center))
+                active_editor.change_selections(Some(Autoscroll::Center), cx, |s| {
+                    s.select_ranges([position..position])
                 });
             }
         });

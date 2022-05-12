@@ -5,7 +5,7 @@ use collections::{BTreeSet, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, RenderBlock},
-    highlight_diagnostic_message, Editor, ExcerptId, MultiBuffer, ToOffset,
+    highlight_diagnostic_message, Autoscroll, Editor, ExcerptId, MultiBuffer, ToOffset,
 };
 use gpui::{
     actions, elements::*, fonts::TextStyle, serde_json, AnyViewHandle, AppContext, Entity,
@@ -418,7 +418,7 @@ impl ProjectDiagnosticsEditor {
             } else {
                 groups = self.path_states.get(path_ix)?.diagnostic_groups.as_slice();
                 new_excerpt_ids_by_selection_id =
-                    editor.change_selections(true, cx, |s| s.refresh());
+                    editor.change_selections(Some(Autoscroll::Fit), cx, |s| s.refresh());
                 selections = editor
                     .selections
                     .interleaved::<usize>(&editor.buffer().read(cx).read(cx));
@@ -444,8 +444,8 @@ impl ProjectDiagnosticsEditor {
                     }
                 }
             }
-            editor.change_selections(true, cx, |s| {
-                s.select(selections, None);
+            editor.change_selections(None, cx, |s| {
+                s.select(selections);
             });
             Some(())
         });

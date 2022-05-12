@@ -12,8 +12,7 @@ use util::post_inc;
 
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
-    Anchor, Autoscroll, DisplayPoint, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode,
-    ToOffset,
+    Anchor, DisplayPoint, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode, ToOffset,
 };
 
 #[derive(Clone)]
@@ -79,10 +78,10 @@ impl SelectionsCollection {
 
     pub fn interleaved<'a, D>(&self, buffer: &MultiBufferSnapshot) -> Vec<Selection<D>>
     where
-        D: 'a + TextDimension + Ord + Sub<D, Output = D>,
+        D: 'a + TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
     {
-        let anchor_disjoint = &self.disjoint;
-        let mut disjoint = resolve_multiple::<D, _>(anchor_disjoint.iter(), &buffer).peekable();
+        let disjoint_anchors = &self.disjoint;
+        let mut disjoint = resolve_multiple::<D, _>(disjoint_anchors.iter(), &buffer).peekable();
 
         let mut pending_opt = self.pending::<D>(&buffer);
 
@@ -197,36 +196,31 @@ impl SelectionsCollection {
         self.interleaved(&snapshot).last().unwrap().clone()
     }
 
-    // NOTE do not use. This should only be called from Editor::change_selections.
-    #[deprecated]
-    pub fn change_with<R>(
+    pub(crate) fn change_with<R>(
         &mut self,
         display_map: ModelHandle<DisplayMap>,
         buffer: ModelHandle<MultiBuffer>,
         cx: &mut MutableAppContext,
         change: impl FnOnce(&mut MutableSelectionsCollection) -> R,
-    ) -> (Option<Autoscroll>, R) {
+    ) -> R {
         let mut mutable_collection = MutableSelectionsCollection {
             collection: self,
-            autoscroll: None,
             display_map,
             buffer,
             cx,
         };
 
         let result = change(&mut mutable_collection);
-
         assert!(
             !mutable_collection.disjoint.is_empty() || mutable_collection.pending.is_some(),
             "There must be at least one selection"
         );
-        (mutable_collection.autoscroll, result)
+        result
     }
 }
 
 pub struct MutableSelectionsCollection<'a> {
     collection: &'a mut SelectionsCollection,
-    pub autoscroll: Option<Autoscroll>,
     buffer: ModelHandle<MultiBuffer>,
     display_map: ModelHandle<DisplayMap>,
     cx: &'a mut MutableAppContext,
@@ -307,7 +301,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         }
     }
 
-    pub fn insert_range<T>(&mut self, range: Range<T>, autoscroll: Option<Autoscroll>)
+    pub fn insert_range<T>(&mut self, range: Range<T>)
     where
         T: 'a
             + ToOffset
@@ -335,10 +329,10 @@ impl<'a> MutableSelectionsCollection<'a> {
             reversed,
             goal: SelectionGoal::None,
         });
-        self.select(selections, autoscroll);
+        self.select(selections);
     }
 
-    pub fn select<T>(&mut self, mut selections: Vec<Selection<T>>, autoscroll: Option<Autoscroll>)
+    pub fn select<T>(&mut self, mut selections: Vec<Selection<T>>)
     where
         T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
     {
@@ -360,8 +354,6 @@ impl<'a> MutableSelectionsCollection<'a> {
             }
         }
 
-        self.autoscroll = autoscroll.or(self.autoscroll.take());
-
         self.collection.disjoint = Arc::from_iter(selections.into_iter().map(|selection| {
             let end_bias = if selection.end > selection.start {
                 Bias::Left
@@ -380,46 +372,14 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.collection.pending = None;
     }
 
-    pub fn select_anchors(
-        &mut self,
-        mut selections: Vec<Selection<Anchor>>,
-        autoscroll: Option<Autoscroll>,
-    ) {
+    pub fn select_anchors(&mut self, selections: Vec<Selection<Anchor>>) {
         let buffer = self.buffer.read(self.cx).snapshot(self.cx);
-        selections.sort_unstable_by(|a, b| a.start.cmp(&b.start, &buffer));
-
-        // Merge overlapping selections.
-        let mut i = 1;
-        while i < selections.len() {
-            if selections[i - 1]
-                .end
-                .cmp(&selections[i].start, &buffer)
-                .is_ge()
-            {
-                let removed = selections.remove(i);
-                if removed.start.cmp(&selections[i - 1].start, &buffer).is_lt() {
-                    selections[i - 1].start = removed.start;
-                }
-                if removed.end.cmp(&selections[i - 1].end, &buffer).is_gt() {
-                    selections[i - 1].end = removed.end;
-                }
-            } else {
-                i += 1;
-            }
-        }
-
-        self.autoscroll = autoscroll.or(self.autoscroll.take());
-
-        self.collection.disjoint = Arc::from_iter(
-            selections
-                .into_iter()
-                .map(|selection| reset_biases(selection, &buffer)),
-        );
-
-        self.collection.pending = None;
+        let resolved_selections =
+            resolve_multiple::<usize, _>(&selections, &buffer).collect::<Vec<_>>();
+        self.select(resolved_selections);
     }
 
-    pub fn select_ranges<I, T>(&mut self, ranges: I, autoscroll: Option<Autoscroll>)
+    pub fn select_ranges<I, T>(&mut self, ranges: I)
     where
         I: IntoIterator<Item = Range<T>>,
         T: ToOffset,
@@ -446,14 +406,10 @@ impl<'a> MutableSelectionsCollection<'a> {
             })
             .collect::<Vec<_>>();
 
-        self.select(selections, autoscroll)
+        self.select(selections)
     }
 
-    pub fn select_anchor_ranges<I: IntoIterator<Item = Range<Anchor>>>(
-        &mut self,
-        ranges: I,
-        autoscroll: Option<Autoscroll>,
-    ) {
+    pub fn select_anchor_ranges<I: IntoIterator<Item = Range<Anchor>>>(&mut self, ranges: I) {
         let buffer = self.buffer.read(self.cx).snapshot(self.cx);
         let selections = ranges
             .into_iter()
@@ -476,7 +432,7 @@ impl<'a> MutableSelectionsCollection<'a> {
             })
             .collect::<Vec<_>>();
 
-        self.select_anchors(selections, autoscroll)
+        self.select_anchors(selections)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -505,7 +461,7 @@ impl<'a> MutableSelectionsCollection<'a> {
                 }
             })
             .collect();
-        self.select(selections, None);
+        self.select(selections);
     }
 
     pub fn move_with(
@@ -523,7 +479,7 @@ impl<'a> MutableSelectionsCollection<'a> {
             })
             .collect();
 
-        self.select(selections, Some(Autoscroll::Fit))
+        self.select(selections)
     }
 
     pub fn move_heads_with(
@@ -572,7 +528,7 @@ impl<'a> MutableSelectionsCollection<'a> {
                 }
             })
             .collect();
-        self.select(new_selections, None);
+        self.select(new_selections);
     }
 
     /// Compute new ranges for any selections that were located in excerpts that have
@@ -620,10 +576,7 @@ impl<'a> MutableSelectionsCollection<'a> {
             .collect();
 
         if !adjusted_disjoint.is_empty() {
-            self.select::<usize>(
-                resolve_multiple(adjusted_disjoint.iter(), &buffer).collect(),
-                None,
-            );
+            self.select::<usize>(resolve_multiple(adjusted_disjoint.iter(), &buffer).collect());
         }
 
         if let Some(pending) = pending.as_mut() {
@@ -665,12 +618,16 @@ pub fn resolve_multiple<'a, D, I>(
     snapshot: &MultiBufferSnapshot,
 ) -> impl 'a + Iterator<Item = Selection<D>>
 where
-    D: TextDimension + Ord + Sub<D, Output = D>,
+    D: TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
     I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
 {
     let (to_summarize, selections) = selections.into_iter().tee();
     let mut summaries = snapshot
-        .summaries_for_anchors::<D, _>(to_summarize.flat_map(|s| [&s.start, &s.end]))
+        .summaries_for_anchors::<D, _>(
+            to_summarize
+                .flat_map(|s| [&s.start, &s.end])
+                .collect::<Vec<_>>(),
+        )
         .into_iter();
     selections.map(move |s| Selection {
         id: s.id,
@@ -692,7 +649,7 @@ fn reset_biases(
     mut selection: Selection<Anchor>,
     buffer: &MultiBufferSnapshot,
 ) -> Selection<Anchor> {
-    let end_bias = if selection.end.cmp(&selection.start, buffer).is_gt() {
+    let end_bias = if selection.end.to_offset(buffer) > selection.start.to_offset(buffer) {
         Bias::Left
     } else {
         Bias::Right

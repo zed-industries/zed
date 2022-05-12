@@ -395,8 +395,8 @@ impl BufferSearchBar {
                         );
                         let range_to_select = ranges[new_index].clone();
                         editor.unfold_ranges([range_to_select.clone()], false, cx);
-                        editor.change_selections(true, cx, |s| {
-                            s.select_ranges([range_to_select], Some(Autoscroll::Fit))
+                        editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                            s.select_ranges([range_to_select])
                         });
                     }
                 });
@@ -538,12 +538,11 @@ impl BufferSearchBar {
                                 editor.update(cx, |editor, cx| {
                                     if select_closest_match {
                                         if let Some(match_ix) = this.active_match_index {
-                                            editor.change_selections(true, cx, |s| {
-                                                s.select_ranges(
-                                                    [ranges[match_ix].clone()],
-                                                    Some(Autoscroll::Fit),
-                                                )
-                                            });
+                                            editor.change_selections(
+                                                Some(Autoscroll::Fit),
+                                                cx,
+                                                |s| s.select_ranges([ranges[match_ix].clone()]),
+                                            );
                                         }
                                     }
 
@@ -725,7 +724,7 @@ mod tests {
         });
 
         editor.update(cx, |editor, cx| {
-            editor.change_selections(true, cx, |s| {
+            editor.change_selections(None, cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)])
             });
         });
@@ -810,7 +809,7 @@ mod tests {
         // Park the cursor in between matches and ensure that going to the previous match selects
         // the closest match to the left.
         editor.update(cx, |editor, cx| {
-            editor.change_selections(true, cx, |s| {
+            editor.change_selections(None, cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
             });
         });
@@ -829,7 +828,7 @@ mod tests {
         // Park the cursor in between matches and ensure that going to the next match selects the
         // closest match to the right.
         editor.update(cx, |editor, cx| {
-            editor.change_selections(true, cx, |s| {
+            editor.change_selections(None, cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
             });
         });
@@ -848,7 +847,7 @@ mod tests {
         // Park the cursor after the last match and ensure that going to the previous match selects
         // the last match.
         editor.update(cx, |editor, cx| {
-            editor.change_selections(true, cx, |s| {
+            editor.change_selections(None, cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(3, 60)..DisplayPoint::new(3, 60)])
             });
         });
@@ -867,7 +866,7 @@ mod tests {
         // Park the cursor after the last match and ensure that going to the next match selects the
         // first match.
         editor.update(cx, |editor, cx| {
-            editor.change_selections(true, cx, |s| {
+            editor.change_selections(None, cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(3, 60)..DisplayPoint::new(3, 60)])
             });
         });
@@ -886,7 +885,7 @@ mod tests {
         // Park the cursor before the first match and ensure that going to the previous match
         // selects the last match.
         editor.update(cx, |editor, cx| {
-            editor.change_selections(true, cx, |s| {
+            editor.change_selections(None, cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)])
             });
         });
