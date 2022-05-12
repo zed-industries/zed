@@ -604,6 +604,31 @@ impl<T: Item> WeakItemHandle for WeakViewHandle<T> {
     }
 }
 
+pub trait Notification: View {
+    fn should_dismiss_notification_on_event(&self, event: &<Self as Entity>::Event) -> bool;
+}
+
+pub trait NotificationHandle {
+    fn id(&self) -> usize;
+    fn to_any(&self) -> AnyViewHandle;
+}
+
+impl<T: Notification> NotificationHandle for ViewHandle<T> {
+    fn id(&self) -> usize {
+        self.id()
+    }
+
+    fn to_any(&self) -> AnyViewHandle {
+        self.into()
+    }
+}
+
+impl Into<AnyViewHandle> for &dyn NotificationHandle {
+    fn into(self) -> AnyViewHandle {
+        self.to_any()
+    }
+}
+
 #[derive(Clone)]
 pub struct WorkspaceParams {
     pub project: ModelHandle<Project>,
@@ -683,6 +708,7 @@ pub struct Workspace {
     panes: Vec<ViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
     status_bar: ViewHandle<StatusBar>,
+    notifications: Vec<Box<dyn NotificationHandle>>,
     project: ModelHandle<Project>,
     leader_state: LeaderState,
     follower_states_by_leader: FollowerStatesByLeader,
@@ -791,6 +817,7 @@ impl Workspace {
             panes: vec![pane.clone()],
             active_pane: pane.clone(),
             status_bar,
+            notifications: Default::default(),
             client: params.client.clone(),
             remote_entity_subscription: None,
             user_store: params.user_store.clone(),
@@ -943,7 +970,7 @@ impl Workspace {
     ) -> Option<ViewHandle<V>>
     where
         V: 'static + View,
-        F: FnOnce(&mut ViewContext<Self>, &mut Self) -> ViewHandle<V>,
+        F: FnOnce(&mut Self, &mut ViewContext<Self>) -> ViewHandle<V>,
     {
         cx.notify();
         // Whatever modal was visible is getting clobbered. If its the same type as V, then return
@@ -953,7 +980,7 @@ impl Workspace {
             cx.focus_self();
             Some(already_open_modal)
         } else {
-            let modal = add_view(cx, self);
+            let modal = add_view(self, cx);
             cx.focus(&modal);
             self.modal = Some(modal.into());
             None
@@ -969,6 +996,32 @@ impl Workspace {
             cx.focus(&self.active_pane);
             cx.notify();
         }
+    }
+
+    pub fn show_notification<V: Notification>(
+        &mut self,
+        notification: ViewHandle<V>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        cx.subscribe(&notification, |this, handle, event, cx| {
+            if handle.read(cx).should_dismiss_notification_on_event(event) {
+                this.dismiss_notification(handle.id(), cx);
+            }
+        })
+        .detach();
+        self.notifications.push(Box::new(notification));
+        cx.notify();
+    }
+
+    fn dismiss_notification(&mut self, id: usize, cx: &mut ViewContext<Self>) {
+        self.notifications.retain(|handle| {
+            if handle.id() == id {
+                cx.notify();
+                false
+            } else {
+                true
+            }
+        });
     }
 
     pub fn items<'a>(
@@ -1049,7 +1102,7 @@ impl Workspace {
         };
         let active_item = sidebar.update(cx, |sidebar, cx| {
             sidebar.toggle_item(action.item_index, cx);
-            sidebar.active_item().cloned()
+            sidebar.active_item().map(|item| item.to_any())
         });
         if let Some(active_item) = active_item {
             cx.focus(active_item);
@@ -1070,7 +1123,7 @@ impl Workspace {
         };
         let active_item = sidebar.update(cx, |sidebar, cx| {
             sidebar.activate_item(action.item_index, cx);
-            sidebar.active_item().cloned()
+            sidebar.active_item().map(|item| item.to_any())
         });
         if let Some(active_item) = active_item {
             if active_item.is_focused(cx) {
@@ -1703,6 +1756,30 @@ impl Workspace {
         }
     }
 
+    fn render_notifications(&self, theme: &theme::Workspace) -> Option<ElementBox> {
+        if self.notifications.is_empty() {
+            None
+        } else {
+            Some(
+                Flex::column()
+                    .with_children(self.notifications.iter().map(|notification| {
+                        ChildView::new(notification.as_ref())
+                            .contained()
+                            .with_style(theme.notification)
+                            .boxed()
+                    }))
+                    .constrained()
+                    .with_width(theme.notifications.width)
+                    .contained()
+                    .with_style(theme.notifications.container)
+                    .aligned()
+                    .bottom()
+                    .right()
+                    .boxed(),
+            )
+        }
+    }
+
     // RPC handlers
 
     async fn handle_follow(
@@ -2037,6 +2114,7 @@ impl View for Workspace {
                                     .top()
                                     .boxed()
                             }))
+                            .with_children(self.render_notifications(&theme.workspace))
                             .flex(1.0, true)
                             .boxed(),
                     )

@@ -66,7 +66,7 @@ impl ThemeSelector {
 
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
         let themes = workspace.themes();
-        workspace.toggle_modal(cx, |cx, _| {
+        workspace.toggle_modal(cx, |_, cx| {
             let this = cx.add_view(|cx| Self::new(themes, cx));
             cx.subscribe(&this, Self::on_event).detach();
             this

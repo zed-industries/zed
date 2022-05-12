@@ -1,6 +1,8 @@
 mod contact_finder;
+mod contact_notification;
 
-use client::{Contact, User, UserStore};
+use client::{Contact, ContactEventKind, User, UserStore};
+use contact_notification::ContactNotification;
 use editor::{Cancel, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
@@ -8,14 +10,14 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     impl_actions,
     platform::CursorStyle,
-    Element, ElementBox, Entity, LayoutContext, ModelHandle, MutableAppContext, RenderContext,
-    Subscription, View, ViewContext, ViewHandle,
+    AppContext, Element, ElementBox, Entity, LayoutContext, ModelHandle, MutableAppContext,
+    RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
 use theme::IconButton;
-use workspace::{AppState, JoinProject};
+use workspace::{sidebar::SidebarItem, AppState, JoinProject, Workspace};
 
 impl_actions!(
     contacts_panel,
@@ -53,6 +55,7 @@ pub struct RespondToContactRequest {
 
 pub fn init(cx: &mut MutableAppContext) {
     contact_finder::init(cx);
+    contact_notification::init(cx);
     cx.add_action(ContactsPanel::request_contact);
     cx.add_action(ContactsPanel::remove_contact);
     cx.add_action(ContactsPanel::respond_to_contact_request);
@@ -60,7 +63,11 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 impl ContactsPanel {
-    pub fn new(app_state: Arc<AppState>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        app_state: Arc<AppState>,
+        workspace: WeakViewHandle<Workspace>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let user_query_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(
                 Some(|theme| theme.contacts_panel.user_query_editor.clone()),
@@ -73,6 +80,27 @@ impl ContactsPanel {
         cx.subscribe(&user_query_editor, |this, _, event, cx| {
             if let editor::Event::BufferEdited = event {
                 this.update_entries(cx)
+            }
+        })
+        .detach();
+
+        cx.subscribe(&app_state.user_store, {
+            let user_store = app_state.user_store.downgrade();
+            move |_, _, event, cx| {
+                if let Some((workspace, user_store)) =
+                    workspace.upgrade(cx).zip(user_store.upgrade(cx))
+                {
+                    workspace.update(cx, |workspace, cx| match event.kind {
+                        ContactEventKind::Requested | ContactEventKind::Accepted => workspace
+                            .show_notification(
+                                cx.add_view(|cx| {
+                                    ContactNotification::new(event.clone(), user_store, cx)
+                                }),
+                                cx,
+                            ),
+                        _ => {}
+                    });
+                }
             }
         })
         .detach();
@@ -316,7 +344,7 @@ impl ContactsPanel {
         is_incoming: bool,
         cx: &mut LayoutContext,
     ) -> ElementBox {
-        enum Reject {}
+        enum Decline {}
         enum Accept {}
         enum Cancel {}
 
@@ -345,13 +373,13 @@ impl ContactsPanel {
 
         if is_incoming {
             row.add_children([
-                MouseEventHandler::new::<Reject, _, _>(user.id as usize, cx, |mouse_state, _| {
+                MouseEventHandler::new::<Decline, _, _>(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {
                         &theme.disabled_contact_button
                     } else {
                         &theme.contact_button.style_for(mouse_state, false)
                     };
-                    render_icon_button(button_style, "icons/reject.svg")
+                    render_icon_button(button_style, "icons/decline.svg")
                         .aligned()
                         .flex_float()
                         .boxed()
@@ -393,7 +421,7 @@ impl ContactsPanel {
                     } else {
                         &theme.contact_button.style_for(mouse_state, false)
                     };
-                    render_icon_button(button_style, "icons/reject.svg")
+                    render_icon_button(button_style, "icons/decline.svg")
                         .aligned()
                         .flex_float()
                         .boxed()
@@ -565,6 +593,16 @@ impl ContactsPanel {
     fn clear_filter(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         self.filter_editor
             .update(cx, |editor, cx| editor.set_text("", cx));
+    }
+}
+
+impl SidebarItem for ContactsPanel {
+    fn should_show_badge(&self, cx: &AppContext) -> bool {
+        !self
+            .user_store
+            .read(cx)
+            .incoming_contact_requests()
+            .is_empty()
     }
 }
 

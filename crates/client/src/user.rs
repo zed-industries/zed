@@ -54,10 +54,21 @@ pub struct UserStore {
     _maintain_current_user: Task<()>,
 }
 
-pub enum Event {}
+#[derive(Clone)]
+pub struct ContactEvent {
+    pub user: Arc<User>,
+    pub kind: ContactEventKind,
+}
+
+#[derive(Clone, Copy)]
+pub enum ContactEventKind {
+    Requested,
+    Accepted,
+    Cancelled,
+}
 
 impl Entity for UserStore {
-    type Event = Event;
+    type Event = ContactEvent;
 }
 
 enum UpdateContacts {
@@ -175,19 +186,23 @@ impl UserStore {
                     // No need to paralellize here
                     let mut updated_contacts = Vec::new();
                     for contact in message.contacts {
-                        updated_contacts.push(Arc::new(
-                            Contact::from_proto(contact, &this, &mut cx).await?,
+                        let should_notify = contact.should_notify;
+                        updated_contacts.push((
+                            Arc::new(Contact::from_proto(contact, &this, &mut cx).await?),
+                            should_notify,
                         ));
                     }
 
                     let mut incoming_requests = Vec::new();
                     for request in message.incoming_requests {
-                        incoming_requests.push(
-                            this.update(&mut cx, |this, cx| {
-                                this.fetch_user(request.requester_id, cx)
-                            })
-                            .await?,
-                        );
+                        incoming_requests.push({
+                            let user = this
+                                .update(&mut cx, |this, cx| {
+                                    this.fetch_user(request.requester_id, cx)
+                                })
+                                .await?;
+                            (user, request.should_notify)
+                        });
                     }
 
                     let mut outgoing_requests = Vec::new();
@@ -210,7 +225,13 @@ impl UserStore {
                         this.contacts
                             .retain(|contact| !removed_contacts.contains(&contact.user.id));
                         // Update existing contacts and insert new ones
-                        for updated_contact in updated_contacts {
+                        for (updated_contact, should_notify) in updated_contacts {
+                            if should_notify {
+                                cx.emit(ContactEvent {
+                                    user: updated_contact.user.clone(),
+                                    kind: ContactEventKind::Accepted,
+                                });
+                            }
                             match this.contacts.binary_search_by_key(
                                 &&updated_contact.user.github_login,
                                 |contact| &contact.user.github_login,
@@ -221,17 +242,33 @@ impl UserStore {
                         }
 
                         // Remove incoming contact requests
-                        this.incoming_contact_requests
-                            .retain(|user| !removed_incoming_requests.contains(&user.id));
+                        this.incoming_contact_requests.retain(|user| {
+                            if removed_incoming_requests.contains(&user.id) {
+                                cx.emit(ContactEvent {
+                                    user: user.clone(),
+                                    kind: ContactEventKind::Cancelled,
+                                });
+                                false
+                            } else {
+                                true
+                            }
+                        });
                         // Update existing incoming requests and insert new ones
-                        for request in incoming_requests {
+                        for (user, should_notify) in incoming_requests {
+                            if should_notify {
+                                cx.emit(ContactEvent {
+                                    user: user.clone(),
+                                    kind: ContactEventKind::Requested,
+                                });
+                            }
+
                             match this
                                 .incoming_contact_requests
-                                .binary_search_by_key(&&request.github_login, |contact| {
+                                .binary_search_by_key(&&user.github_login, |contact| {
                                     &contact.github_login
                                 }) {
-                                Ok(ix) => this.incoming_contact_requests[ix] = request,
-                                Err(ix) => this.incoming_contact_requests.insert(ix, request),
+                                Ok(ix) => this.incoming_contact_requests[ix] = user,
+                                Err(ix) => this.incoming_contact_requests.insert(ix, user),
                             }
                         }
 
@@ -334,11 +371,29 @@ impl UserStore {
                 response: if accept {
                     proto::ContactRequestResponse::Accept
                 } else {
-                    proto::ContactRequestResponse::Reject
+                    proto::ContactRequestResponse::Decline
                 } as i32,
             },
             cx,
         )
+    }
+
+    pub fn dismiss_contact_request(
+        &mut self,
+        requester_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.upgrade();
+        cx.spawn_weak(|_, _| async move {
+            client
+                .ok_or_else(|| anyhow!("can't upgrade client reference"))?
+                .request(proto::RespondToContactRequest {
+                    requester_id,
+                    response: proto::ContactRequestResponse::Dismiss as i32,
+                })
+                .await?;
+            Ok(())
+        })
     }
 
     fn perform_contact_request<T: RequestMessage>(

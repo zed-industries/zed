@@ -217,33 +217,46 @@ impl Store {
             .is_empty()
     }
 
-    pub fn build_initial_contacts_update(&self, contacts: db::Contacts) -> proto::UpdateContacts {
+    pub fn build_initial_contacts_update(
+        &self,
+        contacts: Vec<db::Contact>,
+    ) -> proto::UpdateContacts {
         let mut update = proto::UpdateContacts::default();
-        for user_id in contacts.current {
-            update.contacts.push(self.contact_for_user(user_id));
-        }
 
-        for request in contacts.incoming_requests {
-            update
-                .incoming_requests
-                .push(proto::IncomingContactRequest {
-                    requester_id: request.requester_id.to_proto(),
-                    should_notify: request.should_notify,
-                })
-        }
-
-        for requested_user_id in contacts.outgoing_requests {
-            update.outgoing_requests.push(requested_user_id.to_proto())
+        for contact in contacts {
+            match contact {
+                db::Contact::Accepted {
+                    user_id,
+                    should_notify,
+                } => {
+                    update
+                        .contacts
+                        .push(self.contact_for_user(user_id, should_notify));
+                }
+                db::Contact::Outgoing { user_id } => {
+                    update.outgoing_requests.push(user_id.to_proto())
+                }
+                db::Contact::Incoming {
+                    user_id,
+                    should_notify,
+                } => update
+                    .incoming_requests
+                    .push(proto::IncomingContactRequest {
+                        requester_id: user_id.to_proto(),
+                        should_notify,
+                    }),
+            }
         }
 
         update
     }
 
-    pub fn contact_for_user(&self, user_id: UserId) -> proto::Contact {
+    pub fn contact_for_user(&self, user_id: UserId, should_notify: bool) -> proto::Contact {
         proto::Contact {
             user_id: user_id.to_proto(),
             projects: self.project_metadata_for_user(user_id),
             online: self.is_user_online(user_id),
+            should_notify,
         }
     }
 

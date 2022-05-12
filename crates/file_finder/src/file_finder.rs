@@ -85,7 +85,7 @@ impl FileFinder {
     }
 
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
-        workspace.toggle_modal(cx, |cx, workspace| {
+        workspace.toggle_modal(cx, |workspace, cx| {
             let project = workspace.project().clone();
             let finder = cx.add_view(|cx| Self::new(project, cx));
             cx.subscribe(&finder, Self::on_event).detach();

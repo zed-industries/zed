@@ -1,12 +1,16 @@
 import Theme from "../themes/theme";
-import { backgroundColor, border, iconColor, text } from "./components";
+import { backgroundColor, border, iconColor, shadow, text } from "./components";
 import statusBar from "./statusBar";
+
+export function workspaceBackground(theme: Theme) {
+  return backgroundColor(theme, 300)
+}
 
 export default function workspace(theme: Theme) {
 
   const tab = {
     height: 32,
-    background: backgroundColor(theme, 300),
+    background: workspaceBackground(theme),
     iconClose: iconColor(theme, "muted"),
     iconCloseActive: iconColor(theme, "active"),
     iconConflict: iconColor(theme, "warning"),
@@ -146,5 +150,17 @@ export default function workspace(theme: Theme) {
       ...text(theme, "sans", "active"),
       background: "#000000aa",
     },
+    notification: {
+      margin: { top: 10 },
+      background: backgroundColor(theme, 300),
+      cornerRadius: 6,
+      padding: 12,
+      border: border(theme, "primary"),
+      shadow: shadow(theme),
+    },
+    notifications: {
+      width: 380,
+      margin: { right: 10, bottom: 10 },
+    }
   };
 }

@@ -1,8 +1,8 @@
 import Theme from "../themes/theme";
 import { backgroundColor, border, iconColor, text } from "./components";
+import { workspaceBackground } from "./workspace";
 
 export default function statusBar(theme: Theme) {
-
   const statusContainer = {
     cornerRadius: 6,
     padding: { top: 3, bottom: 3, left: 6, right: 6 }
@@ -100,6 +100,13 @@ export default function statusBar(theme: Theme) {
           iconColor: iconColor(theme, "active"),
           background: backgroundColor(theme, 300, "active"),
         }
+      },
+      badge: {
+        cornerRadius: 3,
+        padding: 2,
+        margin: { bottom: -1, right: -1 },
+        border: { width: 1, color: workspaceBackground(theme) },
+        background: iconColor(theme, "feature"),
       }
     }
   }
