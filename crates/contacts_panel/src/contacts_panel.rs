@@ -8,7 +8,7 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    impl_actions,
+    impl_actions, impl_internal_actions,
     platform::CursorStyle,
     AppContext, Element, ElementBox, Entity, LayoutContext, ModelHandle, MutableAppContext,
     RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
@@ -28,6 +28,8 @@ impl_actions!(
     [RequestContact, RemoveContact, RespondToContactRequest]
 );
 
+impl_internal_actions!(contacts_panel, [ToggleExpanded]);
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 enum Section {
     Requests,
@@ -43,6 +45,9 @@ enum ContactEntry {
     Contact(Arc<Contact>),
     ContactProject(Arc<Contact>, usize),
 }
+
+#[derive(Clone)]
+struct ToggleExpanded(Section);
 
 pub struct ContactsPanel {
     entries: Vec<ContactEntry>,
@@ -78,6 +83,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ContactsPanel::select_next);
     cx.add_action(ContactsPanel::select_prev);
     cx.add_action(ContactsPanel::confirm);
+    cx.add_action(ContactsPanel::toggle_expanded);
 }
 
 impl ContactsPanel {
@@ -140,7 +146,7 @@ impl ContactsPanel {
                     match &this.entries[ix] {
                         ContactEntry::Header(section) => {
                             let is_collapsed = this.collapsed_sections.contains(&section);
-                            Self::render_header(*section, theme, is_selected, is_collapsed)
+                            Self::render_header(*section, theme, is_selected, is_collapsed, cx)
                         }
                         ContactEntry::IncomingRequest(user) => Self::render_contact_request(
                             user.clone(),
@@ -203,7 +209,10 @@ impl ContactsPanel {
         theme: &theme::ContactsPanel,
         is_selected: bool,
         is_collapsed: bool,
+        cx: &mut LayoutContext,
     ) -> ElementBox {
+        enum Header {}
+
         let header_style = theme.header_row.style_for(&Default::default(), is_selected);
         let text = match section {
             Section::Requests => "Requests",
@@ -211,36 +220,41 @@ impl ContactsPanel {
             Section::Offline => "Offline",
         };
         let icon_size = theme.section_icon_size;
-        Flex::row()
-            .with_child(
-                Svg::new(if is_collapsed {
-                    "icons/disclosure-closed.svg"
-                } else {
-                    "icons/disclosure-open.svg"
-                })
-                .with_color(header_style.text.color)
-                .constrained()
-                .with_max_width(icon_size)
-                .with_max_height(icon_size)
-                .aligned()
-                .constrained()
-                .with_width(icon_size)
-                .boxed(),
-            )
-            .with_child(
-                Label::new(text.to_string(), header_style.text.clone())
+        MouseEventHandler::new::<Header, _, _>(section as usize, cx, |_, _| {
+            Flex::row()
+                .with_child(
+                    Svg::new(if is_collapsed {
+                        "icons/disclosure-closed.svg"
+                    } else {
+                        "icons/disclosure-open.svg"
+                    })
+                    .with_color(header_style.text.color)
+                    .constrained()
+                    .with_max_width(icon_size)
+                    .with_max_height(icon_size)
                     .aligned()
-                    .left()
-                    .contained()
-                    .with_margin_left(theme.contact_username.container.margin.left)
-                    .flex(1., true)
+                    .constrained()
+                    .with_width(icon_size)
                     .boxed(),
-            )
-            .constrained()
-            .with_height(theme.row_height)
-            .contained()
-            .with_style(header_style.container)
-            .boxed()
+                )
+                .with_child(
+                    Label::new(text.to_string(), header_style.text.clone())
+                        .aligned()
+                        .left()
+                        .contained()
+                        .with_margin_left(theme.contact_username.container.margin.left)
+                        .flex(1., true)
+                        .boxed(),
+                )
+                .constrained()
+                .with_height(theme.row_height)
+                .contained()
+                .with_style(header_style.container)
+                .boxed()
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(move |_, cx| cx.dispatch_action(ToggleExpanded(section)))
+        .boxed()
     }
 
     fn render_contact(
@@ -716,13 +730,8 @@ impl ContactsPanel {
             if let Some(entry) = self.entries.get(selection) {
                 match entry {
                     ContactEntry::Header(section) => {
-                        if let Some(ix) = self.collapsed_sections.iter().position(|s| s == section)
-                        {
-                            self.collapsed_sections.remove(ix);
-                        } else {
-                            self.collapsed_sections.push(*section);
-                        }
-                        self.update_entries(cx);
+                        let section = *section;
+                        self.toggle_expanded(&ToggleExpanded(section), cx);
                     }
                     ContactEntry::ContactProject(contact, project_ix) => {
                         cx.dispatch_global_action(JoinProject {
@@ -733,8 +742,17 @@ impl ContactsPanel {
                     _ => {}
                 }
             }
-        } else {
         }
+    }
+
+    fn toggle_expanded(&mut self, action: &ToggleExpanded, cx: &mut ViewContext<Self>) {
+        let section = action.0;
+        if let Some(ix) = self.collapsed_sections.iter().position(|s| *s == section) {
+            self.collapsed_sections.remove(ix);
+        } else {
+            self.collapsed_sections.push(section);
+        }
+        self.update_entries(cx);
     }
 }
 
