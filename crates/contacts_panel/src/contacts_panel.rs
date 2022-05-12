@@ -92,7 +92,7 @@ impl ContactsPanel {
         workspace: WeakViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let user_query_editor = cx.add_view(|cx| {
+        let filter_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(
                 Some(|theme| theme.contacts_panel.user_query_editor.clone()),
                 cx,
@@ -101,10 +101,19 @@ impl ContactsPanel {
             editor
         });
 
-        cx.subscribe(&user_query_editor, |this, _, event, cx| {
+        cx.subscribe(&filter_editor, |this, _, event, cx| {
             if let editor::Event::BufferEdited = event {
-                this.selection.take();
-                this.update_entries(cx)
+                let query = this.filter_editor.read(cx).text(cx);
+                if !query.is_empty() {
+                    this.selection.take();
+                }
+                this.update_entries(cx);
+                if !query.is_empty() {
+                    this.selection = this
+                        .entries
+                        .iter()
+                        .position(|entry| !matches!(entry, ContactEntry::Header(_)));
+                }
             }
         })
         .detach();
@@ -194,7 +203,7 @@ impl ContactsPanel {
             collapsed_sections: Default::default(),
             entries: Default::default(),
             match_candidates: Default::default(),
-            filter_editor: user_query_editor,
+            filter_editor,
             _maintain_contacts: cx
                 .observe(&app_state.user_store, |this, _, cx| this.update_entries(cx)),
             user_store: app_state.user_store.clone(),
@@ -659,10 +668,11 @@ impl ContactsPanel {
             }
         }
 
-        if let Some(selection) = &mut self.selection {
+        if let Some(prev_selected_entry) = prev_selected_entry {
+            self.selection.take();
             for (ix, entry) in self.entries.iter().enumerate() {
-                if Some(entry) == prev_selected_entry.as_ref() {
-                    *selection = ix;
+                if *entry == prev_selected_entry {
+                    self.selection = Some(ix);
                     break;
                 }
             }
@@ -991,22 +1001,7 @@ mod tests {
             &[
                 "+",
                 "v Online",
-                "  user_four",
-                "    dir2",
-                "v Offline",
-                "  user_five",
-            ]
-        );
-
-        panel.update(cx, |panel, cx| {
-            panel.select_next(&Default::default(), cx);
-        });
-        assert_eq!(
-            render_to_strings(&panel, cx),
-            &[
-                "+",
-                "v Online  <=== selected",
-                "  user_four",
+                "  user_four  <=== selected",
                 "    dir2",
                 "v Offline",
                 "  user_five",
@@ -1021,9 +1016,24 @@ mod tests {
             &[
                 "+",
                 "v Online",
-                "  user_four  <=== selected",
-                "    dir2",
+                "  user_four",
+                "    dir2  <=== selected",
                 "v Offline",
+                "  user_five",
+            ]
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.select_next(&Default::default(), cx);
+        });
+        assert_eq!(
+            render_to_strings(&panel, cx),
+            &[
+                "+",
+                "v Online",
+                "  user_four",
+                "    dir2",
+                "v Offline  <=== selected",
                 "  user_five",
             ]
         );
