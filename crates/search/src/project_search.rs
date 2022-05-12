@@ -891,7 +891,7 @@ mod tests {
             assert_eq!(
                 search_view
                     .results_editor
-                    .update(cx, |editor, cx| editor.selections.selected_display_ranges(cx)),
+                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(2, 32)..DisplayPoint::new(2, 35)]
             );
 
@@ -901,9 +901,9 @@ mod tests {
         search_view.update(cx, |search_view, cx| {
             assert_eq!(search_view.active_match_index, Some(1));
             assert_eq!(
-                search_view.results_editor.update(cx, |editor, cx| editor
-                    .selections
-                    .selected_display_ranges(cx)),
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(2, 37)..DisplayPoint::new(2, 40)]
             );
             search_view.select_match(Direction::Next, cx);
@@ -912,9 +912,9 @@ mod tests {
         search_view.update(cx, |search_view, cx| {
             assert_eq!(search_view.active_match_index, Some(2));
             assert_eq!(
-                search_view.results_editor.update(cx, |editor, cx| editor
-                    .selections
-                    .selected_display_ranges(cx)),
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(5, 6)..DisplayPoint::new(5, 9)]
             );
             search_view.select_match(Direction::Next, cx);
@@ -923,9 +923,9 @@ mod tests {
         search_view.update(cx, |search_view, cx| {
             assert_eq!(search_view.active_match_index, Some(0));
             assert_eq!(
-                search_view.results_editor.update(cx, |editor, cx| editor
-                    .selections
-                    .selected_display_ranges(cx)),
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(2, 32)..DisplayPoint::new(2, 35)]
             );
             search_view.select_match(Direction::Prev, cx);
@@ -934,9 +934,9 @@ mod tests {
         search_view.update(cx, |search_view, cx| {
             assert_eq!(search_view.active_match_index, Some(2));
             assert_eq!(
-                search_view.results_editor.update(cx, |editor, cx| editor
-                    .selections
-                    .selected_display_ranges(cx)),
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(5, 6)..DisplayPoint::new(5, 9)]
             );
             search_view.select_match(Direction::Prev, cx);
@@ -945,9 +945,9 @@ mod tests {
         search_view.update(cx, |search_view, cx| {
             assert_eq!(search_view.active_match_index, Some(1));
             assert_eq!(
-                search_view.results_editor.update(cx, |editor, cx| editor
-                    .selections
-                    .selected_display_ranges(cx)),
+                search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(2, 37)..DisplayPoint::new(2, 40)]
             );
         });

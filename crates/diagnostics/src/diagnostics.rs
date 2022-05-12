@@ -897,7 +897,7 @@ mod tests {
             // Cursor is at the first diagnostic
             view.editor.update(cx, |editor, cx| {
                 assert_eq!(
-                    editor.selections.selected_display_ranges(cx),
+                    editor.selections.display_ranges(cx),
                     [DisplayPoint::new(12, 6)..DisplayPoint::new(12, 6)]
                 );
             });
@@ -998,7 +998,7 @@ mod tests {
             // Cursor keeps its position.
             view.editor.update(cx, |editor, cx| {
                 assert_eq!(
-                    editor.selections.selected_display_ranges(cx),
+                    editor.selections.display_ranges(cx),
                     [DisplayPoint::new(19, 6)..DisplayPoint::new(19, 6)]
                 );
             });

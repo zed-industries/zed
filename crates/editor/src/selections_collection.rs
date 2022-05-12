@@ -129,6 +129,9 @@ impl SelectionsCollection {
         range: Range<Anchor>,
         cx: &AppContext,
     ) -> Vec<Selection<Point>> {
+        // TODO: Make sure pending selection is handled correctly here
+        // if it is interleaved properly, we can sue resolve_multiple
+        // to improve performance
         let buffer = self.buffer(cx);
         let start_ix = match self
             .disjoint
@@ -211,7 +214,7 @@ impl SelectionsCollection {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn selected_ranges<D: TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug>(
+    pub fn ranges<D: TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug>(
         &self,
         cx: &AppContext,
     ) -> Vec<Range<D>> {
@@ -228,7 +231,7 @@ impl SelectionsCollection {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn selected_display_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
+    pub fn display_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
         let display_map = self.display_map(cx);
         self.disjoint_anchors()
             .iter()

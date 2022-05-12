@@ -5499,11 +5499,11 @@ mod tests {
             Some((worktree_id, "2.txt").into())
         );
         assert_eq!(
-            editor_b2.read_with(cx_b, |editor, cx| editor.selections.selected_ranges(cx)),
+            editor_b2.read_with(cx_b, |editor, cx| editor.selections.ranges(cx)),
             vec![2..3]
         );
         assert_eq!(
-            editor_b1.read_with(cx_b, |editor, cx| editor.selections.selected_ranges(cx)),
+            editor_b1.read_with(cx_b, |editor, cx| editor.selections.ranges(cx)),
             vec![0..1]
         );
 
@@ -5546,7 +5546,7 @@ mod tests {
         });
         editor_b1
             .condition(cx_b, |editor, cx| {
-                editor.selections.selected_ranges(cx) == vec![1..1, 2..2]
+                editor.selections.ranges(cx) == vec![1..1, 2..2]
             })
             .await;
 
@@ -5561,7 +5561,7 @@ mod tests {
         });
         editor_b1
             .condition(cx_b, |editor, cx| {
-                editor.selections.selected_ranges(cx) == vec![3..3]
+                editor.selections.ranges(cx) == vec![3..3]
             })
             .await;
 
