@@ -5016,13 +5016,11 @@ mod tests {
         cx_c: &mut TestAppContext,
     ) {
         cx_a.foreground().forbid_parking();
-        let lang_registry = Arc::new(LanguageRegistry::test());
-        let fs = FakeFs::new(cx_a.background());
 
         // Connect to a server as 3 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-        let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_a = server.create_client(cx_a, "user_a").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         let client_c = server.create_client(cx_c, "user_c").await;
         server
             .make_contacts(vec![
@@ -5046,27 +5044,10 @@ mod tests {
             });
         }
 
-        // Share a worktree as client A.
+        // Share a project as client A.
+        let fs = FakeFs::new(cx_a.background());
         fs.create_dir(Path::new("/a")).await.unwrap();
-
-        let project_a = cx_a.update(|cx| {
-            Project::local(
-                client_a.clone(),
-                client_a.user_store.clone(),
-                lang_registry.clone(),
-                fs.clone(),
-                cx,
-            )
-        });
-        let (worktree_a, _) = project_a
-            .update(cx_a, |p, cx| {
-                p.find_or_create_local_worktree("/a", true, cx)
-            })
-            .await
-            .unwrap();
-        worktree_a
-            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
-            .await;
+        let (project_a, _) = client_a.build_local_project(fs, "/a", cx_a).await;
 
         deterministic.run_until_parked();
         for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
@@ -5104,16 +5085,7 @@ mod tests {
             });
         }
 
-        let _project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let _project_b = client_b.build_remote_project(project_id, cx_b).await;
 
         deterministic.run_until_parked();
         for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
@@ -5129,12 +5101,32 @@ mod tests {
             });
         }
 
+        // Add a local project as client B
+        let fs = FakeFs::new(cx_b.background());
+        fs.create_dir(Path::new("/b")).await.unwrap();
+        let (_project_b, _) = client_b.build_local_project(fs, "/b", cx_a).await;
+
+        deterministic.run_until_parked();
+        for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
+            client.user_store.read_with(*cx, |store, _| {
+                assert_eq!(
+                    contacts(store),
+                    [
+                        ("user_a", true, vec![("a", true, vec!["user_b"])]),
+                        ("user_b", true, vec![("b", false, vec![])]),
+                        ("user_c", true, vec![])
+                    ]
+                )
+            });
+        }
+
         project_a
             .condition(&cx_a, |project, _| {
                 project.collaborators().contains_key(&client_b.peer_id)
             })
             .await;
 
+        client_a.project.take();
         cx_a.update(move |_| drop(project_a));
         deterministic.run_until_parked();
         for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
@@ -5143,7 +5135,7 @@ mod tests {
                     contacts(store),
                     [
                         ("user_a", true, vec![]),
-                        ("user_b", true, vec![]),
+                        ("user_b", true, vec![("b", false, vec![])]),
                         ("user_c", true, vec![])
                     ]
                 )
@@ -5159,7 +5151,7 @@ mod tests {
                     contacts(store),
                     [
                         ("user_a", true, vec![]),
-                        ("user_b", true, vec![]),
+                        ("user_b", true, vec![("b", false, vec![])]),
                         ("user_c", false, vec![])
                     ]
                 )
@@ -5182,7 +5174,7 @@ mod tests {
                     contacts(store),
                     [
                         ("user_a", true, vec![]),
-                        ("user_b", true, vec![]),
+                        ("user_b", true, vec![("b", false, vec![])]),
                         ("user_c", true, vec![])
                     ]
                 )
@@ -5194,7 +5186,7 @@ mod tests {
                 .contacts()
                 .iter()
                 .map(|contact| {
-                    let worktrees = contact
+                    let projects = contact
                         .projects
                         .iter()
                         .map(|p| {
@@ -5205,11 +5197,7 @@ mod tests {
                             )
                         })
                         .collect();
-                    (
-                        contact.user.github_login.as_str(),
-                        contact.online,
-                        worktrees,
-                    )
+                    (contact.user.github_login.as_str(), contact.online, projects)
                 })
                 .collect()
         }

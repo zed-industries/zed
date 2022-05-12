@@ -246,22 +246,27 @@ pub struct CommandPalette {
 pub struct ContactsPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub header: ContainedText,
     pub user_query_editor: FieldEditor,
     pub user_query_editor_height: f32,
     pub add_contact_button: IconButton,
-    pub row: ContainerStyle,
+    pub header_row: Interactive<ContainedText>,
+    pub contact_row: Interactive<ContainerStyle>,
+    pub shared_project_row: Interactive<ProjectRow>,
+    pub unshared_project_row: Interactive<ProjectRow>,
     pub row_height: f32,
     pub contact_avatar: ImageStyle,
     pub contact_username: ContainedText,
     pub contact_button: Interactive<IconButton>,
+    pub contact_button_spacing: f32,
     pub disabled_contact_button: IconButton,
-    pub tree_branch_width: f32,
-    pub tree_branch_color: Color,
-    pub shared_project: ProjectRow,
-    pub hovered_shared_project: ProjectRow,
-    pub unshared_project: ProjectRow,
-    pub hovered_unshared_project: ProjectRow,
+    pub tree_branch: Interactive<TreeBranch>,
+    pub section_icon_size: f32,
+}
+
+#[derive(Deserialize, Default, Clone, Copy)]
+pub struct TreeBranch {
+    pub width: f32,
+    pub color: Color,
 }
 
 #[derive(Deserialize, Default)]
@@ -286,8 +291,8 @@ pub struct IconButton {
 pub struct ProjectRow {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub height: f32,
     pub name: ContainedText,
+    pub guests: ContainerStyle,
     pub guest_avatar: ImageStyle,
     pub guest_avatar_spacing: f32,
 }

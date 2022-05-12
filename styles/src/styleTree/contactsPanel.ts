@@ -3,7 +3,10 @@ import { panel } from "./app";
 import { backgroundColor, border, borderColor, iconColor, player, text } from "./components";
 
 export default function contactsPanel(theme: Theme) {
-  const project = {
+  const nameMargin = 8;
+  const sidePadding = 12;
+
+  const projectRow = {
     guestAvatarSpacing: 4,
     height: 24,
     guestAvatar: {
@@ -13,21 +16,19 @@ export default function contactsPanel(theme: Theme) {
     name: {
       ...text(theme, "mono", "placeholder", { size: "sm" }),
       margin: {
+        left: nameMargin,
         right: 6,
       },
     },
-    padding: {
-      left: 8,
+    guests: {
+      margin: {
+        left: nameMargin,
+        right: nameMargin,
+      }
     },
-  };
-
-  const sharedProject = {
-    ...project,
-    background: backgroundColor(theme, 300),
-    cornerRadius: 6,
-    name: {
-      ...project.name,
-      ...text(theme, "mono", "secondary", { size: "sm" }),
+    padding: {
+      left: sidePadding,
+      right: sidePadding,
     },
   };
 
@@ -54,34 +55,62 @@ export default function contactsPanel(theme: Theme) {
         right: 8,
         top: 4,
       },
+      margin: {
+        left: sidePadding,
+        right: sidePadding,
+      }
     },
     userQueryEditorHeight: 32,
     addContactButton: {
-      margin: { left: 6 },
+      margin: { left: 6, right: 12 },
       color: iconColor(theme, "primary"),
       buttonWidth: 8,
       iconWidth: 8,
     },
-    row: {
-      padding: { left: 8 },
-    },
     rowHeight: 28,
-    header: {
+    sectionIconSize: 8,
+    headerRow: {
       ...text(theme, "mono", "secondary", { size: "sm" }),
-      margin: { top: 8 },
+      margin: { top: 14 },
+      padding: {
+        left: sidePadding,
+        right: sidePadding,
+      },
+      active: {
+        ...text(theme, "mono", "primary", { size: "sm" }),
+        background: backgroundColor(theme, 100, "active"),
+      }
     },
-    treeBranchColor: borderColor(theme, "muted"),
-    treeBranchWidth: 1,
+    contactRow: {
+      padding: {
+        left: sidePadding,
+        right: sidePadding
+      },
+      active: {
+        background: backgroundColor(theme, 100, "active"),
+      }
+    },
+    treeBranch: {
+      color: borderColor(theme, "active"),
+      width: 1,
+      hover: {
+        color: borderColor(theme, "active"),
+      },
+      active: {
+        color: borderColor(theme, "active"),
+      }
+    },
     contactAvatar: {
       cornerRadius: 10,
       width: 18,
     },
     contactUsername: {
       ...text(theme, "mono", "primary", { size: "sm" }),
-      padding: {
-        left: 8,
+      margin: {
+        left: nameMargin,
       },
     },
+    contactButtonSpacing: nameMargin,
     contactButton: {
       ...contactButton,
       hover: {
@@ -93,17 +122,33 @@ export default function contactsPanel(theme: Theme) {
       background: backgroundColor(theme, 100),
       color: iconColor(theme, "muted"),
     },
-    project,
-    sharedProject,
-    hoveredSharedProject: {
-      ...sharedProject,
-      background: backgroundColor(theme, 300, "hovered"),
-      cornerRadius: 6,
+    sharedProjectRow: {
+      ...projectRow,
+      background: backgroundColor(theme, 300),
+      name: {
+        ...projectRow.name,
+        ...text(theme, "mono", "secondary", { size: "sm" }),
+      },
+      hover: {
+        background: backgroundColor(theme, 300, "hovered"),
+      },
+      active: {
+        background: backgroundColor(theme, 300, "active"),
+      }
     },
-    unsharedProject: project,
-    hoveredUnsharedProject: {
-      ...project,
-      cornerRadius: 6,
-    },
+    unsharedProjectRow: {
+      ...projectRow,
+      background: backgroundColor(theme, 300),
+      name: {
+        ...projectRow.name,
+        ...text(theme, "mono", "secondary", { size: "sm" }),
+      },
+      hover: {
+        background: backgroundColor(theme, 300, "hovered"),
+      },
+      active: {
+        background: backgroundColor(theme, 300, "active"),
+      }
+    }
   }
 }

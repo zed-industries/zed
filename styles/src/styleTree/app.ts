@@ -13,7 +13,7 @@ import projectDiagnostics from "./projectDiagnostics";
 import contactNotification from "./contactNotification";
 
 export const panel = {
-  padding: { top: 12, left: 12, bottom: 12, right: 12 },
+  padding: { top: 12, bottom: 12 },
 };
 
 export default function app(theme: Theme): Object {

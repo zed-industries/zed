@@ -272,72 +272,29 @@ impl Store {
         let mut metadata = Vec::new();
         for project_id in project_ids {
             if let Some(project) = self.projects.get(&project_id) {
-                metadata.push(proto::ProjectMetadata {
-                    id: project_id,
-                    is_shared: project.share.is_some(),
-                    worktree_root_names: project
-                        .worktrees
-                        .values()
-                        .map(|worktree| worktree.root_name.clone())
-                        .collect(),
-                    guests: project
-                        .share
-                        .iter()
-                        .flat_map(|share| {
-                            share.guests.values().map(|(_, user_id)| user_id.to_proto())
-                        })
-                        .collect(),
-                });
+                if project.host_user_id == user_id {
+                    metadata.push(proto::ProjectMetadata {
+                        id: project_id,
+                        is_shared: project.share.is_some(),
+                        worktree_root_names: project
+                            .worktrees
+                            .values()
+                            .map(|worktree| worktree.root_name.clone())
+                            .collect(),
+                        guests: project
+                            .share
+                            .iter()
+                            .flat_map(|share| {
+                                share.guests.values().map(|(_, user_id)| user_id.to_proto())
+                            })
+                            .collect(),
+                    });
+                }
             }
         }
 
         metadata
     }
-
-    // pub fn contacts_for_user(&self, user_id: UserId) -> Vec<proto::Contact> {
-    //     let mut contacts = HashMap::default();
-    //     for project_id in self
-    //         .visible_projects_by_user_id
-    //         .get(&user_id)
-    //         .unwrap_or(&HashSet::default())
-    //     {
-    //         let project = &self.projects[project_id];
-
-    //         let mut guests = HashSet::default();
-    //         if let Ok(share) = project.share() {
-    //             for guest_connection_id in share.guests.keys() {
-    //                 if let Ok(user_id) = self.user_id_for_connection(*guest_connection_id) {
-    //                     guests.insert(user_id.to_proto());
-    //                 }
-    //             }
-    //         }
-
-    //         if let Ok(host_user_id) = self.user_id_for_connection(project.host_connection_id) {
-    //             let mut worktree_root_names = project
-    //                 .worktrees
-    //                 .values()
-    //                 .filter(|worktree| worktree.visible)
-    //                 .map(|worktree| worktree.root_name.clone())
-    //                 .collect::<Vec<_>>();
-    //             worktree_root_names.sort_unstable();
-    //             contacts
-    //                 .entry(host_user_id)
-    //                 .or_insert_with(|| proto::Contact {
-    //                     user_id: host_user_id.to_proto(),
-    //                     projects: Vec::new(),
-    //                 })
-    //                 .projects
-    //                 .push(proto::ProjectMetadata {
-    //                     id: *project_id,
-    //                     worktree_root_names,
-    //                     is_shared: project.share.is_some(),
-    //                     guests: guests.into_iter().collect(),
-    //                 });
-    //         }
-    //     }
-
-    //     contacts.into_values().collect()
-    // }
 
     pub fn register_project(
         &mut self,

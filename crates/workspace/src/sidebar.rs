@@ -10,10 +10,14 @@ use theme::Theme;
 
 pub trait SidebarItem: View {
     fn should_show_badge(&self, cx: &AppContext) -> bool;
+    fn contains_focused_view(&self, _: &AppContext) -> bool {
+        false
+    }
 }
 
 pub trait SidebarItemHandle {
     fn should_show_badge(&self, cx: &AppContext) -> bool;
+    fn is_focused(&self, cx: &AppContext) -> bool;
     fn to_any(&self) -> AnyViewHandle;
 }
 
@@ -23,6 +27,10 @@ where
 {
     fn should_show_badge(&self, cx: &AppContext) -> bool {
         self.read(cx).should_show_badge(cx)
+    }
+
+    fn is_focused(&self, cx: &AppContext) -> bool {
+        ViewHandle::is_focused(&self, cx) || self.read(cx).contains_focused_view(cx)
     }
 
     fn to_any(&self) -> AnyViewHandle {
@@ -114,10 +122,10 @@ impl Sidebar {
         cx.notify();
     }
 
-    pub fn active_item(&self) -> Option<&dyn SidebarItemHandle> {
+    pub fn active_item(&self) -> Option<&Rc<dyn SidebarItemHandle>> {
         self.active_item_ix
             .and_then(|ix| self.items.get(ix))
-            .map(|item| item.view.as_ref())
+            .map(|item| &item.view)
     }
 
     fn render_resize_handle(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
@@ -170,7 +178,7 @@ impl View for Sidebar {
 
             container.add_child(
                 Hook::new(
-                    ChildView::new(active_item)
+                    ChildView::new(active_item.to_any())
                         .constrained()
                         .with_max_width(*self.custom_width.borrow())
                         .boxed(),
