@@ -959,7 +959,7 @@ impl Element for EditorElement {
             if view.show_local_selections {
                 let local_selections = view
                     .selections
-                    .interleaved_in_range(start_anchor..end_anchor, &display_map.buffer_snapshot);
+                    .interleaved_in_range(start_anchor..end_anchor, cx);
                 for selection in &local_selections {
                     let is_empty = selection.start == selection.end;
                     let selection_start = snapshot.prev_line_boundary(selection.start).1;
@@ -1043,7 +1043,7 @@ impl Element for EditorElement {
 
             let newest_selection_head = view
                 .selections
-                .newest::<usize>(&snapshot.buffer_snapshot)
+                .newest::<usize>(cx)
                 .head()
                 .to_display_point(&snapshot);
 

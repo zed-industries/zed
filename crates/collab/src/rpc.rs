@@ -5499,11 +5499,11 @@ mod tests {
             Some((worktree_id, "2.txt").into())
         );
         assert_eq!(
-            editor_b2.read_with(cx_b, |editor, cx| editor.selected_ranges(cx)),
+            editor_b2.read_with(cx_b, |editor, cx| editor.selections.selected_ranges(cx)),
             vec![2..3]
         );
         assert_eq!(
-            editor_b1.read_with(cx_b, |editor, cx| editor.selected_ranges(cx)),
+            editor_b1.read_with(cx_b, |editor, cx| editor.selections.selected_ranges(cx)),
             vec![0..1]
         );
 
@@ -5546,7 +5546,7 @@ mod tests {
         });
         editor_b1
             .condition(cx_b, |editor, cx| {
-                editor.selected_ranges(cx) == vec![1..1, 2..2]
+                editor.selections.selected_ranges(cx) == vec![1..1, 2..2]
             })
             .await;
 
@@ -5560,7 +5560,9 @@ mod tests {
             editor.set_scroll_position(vec2f(0., 100.), cx);
         });
         editor_b1
-            .condition(cx_b, |editor, cx| editor.selected_ranges(cx) == vec![3..3])
+            .condition(cx_b, |editor, cx| {
+                editor.selections.selected_ranges(cx) == vec![3..3]
+            })
             .await;
 
         // After unfollowing, client B stops receiving updates from client A.

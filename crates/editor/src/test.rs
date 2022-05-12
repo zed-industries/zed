@@ -54,5 +54,5 @@ pub fn assert_text_with_selections(
     let (unmarked_text, text_ranges) = marked_text_ranges(marked_text);
 
     assert_eq!(editor.text(cx), unmarked_text);
-    assert_eq!(editor.selected_ranges(cx), text_ranges);
+    assert_eq!(editor.selections.selected_ranges(cx), text_ranges);
 }

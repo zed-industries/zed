@@ -419,9 +419,7 @@ impl ProjectDiagnosticsEditor {
                 groups = self.path_states.get(path_ix)?.diagnostic_groups.as_slice();
                 new_excerpt_ids_by_selection_id =
                     editor.change_selections(Some(Autoscroll::Fit), cx, |s| s.refresh());
-                selections = editor
-                    .selections
-                    .interleaved::<usize>(&editor.buffer().read(cx).read(cx));
+                selections = editor.selections.interleaved::<usize>(cx);
             }
 
             // If any selection has lost its position, move it to start of the next primary diagnostic.
@@ -899,7 +897,7 @@ mod tests {
             // Cursor is at the first diagnostic
             view.editor.update(cx, |editor, cx| {
                 assert_eq!(
-                    editor.selected_display_ranges(cx),
+                    editor.selections.selected_display_ranges(cx),
                     [DisplayPoint::new(12, 6)..DisplayPoint::new(12, 6)]
                 );
             });
@@ -1000,7 +998,7 @@ mod tests {
             // Cursor keeps its position.
             view.editor.update(cx, |editor, cx| {
                 assert_eq!(
-                    editor.selected_display_ranges(cx),
+                    editor.selections.selected_display_ranges(cx),
                     [DisplayPoint::new(19, 6)..DisplayPoint::new(19, 6)]
                 );
             });

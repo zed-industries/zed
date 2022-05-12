@@ -200,7 +200,7 @@ impl<'a> VimTestContext<'a> {
             self.editor.read_with(self.cx, |editor, cx| {
                 let (empty_selections, non_empty_selections): (Vec<_>, Vec<_>) = editor
                     .selections
-                    .interleaved::<usize>(&editor.buffer().read(cx).read(cx))
+                    .interleaved::<usize>(cx)
                     .into_iter()
                     .partition_map(|selection| {
                         if selection.is_empty() {

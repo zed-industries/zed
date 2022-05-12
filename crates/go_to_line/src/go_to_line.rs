@@ -43,7 +43,7 @@ impl GoToLine {
             let buffer = editor.buffer().read(cx).read(cx);
             (
                 Some(scroll_position),
-                editor.selections.newest(&buffer).head(),
+                editor.selections.newest(cx).head(),
                 buffer.max_point(),
             )
         });

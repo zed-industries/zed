@@ -252,13 +252,13 @@ fn deserialize_selection(
 impl Item for Editor {
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
         if let Ok(data) = data.downcast::<NavigationData>() {
+            let newest_selection = self.selections.newest::<Point>(cx);
             let buffer = self.buffer.read(cx).read(cx);
             let offset = if buffer.can_resolve(&data.cursor_anchor) {
                 data.cursor_anchor.to_point(&buffer)
             } else {
                 buffer.clip_point(data.cursor_position, Bias::Left)
             };
-            let newest_selection = self.selections.newest::<Point>(&buffer);
 
             let scroll_top_anchor = if buffer.can_resolve(&data.scroll_top_anchor) {
                 data.scroll_top_anchor
@@ -465,7 +465,7 @@ impl CursorPosition {
 
         self.selected_count = 0;
         let mut last_selection: Option<Selection<usize>> = None;
-        for selection in editor.selections.interleaved::<usize>(&buffer) {
+        for selection in editor.selections.interleaved::<usize>(cx) {
             self.selected_count += selection.end - selection.start;
             if last_selection
                 .as_ref()

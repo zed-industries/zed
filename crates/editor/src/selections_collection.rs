@@ -5,7 +5,7 @@ use std::{
 };
 
 use collections::HashMap;
-use gpui::{ModelHandle, MutableAppContext};
+use gpui::{AppContext, ModelHandle, MutableAppContext};
 use itertools::Itertools;
 use language::{rope::TextDimension, Bias, Point, Selection, SelectionGoal, ToPoint};
 use util::post_inc;
@@ -22,14 +22,18 @@ pub struct PendingSelection {
 }
 
 pub struct SelectionsCollection {
+    display_map: ModelHandle<DisplayMap>,
+    buffer: ModelHandle<MultiBuffer>,
     pub next_selection_id: usize,
     disjoint: Arc<[Selection<Anchor>]>,
     pending: Option<PendingSelection>,
 }
 
 impl SelectionsCollection {
-    pub fn new() -> Self {
+    pub fn new(display_map: ModelHandle<DisplayMap>, buffer: ModelHandle<MultiBuffer>) -> Self {
         Self {
+            display_map,
+            buffer,
             next_selection_id: 1,
             disjoint: Arc::from([]),
             pending: Some(PendingSelection {
@@ -43,6 +47,14 @@ impl SelectionsCollection {
                 mode: SelectMode::Character,
             }),
         }
+    }
+
+    fn display_map(&self, cx: &mut MutableAppContext) -> DisplaySnapshot {
+        self.display_map.update(cx, |map, cx| map.snapshot(cx))
+    }
+
+    fn buffer(&self, cx: &AppContext) -> MultiBufferSnapshot {
+        self.buffer.read(cx).snapshot(cx)
     }
 
     pub fn count<'a>(&self) -> usize {
@@ -65,25 +77,26 @@ impl SelectionsCollection {
 
     pub fn pending<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        snapshot: &MultiBufferSnapshot,
+        cx: &AppContext,
     ) -> Option<Selection<D>> {
         self.pending_anchor()
             .as_ref()
-            .map(|pending| pending.map(|p| p.summary::<D>(&snapshot)))
+            .map(|pending| pending.map(|p| p.summary::<D>(&self.buffer(cx))))
     }
 
     pub fn pending_mode(&self) -> Option<SelectMode> {
         self.pending.as_ref().map(|pending| pending.mode.clone())
     }
 
-    pub fn interleaved<'a, D>(&self, buffer: &MultiBufferSnapshot) -> Vec<Selection<D>>
+    pub fn interleaved<'a, D>(&self, cx: &AppContext) -> Vec<Selection<D>>
     where
         D: 'a + TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
     {
         let disjoint_anchors = &self.disjoint;
-        let mut disjoint = resolve_multiple::<D, _>(disjoint_anchors.iter(), &buffer).peekable();
+        let mut disjoint =
+            resolve_multiple::<D, _>(disjoint_anchors.iter(), &self.buffer(cx)).peekable();
 
-        let mut pending_opt = self.pending::<D>(&buffer);
+        let mut pending_opt = self.pending::<D>(cx);
 
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
@@ -114,8 +127,9 @@ impl SelectionsCollection {
     pub fn interleaved_in_range<'a>(
         &self,
         range: Range<Anchor>,
-        buffer: &MultiBufferSnapshot,
+        cx: &AppContext,
     ) -> Vec<Selection<Point>> {
+        let buffer = self.buffer(cx);
         let start_ix = match self
             .disjoint
             .binary_search_by(|probe| probe.end.cmp(&range.start, &buffer))
@@ -162,9 +176,9 @@ impl SelectionsCollection {
 
     pub fn newest<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        snapshot: &MultiBufferSnapshot,
+        cx: &AppContext,
     ) -> Selection<D> {
-        resolve(self.newest_anchor(), snapshot)
+        resolve(self.newest_anchor(), &self.buffer(cx))
     }
 
     pub fn oldest_anchor(&self) -> &Selection<Anchor> {
@@ -177,36 +191,65 @@ impl SelectionsCollection {
 
     pub fn oldest<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        snapshot: &MultiBufferSnapshot,
+        cx: &AppContext,
     ) -> Selection<D> {
-        resolve(self.oldest_anchor(), snapshot)
+        resolve(self.oldest_anchor(), &self.buffer(cx))
     }
 
     pub fn first<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        snapshot: &MultiBufferSnapshot,
+        cx: &AppContext,
     ) -> Selection<D> {
-        self.interleaved(&snapshot).first().unwrap().clone()
+        self.interleaved(cx).first().unwrap().clone()
     }
 
     pub fn last<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        snapshot: &MultiBufferSnapshot,
+        cx: &AppContext,
     ) -> Selection<D> {
-        self.interleaved(&snapshot).last().unwrap().clone()
+        self.interleaved(cx).last().unwrap().clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn selected_ranges<D: TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug>(
+        &self,
+        cx: &AppContext,
+    ) -> Vec<Range<D>> {
+        self.interleaved::<D>(cx)
+            .iter()
+            .map(|s| {
+                if s.reversed {
+                    s.end.clone()..s.start.clone()
+                } else {
+                    s.start.clone()..s.end.clone()
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn selected_display_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
+        let display_map = self.display_map(cx);
+        self.disjoint_anchors()
+            .iter()
+            .chain(self.pending_anchor().as_ref())
+            .map(|s| {
+                if s.reversed {
+                    s.end.to_display_point(&display_map)..s.start.to_display_point(&display_map)
+                } else {
+                    s.start.to_display_point(&display_map)..s.end.to_display_point(&display_map)
+                }
+            })
+            .collect()
     }
 
     pub(crate) fn change_with<R>(
         &mut self,
-        display_map: ModelHandle<DisplayMap>,
-        buffer: ModelHandle<MultiBuffer>,
         cx: &mut MutableAppContext,
         change: impl FnOnce(&mut MutableSelectionsCollection) -> R,
     ) -> R {
         let mut mutable_collection = MutableSelectionsCollection {
             collection: self,
-            display_map,
-            buffer,
             cx,
         };
 
@@ -221,12 +264,18 @@ impl SelectionsCollection {
 
 pub struct MutableSelectionsCollection<'a> {
     collection: &'a mut SelectionsCollection,
-    buffer: ModelHandle<MultiBuffer>,
-    display_map: ModelHandle<DisplayMap>,
     cx: &'a mut MutableAppContext,
 }
 
 impl<'a> MutableSelectionsCollection<'a> {
+    fn display_map(&mut self) -> DisplaySnapshot {
+        self.collection.display_map(self.cx)
+    }
+
+    fn buffer(&mut self) -> MultiBufferSnapshot {
+        self.collection.buffer(self.cx)
+    }
+
     pub fn clear_disjoint(&mut self) {
         self.collection.disjoint = Arc::from([]);
     }
@@ -303,19 +352,11 @@ impl<'a> MutableSelectionsCollection<'a> {
 
     pub fn insert_range<T>(&mut self, range: Range<T>)
     where
-        T: 'a
-            + ToOffset
-            + ToPoint
-            + TextDimension
-            + Ord
-            + Sub<T, Output = T>
-            + std::marker::Copy
-            + std::fmt::Debug,
+        T: 'a + ToOffset + ToPoint + TextDimension + Ord + Sub<T, Output = T> + std::marker::Copy,
     {
-        let buffer = self.buffer.read(self.cx).snapshot(self.cx);
-        let mut selections = self.interleaved(&buffer);
-        let mut start = range.start.to_offset(&buffer);
-        let mut end = range.end.to_offset(&buffer);
+        let mut selections = self.interleaved(self.cx);
+        let mut start = range.start.to_offset(&self.buffer());
+        let mut end = range.end.to_offset(&self.buffer());
         let reversed = if start > end {
             mem::swap(&mut start, &mut end);
             true
@@ -440,7 +481,7 @@ impl<'a> MutableSelectionsCollection<'a> {
     where
         T: IntoIterator<Item = Range<DisplayPoint>>,
     {
-        let display_map = self.display_map.update(self.cx, |map, cx| map.snapshot(cx));
+        let display_map = self.display_map();
         let selections = ranges
             .into_iter()
             .map(|range| {
@@ -468,9 +509,9 @@ impl<'a> MutableSelectionsCollection<'a> {
         &mut self,
         mut move_selection: impl FnMut(&DisplaySnapshot, &mut Selection<DisplayPoint>),
     ) {
-        let display_map = self.display_map.update(self.cx, |map, cx| map.snapshot(cx));
+        let display_map = self.display_map();
         let selections = self
-            .interleaved::<Point>(&display_map.buffer_snapshot)
+            .interleaved::<Point>(self.cx)
             .into_iter()
             .map(|selection| {
                 let mut selection = selection.map(|point| point.to_display_point(&display_map));
@@ -514,7 +555,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         &mut self,
         mut find_replacement_cursors: impl FnMut(&DisplaySnapshot) -> Vec<DisplayPoint>,
     ) {
-        let display_map = self.display_map.update(self.cx, |map, cx| map.snapshot(cx));
+        let display_map = self.display_map();
         let new_selections = find_replacement_cursors(&display_map)
             .into_iter()
             .map(|cursor| {
