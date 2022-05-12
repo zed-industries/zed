@@ -24,11 +24,9 @@ axum = { version = "0.5", features = ["json", "headers", "ws"] }
 base64 = "0.13"
 clap = { version = "3.1", features = ["derive"], optional = true }
 envy = "0.4.2"
-env_logger = "0.8"
 futures = "0.3"
 lazy_static = "1.4"
 lipsum = { version = "0.8", optional = true }
-log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 opentelemetry = { version = "0.17", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.10", features = ["tls-roots"] }
 parking_lot = "0.11.1"
@@ -60,6 +58,7 @@ rpc = { path = "../rpc", features = ["test-support"] }
 client = { path = "../client", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
+log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }

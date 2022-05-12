@@ -44,7 +44,7 @@ impl AppState {
 #[tokio::main]
 async fn main() -> Result<()> {
     if let Err(error) = env::load_dotenv() {
-        log::error!(
+        eprintln!(
             "error loading .env.toml (this is expected in production): {}",
             error
         );

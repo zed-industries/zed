@@ -3865,7 +3865,6 @@ dependencies = [
  "collections",
  "futures",
  "gpui",
- "log",
  "parking_lot",
  "prost 0.8.0",
  "prost-build 0.8.0",
