@@ -332,6 +332,11 @@
       "description": "Step: 250",
       "type": "color"
     },
+    "onMedia": {
+      "value": "#b8b8b84d",
+      "description": "Step: 250",
+      "type": "color"
+    },
     "ok": {
       "value": "#1b944726",
       "description": "Step: 600",

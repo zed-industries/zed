@@ -87,6 +87,10 @@ export default interface Theme {
     muted: ColorToken;
     focused: ColorToken;
     active: ColorToken;
+    /**
+    * Used for rendering borders on top of media like avatars, images, video, etc.
+    */
+    onMedia: ColorToken;
     ok: ColorToken;
     error: ColorToken;
     warning: ColorToken;

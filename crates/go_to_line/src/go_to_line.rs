@@ -62,7 +62,7 @@ impl GoToLine {
             .active_item(cx)
             .and_then(|active_item| active_item.downcast::<Editor>())
         {
-            workspace.toggle_modal(cx, |cx, _| {
+            workspace.toggle_modal(cx, |_, cx| {
                 let view = cx.add_view(|cx| GoToLine::new(editor, cx));
                 cx.subscribe(&view, Self::on_event).detach();
                 view

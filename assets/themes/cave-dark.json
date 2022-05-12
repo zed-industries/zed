@@ -341,6 +341,19 @@
             "icon_color": "#efecf4",
             "background": "#5852605c"
           }
+        },
+        "badge": {
+          "corner_radius": 3,
+          "padding": 2,
+          "margin": {
+            "bottom": -1,
+            "right": -1
+          },
+          "border": {
+            "width": 1,
+            "color": "#26232a"
+          },
+          "background": "#576ddb"
         }
       }
     },
@@ -470,6 +483,33 @@
       "color": "#efecf4",
       "size": 14,
       "background": "#000000aa"
+    },
+    "notification": {
+      "margin": {
+        "top": 10
+      },
+      "background": "#26232a",
+      "corner_radius": 6,
+      "padding": 12,
+      "border": {
+        "color": "#19171c",
+        "width": 1
+      },
+      "shadow": {
+        "blur": 16,
+        "color": "#0000003d",
+        "offset": [
+          0,
+          2
+        ]
+      }
+    },
+    "notifications": {
+      "width": 380,
+      "margin": {
+        "right": 10,
+        "bottom": 10
+      }
     }
   },
   "editor": {
@@ -1638,6 +1678,57 @@
     "size": 14,
     "padding": {
       "left": 6
+    }
+  },
+  "contact_notification": {
+    "header_avatar": {
+      "height": 12,
+      "width": 12,
+      "corner_radius": 6
+    },
+    "header_message": {
+      "family": "Zed Sans",
+      "color": "#e2dfe7",
+      "size": 12,
+      "margin": {
+        "left": 8,
+        "right": 8
+      }
+    },
+    "header_height": 18,
+    "body_message": {
+      "family": "Zed Sans",
+      "color": "#8b8792",
+      "size": 12,
+      "margin": {
+        "left": 20,
+        "top": 6,
+        "bottom": 6
+      }
+    },
+    "button": {
+      "family": "Zed Sans",
+      "color": "#e2dfe7",
+      "size": 12,
+      "background": "#19171c",
+      "padding": 4,
+      "corner_radius": 6,
+      "margin": {
+        "left": 6
+      },
+      "hover": {
+        "background": "#26232a3d"
+      }
+    },
+    "dismiss_button": {
+      "color": "#8b8792",
+      "icon_width": 8,
+      "icon_height": 8,
+      "button_width": 8,
+      "button_height": 8,
+      "hover": {
+        "color": "#e2dfe7"
+      }
     }
   }
 }

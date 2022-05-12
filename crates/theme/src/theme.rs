@@ -29,6 +29,7 @@ pub struct Theme {
     pub search: Search,
     pub project_diagnostics: ProjectDiagnostics,
     pub breadcrumbs: ContainedText,
+    pub contact_notification: ContactNotification,
 }
 
 #[derive(Deserialize, Default)]
@@ -45,6 +46,8 @@ pub struct Workspace {
     pub toolbar: Toolbar,
     pub disconnected_overlay: ContainedText,
     pub modal: ContainerStyle,
+    pub notification: ContainerStyle,
+    pub notifications: Notifications,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -110,6 +113,13 @@ pub struct Toolbar {
 }
 
 #[derive(Clone, Deserialize, Default)]
+pub struct Notifications {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub width: f32,
+}
+
+#[derive(Clone, Deserialize, Default)]
 pub struct Search {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -152,6 +162,7 @@ pub struct StatusBarSidebarButtons {
     pub group_left: ContainerStyle,
     pub group_right: ContainerStyle,
     pub item: Interactive<SidebarItem>,
+    pub badge: ContainerStyle,
 }
 
 #[derive(Deserialize, Default)]
@@ -348,6 +359,16 @@ pub struct ProjectDiagnostics {
     pub tab_icon_width: f32,
     pub tab_icon_spacing: f32,
     pub tab_summary_spacing: f32,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ContactNotification {
+    pub header_avatar: ImageStyle,
+    pub header_message: ContainedText,
+    pub header_height: f32,
+    pub body_message: ContainedText,
+    pub button: Interactive<ContainedText>,
+    pub dismiss_button: Interactive<IconButton>,
 }
 
 #[derive(Clone, Deserialize, Default)]

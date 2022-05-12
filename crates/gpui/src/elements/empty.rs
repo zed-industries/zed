@@ -8,11 +8,18 @@ use crate::{
 };
 use crate::{Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint};
 
-pub struct Empty;
+pub struct Empty {
+    collapsed: bool,
+}
 
 impl Empty {
     pub fn new() -> Self {
-        Self
+        Self { collapsed: false }
+    }
+
+    pub fn collapsed(mut self) -> Self {
+        self.collapsed = true;
+        self
     }
 }
 
@@ -25,12 +32,12 @@ impl Element for Empty {
         constraint: SizeConstraint,
         _: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let x = if constraint.max.x().is_finite() {
+        let x = if constraint.max.x().is_finite() && !self.collapsed {
             constraint.max.x()
         } else {
             constraint.min.x()
         };
-        let y = if constraint.max.y().is_finite() {
+        let y = if constraint.max.y().is_finite() && !self.collapsed {
             constraint.max.y()
         } else {
             constraint.min.y()

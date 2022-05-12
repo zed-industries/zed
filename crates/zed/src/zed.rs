@@ -172,7 +172,8 @@ pub fn build_workspace(
     });
 
     let project_panel = ProjectPanel::new(project, cx);
-    let contact_panel = cx.add_view(|cx| ContactsPanel::new(app_state.clone(), cx));
+    let contact_panel =
+        cx.add_view(|cx| ContactsPanel::new(app_state.clone(), workspace.weak_handle(), cx));
 
     workspace.left_sidebar().update(cx, |sidebar, cx| {
         sidebar.add_item("icons/folder-tree-solid-14.svg", project_panel.into(), cx)

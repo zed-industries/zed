@@ -17,10 +17,11 @@ pub trait Db: Send + Sync {
     async fn set_user_is_admin(&self, id: UserId, is_admin: bool) -> Result<()>;
     async fn destroy_user(&self, id: UserId) -> Result<()>;
 
-    async fn get_contacts(&self, id: UserId) -> Result<Contacts>;
+    async fn get_contacts(&self, id: UserId) -> Result<Vec<Contact>>;
+    async fn has_contact(&self, user_id_a: UserId, user_id_b: UserId) -> Result<bool>;
     async fn send_contact_request(&self, requester_id: UserId, responder_id: UserId) -> Result<()>;
     async fn remove_contact(&self, requester_id: UserId, responder_id: UserId) -> Result<()>;
-    async fn dismiss_contact_request(
+    async fn dismiss_contact_notification(
         &self,
         responder_id: UserId,
         requester_id: UserId,
@@ -190,7 +191,7 @@ impl Db for PostgresDb {
 
     // contacts
 
-    async fn get_contacts(&self, user_id: UserId) -> Result<Contacts> {
+    async fn get_contacts(&self, user_id: UserId) -> Result<Vec<Contact>> {
         let query = "
             SELECT user_id_a, user_id_b, a_to_b, accepted, should_notify
             FROM contacts
@@ -201,46 +202,67 @@ impl Db for PostgresDb {
             .bind(user_id)
             .fetch(&self.pool);
 
-        let mut current = vec![user_id];
-        let mut outgoing_requests = Vec::new();
-        let mut incoming_requests = Vec::new();
+        let mut contacts = vec![Contact::Accepted {
+            user_id,
+            should_notify: false,
+        }];
         while let Some(row) = rows.next().await {
             let (user_id_a, user_id_b, a_to_b, accepted, should_notify) = row?;
 
             if user_id_a == user_id {
                 if accepted {
-                    current.push(user_id_b);
+                    contacts.push(Contact::Accepted {
+                        user_id: user_id_b,
+                        should_notify: should_notify && a_to_b,
+                    });
                 } else if a_to_b {
-                    outgoing_requests.push(user_id_b);
+                    contacts.push(Contact::Outgoing { user_id: user_id_b })
                 } else {
-                    incoming_requests.push(IncomingContactRequest {
-                        requester_id: user_id_b,
+                    contacts.push(Contact::Incoming {
+                        user_id: user_id_b,
                         should_notify,
                     });
                 }
             } else {
                 if accepted {
-                    current.push(user_id_a);
+                    contacts.push(Contact::Accepted {
+                        user_id: user_id_a,
+                        should_notify: should_notify && !a_to_b,
+                    });
                 } else if a_to_b {
-                    incoming_requests.push(IncomingContactRequest {
-                        requester_id: user_id_a,
+                    contacts.push(Contact::Incoming {
+                        user_id: user_id_a,
                         should_notify,
                     });
                 } else {
-                    outgoing_requests.push(user_id_a);
+                    contacts.push(Contact::Outgoing { user_id: user_id_a });
                 }
             }
         }
 
-        current.sort_unstable();
-        outgoing_requests.sort_unstable();
-        incoming_requests.sort_unstable();
+        contacts.sort_unstable_by_key(|contact| contact.user_id());
 
-        Ok(Contacts {
-            current,
-            outgoing_requests,
-            incoming_requests,
-        })
+        Ok(contacts)
+    }
+
+    async fn has_contact(&self, user_id_1: UserId, user_id_2: UserId) -> Result<bool> {
+        let (id_a, id_b) = if user_id_1 < user_id_2 {
+            (user_id_1, user_id_2)
+        } else {
+            (user_id_2, user_id_1)
+        };
+
+        let query = "
+            SELECT 1 FROM contacts
+            WHERE user_id_a = $1 AND user_id_b = $2 AND accepted = 't'
+            LIMIT 1
+        ";
+        Ok(sqlx::query_scalar::<_, i32>(query)
+            .bind(id_a.0)
+            .bind(id_b.0)
+            .fetch_optional(&self.pool)
+            .await?
+            .is_some())
     }
 
     async fn send_contact_request(&self, sender_id: UserId, receiver_id: UserId) -> Result<()> {
@@ -254,7 +276,8 @@ impl Db for PostgresDb {
             VALUES ($1, $2, $3, 'f', 't')
             ON CONFLICT (user_id_a, user_id_b) DO UPDATE
             SET
-                accepted = 't'
+                accepted = 't',
+                should_notify = 'f'
             WHERE
                 NOT contacts.accepted AND
                 ((contacts.a_to_b = excluded.a_to_b AND contacts.user_id_a = excluded.user_id_b) OR
@@ -297,21 +320,26 @@ impl Db for PostgresDb {
         }
     }
 
-    async fn dismiss_contact_request(
+    async fn dismiss_contact_notification(
         &self,
-        responder_id: UserId,
-        requester_id: UserId,
+        user_id: UserId,
+        contact_user_id: UserId,
     ) -> Result<()> {
-        let (id_a, id_b, a_to_b) = if responder_id < requester_id {
-            (responder_id, requester_id, false)
+        let (id_a, id_b, a_to_b) = if user_id < contact_user_id {
+            (user_id, contact_user_id, true)
         } else {
-            (requester_id, responder_id, true)
+            (contact_user_id, user_id, false)
         };
 
         let query = "
             UPDATE contacts
             SET should_notify = 'f'
-            WHERE user_id_a = $1 AND user_id_b = $2 AND a_to_b = $3;
+            WHERE
+                user_id_a = $1 AND user_id_b = $2 AND
+                (
+                    (a_to_b = $3 AND accepted) OR
+                    (a_to_b != $3 AND NOT accepted)
+                );
         ";
 
         let result = sqlx::query(query)
@@ -342,7 +370,7 @@ impl Db for PostgresDb {
         let result = if accept {
             let query = "
                 UPDATE contacts
-                SET accepted = 't', should_notify = 'f'
+                SET accepted = 't', should_notify = 't'
                 WHERE user_id_a = $1 AND user_id_b = $2 AND a_to_b = $3;
             ";
             sqlx::query(query)
@@ -702,10 +730,28 @@ pub struct ChannelMessage {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Contacts {
-    pub current: Vec<UserId>,
-    pub incoming_requests: Vec<IncomingContactRequest>,
-    pub outgoing_requests: Vec<UserId>,
+pub enum Contact {
+    Accepted {
+        user_id: UserId,
+        should_notify: bool,
+    },
+    Outgoing {
+        user_id: UserId,
+    },
+    Incoming {
+        user_id: UserId,
+        should_notify: bool,
+    },
+}
+
+impl Contact {
+    pub fn user_id(&self) -> UserId {
+        match self {
+            Contact::Accepted { user_id, .. } => *user_id,
+            Contact::Outgoing { user_id } => *user_id,
+            Contact::Incoming { user_id, .. } => *user_id,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -947,51 +993,60 @@ pub mod tests {
             // User starts with no contacts
             assert_eq!(
                 db.get_contacts(user_1).await.unwrap(),
-                Contacts {
-                    current: vec![user_1],
-                    outgoing_requests: vec![],
-                    incoming_requests: vec![],
-                },
+                vec![Contact::Accepted {
+                    user_id: user_1,
+                    should_notify: false
+                }],
             );
 
             // User requests a contact. Both users see the pending request.
             db.send_contact_request(user_1, user_2).await.unwrap();
+            assert!(!db.has_contact(user_1, user_2).await.unwrap());
+            assert!(!db.has_contact(user_2, user_1).await.unwrap());
             assert_eq!(
                 db.get_contacts(user_1).await.unwrap(),
-                Contacts {
-                    current: vec![user_1],
-                    outgoing_requests: vec![user_2],
-                    incoming_requests: vec![],
-                },
+                &[
+                    Contact::Accepted {
+                        user_id: user_1,
+                        should_notify: false
+                    },
+                    Contact::Outgoing { user_id: user_2 }
+                ],
             );
             assert_eq!(
                 db.get_contacts(user_2).await.unwrap(),
-                Contacts {
-                    current: vec![user_2],
-                    outgoing_requests: vec![],
-                    incoming_requests: vec![IncomingContactRequest {
-                        requester_id: user_1,
+                &[
+                    Contact::Incoming {
+                        user_id: user_1,
                         should_notify: true
-                    }],
-                },
+                    },
+                    Contact::Accepted {
+                        user_id: user_2,
+                        should_notify: false
+                    },
+                ]
             );
 
             // User 2 dismisses the contact request notification without accepting or rejecting.
             // We shouldn't notify them again.
-            db.dismiss_contact_request(user_1, user_2)
+            db.dismiss_contact_notification(user_1, user_2)
                 .await
                 .unwrap_err();
-            db.dismiss_contact_request(user_2, user_1).await.unwrap();
+            db.dismiss_contact_notification(user_2, user_1)
+                .await
+                .unwrap();
             assert_eq!(
                 db.get_contacts(user_2).await.unwrap(),
-                Contacts {
-                    current: vec![user_2],
-                    outgoing_requests: vec![],
-                    incoming_requests: vec![IncomingContactRequest {
-                        requester_id: user_1,
+                &[
+                    Contact::Incoming {
+                        user_id: user_1,
                         should_notify: false
-                    }],
-                },
+                    },
+                    Contact::Accepted {
+                        user_id: user_2,
+                        should_notify: false
+                    },
+                ]
             );
 
             // User can't accept their own contact request
@@ -1005,24 +1060,72 @@ pub mod tests {
                 .unwrap();
             assert_eq!(
                 db.get_contacts(user_1).await.unwrap(),
-                Contacts {
-                    current: vec![user_1, user_2],
-                    outgoing_requests: vec![],
-                    incoming_requests: vec![],
-                },
+                &[
+                    Contact::Accepted {
+                        user_id: user_1,
+                        should_notify: false
+                    },
+                    Contact::Accepted {
+                        user_id: user_2,
+                        should_notify: true
+                    }
+                ],
             );
+            assert!(db.has_contact(user_1, user_2).await.unwrap());
+            assert!(db.has_contact(user_2, user_1).await.unwrap());
             assert_eq!(
                 db.get_contacts(user_2).await.unwrap(),
-                Contacts {
-                    current: vec![user_1, user_2],
-                    outgoing_requests: vec![],
-                    incoming_requests: vec![],
-                },
+                &[
+                    Contact::Accepted {
+                        user_id: user_1,
+                        should_notify: false,
+                    },
+                    Contact::Accepted {
+                        user_id: user_2,
+                        should_notify: false,
+                    },
+                ]
             );
 
             // Users cannot re-request existing contacts.
             db.send_contact_request(user_1, user_2).await.unwrap_err();
             db.send_contact_request(user_2, user_1).await.unwrap_err();
+
+            // Users can't dismiss notifications of them accepting other users' requests.
+            db.dismiss_contact_notification(user_2, user_1)
+                .await
+                .unwrap_err();
+            assert_eq!(
+                db.get_contacts(user_1).await.unwrap(),
+                &[
+                    Contact::Accepted {
+                        user_id: user_1,
+                        should_notify: false
+                    },
+                    Contact::Accepted {
+                        user_id: user_2,
+                        should_notify: true,
+                    },
+                ]
+            );
+
+            // Users can dismiss notifications of other users accepting their requests.
+            db.dismiss_contact_notification(user_1, user_2)
+                .await
+                .unwrap();
+            assert_eq!(
+                db.get_contacts(user_1).await.unwrap(),
+                &[
+                    Contact::Accepted {
+                        user_id: user_1,
+                        should_notify: false
+                    },
+                    Contact::Accepted {
+                        user_id: user_2,
+                        should_notify: false,
+                    },
+                ]
+            );
 
             // Users send each other concurrent contact requests and
             // see that they are immediately accepted.
@@ -1030,19 +1133,33 @@ pub mod tests {
             db.send_contact_request(user_3, user_1).await.unwrap();
             assert_eq!(
                 db.get_contacts(user_1).await.unwrap(),
-                Contacts {
-                    current: vec![user_1, user_2, user_3],
-                    outgoing_requests: vec![],
-                    incoming_requests: vec![],
-                },
+                &[
+                    Contact::Accepted {
+                        user_id: user_1,
+                        should_notify: false
+                    },
+                    Contact::Accepted {
+                        user_id: user_2,
+                        should_notify: false,
+                    },
+                    Contact::Accepted {
+                        user_id: user_3,
+                        should_notify: false
+                    },
+                ]
             );
             assert_eq!(
                 db.get_contacts(user_3).await.unwrap(),
-                Contacts {
-                    current: vec![user_1, user_3],
-                    outgoing_requests: vec![],
-                    incoming_requests: vec![],
-                },
+                &[
+                    Contact::Accepted {
+                        user_id: user_1,
+                        should_notify: false
+                    },
+                    Contact::Accepted {
+                        user_id: user_3,
+                        should_notify: false
+                    }
+                ],
             );
 
             // User declines a contact request. Both users see that it is gone.
@@ -1050,21 +1167,33 @@ pub mod tests {
             db.respond_to_contact_request(user_3, user_2, false)
                 .await
                 .unwrap();
+            assert!(!db.has_contact(user_2, user_3).await.unwrap());
+            assert!(!db.has_contact(user_3, user_2).await.unwrap());
             assert_eq!(
                 db.get_contacts(user_2).await.unwrap(),
-                Contacts {
-                    current: vec![user_1, user_2],
-                    outgoing_requests: vec![],
-                    incoming_requests: vec![],
-                },
+                &[
+                    Contact::Accepted {
+                        user_id: user_1,
+                        should_notify: false
+                    },
+                    Contact::Accepted {
+                        user_id: user_2,
+                        should_notify: false
+                    }
+                ]
             );
             assert_eq!(
                 db.get_contacts(user_3).await.unwrap(),
-                Contacts {
-                    current: vec![user_1, user_3],
-                    outgoing_requests: vec![],
-                    incoming_requests: vec![],
-                },
+                &[
+                    Contact::Accepted {
+                        user_id: user_1,
+                        should_notify: false
+                    },
+                    Contact::Accepted {
+                        user_id: user_3,
+                        should_notify: false
+                    }
+                ],
             );
         }
     }
@@ -1219,40 +1348,51 @@ pub mod tests {
             unimplemented!()
         }
 
-        async fn get_contacts(&self, id: UserId) -> Result<Contacts> {
+        async fn get_contacts(&self, id: UserId) -> Result<Vec<Contact>> {
             self.background.simulate_random_delay().await;
-            let mut current = vec![id];
-            let mut outgoing_requests = Vec::new();
-            let mut incoming_requests = Vec::new();
+            let mut contacts = vec![Contact::Accepted {
+                user_id: id,
+                should_notify: false,
+            }];
 
             for contact in self.contacts.lock().iter() {
                 if contact.requester_id == id {
                     if contact.accepted {
-                        current.push(contact.responder_id);
+                        contacts.push(Contact::Accepted {
+                            user_id: contact.responder_id,
+                            should_notify: contact.should_notify,
+                        });
                     } else {
-                        outgoing_requests.push(contact.responder_id);
+                        contacts.push(Contact::Outgoing {
+                            user_id: contact.responder_id,
+                        });
                     }
                 } else if contact.responder_id == id {
                     if contact.accepted {
-                        current.push(contact.requester_id);
+                        contacts.push(Contact::Accepted {
+                            user_id: contact.requester_id,
+                            should_notify: false,
+                        });
                     } else {
-                        incoming_requests.push(IncomingContactRequest {
-                            requester_id: contact.requester_id,
+                        contacts.push(Contact::Incoming {
+                            user_id: contact.requester_id,
                             should_notify: contact.should_notify,
                         });
                     }
                 }
             }
 
-            current.sort_unstable();
-            outgoing_requests.sort_unstable();
-            incoming_requests.sort_unstable();
+            contacts.sort_unstable_by_key(|contact| contact.user_id());
+            Ok(contacts)
+        }
 
-            Ok(Contacts {
-                current,
-                outgoing_requests,
-                incoming_requests,
-            })
+        async fn has_contact(&self, user_id_a: UserId, user_id_b: UserId) -> Result<bool> {
+            self.background.simulate_random_delay().await;
+            Ok(self.contacts.lock().iter().any(|contact| {
+                contact.accepted
+                    && ((contact.requester_id == user_id_a && contact.responder_id == user_id_b)
+                        || (contact.requester_id == user_id_b && contact.responder_id == user_id_a))
+            }))
         }
 
         async fn send_contact_request(
@@ -1274,6 +1414,7 @@ pub mod tests {
                         Err(anyhow!("contact already exists"))?;
                     } else {
                         contact.accepted = true;
+                        contact.should_notify = false;
                         return Ok(());
                     }
                 }
@@ -1294,22 +1435,29 @@ pub mod tests {
             Ok(())
         }
 
-        async fn dismiss_contact_request(
+        async fn dismiss_contact_notification(
             &self,
-            responder_id: UserId,
-            requester_id: UserId,
+            user_id: UserId,
+            contact_user_id: UserId,
         ) -> Result<()> {
             let mut contacts = self.contacts.lock();
             for contact in contacts.iter_mut() {
-                if contact.requester_id == requester_id && contact.responder_id == responder_id {
-                    if contact.accepted {
-                        return Err(anyhow!("contact already confirmed"));
-                    }
+                if contact.requester_id == contact_user_id
+                    && contact.responder_id == user_id
+                    && !contact.accepted
+                {
+                    contact.should_notify = false;
+                    return Ok(());
+                }
+                if contact.requester_id == user_id
+                    && contact.responder_id == contact_user_id
+                    && contact.accepted
+                {
                     contact.should_notify = false;
                     return Ok(());
                 }
             }
-            Err(anyhow!("no such contact request"))
+            Err(anyhow!("no such notification"))
         }
 
         async fn respond_to_contact_request(
@@ -1326,6 +1474,7 @@ pub mod tests {
                     }
                     if accept {
                         contact.accepted = true;
+                        contact.should_notify = true;
                     } else {
                         contacts.remove(ix);
                     }
