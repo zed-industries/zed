@@ -1,3 +1,2 @@
 ZED_ENVIRONMENT=staging
-RUST_LOG=info
-TRACE_LEVEL=debug
+RUST_LOG=info,rpc=debug

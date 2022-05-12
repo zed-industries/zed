@@ -9,6 +9,7 @@ use futures::{
     stream::BoxStream,
     FutureExt, SinkExt, StreamExt,
 };
+use log::as_debug;
 use parking_lot::{Mutex, RwLock};
 use smol_timeout::TimeoutExt;
 use std::sync::atomic::Ordering::SeqCst;
@@ -22,6 +23,7 @@ use std::{
     },
     time::Duration,
 };
+use tracing::instrument;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ConnectionId(pub u32);
@@ -108,6 +110,7 @@ impl Peer {
         })
     }
 
+    #[instrument(skip_all)]
     pub async fn add_connection<F, Fut, Out>(
         self: &Arc<Self>,
         connection: Connection,
@@ -145,9 +148,12 @@ impl Peer {
         let this = self.clone();
         let response_channels = connection_state.response_channels.clone();
         let handle_io = async move {
+            log::debug!(connection_id = connection_id.0; "handle io future: start");
+
             let _end_connection = util::defer(|| {
                 response_channels.lock().take();
                 this.connections.write().remove(&connection_id);
+                log::debug!(connection_id = connection_id.0; "handle io future: end");
             });
 
             // Send messages on this frequency so the connection isn't closed.
@@ -159,49 +165,68 @@ impl Peer {
             futures::pin_mut!(receive_timeout);
 
             loop {
+                log::debug!(connection_id = connection_id.0; "outer loop iteration start");
                 let read_message = reader.read().fuse();
                 futures::pin_mut!(read_message);
 
                 loop {
+                    log::debug!(connection_id = connection_id.0; "inner loop iteration start");
                     futures::select_biased! {
                         outgoing = outgoing_rx.next().fuse() => match outgoing {
                             Some(outgoing) => {
+                                log::debug!(connection_id = connection_id.0; "outgoing rpc message: writing");
                                 if let Some(result) = writer.write(outgoing).timeout(WRITE_TIMEOUT).await {
+                                    log::debug!(connection_id = connection_id.0; "outgoing rpc message: done writing");
                                     result.context("failed to write RPC message")?;
+                                    log::debug!(connection_id = connection_id.0; "keepalive interval: resetting after sending message");
                                     keepalive_timer.set(create_timer(KEEPALIVE_INTERVAL).fuse());
                                 } else {
+                                    log::debug!(connection_id = connection_id.0; "outgoing rpc message: writing timed out");
                                     Err(anyhow!("timed out writing message"))?;
                                 }
                             }
                             None => {
-                                log::info!("outgoing channel closed");
+                                log::debug!(connection_id = connection_id.0; "outgoing rpc message: channel closed");
                                 return Ok(())
                             },
                         },
                         incoming = read_message => {
+                            log::debug!(connection_id = connection_id.0; "incoming rpc message: received");
                             let incoming = incoming.context("received invalid RPC message")?;
+                            log::debug!(connection_id = connection_id.0; "receive timeout: resetting");
                             receive_timeout.set(create_timer(RECEIVE_TIMEOUT).fuse());
                             if let proto::Message::Envelope(incoming) = incoming {
+                                log::debug!(connection_id = connection_id.0; "incoming rpc message: processing");
                                 match incoming_tx.send(incoming).timeout(RECEIVE_TIMEOUT).await {
-                                    Some(Ok(_)) => {},
+                                    Some(Ok(_)) => {
+                                        log::debug!(connection_id = connection_id.0; "incoming rpc message: processed");
+                                    },
                                     Some(Err(_)) => {
-                                        log::info!("incoming channel closed");
+                                        log::debug!(connection_id = connection_id.0; "incoming rpc message: channel closed");
                                         return Ok(())
                                     },
-                                    None => Err(anyhow!("timed out processing incoming message"))?,
+                                    None => {
+                                        log::debug!(connection_id = connection_id.0; "incoming rpc message: processing timed out");
+                                        Err(anyhow!("timed out processing incoming message"))?
+                                    },
                                 }
                             }
                             break;
                         },
                         _ = keepalive_timer => {
+                            log::debug!(connection_id = connection_id.0; "keepalive interval: pinging");
                             if let Some(result) = writer.write(proto::Message::Ping).timeout(WRITE_TIMEOUT).await {
+                                log::debug!(connection_id = connection_id.0; "keepalive interval: done pinging");
                                 result.context("failed to send keepalive")?;
+                                log::debug!(connection_id = connection_id.0; "keepalive interval: resetting after pinging");
                                 keepalive_timer.set(create_timer(KEEPALIVE_INTERVAL).fuse());
                             } else {
+                                log::debug!(connection_id = connection_id.0; "keepalive interval: pinging timed out");
                                 Err(anyhow!("timed out sending keepalive"))?;
                             }
                         }
                         _ = receive_timeout => {
+                            log::debug!(connection_id = connection_id.0; "receive timeout: delay between messages too long");
                             Err(anyhow!("delay between messages too long"))?
                         }
                     }
@@ -217,25 +242,71 @@ impl Peer {
         let incoming_rx = incoming_rx.filter_map(move |incoming| {
             let response_channels = response_channels.clone();
             async move {
+                let message_id = incoming.id;
+                log::debug!(incoming = as_debug!(&incoming); "incoming message future: start");
+                let _end = util::defer(move || {
+                    log::debug!(
+                        connection_id = connection_id.0,
+                        message_id = message_id;
+                        "incoming message future: end"
+                    );
+                });
+
                 if let Some(responding_to) = incoming.responding_to {
+                    log::debug!(
+                        connection_id = connection_id.0,
+                        message_id = message_id,
+                        responding_to = responding_to;
+                        "incoming response: received"
+                    );
                     let channel = response_channels.lock().as_mut()?.remove(&responding_to);
                     if let Some(tx) = channel {
                         let requester_resumed = oneshot::channel();
                         if let Err(error) = tx.send((incoming, requester_resumed.0)) {
                             log::debug!(
-                                "received RPC but request future was dropped {:?}",
-                                error.0
+                                connection_id = connection_id.0,
+                                message_id = message_id,
+                                responding_to = responding_to,
+                                error = as_debug!(error);
+                                "incoming response: request future dropped",
                             );
                         }
+
+                        log::debug!(
+                            connection_id = connection_id.0,
+                            message_id = message_id,
+                            responding_to = responding_to;
+                            "incoming response: waiting to resume requester"
+                        );
                         let _ = requester_resumed.1.await;
+                        log::debug!(
+                            connection_id = connection_id.0,
+                            message_id = message_id,
+                            responding_to = responding_to;
+                            "incoming response: requester resumed"
+                        );
                     } else {
-                        log::warn!("received RPC response to unknown request {}", responding_to);
+                        log::warn!(
+                            connection_id = connection_id.0,
+                            message_id = message_id,
+                            responding_to = responding_to;
+                            "incoming response: unknown request"
+                        );
                     }
 
                     None
                 } else {
+                    log::debug!(
+                        connection_id = connection_id.0,
+                        message_id = message_id;
+                        "incoming message: received"
+                    );
                     proto::build_typed_envelope(connection_id, incoming).or_else(|| {
-                        log::error!("unable to construct a typed envelope");
+                        log::error!(
+                            connection_id = connection_id.0,
+                            message_id = message_id;
+                            "unable to construct a typed envelope"
+                        );
                         None
                     })
                 }
