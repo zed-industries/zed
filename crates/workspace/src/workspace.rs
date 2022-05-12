@@ -1123,13 +1123,13 @@ impl Workspace {
         };
         let active_item = sidebar.update(cx, |sidebar, cx| {
             sidebar.activate_item(action.item_index, cx);
-            sidebar.active_item().map(|item| item.to_any())
+            sidebar.active_item().cloned()
         });
         if let Some(active_item) = active_item {
             if active_item.is_focused(cx) {
                 cx.focus_self();
             } else {
-                cx.focus(active_item);
+                cx.focus(active_item.to_any());
             }
         }
         cx.notify();

@@ -764,6 +764,10 @@ impl SidebarItem for ContactsPanel {
             .incoming_contact_requests()
             .is_empty()
     }
+
+    fn contains_focused_view(&self, cx: &AppContext) -> bool {
+        self.filter_editor.is_focused(cx)
+    }
 }
 
 fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Element {

@@ -324,6 +324,20 @@
                     "side": "Left",
                     "item_index": 0
                 }
+            ],
+            "cmd-9": [
+                "workspace::ToggleSidebarItemFocus",
+                {
+                    "side": "Right",
+                    "item_index": 0
+                }
+            ],
+            "cmd-shift-(": [
+                "workspace::ToggleSidebarItem",
+                {
+                    "side": "Right",
+                    "item_index": 0
+                }
             ]
         }
     },
