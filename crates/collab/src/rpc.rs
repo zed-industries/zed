@@ -1116,29 +1116,6 @@ impl Server {
         Ok(())
     }
 
-    // #[instrument(skip(self, state, user_ids))]
-    // fn update_contacts_for_users<'a>(
-    //     self: &Arc<Self>,
-    //     state: &Store,
-    //     user_ids: impl IntoIterator<Item = &'a UserId>,
-    // ) {
-    //     for user_id in user_ids {
-    //         let contacts = state.contacts_for_user(*user_id);
-    //         for connection_id in state.connection_ids_for_user(*user_id) {
-    //             self.peer
-    //                 .send(
-    //                     connection_id,
-    //                     proto::UpdateContacts {
-    //                         contacts: contacts.clone(),
-    //                         pending_requests_from_user_ids: Default::default(),
-    //                         pending_requests_to_user_ids: Default::default(),
-    //                     },
-    //                 )
-    //                 .trace_err();
-    //         }
-    //     }
-    // }
-
     async fn join_channel(
         self: Arc<Self>,
         request: TypedEnvelope<proto::JoinChannel>,
