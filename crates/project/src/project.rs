@@ -259,6 +259,7 @@ impl Project {
         client.add_model_message_handler(Self::handle_register_worktree);
         client.add_model_message_handler(Self::handle_unregister_worktree);
         client.add_model_message_handler(Self::handle_unregister_project);
+        client.add_model_message_handler(Self::handle_project_unshared);
         client.add_model_message_handler(Self::handle_update_buffer_file);
         client.add_model_message_handler(Self::handle_update_buffer);
         client.add_model_message_handler(Self::handle_update_diagnostic_summary);
@@ -557,7 +558,7 @@ impl Project {
     }
 
     fn unregister(&mut self, cx: &mut ModelContext<Self>) {
-        self.unshare(cx);
+        self.unshared(cx);
         for worktree in &self.worktrees {
             if let Some(worktree) = worktree.upgrade(cx) {
                 worktree.update(cx, |worktree, _| {
@@ -817,12 +818,7 @@ impl Project {
         }
     }
 
-    fn share(
-        &mut self,
-        requester_user_id: UserId,
-        requester_peer_id: PeerId,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
+    fn share(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let project_id;
         if let ProjectClientState::Local {
             remote_id_rx,
@@ -883,7 +879,7 @@ impl Project {
         })
     }
 
-    fn unshare(&mut self, cx: &mut ModelContext<Self>) {
+    fn unshared(&mut self, cx: &mut ModelContext<Self>) {
         if let ProjectClientState::Local { is_shared, .. } = &mut self.client_state {
             if !*is_shared {
                 return;
@@ -930,10 +926,7 @@ impl Project {
             let client = self.client.clone();
             cx.foreground()
                 .spawn(async move {
-                    println!("SHARING because {} wanted to join!!!", requester_id);
                     share.await?;
-                    println!("DONE SHARING!!!!!");
-
                     client.send(proto::RespondToJoinProjectRequest {
                         requester_id,
                         project_id,
@@ -3802,6 +3795,16 @@ impl Project {
         Ok(())
     }
 
+    async fn handle_project_unshared(
+        this: ModelHandle<Self>,
+        _: TypedEnvelope<proto::ProjectUnshared>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| this.unshared(cx));
+        Ok(())
+    }
+
     async fn handle_add_collaborator(
         this: ModelHandle<Self>,
         mut envelope: TypedEnvelope<proto::AddProjectCollaborator>,
@@ -3843,19 +3846,7 @@ impl Project {
                     buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
                 }
             }
-            println!(
-                "{} observed {:?} leaving",
-                this.user_store
-                    .read(cx)
-                    .current_user()
-                    .unwrap()
-                    .github_login,
-                peer_id
-            );
-            if this.collaborators.is_empty() {
-                println!("UNSHARING!!!!");
-                this.unshare(cx);
-            }
+
             cx.emit(Event::CollaboratorLeft(peer_id));
             cx.notify();
             Ok(())

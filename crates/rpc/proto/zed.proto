@@ -21,20 +21,21 @@ message Envelope {
         LeaveProject leave_project = 15;
         AddProjectCollaborator add_project_collaborator = 16;
         RemoveProjectCollaborator remove_project_collaborator = 17;
+        ProjectUnshared project_unshared = 18;
 
-        GetDefinition get_definition = 18;
-        GetDefinitionResponse get_definition_response = 19;
-        GetReferences get_references = 20;
-        GetReferencesResponse get_references_response = 21;
-        GetDocumentHighlights get_document_highlights = 22;
-        GetDocumentHighlightsResponse get_document_highlights_response = 23;
-        GetProjectSymbols get_project_symbols = 24;
-        GetProjectSymbolsResponse get_project_symbols_response = 25;
-        OpenBufferForSymbol open_buffer_for_symbol = 26;
-        OpenBufferForSymbolResponse open_buffer_for_symbol_response = 27;
+        GetDefinition get_definition = 19;
+        GetDefinitionResponse get_definition_response = 20;
+        GetReferences get_references = 21;
+        GetReferencesResponse get_references_response = 22;
+        GetDocumentHighlights get_document_highlights = 23;
+        GetDocumentHighlightsResponse get_document_highlights_response = 24;
+        GetProjectSymbols get_project_symbols = 25;
+        GetProjectSymbolsResponse get_project_symbols_response = 26;
+        OpenBufferForSymbol open_buffer_for_symbol = 27;
+        OpenBufferForSymbolResponse open_buffer_for_symbol_response = 28;
 
-        RegisterWorktree register_worktree = 28;
-        UnregisterWorktree unregister_worktree = 29;
+        RegisterWorktree register_worktree = 29;
+        UnregisterWorktree unregister_worktree = 30;
         UpdateWorktree update_worktree = 31;
 
         CreateProjectEntry create_project_entry = 32;
@@ -211,6 +212,10 @@ message AddProjectCollaborator {
 message RemoveProjectCollaborator {
     uint64 project_id = 1;
     uint32 peer_id = 2;
+}
+
+message ProjectUnshared {
+    uint64 project_id = 1;
 }
 
 message GetDefinition {

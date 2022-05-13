@@ -51,7 +51,7 @@ pub type ReplicaId = u16;
 pub struct RemovedConnectionState {
     pub user_id: UserId,
     pub hosted_projects: HashMap<u64, Project>,
-    pub guest_project_ids: HashMap<u64, Vec<ConnectionId>>,
+    pub guest_project_ids: HashSet<u64>,
     pub contact_ids: HashSet<UserId>,
 }
 
@@ -134,10 +134,8 @@ impl Store {
         for project_id in connection.projects.clone() {
             if let Ok(project) = self.unregister_project(project_id, connection_id) {
                 result.hosted_projects.insert(project_id, project);
-            } else if let Ok(project) = self.leave_project(connection_id, project_id) {
-                result
-                    .guest_project_ids
-                    .insert(project_id, project.connection_ids);
+            } else if self.leave_project(connection_id, project_id).is_ok() {
+                result.guest_project_ids.insert(project_id);
             }
         }
 

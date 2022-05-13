@@ -336,31 +336,46 @@ impl Server {
     }
 
     async fn sign_out(self: &mut Arc<Self>, connection_id: ConnectionId) -> Result<()> {
-        println!("Signing out {:?}", connection_id);
         self.peer.disconnect(connection_id);
-        let removed_connection = self.store_mut().await.remove_connection(connection_id)?;
 
-        for (project_id, project) in removed_connection.hosted_projects {
-            broadcast(connection_id, project.guests.keys().copied(), |conn_id| {
-                self.peer
-                    .send(conn_id, proto::UnregisterProject { project_id })
-            });
-        }
+        let removed_user_id = {
+            let mut store = self.store_mut().await;
+            let removed_connection = store.remove_connection(connection_id)?;
 
-        for (project_id, peer_ids) in removed_connection.guest_project_ids {
-            broadcast(connection_id, peer_ids, |conn_id| {
-                self.peer.send(
-                    conn_id,
-                    proto::RemoveProjectCollaborator {
-                        project_id,
-                        peer_id: connection_id.0,
-                    },
-                )
-            });
-        }
+            for (project_id, project) in removed_connection.hosted_projects {
+                broadcast(connection_id, project.guests.keys().copied(), |conn_id| {
+                    self.peer
+                        .send(conn_id, proto::UnregisterProject { project_id })
+                });
+            }
 
-        self.update_user_contacts(removed_connection.user_id)
-            .await?;
+            for project_id in removed_connection.guest_project_ids {
+                if let Some(project) = store.project(project_id).trace_err() {
+                    if project.guests.is_empty() {
+                        self.peer
+                            .send(
+                                project.host_connection_id,
+                                proto::ProjectUnshared { project_id },
+                            )
+                            .trace_err();
+                    } else {
+                        broadcast(connection_id, project.connection_ids(), |conn_id| {
+                            self.peer.send(
+                                conn_id,
+                                proto::RemoveProjectCollaborator {
+                                    project_id,
+                                    peer_id: connection_id.0,
+                                },
+                            )
+                        });
+                    }
+                }
+            }
+
+            removed_connection.user_id
+        };
+
+        self.update_user_contacts(removed_user_id).await?;
 
         Ok(())
     }
@@ -829,7 +844,6 @@ impl Server {
         request: TypedEnvelope<proto::UpdateBuffer>,
         response: Response<proto::UpdateBuffer>,
     ) -> Result<()> {
-        println!("{:?}: update buffer", request.sender_id);
         let receiver_ids = self
             .store()
             .await
