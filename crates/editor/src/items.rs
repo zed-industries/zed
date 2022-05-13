@@ -465,7 +465,7 @@ impl CursorPosition {
 
         self.selected_count = 0;
         let mut last_selection: Option<Selection<usize>> = None;
-        for selection in editor.selections.interleaved::<usize>(cx) {
+        for selection in editor.selections.all::<usize>(cx) {
             self.selected_count += selection.end - selection.start;
             if last_selection
                 .as_ref()

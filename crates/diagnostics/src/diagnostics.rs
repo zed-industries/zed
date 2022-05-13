@@ -419,7 +419,7 @@ impl ProjectDiagnosticsEditor {
                 groups = self.path_states.get(path_ix)?.diagnostic_groups.as_slice();
                 new_excerpt_ids_by_selection_id =
                     editor.change_selections(Some(Autoscroll::Fit), cx, |s| s.refresh());
-                selections = editor.selections.interleaved::<usize>(cx);
+                selections = editor.selections.all::<usize>(cx);
             }
 
             // If any selection has lost its position, move it to start of the next primary diagnostic.

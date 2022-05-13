@@ -957,9 +957,10 @@ impl Element for EditorElement {
             selections.extend(remote_selections);
 
             if view.show_local_selections {
-                let local_selections = view
+                let mut local_selections = view
                     .selections
-                    .interleaved_in_range(start_anchor..end_anchor, cx);
+                    .disjoint_in_range(start_anchor..end_anchor, cx);
+                local_selections.extend(view.selections.pending(cx));
                 for selection in &local_selections {
                     let is_empty = selection.start == selection.end;
                     let selection_start = snapshot.prev_line_boundary(selection.start).1;

@@ -1,5 +1,6 @@
 use std::{
-    iter, mem,
+    cell::Ref,
+    cmp, iter, mem,
     ops::{Deref, Range, Sub},
     sync::Arc,
 };
@@ -53,8 +54,8 @@ impl SelectionsCollection {
         self.display_map.update(cx, |map, cx| map.snapshot(cx))
     }
 
-    fn buffer(&self, cx: &AppContext) -> MultiBufferSnapshot {
-        self.buffer.read(cx).snapshot(cx)
+    fn buffer<'a>(&self, cx: &'a AppContext) -> Ref<'a, MultiBufferSnapshot> {
+        self.buffer.read(cx).read(cx)
     }
 
     pub fn count<'a>(&self) -> usize {
@@ -88,7 +89,7 @@ impl SelectionsCollection {
         self.pending.as_ref().map(|pending| pending.mode.clone())
     }
 
-    pub fn interleaved<'a, D>(&self, cx: &AppContext) -> Vec<Selection<D>>
+    pub fn all<'a, D>(&self, cx: &AppContext) -> Vec<Selection<D>>
     where
         D: 'a + TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
     {
@@ -124,14 +125,14 @@ impl SelectionsCollection {
         .collect()
     }
 
-    pub fn interleaved_in_range<'a>(
+    pub fn disjoint_in_range<'a, D>(
         &self,
         range: Range<Anchor>,
         cx: &AppContext,
-    ) -> Vec<Selection<Point>> {
-        // TODO: Make sure pending selection is handled correctly here
-        // if it is interleaved properly, we can sue resolve_multiple
-        // to improve performance
+    ) -> Vec<Selection<D>>
+    where
+        D: 'a + TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
+    {
         let buffer = self.buffer(cx);
         let start_ix = match self
             .disjoint
@@ -146,36 +147,16 @@ impl SelectionsCollection {
             Ok(ix) => ix + 1,
             Err(ix) => ix,
         };
-
-        fn point_selection(
-            selection: &Selection<Anchor>,
-            buffer: &MultiBufferSnapshot,
-        ) -> Selection<Point> {
-            let start = crate::ToPoint::to_point(&selection.start, &buffer);
-            let end = crate::ToPoint::to_point(&selection.end, &buffer);
-            Selection {
-                id: selection.id,
-                start,
-                end,
-                reversed: selection.reversed,
-                goal: selection.goal,
-            }
-        }
-
-        self.disjoint[start_ix..end_ix]
-            .iter()
-            .chain(self.pending.as_ref().map(|pending| &pending.selection))
-            .map(|s| point_selection(s, &buffer))
-            .collect()
+        resolve_multiple(&self.disjoint[start_ix..end_ix], &buffer).collect()
     }
 
-    pub fn display_interleaved(
+    pub fn all_display(
         &mut self,
         cx: &mut MutableAppContext,
     ) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
         let display_map = self.display_map(cx);
         let selections = self
-            .interleaved::<Point>(cx)
+            .all::<Point>(cx)
             .into_iter()
             .map(|selection| selection.map(|point| point.to_display_point(&display_map)))
             .collect();
@@ -216,14 +197,14 @@ impl SelectionsCollection {
         &self,
         cx: &AppContext,
     ) -> Selection<D> {
-        self.interleaved(cx).first().unwrap().clone()
+        self.all(cx).first().unwrap().clone()
     }
 
     pub fn last<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
         cx: &AppContext,
     ) -> Selection<D> {
-        self.interleaved(cx).last().unwrap().clone()
+        self.all(cx).last().unwrap().clone()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -231,7 +212,7 @@ impl SelectionsCollection {
         &self,
         cx: &AppContext,
     ) -> Vec<Range<D>> {
-        self.interleaved::<D>(cx)
+        self.all::<D>(cx)
             .iter()
             .map(|s| {
                 if s.reversed {
@@ -257,6 +238,34 @@ impl SelectionsCollection {
                 }
             })
             .collect()
+    }
+
+    pub fn build_columnar_selection(
+        &mut self,
+        display_map: &DisplaySnapshot,
+        row: u32,
+        columns: &Range<u32>,
+        reversed: bool,
+    ) -> Option<Selection<Point>> {
+        let is_empty = columns.start == columns.end;
+        let line_len = display_map.line_len(row);
+        if columns.start < line_len || (is_empty && columns.start == line_len) {
+            let start = DisplayPoint::new(row, columns.start);
+            let end = DisplayPoint::new(row, cmp::min(columns.end, line_len));
+
+            Some(Selection {
+                id: post_inc(&mut self.next_selection_id),
+                start: start.to_point(display_map),
+                end: end.to_point(display_map),
+                reversed,
+                goal: SelectionGoal::ColumnRange {
+                    start: columns.start,
+                    end: columns.end,
+                },
+            })
+        } else {
+            None
+        }
     }
 
     pub(crate) fn change_with<R>(
@@ -288,7 +297,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.collection.display_map(self.cx)
     }
 
-    fn buffer(&mut self) -> MultiBufferSnapshot {
+    fn buffer(&self) -> Ref<MultiBufferSnapshot> {
         self.collection.buffer(self.cx)
     }
 
@@ -370,7 +379,7 @@ impl<'a> MutableSelectionsCollection<'a> {
     where
         T: 'a + ToOffset + ToPoint + TextDimension + Ord + Sub<T, Output = T> + std::marker::Copy,
     {
-        let mut selections = self.interleaved(self.cx);
+        let mut selections = self.all(self.cx);
         let mut start = range.start.to_offset(&self.buffer());
         let mut end = range.end.to_offset(&self.buffer());
         let reversed = if start > end {
@@ -527,7 +536,7 @@ impl<'a> MutableSelectionsCollection<'a> {
     ) {
         let display_map = self.display_map();
         let selections = self
-            .interleaved::<Point>(self.cx)
+            .all::<Point>(self.cx)
             .into_iter()
             .map(|selection| {
                 let mut selection = selection.map(|point| point.to_display_point(&display_map));
@@ -595,18 +604,17 @@ impl<'a> MutableSelectionsCollection<'a> {
     /// was no longer present. The keys of the map are selection ids. The values are
     /// the id of the new excerpt where the head of the selection has been moved.
     pub fn refresh(&mut self) -> HashMap<usize, ExcerptId> {
-        // TODO: Pull disjoint constraint out of update_selections so we don't have to
-        // store the pending_selection here.
-        let buffer = self.buffer();
-
         let mut pending = self.collection.pending.take();
         let mut selections_with_lost_position = HashMap::default();
 
-        let anchors_with_status = buffer.refresh_anchors(
-            self.disjoint
+        let anchors_with_status = {
+            let buffer = self.buffer();
+            let disjoint_anchors = self
+                .disjoint
                 .iter()
-                .flat_map(|selection| [&selection.start, &selection.end]),
-        );
+                .flat_map(|selection| [&selection.start, &selection.end]);
+            buffer.refresh_anchors(disjoint_anchors)
+        };
         let adjusted_disjoint: Vec<_> = anchors_with_status
             .chunks(2)
             .map(|selection_anchors| {
@@ -634,10 +642,13 @@ impl<'a> MutableSelectionsCollection<'a> {
             .collect();
 
         if !adjusted_disjoint.is_empty() {
-            self.select::<usize>(resolve_multiple(adjusted_disjoint.iter(), &buffer).collect());
+            let resolved_selections =
+                resolve_multiple(adjusted_disjoint.iter(), &self.buffer()).collect();
+            self.select::<usize>(resolved_selections);
         }
 
         if let Some(pending) = pending.as_mut() {
+            let buffer = self.buffer();
             let anchors =
                 buffer.refresh_anchors([&pending.selection.start, &pending.selection.end]);
             let (_, start, kept_start) = anchors[0].clone();

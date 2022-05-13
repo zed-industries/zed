@@ -130,7 +130,7 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
         vim.switch_mode(Mode::Insert, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
-                let (map, old_selections) = editor.selections.display_interleaved(cx);
+                let (map, old_selections) = editor.selections.all_display(cx);
                 let selection_start_rows: HashSet<u32> = old_selections
                     .into_iter()
                     .map(|selection| selection.start.row())
@@ -162,7 +162,7 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
         vim.switch_mode(Mode::Insert, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
-                let (map, old_selections) = editor.selections.display_interleaved(cx);
+                let (map, old_selections) = editor.selections.all_display(cx);
                 let selection_end_rows: HashSet<u32> = old_selections
                     .into_iter()
                     .map(|selection| selection.end.row())

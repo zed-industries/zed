@@ -1191,7 +1191,7 @@ impl Editor {
             first_cursor_top = newest_selection.head().to_display_point(&display_map).row() as f32;
             last_cursor_bottom = first_cursor_top + 1.;
         } else {
-            let selections = self.selections.interleaved::<Point>(cx);
+            let selections = self.selections.all::<Point>(cx);
             first_cursor_top = selections
                 .first()
                 .unwrap()
@@ -1251,7 +1251,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> bool {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let selections = self.selections.interleaved::<Point>(cx);
+        let selections = self.selections.all::<Point>(cx);
 
         let mut target_left;
         let mut target_right;
@@ -1663,7 +1663,7 @@ impl Editor {
     fn end_selection(&mut self, cx: &mut ViewContext<Self>) {
         self.columnar_selection_tail.take();
         if self.selections.pending_anchor().is_some() {
-            let selections = self.selections.interleaved::<usize>(cx);
+            let selections = self.selections.all::<usize>(cx);
             self.change_selections(None, cx, |s| {
                 s.select(selections);
                 s.clear_pending();
@@ -1763,7 +1763,7 @@ impl Editor {
     pub fn newline(&mut self, _: &Newline, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             let (edits, selection_fixup_info): (Vec<_>, Vec<_>) = {
-                let selections = this.selections.interleaved::<usize>(cx);
+                let selections = this.selections.all::<usize>(cx);
 
                 let buffer = this.buffer.read(cx).snapshot(cx);
                 selections
@@ -1845,7 +1845,7 @@ impl Editor {
     pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         let text: Arc<str> = text.into();
         self.transact(cx, |this, cx| {
-            let old_selections = this.selections.interleaved::<usize>(cx);
+            let old_selections = this.selections.all::<usize>(cx);
             let selection_anchors = this.buffer.update(cx, |buffer, cx| {
                 let anchors = {
                     let snapshot = buffer.read(cx);
@@ -1908,7 +1908,7 @@ impl Editor {
         {
             if self
                 .selections
-                .interleaved::<usize>(cx)
+                .all::<usize>(cx)
                 .iter()
                 .any(|selection| selection.is_empty())
             {
@@ -1951,7 +1951,7 @@ impl Editor {
     }
 
     fn autoclose_bracket_pairs(&mut self, cx: &mut ViewContext<Self>) {
-        let selections = self.selections.interleaved::<usize>(cx);
+        let selections = self.selections.all::<usize>(cx);
         let mut bracket_pair_state = None;
         let mut new_selections = None;
         self.buffer.update(cx, |buffer, cx| {
@@ -2045,7 +2045,7 @@ impl Editor {
 
     fn skip_autoclose_end(&mut self, text: &str, cx: &mut ViewContext<Self>) -> bool {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let old_selections = self.selections.interleaved::<usize>(cx);
+        let old_selections = self.selections.all::<usize>(cx);
         let autoclose_pair = if let Some(autoclose_pair) = self.autoclose_stack.last() {
             autoclose_pair
         } else {
@@ -2214,7 +2214,7 @@ impl Editor {
             snippet = None;
             text = completion.new_text.clone();
         };
-        let selections = self.selections.interleaved::<usize>(cx);
+        let selections = self.selections.all::<usize>(cx);
         let buffer = buffer_handle.read(cx);
         let old_range = completion.old_range.to_offset(&buffer);
         let old_text = buffer.text_for_range(old_range.clone()).collect::<String>();
@@ -2733,7 +2733,7 @@ impl Editor {
 
     pub fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections.interleaved::<Point>(cx);
+        let mut selections = self.selections.all::<Point>(cx);
         for selection in &mut selections {
             if selection.is_empty() {
                 let old_head = selection.head();
@@ -2792,7 +2792,7 @@ impl Editor {
             return;
         }
 
-        let mut selections = self.selections.interleaved::<Point>(cx);
+        let mut selections = self.selections.all::<Point>(cx);
         if selections.iter().all(|s| s.is_empty()) {
             self.transact(cx, |this, cx| {
                 this.buffer.update(cx, |buffer, cx| {
@@ -2827,7 +2827,7 @@ impl Editor {
     }
 
     pub fn indent(&mut self, _: &Indent, cx: &mut ViewContext<Self>) {
-        let mut selections = self.selections.interleaved::<Point>(cx);
+        let mut selections = self.selections.all::<Point>(cx);
         self.transact(cx, |this, cx| {
             let mut last_indent = None;
             this.buffer.update(cx, |buffer, cx| {
@@ -2890,7 +2890,7 @@ impl Editor {
 
     pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let selections = self.selections.interleaved::<Point>(cx);
+        let selections = self.selections.all::<Point>(cx);
         let mut deletion_ranges = Vec::new();
         let mut last_outdent = None;
         {
@@ -2933,17 +2933,14 @@ impl Editor {
                     cx,
                 );
             });
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                // TODO: Make sure this is a reasonable change
-                // This used to call select(local_selections)
-                s.refresh()
-            });
+            let selections = this.selections.all::<usize>(cx);
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
         });
     }
 
     pub fn delete_line(&mut self, _: &DeleteLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let selections = self.selections.interleaved::<Point>(cx);
+        let selections = self.selections.all::<Point>(cx);
 
         let mut new_cursors = Vec::new();
         let mut edit_ranges = Vec::new();
@@ -3025,7 +3022,7 @@ impl Editor {
     pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
-        let selections = self.selections.interleaved::<Point>(cx);
+        let selections = self.selections.all::<Point>(cx);
 
         let mut edits = Vec::new();
         let mut selections_iter = selections.iter().peekable();
@@ -3070,7 +3067,7 @@ impl Editor {
         let mut unfold_ranges = Vec::new();
         let mut refold_ranges = Vec::new();
 
-        let selections = self.selections.interleaved::<Point>(cx);
+        let selections = self.selections.all::<Point>(cx);
         let mut selections = selections.iter().peekable();
         let mut contiguous_row_selections = Vec::new();
         let mut new_selections = Vec::new();
@@ -3182,7 +3179,7 @@ impl Editor {
         let mut unfold_ranges = Vec::new();
         let mut refold_ranges = Vec::new();
 
-        let selections = self.selections.interleaved::<Point>(cx);
+        let selections = self.selections.all::<Point>(cx);
         let mut selections = selections.iter().peekable();
         let mut contiguous_row_selections = Vec::new();
         let mut new_selections = Vec::new();
@@ -3320,10 +3317,9 @@ impl Editor {
                 edits
             });
             this.buffer.update(cx, |buffer, cx| buffer.edit(edits, cx));
+            let selections = this.selections.all::<usize>(cx);
             this.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                // TODO: Make sure this swap is reasonable.
-                // This was select(interleaved)
-                s.refresh();
+                s.select(selections);
             });
         });
     }
@@ -3331,7 +3327,7 @@ impl Editor {
     pub fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
         let mut text = String::new();
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let mut selections = self.selections.interleaved::<Point>(cx);
+        let mut selections = self.selections.all::<Point>(cx);
         let mut clipboard_selections = Vec::with_capacity(selections.len());
         {
             let max_point = buffer.max_point();
@@ -3364,7 +3360,7 @@ impl Editor {
     }
 
     pub fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
-        let selections = self.selections.interleaved::<Point>(cx);
+        let selections = self.selections.all::<Point>(cx);
         let buffer = self.buffer.read(cx).read(cx);
         let mut text = String::new();
         let mut clipboard_selections = Vec::with_capacity(selections.len());
@@ -3398,7 +3394,7 @@ impl Editor {
             if let Some(item) = cx.as_mut().read_from_clipboard() {
                 let mut clipboard_text = Cow::Borrowed(item.text());
                 if let Some(mut clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
-                    let old_selections = this.selections.interleaved::<usize>(cx);
+                    let old_selections = this.selections.all::<usize>(cx);
                     let all_selections_were_entire_line =
                         clipboard_selections.iter().all(|s| s.is_entire_line);
                     if clipboard_selections.len() != old_selections.len() {
@@ -3451,7 +3447,7 @@ impl Editor {
                         buffer.edit_with_autoindent(edits, cx);
                     });
 
-                    let selections = this.selections.interleaved::<usize>(cx);
+                    let selections = this.selections.all::<usize>(cx);
                     this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
                 } else {
                     this.insert(&clipboard_text, cx);
@@ -3464,8 +3460,6 @@ impl Editor {
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
             if let Some((selections, _)) = self.selection_history.transaction(tx_id).cloned() {
                 self.change_selections(None, cx, |s| {
-                    // TODO: move to SelectionsCollection to preserve selection
-                    // invariants without rechecking
                     s.select_anchors(selections.to_vec());
                 });
             }
@@ -3479,8 +3473,6 @@ impl Editor {
             if let Some((_, Some(selections))) = self.selection_history.transaction(tx_id).cloned()
             {
                 self.change_selections(None, cx, |s| {
-                    // TODO: move to SelectionsCollection to preserve selection
-                    // invariants without rechecking
                     s.select_anchors(selections.to_vec());
                 });
             }
@@ -3950,7 +3942,7 @@ impl Editor {
 
     pub fn select_line(&mut self, _: &SelectLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections.interleaved::<Point>(cx);
+        let mut selections = self.selections.all::<Point>(cx);
         let max_point = display_map.buffer_snapshot.max_point();
         for selection in &mut selections {
             let rows = selection.spanned_rows(true, &display_map);
@@ -3971,7 +3963,7 @@ impl Editor {
         let mut to_unfold = Vec::new();
         let mut new_selection_ranges = Vec::new();
         {
-            let selections = self.selections.interleaved::<Point>(cx);
+            let selections = self.selections.all::<Point>(cx);
             let buffer = self.buffer.read(cx).read(cx);
             for selection in selections {
                 for row in selection.start.row..selection.end.row {
@@ -3998,7 +3990,7 @@ impl Editor {
 
     fn add_selection(&mut self, above: bool, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections.interleaved::<Point>(cx);
+        let mut selections = self.selections.all::<Point>(cx);
         let mut state = self.add_selections_state.take().unwrap_or_else(|| {
             let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
             let range = oldest_selection.display_range(&display_map).sorted();
@@ -4008,7 +4000,7 @@ impl Editor {
             selections.clear();
             let mut stack = Vec::new();
             for row in range.start.row()..=range.end.row() {
-                if let Some(selection) = self.build_columnar_selection(
+                if let Some(selection) = self.selections.build_columnar_selection(
                     &display_map,
                     row,
                     &columns,
@@ -4055,7 +4047,7 @@ impl Editor {
                             row += 1;
                         }
 
-                        if let Some(new_selection) = self.build_columnar_selection(
+                        if let Some(new_selection) = self.selections.build_columnar_selection(
                             &display_map,
                             row,
                             &columns,
@@ -4095,7 +4087,7 @@ impl Editor {
         self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
-        let mut selections = self.selections.interleaved::<usize>(cx);
+        let mut selections = self.selections.all::<usize>(cx);
         if let Some(mut select_next_state) = self.select_next_state.take() {
             let query = &select_next_state.query;
             if !select_next_state.done {
@@ -4185,7 +4177,7 @@ impl Editor {
 
     pub fn toggle_comments(&mut self, _: &ToggleComments, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            let mut selections = this.selections.interleaved::<Point>(cx);
+            let mut selections = this.selections.all::<Point>(cx);
             let mut all_selection_lines_are_comments = true;
             let mut edit_ranges = Vec::new();
             let mut last_toggled_row = None;
@@ -4286,10 +4278,8 @@ impl Editor {
                 }
             });
 
-            let selections = this.selections.interleaved::<usize>(cx);
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                s.select(selections);
-            });
+            let selections = this.selections.all::<usize>(cx);
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
         });
     }
 
@@ -4300,7 +4290,7 @@ impl Editor {
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let old_selections = self.selections.interleaved::<usize>(cx).into_boxed_slice();
+        let old_selections = self.selections.all::<usize>(cx).into_boxed_slice();
 
         let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
         let mut selected_larger_node = false;
@@ -4360,7 +4350,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let mut selections = self.selections.interleaved::<usize>(cx);
+        let mut selections = self.selections.all::<usize>(cx);
         for selection in &mut selections {
             if let Some((open_range, close_range)) =
                 buffer.enclosing_bracket_ranges(selection.start..selection.end)
@@ -4387,11 +4377,7 @@ impl Editor {
         self.end_selection(cx);
         self.selection_history.mode = SelectionHistoryMode::Undoing;
         if let Some(entry) = self.selection_history.undo_stack.pop_back() {
-            self.change_selections(None, cx, |s| {
-                // TODO: Move to selections so selections invariants can be preserved rather than
-                // rechecking them.
-                s.select_anchors(entry.selections.to_vec())
-            });
+            self.change_selections(None, cx, |s| s.select_anchors(entry.selections.to_vec()));
             self.select_next_state = entry.select_next_state;
             self.add_selections_state = entry.add_selections_state;
             self.request_autoscroll(Autoscroll::Newest, cx);
@@ -4403,11 +4389,7 @@ impl Editor {
         self.end_selection(cx);
         self.selection_history.mode = SelectionHistoryMode::Redoing;
         if let Some(entry) = self.selection_history.redo_stack.pop_back() {
-            self.change_selections(None, cx, |s| {
-                // TODO: Move to selections so selections invariants can be preserved rather than
-                // rechecking them.
-                s.select_anchors(entry.selections.to_vec())
-            });
+            self.change_selections(None, cx, |s| s.select_anchors(entry.selections.to_vec()));
             self.select_next_state = entry.select_next_state;
             self.add_selections_state = entry.add_selections_state;
             self.request_autoscroll(Autoscroll::Newest, cx);
@@ -4827,14 +4809,9 @@ impl Editor {
                 .min(rename_range.end);
             drop(snapshot);
 
-            let new_selection = Selection {
-                id: self.selections.newest_anchor().id,
-                start: cursor_in_editor,
-                end: cursor_in_editor,
-                reversed: false,
-                goal: SelectionGoal::None,
-            };
-            self.change_selections(None, cx, |s| s.select(vec![new_selection]));
+            self.change_selections(None, cx, |s| {
+                s.select_ranges(vec![cursor_in_editor..cursor_in_editor])
+            });
         }
 
         Some(rename)
@@ -4945,34 +4922,6 @@ impl Editor {
         }
     }
 
-    fn build_columnar_selection(
-        &mut self,
-        display_map: &DisplaySnapshot,
-        row: u32,
-        columns: &Range<u32>,
-        reversed: bool,
-    ) -> Option<Selection<Point>> {
-        let is_empty = columns.start == columns.end;
-        let line_len = display_map.line_len(row);
-        if columns.start < line_len || (is_empty && columns.start == line_len) {
-            let start = DisplayPoint::new(row, columns.start);
-            let end = DisplayPoint::new(row, cmp::min(columns.end, line_len));
-            // TODO: Don't expose next_selection_id
-            Some(Selection {
-                id: post_inc(&mut self.selections.next_selection_id),
-                start: start.to_point(display_map),
-                end: end.to_point(display_map),
-                reversed,
-                goal: SelectionGoal::ColumnRange {
-                    start: columns.start,
-                    end: columns.end,
-                },
-            })
-        } else {
-            None
-        }
-    }
-
     pub fn set_selections_from_remote(
         &mut self,
         selections: Vec<Selection<Anchor>>,
@@ -5051,7 +5000,7 @@ impl Editor {
         let mut fold_ranges = Vec::new();
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let selections = self.selections.interleaved::<Point>(cx);
+        let selections = self.selections.all::<Point>(cx);
         for selection in selections {
             let range = selection.display_range(&display_map).sorted();
             let buffer_start_row = range.start.to_point(&display_map).row;
@@ -5075,7 +5024,7 @@ impl Editor {
     pub fn unfold_lines(&mut self, _: &UnfoldLines, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
-        let selections = self.selections.interleaved::<Point>(cx);
+        let selections = self.selections.all::<Point>(cx);
         let ranges = selections
             .iter()
             .map(|s| {
@@ -5133,7 +5082,7 @@ impl Editor {
     }
 
     pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {
-        let selections = self.selections.interleaved::<Point>(cx);
+        let selections = self.selections.all::<Point>(cx);
         let ranges = selections.into_iter().map(|s| s.start..s.end);
         self.fold_ranges(ranges, cx);
     }
@@ -5510,7 +5459,7 @@ impl Editor {
         }
 
         let mut new_selections_by_buffer = HashMap::default();
-        for selection in editor.selections.interleaved::<usize>(cx) {
+        for selection in editor.selections.all::<usize>(cx) {
             for (buffer, mut range) in
                 buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
             {
