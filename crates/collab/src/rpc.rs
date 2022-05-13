@@ -336,6 +336,7 @@ impl Server {
     }
 
     async fn sign_out(self: &mut Arc<Self>, connection_id: ConnectionId) -> Result<()> {
+        println!("Signing out {:?}", connection_id);
         self.peer.disconnect(connection_id);
         let removed_connection = self.store_mut().await.remove_connection(connection_id)?;
 
@@ -554,8 +555,13 @@ impl Server {
                     })
                 })
                 .collect::<Vec<_>>();
+
+            // Add all guests other than the requesting user's own connections as collaborators
             for (peer_conn_id, (peer_replica_id, peer_user_id)) in &project.guests {
-                if *peer_conn_id != request.sender_id {
+                if receipts_with_replica_ids
+                    .iter()
+                    .all(|(receipt, _)| receipt.sender_id != *peer_conn_id)
+                {
                     collaborators.push(proto::Collaborator {
                         peer_id: peer_conn_id.0,
                         replica_id: *peer_replica_id as u32,
@@ -563,6 +569,7 @@ impl Server {
                     });
                 }
             }
+
             for conn_id in project.connection_ids() {
                 for (receipt, replica_id) in &receipts_with_replica_ids {
                     if conn_id != receipt.sender_id {
@@ -822,6 +829,7 @@ impl Server {
         request: TypedEnvelope<proto::UpdateBuffer>,
         response: Response<proto::UpdateBuffer>,
     ) -> Result<()> {
+        println!("{:?}: update buffer", request.sender_id);
         let receiver_ids = self
             .store()
             .await
@@ -1640,7 +1648,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -1673,20 +1681,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that project as client B
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let client_b_peer_id = client_b.peer_id;
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         let replica_id_b = project_b.read_with(cx_b, |project, _| {
             assert_eq!(
@@ -1703,7 +1701,7 @@ mod tests {
         project_a
             .condition(&cx_a, |tree, _| {
                 tree.collaborators()
-                    .get(&client_b.peer_id)
+                    .get(&client_b_peer_id)
                     .map_or(false, |collaborator| {
                         collaborator.replica_id == replica_id_b
                             && collaborator.user.github_login == "user_b"
@@ -1749,14 +1747,21 @@ mod tests {
         //     .await;
 
         // Dropping the client B's project removes client B from client A's collaborators.
-        cx_b.update(move |_| drop(project_b));
+        cx_b.update(move |_| {
+            drop(client_b.project.take());
+            drop(project_b);
+        });
         project_a
             .condition(&cx_a, |project, _| project.collaborators().is_empty())
             .await;
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_unshare_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    async fn test_unshare_project(
+        deterministic: Arc<Deterministic>,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
+    ) {
         let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
         cx_a.foreground().forbid_parking();
@@ -1764,7 +1769,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -1796,54 +1801,27 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
-        assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
         // Join that project as client B
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+        assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
         project_b
             .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
 
-        // Unshare the project as client A
-        project_a.update(cx_a, |project, cx| project.unshare(cx));
-        project_b
-            .condition(cx_b, |project, _| project.is_read_only())
-            .await;
-        assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
+        // When client B leaves the project, it gets automatically unshared.
         cx_b.update(|_| {
+            drop(client_b.project.take());
             drop(project_b);
         });
+        deterministic.run_until_parked();
+        assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
 
-        // Share the project again and ensure guests can still join.
-        project_a
-            .update(cx_a, |project, cx| project.share(cx))
-            .await
-            .unwrap();
+        // When client B joins again, the project gets re-shared.
+        let project_b2 = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
         assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
-
-        let project_b2 = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
         project_b2
             .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
@@ -1859,7 +1837,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -1891,22 +1869,11 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
-        assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
         // Join that project as client B
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+        assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
         project_b
             .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
@@ -1927,26 +1894,9 @@ mod tests {
             drop(project_b);
         });
 
-        // Await reconnection
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
-
-        // Share the project again and ensure guests can still join.
-        project_a
-            .update(cx_a, |project, cx| project.share(cx))
-            .await
-            .unwrap();
+        // Ensure guests can still join.
+        let project_b2 = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
         assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
-
-        let project_b2 = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
         project_b2
             .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
@@ -1966,8 +1916,8 @@ mod tests {
         // Connect to a server as 3 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
-        let client_c = server.create_client(cx_c, "user_c").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_c = server.create_client(cx_c, "user_c").await;
         server
             .make_contacts(vec![
                 (&client_a, cx_a),
@@ -2003,31 +1953,11 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that worktree as clients B and C.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
-        let project_c = Project::remote(
-            project_id,
-            client_c.clone(),
-            client_c.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_c.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+        let project_c = client_c.build_remote_project(&project_a, cx_a, cx_c).await;
         let worktree_b = project_b.read_with(cx_b, |p, cx| p.worktrees(cx).next().unwrap());
         let worktree_c = project_c.read_with(cx_c, |p, cx| p.worktrees(cx).next().unwrap());
 
@@ -2166,13 +2096,7 @@ mod tests {
         .await;
 
         let (project_a, worktree_id) = client_a.build_local_project(fs, "/dir", cx_a).await;
-        let project_id = project_a.read_with(cx_a, |project, _| project.remote_id().unwrap());
-        project_a
-            .update(cx_a, |project, cx| project.share(cx))
-            .await
-            .unwrap();
-
-        let project_b = client_b.build_remote_project(project_id, cx_b).await;
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         let worktree_a =
             project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
@@ -2319,7 +2243,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -2351,21 +2275,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that project as client B
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Open a buffer as client B
         let buffer_b = project_b
@@ -2403,7 +2316,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -2435,21 +2348,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that project as client B
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
         let _worktree_b = project_b.update(cx_b, |p, cx| p.worktrees(cx).next().unwrap());
 
         // Open a buffer as client B
@@ -2487,7 +2389,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -2518,21 +2420,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that project as client B
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Open a buffer as client A
         let buffer_a = project_a
@@ -2568,7 +2459,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -2599,21 +2490,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that project as client B
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // See that a guest has joined as client A.
         project_a
@@ -2624,7 +2504,10 @@ mod tests {
         let buffer_b = cx_b
             .background()
             .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx)));
-        cx_b.update(|_| drop(project_b));
+        cx_b.update(|_| {
+            drop(client_b.project.take());
+            drop(project_b);
+        });
         drop(buffer_b);
 
         // See that the guest has left.
@@ -2642,7 +2525,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -2674,25 +2557,9 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a
-            .update(cx_a, |project, _| project.next_remote_id())
-            .await;
-        project_a
-            .update(cx_a, |project, cx| project.share(cx))
-            .await
-            .unwrap();
 
         // Join that project as client B
-        let _project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let _project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Client A sees that a guest has joined.
         project_a
@@ -2706,16 +2573,7 @@ mod tests {
             .await;
 
         // Rejoin the project as client B
-        let _project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let _project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Client A sees that a guest has re-joined.
         project_a
@@ -2733,10 +2591,12 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_collaborating_with_diagnostics(
+        deterministic: Arc<Deterministic>,
         cx_a: &mut TestAppContext,
         cx_b: &mut TestAppContext,
+        cx_c: &mut TestAppContext,
     ) {
-        cx_a.foreground().forbid_parking();
+        deterministic.forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
 
@@ -2755,9 +2615,14 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_c = server.create_client(cx_c, "user_c").await;
         server
-            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .make_contacts(vec![
+                (&client_a, cx_a),
+                (&client_b, cx_b),
+                (&client_c, cx_c),
+            ])
             .await;
 
         // Share a project as client A
@@ -2789,10 +2654,9 @@ mod tests {
             .await;
         let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Cause the language server to start.
-        let _ = cx_a
+        let _buffer = cx_a
             .background()
             .spawn(project_a.update(cx_a, |project, cx| {
                 project.open_buffer(
@@ -2805,6 +2669,9 @@ mod tests {
             }))
             .await
             .unwrap();
+
+        // Join the worktree as client B.
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Simulate a language server reporting errors for a file.
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
@@ -2825,32 +2692,35 @@ mod tests {
         );
 
         // Wait for server to see the diagnostics update.
-        server
-            .condition(|store| {
-                let worktree = store
-                    .project(project_id)
-                    .unwrap()
-                    .worktrees
-                    .get(&worktree_id.to_proto())
-                    .unwrap();
+        deterministic.run_until_parked();
+        {
+            let store = server.store.read().await;
+            let project = store.project(project_id).unwrap();
+            let worktree = project.worktrees.get(&worktree_id.to_proto()).unwrap();
+            assert!(!worktree.diagnostic_summaries.is_empty());
+        }
 
-                !worktree.diagnostic_summaries.is_empty()
-            })
-            .await;
-
-        // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
-
+        // Ensure client B observes the new diagnostics.
         project_b.read_with(cx_b, |project, cx| {
+            assert_eq!(
+                project.diagnostic_summaries(cx).collect::<Vec<_>>(),
+                &[(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("a.rs")),
+                    },
+                    DiagnosticSummary {
+                        error_count: 1,
+                        warning_count: 0,
+                        ..Default::default()
+                    },
+                )]
+            )
+        });
+
+        // Join project as client C and observe the diagnostics.
+        let project_c = client_c.build_remote_project(&project_a, cx_a, cx_c).await;
+        project_c.read_with(cx_c, |project, cx| {
             assert_eq!(
                 project.diagnostic_summaries(cx).collect::<Vec<_>>(),
                 &[(
@@ -2892,23 +2762,40 @@ mod tests {
             },
         );
 
-        // Client b gets the updated summaries
-        project_b
-            .condition(&cx_b, |project, cx| {
-                project.diagnostic_summaries(cx).collect::<Vec<_>>()
-                    == &[(
-                        ProjectPath {
-                            worktree_id,
-                            path: Arc::from(Path::new("a.rs")),
-                        },
-                        DiagnosticSummary {
-                            error_count: 1,
-                            warning_count: 1,
-                            ..Default::default()
-                        },
-                    )]
-            })
-            .await;
+        // Clients B and C get the updated summaries
+        deterministic.run_until_parked();
+        project_b.read_with(cx_b, |project, cx| {
+            assert_eq!(
+                project.diagnostic_summaries(cx).collect::<Vec<_>>(),
+                [(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("a.rs")),
+                    },
+                    DiagnosticSummary {
+                        error_count: 1,
+                        warning_count: 1,
+                        ..Default::default()
+                    },
+                )]
+            );
+        });
+        project_c.read_with(cx_c, |project, cx| {
+            assert_eq!(
+                project.diagnostic_summaries(cx).collect::<Vec<_>>(),
+                [(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("a.rs")),
+                    },
+                    DiagnosticSummary {
+                        error_count: 1,
+                        warning_count: 1,
+                        ..Default::default()
+                    },
+                )]
+            );
+        });
 
         // Open the file with the errors on client B. They should be present.
         let buffer_b = cx_b
@@ -2957,16 +2844,16 @@ mod tests {
                 diagnostics: vec![],
             },
         );
-        project_a
-            .condition(cx_a, |project, cx| {
-                project.diagnostic_summaries(cx).collect::<Vec<_>>() == &[]
-            })
-            .await;
-        project_b
-            .condition(cx_b, |project, cx| {
-                project.diagnostic_summaries(cx).collect::<Vec<_>>() == &[]
-            })
-            .await;
+        deterministic.run_until_parked();
+        project_a.read_with(cx_a, |project, cx| {
+            assert_eq!(project.diagnostic_summaries(cx).collect::<Vec<_>>(), [])
+        });
+        project_b.read_with(cx_b, |project, cx| {
+            assert_eq!(project.diagnostic_summaries(cx).collect::<Vec<_>>(), [])
+        });
+        project_c.read_with(cx_c, |project, cx| {
+            assert_eq!(project.diagnostic_summaries(cx).collect::<Vec<_>>(), [])
+        });
     }
 
     #[gpui::test(iterations = 10)]
@@ -3002,7 +2889,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -3034,21 +2921,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Open a file in an editor as the guest.
         let buffer_b = project_b
@@ -3185,7 +3061,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -3216,25 +3092,14 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
         let buffer_a = project_a
             .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
             .await
             .unwrap();
 
         // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         let buffer_b = cx_b
             .background()
@@ -3316,7 +3181,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -3347,21 +3212,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
-        // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        // Join the project as client B.
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         let buffer_b = cx_b
             .background()
@@ -3430,7 +3284,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -3454,21 +3308,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
-        // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        // Join the project as client B.
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Open the file on client B.
         let buffer_b = cx_b
@@ -3577,7 +3420,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -3601,21 +3444,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Open the file on client B.
         let buffer_b = cx_b
@@ -3710,7 +3542,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -3725,7 +3557,6 @@ mod tests {
                 cx,
             )
         });
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
 
         let (worktree_1, _) = project_a
             .update(cx_a, |p, cx| {
@@ -3746,20 +3577,8 @@ mod tests {
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
 
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
-
         // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
-
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
         let results = project_b
             .update(cx_b, |project, cx| {
                 project.search(SearchQuery::text("world", false, false), cx)
@@ -3821,7 +3640,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -3845,21 +3664,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Open the file on client B.
         let buffer_b = cx_b
@@ -3968,7 +3776,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -3992,21 +3800,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Cause the language server to start.
         let _buffer = cx_b
@@ -4100,7 +3897,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -4125,21 +3922,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
-        // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        // Join the project as client B.
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         let buffer_b1 = cx_b
             .background()
@@ -4200,7 +3986,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -4232,26 +4018,15 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
-        // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        // Join the project as client B.
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
         let mut params = cx_b.update(WorkspaceParams::test);
         params.languages = lang_registry.clone();
+        params.project = project_b.clone();
         params.client = client_b.client.clone();
         params.user_store = client_b.user_store.clone();
-        params.project = project_b;
 
         let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
         let editor_b = workspace_b
@@ -4450,7 +4225,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -4482,26 +4257,15 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
         let mut params = cx_b.update(WorkspaceParams::test);
         params.languages = lang_registry.clone();
+        params.project = project_b.clone();
         params.client = client_b.client.clone();
         params.user_store = client_b.user_store.clone();
-        params.project = project_b;
 
         let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
         let editor_b = workspace_b
@@ -5108,29 +4872,7 @@ mod tests {
             });
         }
 
-        let project_id = project_a
-            .update(cx_a, |project, _| project.next_remote_id())
-            .await;
-        project_a
-            .update(cx_a, |project, cx| project.share(cx))
-            .await
-            .unwrap();
-
-        deterministic.run_until_parked();
-        for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
-            client.user_store.read_with(*cx, |store, _| {
-                assert_eq!(
-                    contacts(store),
-                    [
-                        ("user_a", true, vec![("a", vec![])]),
-                        ("user_b", true, vec![]),
-                        ("user_c", true, vec![])
-                    ]
-                )
-            });
-        }
-
-        let _project_b = client_b.build_remote_project(project_id, cx_b).await;
+        let _project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         deterministic.run_until_parked();
         for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
@@ -5469,20 +5211,9 @@ mod tests {
         )
         .await;
         let (project_a, worktree_id) = client_a.build_local_project(fs.clone(), "/a", cx_a).await;
-        project_a
-            .update(cx_a, |project, cx| project.share(cx))
-            .await
-            .unwrap();
 
         // Client B joins the project.
-        let project_b = client_b
-            .build_remote_project(
-                project_a
-                    .read_with(cx_a, |project, _| project.remote_id())
-                    .unwrap(),
-                cx_b,
-            )
-            .await;
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Client A opens some editors.
         let workspace_a = client_a.build_workspace(&project_a, cx_a);
@@ -5533,6 +5264,7 @@ mod tests {
             })
             .await
             .unwrap();
+
         let editor_b2 = workspace_b.read_with(cx_b, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -5683,20 +5415,9 @@ mod tests {
         )
         .await;
         let (project_a, worktree_id) = client_a.build_local_project(fs.clone(), "/a", cx_a).await;
-        project_a
-            .update(cx_a, |project, cx| project.share(cx))
-            .await
-            .unwrap();
 
         // Client B joins the project.
-        let project_b = client_b
-            .build_remote_project(
-                project_a
-                    .read_with(cx_a, |project, _| project.remote_id())
-                    .unwrap(),
-                cx_b,
-            )
-            .await;
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Client A opens some editors.
         let workspace_a = client_a.build_workspace(&project_a, cx_a);
@@ -5830,20 +5551,9 @@ mod tests {
         )
         .await;
         let (project_a, worktree_id) = client_a.build_local_project(fs.clone(), "/a", cx_a).await;
-        project_a
-            .update(cx_a, |project, cx| project.share(cx))
-            .await
-            .unwrap();
 
         // Client B joins the project.
-        let project_b = client_b
-            .build_remote_project(
-                project_a
-                    .read_with(cx_a, |project, _| project.remote_id())
-                    .unwrap(),
-                cx_b,
-            )
-            .await;
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Client A opens some editors.
         let workspace_a = client_a.build_workspace(&project_a, cx_a);
@@ -6052,10 +5762,6 @@ mod tests {
         collab_worktree
             .read_with(&host_cx, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        host_project
-            .update(&mut host_cx, |project, cx| project.share(cx))
-            .await
-            .unwrap();
 
         // Set up fake language servers.
         let mut language = Language::new(
@@ -6216,7 +5922,7 @@ mod tests {
 
                 let (host, mut host_cx, host_err) = clients.remove(0);
                 if let Some(host_err) = host_err {
-                    log::error!("host error - {}", host_err);
+                    log::error!("host error - {:?}", host_err);
                 }
                 host.project
                     .as_ref()
@@ -6224,7 +5930,7 @@ mod tests {
                     .read_with(&host_cx, |project, _| assert!(!project.is_shared()));
                 for (guest, mut guest_cx, guest_err) in clients {
                     if let Some(guest_err) = guest_err {
-                        log::error!("{} error - {}", guest.username, guest_err);
+                        log::error!("{} error - {:?}", guest.username, guest_err);
                     }
                     // TODO
                     // let contacts = server
@@ -6299,7 +6005,7 @@ mod tests {
                     cx.foreground().advance_clock(RECEIVE_TIMEOUT);
                     let (guest, mut guest_cx, guest_err) = guest.await;
                     if let Some(guest_err) = guest_err {
-                        log::error!("{} error - {}", guest.username, guest_err);
+                        log::error!("{} error - {:?}", guest.username, guest_err);
                     }
                     guest
                         .project
@@ -6353,7 +6059,7 @@ mod tests {
 
         let (host_client, mut host_cx, host_err) = clients.remove(0);
         if let Some(host_err) = host_err {
-            panic!("host error - {}", host_err);
+            panic!("host error - {:?}", host_err);
         }
         let host_project = host_client.project.as_ref().unwrap();
         let host_worktree_snapshots = host_project.read_with(&host_cx, |project, cx| {
@@ -6374,7 +6080,7 @@ mod tests {
 
         for (guest_client, mut guest_cx, guest_err) in clients.into_iter() {
             if let Some(guest_err) = guest_err {
-                panic!("{} error - {}", guest_client.username, guest_err);
+                panic!("{} error - {:?}", guest_client.username, guest_err);
             }
             let worktree_snapshots =
                 guest_client
@@ -6757,19 +6463,37 @@ mod tests {
 
         async fn build_remote_project(
             &mut self,
-            project_id: u64,
-            cx: &mut TestAppContext,
+            host_project: &ModelHandle<Project>,
+            host_cx: &mut TestAppContext,
+            guest_cx: &mut TestAppContext,
         ) -> ModelHandle<Project> {
-            let project = Project::remote(
-                project_id,
-                self.client.clone(),
-                self.user_store.clone(),
-                self.language_registry.clone(),
-                FakeFs::new(cx.background()),
-                &mut cx.to_async(),
-            )
-            .await
-            .unwrap();
+            let host_project_id = host_project
+                .read_with(host_cx, |project, _| project.next_remote_id())
+                .await;
+            let guest_user_id = self.user_id().unwrap();
+            let languages =
+                host_project.read_with(host_cx, |project, _| project.languages().clone());
+            let project_b = guest_cx.spawn(|mut cx| {
+                let user_store = self.user_store.clone();
+                let guest_client = self.client.clone();
+                async move {
+                    Project::remote(
+                        host_project_id,
+                        guest_client,
+                        user_store.clone(),
+                        languages,
+                        FakeFs::new(cx.background()),
+                        &mut cx,
+                    )
+                    .await
+                    .unwrap()
+                }
+            });
+            host_cx.foreground().run_until_parked();
+            host_project.update(host_cx, |project, cx| {
+                project.respond_to_join_request(guest_user_id, true, cx)
+            });
+            let project = project_b.await;
             self.project = Some(project.clone());
             project
         }
@@ -6815,11 +6539,23 @@ mod tests {
             ) -> anyhow::Result<()> {
                 let fs = project.read_with(cx, |project, _| project.fs().clone());
 
+                cx.update(|cx| {
+                    cx.subscribe(&project, move |project, event, cx| {
+                        if let project::Event::ContactRequestedJoin(user) = event {
+                            log::info!("Host: accepting join request from {}", user.github_login);
+                            project.update(cx, |project, cx| {
+                                project.respond_to_join_request(user.id, true, cx)
+                            });
+                        }
+                    })
+                    .detach();
+                });
+
                 while op_start_signal.next().await.is_some() {
                     let distribution = rng.lock().gen_range::<usize, _>(0..100);
                     let files = fs.as_fake().files().await;
                     match distribution {
-                        0..=20 if !files.is_empty() => {
+                        0..=19 if !files.is_empty() => {
                             let path = files.choose(&mut *rng.lock()).unwrap();
                             let mut path = path.as_path();
                             while let Some(parent_path) = path.parent() {
@@ -6839,7 +6575,7 @@ mod tests {
                                 find_or_create_worktree.await?;
                             }
                         }
-                        10..=80 if !files.is_empty() => {
+                        20..=79 if !files.is_empty() => {
                             let buffer = if client.buffers.is_empty() || rng.lock().gen() {
                                 let file = files.choose(&mut *rng.lock()).unwrap();
                                 let (worktree, path) = project

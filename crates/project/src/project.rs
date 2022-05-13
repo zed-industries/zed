@@ -817,11 +817,12 @@ impl Project {
         }
     }
 
-    pub fn can_share(&self, cx: &AppContext) -> bool {
-        self.is_local() && self.visible_worktrees(cx).next().is_some()
-    }
-
-    pub fn share(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn share(
+        &mut self,
+        requester_user_id: UserId,
+        requester_peer_id: PeerId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
         let project_id;
         if let ProjectClientState::Local {
             remote_id_rx,
@@ -882,7 +883,7 @@ impl Project {
         })
     }
 
-    pub fn unshare(&mut self, cx: &mut ModelContext<Self>) {
+    fn unshare(&mut self, cx: &mut ModelContext<Self>) {
         if let ProjectClientState::Local { is_shared, .. } = &mut self.client_state {
             if !*is_shared {
                 return;
@@ -929,7 +930,10 @@ impl Project {
             let client = self.client.clone();
             cx.foreground()
                 .spawn(async move {
+                    println!("SHARING because {} wanted to join!!!", requester_id);
                     share.await?;
+                    println!("DONE SHARING!!!!!");
+
                     client.send(proto::RespondToJoinProjectRequest {
                         requester_id,
                         project_id,
@@ -3521,25 +3525,36 @@ impl Project {
                         });
                         let worktree = worktree?;
 
-                        let (remote_project_id, is_shared) =
-                            project.update(&mut cx, |project, cx| {
-                                project.add_worktree(&worktree, cx);
-                                (project.remote_id(), project.is_shared())
-                            });
+                        let remote_project_id = project.update(&mut cx, |project, cx| {
+                            project.add_worktree(&worktree, cx);
+                            project.remote_id()
+                        });
 
                         if let Some(project_id) = remote_project_id {
-                            if is_shared {
-                                worktree
-                                    .update(&mut cx, |worktree, cx| {
-                                        worktree.as_local_mut().unwrap().share(project_id, cx)
-                                    })
-                                    .await?;
-                            } else {
-                                worktree
-                                    .update(&mut cx, |worktree, cx| {
-                                        worktree.as_local_mut().unwrap().register(project_id, cx)
-                                    })
-                                    .await?;
+                            // Because sharing is async, we may have *unshared* the project by the time it completes,
+                            // in which case we need to register the worktree instead.
+                            loop {
+                                if project.read_with(&cx, |project, _| project.is_shared()) {
+                                    if worktree
+                                        .update(&mut cx, |worktree, cx| {
+                                            worktree.as_local_mut().unwrap().share(project_id, cx)
+                                        })
+                                        .await
+                                        .is_ok()
+                                    {
+                                        break;
+                                    }
+                                } else {
+                                    worktree
+                                        .update(&mut cx, |worktree, cx| {
+                                            worktree
+                                                .as_local_mut()
+                                                .unwrap()
+                                                .register(project_id, cx)
+                                        })
+                                        .await?;
+                                    break;
+                                }
                             }
                         }
 
@@ -3828,7 +3843,17 @@ impl Project {
                     buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
                 }
             }
+            println!(
+                "{} observed {:?} leaving",
+                this.user_store
+                    .read(cx)
+                    .current_user()
+                    .unwrap()
+                    .github_login,
+                peer_id
+            );
             if this.collaborators.is_empty() {
+                println!("UNSHARING!!!!");
                 this.unshare(cx);
             }
             cx.emit(Event::CollaboratorLeft(peer_id));
@@ -4087,6 +4112,7 @@ impl Project {
                 .into_iter()
                 .map(|op| language::proto::deserialize_operation(op))
                 .collect::<Result<Vec<_>, _>>()?;
+            let is_remote = this.is_remote();
             match this.opened_buffers.entry(buffer_id) {
                 hash_map::Entry::Occupied(mut e) => match e.get_mut() {
                     OpenBuffer::Strong(buffer) => {
@@ -4096,6 +4122,11 @@ impl Project {
                     OpenBuffer::Weak(_) => {}
                 },
                 hash_map::Entry::Vacant(e) => {
+                    assert!(
+                        is_remote,
+                        "received buffer update from {:?}",
+                        envelope.original_sender_id
+                    );
                     e.insert(OpenBuffer::Loading(ops));
                 }
             }
