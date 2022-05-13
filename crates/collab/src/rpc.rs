@@ -634,6 +634,7 @@ impl Server {
         {
             let mut state = self.store_mut().await;
             project = state.leave_project(sender_id, project_id)?;
+            let unshare = project.connection_ids.len() <= 1;
             broadcast(sender_id, project.connection_ids, |conn_id| {
                 self.peer.send(
                     conn_id,
@@ -643,6 +644,12 @@ impl Server {
                     },
                 )
             });
+            if unshare {
+                self.peer.send(
+                    project.host_connection_id,
+                    proto::ProjectUnshared { project_id },
+                )?;
+            }
         }
         self.update_user_contacts(project.host_user_id).await?;
         Ok(())

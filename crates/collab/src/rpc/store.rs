@@ -58,6 +58,7 @@ pub struct RemovedConnectionState {
 pub struct LeftProject {
     pub connection_ids: Vec<ConnectionId>,
     pub host_user_id: UserId,
+    pub host_connection_id: ConnectionId,
 }
 
 #[derive(Copy, Clone)]
@@ -504,6 +505,7 @@ impl Store {
 
         Ok(LeftProject {
             connection_ids: project.connection_ids(),
+            host_connection_id: project.host_connection_id,
             host_user_id: project.host_user_id,
         })
     }
