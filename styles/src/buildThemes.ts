@@ -4,6 +4,7 @@ import app from "./styleTree/app";
 import { dark as caveDark, light as caveLight } from "./themes/cave";
 import dark from "./themes/dark";
 import light from "./themes/light";
+import { dark as molikaDark } from "./themes/molika";
 import { dark as solarizedDark, light as solarizedLight } from "./themes/solarized";
 import { dark as sulphurpoolDark, light as sulphurpoolLight } from "./themes/sulphurpool";
 import snakeCase from "./utils/snakeCase";
@@ -11,6 +12,7 @@ import snakeCase from "./utils/snakeCase";
 const themes = [
   dark, light,
   caveDark, caveLight,
+  molikaDark,
   solarizedDark, solarizedLight,
   sulphurpoolDark, sulphurpoolLight
 ];
