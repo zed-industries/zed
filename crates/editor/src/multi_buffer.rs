@@ -226,7 +226,7 @@ impl MultiBuffer {
         self.snapshot.borrow().clone()
     }
 
-    pub fn read(&self, cx: &AppContext) -> Ref<MultiBufferSnapshot> {
+    pub(crate) fn read(&self, cx: &AppContext) -> Ref<MultiBufferSnapshot> {
         self.sync(cx);
         self.snapshot.borrow()
     }
@@ -253,6 +253,27 @@ impl MultiBuffer {
 
     pub fn subscribe(&mut self) -> Subscription {
         self.subscriptions.subscribe()
+    }
+
+    pub fn is_dirty(&self, cx: &AppContext) -> bool {
+        self.read(cx).is_dirty()
+    }
+
+    pub fn has_conflict(&self, cx: &AppContext) -> bool {
+        self.read(cx).has_conflict()
+    }
+
+    pub fn len(&self, cx: &AppContext) -> usize {
+        self.read(cx).len()
+    }
+
+    pub fn symbols_containing<T: ToOffset>(
+        &self,
+        offset: T,
+        theme: Option<&SyntaxTheme>,
+        cx: &AppContext,
+    ) -> Option<(usize, Vec<OutlineItem<Anchor>>)> {
+        self.read(cx).symbols_containing(offset, theme)
     }
 
     pub fn edit<I, S, T>(&mut self, edits: I, cx: &mut ModelContext<Self>)

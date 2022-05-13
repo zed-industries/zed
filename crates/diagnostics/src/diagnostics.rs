@@ -489,11 +489,11 @@ impl workspace::Item for ProjectDiagnosticsEditor {
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.excerpts.read(cx).read(cx).is_dirty()
+        self.excerpts.read(cx).is_dirty(cx)
     }
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
-        self.excerpts.read(cx).read(cx).has_conflict()
+        self.excerpts.read(cx).has_conflict(cx)
     }
 
     fn can_save(&self, _: &AppContext) -> bool {

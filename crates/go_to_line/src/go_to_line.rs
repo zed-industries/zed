@@ -40,7 +40,7 @@ impl GoToLine {
 
         let (scroll_position, cursor_point, max_point) = active_editor.update(cx, |editor, cx| {
             let scroll_position = editor.scroll_position(cx);
-            let buffer = editor.buffer().read(cx).read(cx);
+            let buffer = editor.buffer().read(cx).snapshot(cx);
             (
                 Some(scroll_position),
                 editor.selections.newest(cx).head(),
@@ -108,7 +108,7 @@ impl GoToLine {
         match event {
             editor::Event::Blurred => cx.emit(Event::Dismissed),
             editor::Event::BufferEdited { .. } => {
-                let line_editor = self.line_editor.read(cx).buffer().read(cx).read(cx).text();
+                let line_editor = self.line_editor.read(cx).text(cx);
                 let mut components = line_editor.trim().split(&[',', ':'][..]);
                 let row = components.next().and_then(|row| row.parse::<u32>().ok());
                 let column = components.next().and_then(|row| row.parse::<u32>().ok());
