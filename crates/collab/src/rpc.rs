@@ -3003,7 +3003,7 @@ mod tests {
 
         // Type a completion trigger character as the guest.
         editor_b.update(cx_b, |editor, cx| {
-            editor.select_ranges([13..13], None, cx);
+            editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
             editor.handle_input(&Input(".".into()), cx);
             cx.focus(&editor_b);
         });
@@ -4215,7 +4215,9 @@ mod tests {
 
         // Move cursor to a location that contains code actions.
         editor_b.update(cx_b, |editor, cx| {
-            editor.select_ranges([Point::new(1, 31)..Point::new(1, 31)], None, cx);
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges([Point::new(1, 31)..Point::new(1, 31)])
+            });
             cx.focus(&editor_b);
         });
 
@@ -4452,7 +4454,7 @@ mod tests {
 
         // Move cursor to a location that can be renamed.
         let prepare_rename = editor_b.update(cx_b, |editor, cx| {
-            editor.select_ranges([7..7], None, cx);
+            editor.change_selections(None, cx, |s| s.select_ranges([7..7]));
             editor.rename(&Rename, cx).unwrap()
         });
 
@@ -5460,8 +5462,12 @@ mod tests {
         });
 
         // When client B starts following client A, all visible view states are replicated to client B.
-        editor_a1.update(cx_a, |editor, cx| editor.select_ranges([0..1], None, cx));
-        editor_a2.update(cx_a, |editor, cx| editor.select_ranges([2..3], None, cx));
+        editor_a1.update(cx_a, |editor, cx| {
+            editor.change_selections(None, cx, |s| s.select_ranges([0..1]))
+        });
+        editor_a2.update(cx_a, |editor, cx| {
+            editor.change_selections(None, cx, |s| s.select_ranges([2..3]))
+        });
         workspace_b
             .update(cx_b, |workspace, cx| {
                 workspace
@@ -5483,11 +5489,11 @@ mod tests {
             Some((worktree_id, "2.txt").into())
         );
         assert_eq!(
-            editor_b2.read_with(cx_b, |editor, cx| editor.selected_ranges(cx)),
+            editor_b2.read_with(cx_b, |editor, cx| editor.selections.ranges(cx)),
             vec![2..3]
         );
         assert_eq!(
-            editor_b1.read_with(cx_b, |editor, cx| editor.selected_ranges(cx)),
+            editor_b1.read_with(cx_b, |editor, cx| editor.selections.ranges(cx)),
             vec![0..1]
         );
 
@@ -5526,11 +5532,11 @@ mod tests {
 
         // Changes to client A's editor are reflected on client B.
         editor_a1.update(cx_a, |editor, cx| {
-            editor.select_ranges([1..1, 2..2], None, cx);
+            editor.change_selections(None, cx, |s| s.select_ranges([1..1, 2..2]));
         });
         editor_b1
             .condition(cx_b, |editor, cx| {
-                editor.selected_ranges(cx) == vec![1..1, 2..2]
+                editor.selections.ranges(cx) == vec![1..1, 2..2]
             })
             .await;
 
@@ -5540,11 +5546,13 @@ mod tests {
             .await;
 
         editor_a1.update(cx_a, |editor, cx| {
-            editor.select_ranges([3..3], None, cx);
+            editor.change_selections(None, cx, |s| s.select_ranges([3..3]));
             editor.set_scroll_position(vec2f(0., 100.), cx);
         });
         editor_b1
-            .condition(cx_b, |editor, cx| editor.selected_ranges(cx) == vec![3..3])
+            .condition(cx_b, |editor, cx| {
+                editor.selections.ranges(cx) == vec![3..3]
+            })
             .await;
 
         // After unfollowing, client B stops receiving updates from client A.

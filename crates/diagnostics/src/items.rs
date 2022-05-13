@@ -58,9 +58,7 @@ impl DiagnosticIndicator {
     fn update(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
         let buffer = editor.buffer().read(cx);
-        let cursor_position = editor
-            .newest_selection_with_snapshot::<usize>(&buffer.read(cx))
-            .head();
+        let cursor_position = editor.selections.newest::<usize>(cx).head();
         let new_diagnostic = buffer
             .read(cx)
             .diagnostics_in_range::<_, usize>(cursor_position..cursor_position, false)

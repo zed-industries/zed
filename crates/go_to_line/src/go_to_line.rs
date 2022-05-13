@@ -43,7 +43,7 @@ impl GoToLine {
             let buffer = editor.buffer().read(cx).read(cx);
             (
                 Some(scroll_position),
-                editor.newest_selection_with_snapshot(&buffer).head(),
+                editor.selections.newest(cx).head(),
                 buffer.max_point(),
             )
         });
@@ -80,7 +80,9 @@ impl GoToLine {
             if let Some(rows) = active_editor.highlighted_rows() {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
                 let position = DisplayPoint::new(rows.start, 0).to_point(&snapshot);
-                active_editor.select_ranges([position..position], Some(Autoscroll::Center), cx);
+                active_editor.change_selections(Some(Autoscroll::Center), cx, |s| {
+                    s.select_ranges([position..position])
+                });
             }
         });
         cx.emit(Event::Dismissed);

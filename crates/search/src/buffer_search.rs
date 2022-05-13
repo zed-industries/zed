@@ -225,9 +225,7 @@ impl BufferSearchBar {
         let display_map = editor
             .update(cx, |editor, cx| editor.snapshot(cx))
             .display_snapshot;
-        let selection = editor
-            .read(cx)
-            .newest_selection_with_snapshot::<usize>(&display_map.buffer_snapshot);
+        let selection = editor.read(cx).selections.newest::<usize>(cx);
 
         let mut text: String;
         if selection.start == selection.end {
@@ -387,14 +385,16 @@ impl BufferSearchBar {
                     if let Some(ranges) = self.editors_with_matches.get(&cx.weak_handle()) {
                         let new_index = match_index_for_direction(
                             ranges,
-                            &editor.newest_anchor_selection().head(),
+                            &editor.selections.newest_anchor().head(),
                             index,
                             direction,
                             &editor.buffer().read(cx).read(cx),
                         );
                         let range_to_select = ranges[new_index].clone();
                         editor.unfold_ranges([range_to_select.clone()], false, cx);
-                        editor.select_ranges([range_to_select], Some(Autoscroll::Fit), cx);
+                        editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                            s.select_ranges([range_to_select])
+                        });
                     }
                 });
             }
@@ -535,10 +535,10 @@ impl BufferSearchBar {
                                 editor.update(cx, |editor, cx| {
                                     if select_closest_match {
                                         if let Some(match_ix) = this.active_match_index {
-                                            editor.select_ranges(
-                                                [ranges[match_ix].clone()],
+                                            editor.change_selections(
                                                 Some(Autoscroll::Fit),
                                                 cx,
+                                                |s| s.select_ranges([ranges[match_ix].clone()]),
                                             );
                                         }
                                     }
@@ -564,7 +564,7 @@ impl BufferSearchBar {
             let editor = editor.read(cx);
             active_match_index(
                 &ranges,
-                &editor.newest_anchor_selection().head(),
+                &editor.selections.newest_anchor().head(),
                 &editor.buffer().read(cx).read(cx),
             )
         });
@@ -721,13 +721,15 @@ mod tests {
         });
 
         editor.update(cx, |editor, cx| {
-            editor.select_display_ranges(&[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)], cx);
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)])
+            });
         });
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(0));
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
@@ -738,7 +740,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
             );
         });
@@ -749,7 +751,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
             );
         });
@@ -760,7 +762,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
@@ -771,7 +773,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
             );
         });
@@ -782,7 +784,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
             );
         });
@@ -793,7 +795,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
@@ -804,13 +806,15 @@ mod tests {
         // Park the cursor in between matches and ensure that going to the previous match selects
         // the closest match to the left.
         editor.update(cx, |editor, cx| {
-            editor.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
+            });
         });
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(1));
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
@@ -821,13 +825,15 @@ mod tests {
         // Park the cursor in between matches and ensure that going to the next match selects the
         // closest match to the right.
         editor.update(cx, |editor, cx| {
-            editor.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
+            });
         });
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(1));
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
             );
         });
@@ -838,13 +844,15 @@ mod tests {
         // Park the cursor after the last match and ensure that going to the previous match selects
         // the last match.
         editor.update(cx, |editor, cx| {
-            editor.select_display_ranges(&[DisplayPoint::new(3, 60)..DisplayPoint::new(3, 60)], cx);
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(3, 60)..DisplayPoint::new(3, 60)])
+            });
         });
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(2));
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
             );
         });
@@ -855,13 +863,15 @@ mod tests {
         // Park the cursor after the last match and ensure that going to the next match selects the
         // first match.
         editor.update(cx, |editor, cx| {
-            editor.select_display_ranges(&[DisplayPoint::new(3, 60)..DisplayPoint::new(3, 60)], cx);
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(3, 60)..DisplayPoint::new(3, 60)])
+            });
         });
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(2));
             search_bar.select_next_match(&SelectNextMatch, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
             );
         });
@@ -872,13 +882,15 @@ mod tests {
         // Park the cursor before the first match and ensure that going to the previous match
         // selects the last match.
         editor.update(cx, |editor, cx| {
-            editor.select_display_ranges(&[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)], cx);
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)])
+            });
         });
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.active_match_index, Some(0));
             search_bar.select_prev_match(&SelectPrevMatch, cx);
             assert_eq!(
-                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
             );
         });

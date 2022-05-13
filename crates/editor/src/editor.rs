@@ -3,6 +3,7 @@ mod element;
 pub mod items;
 pub mod movement;
 mod multi_buffer;
+mod selections_collection;
 
 #[cfg(test)]
 mod test;
@@ -28,7 +29,6 @@ use gpui::{
     ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
-use itertools::Itertools as _;
 pub use language::{char_kind, CharKind};
 use language::{
     BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticSeverity,
@@ -40,6 +40,7 @@ pub use multi_buffer::{
 };
 use ordered_float::OrderedFloat;
 use project::{Project, ProjectTransaction};
+use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smallvec::SmallVec;
@@ -49,14 +50,12 @@ use std::{
     any::TypeId,
     borrow::Cow,
     cmp::{self, Ordering, Reverse},
-    iter::{self, FromIterator},
-    mem,
-    ops::{Deref, DerefMut, Range, RangeInclusive, Sub},
+    iter, mem,
+    ops::{Deref, DerefMut, Range, RangeInclusive},
     sync::Arc,
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
-use text::rope::TextDimension;
 use theme::{DiagnosticStyle, Theme};
 use util::{post_inc, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, Workspace};
@@ -377,9 +376,7 @@ pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<MultiBuffer>,
     display_map: ModelHandle<DisplayMap>,
-    next_selection_id: usize,
-    selections: Arc<[Selection<Anchor>]>,
-    pending_selection: Option<PendingSelection>,
+    pub selections: SelectionsCollection,
     columnar_selection_tail: Option<Anchor>,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
@@ -429,13 +426,7 @@ pub struct EditorSnapshot {
     scroll_top_anchor: Anchor,
 }
 
-#[derive(Clone)]
-pub struct PendingSelection {
-    selection: Selection<Anchor>,
-    mode: SelectMode,
-}
-
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct SelectionHistoryEntry {
     selections: Arc<[Selection<Anchor>]>,
     select_next_state: Option<SelectNextState>,
@@ -527,13 +518,13 @@ impl SelectionHistory {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct AddSelectionsState {
     above: bool,
     stack: Vec<usize>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct SelectNextState {
     query: AhoCorasick,
     wordwise: bool,
@@ -545,6 +536,7 @@ struct BracketPairState {
     pair: BracketPair,
 }
 
+#[derive(Debug)]
 struct SnippetState {
     ranges: Vec<Vec<Range<Anchor>>>,
     active_index: usize,
@@ -945,23 +937,14 @@ impl Editor {
         cx.observe(&display_map, Self::on_display_map_changed)
             .detach();
 
+        let selections = SelectionsCollection::new(display_map.clone(), buffer.clone());
+
         let mut this = Self {
             handle: cx.weak_handle(),
             buffer,
             display_map,
-            selections: Arc::from([]),
-            pending_selection: Some(PendingSelection {
-                selection: Selection {
-                    id: 0,
-                    start: Anchor::min(),
-                    end: Anchor::min(),
-                    reversed: false,
-                    goal: SelectionGoal::None,
-                },
-                mode: SelectMode::Character,
-            }),
+            selections,
             columnar_selection_tail: None,
-            next_selection_id: 1,
             add_selections_state: None,
             select_next_state: None,
             selection_history: Default::default(),
@@ -1204,12 +1187,11 @@ impl Editor {
             first_cursor_top = highlighted_rows.start as f32;
             last_cursor_bottom = first_cursor_top + 1.;
         } else if autoscroll == Autoscroll::Newest {
-            let newest_selection =
-                self.newest_selection_with_snapshot::<Point>(&display_map.buffer_snapshot);
+            let newest_selection = self.selections.newest::<Point>(cx);
             first_cursor_top = newest_selection.head().to_display_point(&display_map).row() as f32;
             last_cursor_bottom = first_cursor_top + 1.;
         } else {
-            let selections = self.local_selections::<Point>(cx);
+            let selections = self.selections.all::<Point>(cx);
             first_cursor_top = selections
                 .first()
                 .unwrap()
@@ -1269,7 +1251,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> bool {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let selections = self.local_selections::<Point>(cx);
+        let selections = self.selections.all::<Point>(cx);
 
         let mut target_left;
         let mut target_right;
@@ -1318,83 +1300,96 @@ impl Editor {
         }
     }
 
-    pub fn replace_selections_with(
+    fn selections_did_change(
         &mut self,
+        local: bool,
+        old_cursor_position: &Anchor,
         cx: &mut ViewContext<Self>,
-        mut find_replacement: impl FnMut(&DisplaySnapshot) -> DisplayPoint,
     ) {
-        let display_map = self.snapshot(cx);
-        let cursor = find_replacement(&display_map);
-        let selection = Selection {
-            id: post_inc(&mut self.next_selection_id),
-            start: cursor,
-            end: cursor,
-            reversed: false,
-            goal: SelectionGoal::None,
+        if self.focused && self.leader_replica_id.is_none() {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.set_active_selections(&self.selections.disjoint_anchors(), cx)
+            });
         }
-        .map(|display_point| display_point.to_point(&display_map));
-        self.update_selections(vec![selection], None, cx);
+
+        let display_map = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.snapshot(cx));
+        let buffer = &display_map.buffer_snapshot;
+        self.add_selections_state = None;
+        self.select_next_state = None;
+        self.select_larger_syntax_node_stack.clear();
+        self.autoclose_stack
+            .invalidate(&self.selections.disjoint_anchors(), buffer);
+        self.snippet_stack
+            .invalidate(&self.selections.disjoint_anchors(), buffer);
+        self.take_rename(false, cx);
+
+        let new_cursor_position = self.selections.newest_anchor().head();
+
+        self.push_to_nav_history(
+            old_cursor_position.clone(),
+            Some(new_cursor_position.to_point(buffer)),
+            cx,
+        );
+
+        if local {
+            let new_cursor_position = self.selections.newest_anchor().head();
+            let completion_menu = match self.context_menu.as_mut() {
+                Some(ContextMenu::Completions(menu)) => Some(menu),
+                _ => {
+                    self.context_menu.take();
+                    None
+                }
+            };
+
+            if let Some(completion_menu) = completion_menu {
+                let cursor_position = new_cursor_position.to_offset(buffer);
+                let (word_range, kind) =
+                    buffer.surrounding_word(completion_menu.initial_position.clone());
+                if kind == Some(CharKind::Word)
+                    && word_range.to_inclusive().contains(&cursor_position)
+                {
+                    let query = Self::completion_query(buffer, cursor_position);
+                    cx.background()
+                        .block(completion_menu.filter(query.as_deref(), cx.background().clone()));
+                    self.show_completions(&ShowCompletions, cx);
+                } else {
+                    self.hide_context_menu(cx);
+                }
+            }
+
+            if old_cursor_position.to_display_point(&display_map).row()
+                != new_cursor_position.to_display_point(&display_map).row()
+            {
+                self.available_code_actions.take();
+            }
+            self.refresh_code_actions(cx);
+            self.refresh_document_highlights(cx);
+        }
+
+        self.pause_cursor_blinking(cx);
+        cx.emit(Event::SelectionsChanged { local });
+        cx.notify();
     }
 
-    pub fn display_selections(
+    pub fn change_selections<R>(
         &mut self,
+        autoscroll: Option<Autoscroll>,
         cx: &mut ViewContext<Self>,
-    ) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let selections = self
-            .local_selections::<Point>(cx)
-            .into_iter()
-            .map(|selection| selection.map(|point| point.to_display_point(&display_map)))
-            .collect();
-        (display_map, selections)
-    }
+        change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
+    ) -> R {
+        let old_cursor_position = self.selections.newest_anchor().head();
+        self.push_to_selection_history();
 
-    pub fn move_selections(
-        &mut self,
-        cx: &mut ViewContext<Self>,
-        mut move_selection: impl FnMut(&DisplaySnapshot, &mut Selection<DisplayPoint>),
-    ) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let selections = self
-            .local_selections::<Point>(cx)
-            .into_iter()
-            .map(|selection| {
-                let mut selection = selection.map(|point| point.to_display_point(&display_map));
-                move_selection(&display_map, &mut selection);
-                selection.map(|display_point| display_point.to_point(&display_map))
-            })
-            .collect();
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
-    }
+        let result = self.selections.change_with(cx, change);
 
-    pub fn move_selection_heads(
-        &mut self,
-        cx: &mut ViewContext<Self>,
-        mut update_head: impl FnMut(
-            &DisplaySnapshot,
-            DisplayPoint,
-            SelectionGoal,
-        ) -> (DisplayPoint, SelectionGoal),
-    ) {
-        self.move_selections(cx, |map, selection| {
-            let (new_head, new_goal) = update_head(map, selection.head(), selection.goal);
-            selection.set_head(new_head, new_goal);
-        });
-    }
+        if let Some(autoscroll) = autoscroll {
+            self.request_autoscroll(autoscroll, cx);
+        }
+        self.selections_did_change(true, &old_cursor_position, cx);
 
-    pub fn move_cursors(
-        &mut self,
-        cx: &mut ViewContext<Self>,
-        mut update_cursor_position: impl FnMut(
-            &DisplaySnapshot,
-            DisplayPoint,
-            SelectionGoal,
-        ) -> (DisplayPoint, SelectionGoal),
-    ) {
-        self.move_selections(cx, |map, selection| {
-            let (cursor, new_goal) = update_cursor_position(map, selection.head(), selection.goal);
-            selection.collapse_to(cursor, new_goal)
-        });
+        result
     }
 
     pub fn edit<I, S, T>(&mut self, edits: I, cx: &mut ViewContext<Self>)
@@ -1449,30 +1444,34 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let tail = self
-            .newest_selection_with_snapshot::<usize>(&display_map.buffer_snapshot)
-            .tail();
+        let tail = self.selections.newest::<usize>(cx).tail();
         self.begin_selection(position, false, click_count, cx);
 
         let position = position.to_offset(&display_map, Bias::Left);
         let tail_anchor = display_map.buffer_snapshot.anchor_before(tail);
-        let mut pending = self.pending_selection.clone().unwrap();
 
+        let mut pending_selection = self
+            .selections
+            .pending_anchor()
+            .expect("extend_selection not called with pending selection");
         if position >= tail {
-            pending.selection.start = tail_anchor.clone();
+            pending_selection.start = tail_anchor.clone();
         } else {
-            pending.selection.end = tail_anchor.clone();
-            pending.selection.reversed = true;
+            pending_selection.end = tail_anchor.clone();
+            pending_selection.reversed = true;
         }
 
-        match &mut pending.mode {
+        let mut pending_mode = self.selections.pending_mode().unwrap();
+        match &mut pending_mode {
             SelectMode::Word(range) | SelectMode::Line(range) => {
                 *range = tail_anchor.clone()..tail_anchor
             }
             _ => {}
         }
 
-        self.set_selections(self.selections.clone(), Some(pending), true, cx);
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.set_pending(pending_selection, pending_mode)
+        });
     }
 
     fn begin_selection(
@@ -1489,7 +1488,7 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
-        let newest_selection = self.newest_anchor_selection().clone();
+        let newest_selection = self.selections.newest_anchor().clone();
         let position = display_map.clip_point(position, Bias::Left);
 
         let start;
@@ -1527,38 +1526,17 @@ impl Editor {
             }
         }
 
-        let selection = Selection {
-            id: post_inc(&mut self.next_selection_id),
-            start,
-            end,
-            reversed: false,
-            goal: SelectionGoal::None,
-        };
-
-        let mut selections;
-        if add {
-            selections = self.selections.clone();
-            // Remove the newest selection if it was added due to a previous mouse up
-            // within this multi-click.
-            if click_count > 1 {
-                selections = self
-                    .selections
-                    .iter()
-                    .filter(|selection| selection.id != newest_selection.id)
-                    .cloned()
-                    .collect();
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            if add {
+                if click_count > 1 {
+                    s.delete(newest_selection.id);
+                }
+            } else {
+                s.clear_disjoint();
             }
-        } else {
-            selections = Arc::from([]);
-        }
-        self.set_selections(
-            selections,
-            Some(PendingSelection { selection, mode }),
-            true,
-            cx,
-        );
 
-        cx.notify();
+            s.set_pending_range(start..end, mode);
+        });
     }
 
     fn begin_columnar_selection(
@@ -1573,9 +1551,7 @@ impl Editor {
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let tail = self
-            .newest_selection_with_snapshot::<Point>(&display_map.buffer_snapshot)
-            .tail();
+        let tail = self.selections.newest::<Point>(cx).tail();
         self.columnar_selection_tail = Some(display_map.buffer_snapshot.anchor_before(tail));
 
         self.select_columns(
@@ -1599,14 +1575,15 @@ impl Editor {
         if let Some(tail) = self.columnar_selection_tail.as_ref() {
             let tail = tail.to_display_point(&display_map);
             self.select_columns(tail, position, overshoot, &display_map, cx);
-        } else if let Some(mut pending) = self.pending_selection.clone() {
+        } else if let Some(mut pending) = self.selections.pending_anchor().clone() {
             let buffer = self.buffer.read(cx).snapshot(cx);
             let head;
             let tail;
-            match &pending.mode {
+            let mode = self.selections.pending_mode().unwrap();
+            match &mode {
                 SelectMode::Character => {
                     head = position.to_point(&display_map);
-                    tail = pending.selection.tail().to_point(&buffer);
+                    tail = pending.tail().to_point(&buffer);
                 }
                 SelectMode::Word(original_range) => {
                     let original_display_range = original_range.start.to_display_point(&display_map)
@@ -1662,15 +1639,18 @@ impl Editor {
             };
 
             if head < tail {
-                pending.selection.start = buffer.anchor_before(head);
-                pending.selection.end = buffer.anchor_before(tail);
-                pending.selection.reversed = true;
+                pending.start = buffer.anchor_before(head);
+                pending.end = buffer.anchor_before(tail);
+                pending.reversed = true;
             } else {
-                pending.selection.start = buffer.anchor_before(tail);
-                pending.selection.end = buffer.anchor_before(head);
-                pending.selection.reversed = false;
+                pending.start = buffer.anchor_before(tail);
+                pending.end = buffer.anchor_before(head);
+                pending.reversed = false;
             }
-            self.set_selections(self.selections.clone(), Some(pending), true, cx);
+
+            self.change_selections(None, cx, |s| {
+                s.set_pending(pending, mode);
+            });
         } else {
             log::error!("update_selection dispatched with no pending selection");
             return;
@@ -1682,9 +1662,12 @@ impl Editor {
 
     fn end_selection(&mut self, cx: &mut ViewContext<Self>) {
         self.columnar_selection_tail.take();
-        if self.pending_selection.is_some() {
-            let selections = self.local_selections::<usize>(cx);
-            self.update_selections(selections, None, cx);
+        if self.selections.pending_anchor().is_some() {
+            let selections = self.selections.all::<usize>(cx);
+            self.change_selections(None, cx, |s| {
+                s.select(selections);
+                s.clear_pending();
+            });
         }
     }
 
@@ -1702,7 +1685,7 @@ impl Editor {
         let end_column = cmp::max(tail.column(), head.column() + overshoot);
         let reversed = start_column < tail.column();
 
-        let selections = (start_row..=end_row)
+        let selection_ranges = (start_row..=end_row)
             .filter_map(|row| {
                 if start_column <= display_map.line_len(row) && !display_map.is_block_line(row) {
                     let start = display_map
@@ -1711,25 +1694,25 @@ impl Editor {
                     let end = display_map
                         .clip_point(DisplayPoint::new(row, end_column), Bias::Right)
                         .to_point(&display_map);
-                    Some(Selection {
-                        id: post_inc(&mut self.next_selection_id),
-                        start,
-                        end,
-                        reversed,
-                        goal: SelectionGoal::None,
-                    })
+                    if reversed {
+                        Some(end..start)
+                    } else {
+                        Some(start..end)
+                    }
                 } else {
                     None
                 }
             })
             .collect::<Vec<_>>();
 
-        self.update_selections(selections, None, cx);
+        self.change_selections(None, cx, |s| {
+            s.select_ranges(selection_ranges);
+        });
         cx.notify();
     }
 
     pub fn is_selecting(&self) -> bool {
-        self.pending_selection.is_some() || self.columnar_selection_tail.is_some()
+        self.selections.pending_anchor().is_some() || self.columnar_selection_tail.is_some()
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
@@ -1751,132 +1734,12 @@ impl Editor {
                 return;
             }
 
-            if let Some(pending) = self.pending_selection.clone() {
-                let mut selections = self.selections.clone();
-                if selections.is_empty() {
-                    selections = Arc::from([pending.selection]);
-                }
-                self.set_selections(selections, None, true, cx);
-                self.request_autoscroll(Autoscroll::Fit, cx);
-                return;
-            }
-
-            let mut oldest_selection = self.oldest_selection::<usize>(&cx);
-            if self.selection_count() > 1 {
-                self.update_selections(vec![oldest_selection], Some(Autoscroll::Fit), cx);
-                return;
-            }
-
-            if !oldest_selection.is_empty() {
-                oldest_selection.start = oldest_selection.head().clone();
-                oldest_selection.end = oldest_selection.head().clone();
-                self.update_selections(vec![oldest_selection], Some(Autoscroll::Fit), cx);
+            if self.change_selections(Some(Autoscroll::Fit), cx, |s| s.try_cancel()) {
                 return;
             }
         }
 
         cx.propagate_action();
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn selected_ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
-        &self,
-        cx: &AppContext,
-    ) -> Vec<Range<D>> {
-        self.local_selections::<D>(cx)
-            .iter()
-            .map(|s| {
-                if s.reversed {
-                    s.end.clone()..s.start.clone()
-                } else {
-                    s.start.clone()..s.end.clone()
-                }
-            })
-            .collect()
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn selected_display_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
-        let display_map = self
-            .display_map
-            .update(cx, |display_map, cx| display_map.snapshot(cx));
-        self.selections
-            .iter()
-            .chain(
-                self.pending_selection
-                    .as_ref()
-                    .map(|pending| &pending.selection),
-            )
-            .map(|s| {
-                if s.reversed {
-                    s.end.to_display_point(&display_map)..s.start.to_display_point(&display_map)
-                } else {
-                    s.start.to_display_point(&display_map)..s.end.to_display_point(&display_map)
-                }
-            })
-            .collect()
-    }
-
-    pub fn select_ranges<I, T>(
-        &mut self,
-        ranges: I,
-        autoscroll: Option<Autoscroll>,
-        cx: &mut ViewContext<Self>,
-    ) where
-        I: IntoIterator<Item = Range<T>>,
-        T: ToOffset,
-    {
-        let buffer = self.buffer.read(cx).snapshot(cx);
-        let selections = ranges
-            .into_iter()
-            .map(|range| {
-                let mut start = range.start.to_offset(&buffer);
-                let mut end = range.end.to_offset(&buffer);
-                let reversed = if start > end {
-                    mem::swap(&mut start, &mut end);
-                    true
-                } else {
-                    false
-                };
-                Selection {
-                    id: post_inc(&mut self.next_selection_id),
-                    start,
-                    end,
-                    reversed,
-                    goal: SelectionGoal::None,
-                }
-            })
-            .collect::<Vec<_>>();
-        self.update_selections(selections, autoscroll, cx);
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn select_display_ranges<'a, T>(&mut self, ranges: T, cx: &mut ViewContext<Self>)
-    where
-        T: IntoIterator<Item = &'a Range<DisplayPoint>>,
-    {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let selections = ranges
-            .into_iter()
-            .map(|range| {
-                let mut start = range.start;
-                let mut end = range.end;
-                let reversed = if start > end {
-                    mem::swap(&mut start, &mut end);
-                    true
-                } else {
-                    false
-                };
-                Selection {
-                    id: post_inc(&mut self.next_selection_id),
-                    start: start.to_point(&display_map),
-                    end: end.to_point(&display_map),
-                    reversed,
-                    goal: SelectionGoal::None,
-                }
-            })
-            .collect();
-        self.update_selections(selections, None, cx);
     }
 
     pub fn handle_input(&mut self, action: &Input, cx: &mut ViewContext<Self>) {
@@ -1900,7 +1763,8 @@ impl Editor {
     pub fn newline(&mut self, _: &Newline, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             let (edits, selection_fixup_info): (Vec<_>, Vec<_>) = {
-                let selections = this.local_selections::<usize>(cx);
+                let selections = this.selections.all::<usize>(cx);
+
                 let buffer = this.buffer.read(cx).snapshot(cx);
                 selections
                     .iter()
@@ -1947,9 +1811,12 @@ impl Editor {
                         if insert_extra_newline {
                             new_text = new_text.repeat(2);
                         }
+
+                        let anchor = buffer.anchor_after(end);
+                        let new_selection = selection.map(|_| anchor.clone());
                         (
                             (start..end, new_text),
-                            (insert_extra_newline, buffer.anchor_after(end)),
+                            (insert_extra_newline, new_selection),
                         )
                     })
                     .unzip()
@@ -1957,35 +1824,28 @@ impl Editor {
 
             this.buffer.update(cx, |buffer, cx| {
                 buffer.edit_with_autoindent(edits, cx);
-
-                let buffer = buffer.read(cx);
-                this.selections = this
-                    .selections
-                    .iter()
-                    .cloned()
-                    .zip(selection_fixup_info)
-                    .map(|(mut new_selection, (extra_newline_inserted, end))| {
-                        let mut cursor = end.to_point(&buffer);
-                        if extra_newline_inserted {
-                            cursor.row -= 1;
-                            cursor.column = buffer.line_len(cursor.row);
-                        }
-                        let anchor = buffer.anchor_after(cursor);
-                        new_selection.start = anchor.clone();
-                        new_selection.end = anchor;
-                        new_selection
-                    })
-                    .collect();
             });
+            let buffer = this.buffer.read(cx).snapshot(cx);
+            let new_selections = selection_fixup_info
+                .into_iter()
+                .map(|(extra_newline_inserted, new_selection)| {
+                    let mut cursor = new_selection.end.to_point(&buffer);
+                    if extra_newline_inserted {
+                        cursor.row -= 1;
+                        cursor.column = buffer.line_len(cursor.row);
+                    }
+                    new_selection.map(|_| cursor.clone())
+                })
+                .collect();
 
-            this.request_autoscroll(Autoscroll::Fit, cx);
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(new_selections));
         });
     }
 
     pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         let text: Arc<str> = text.into();
         self.transact(cx, |this, cx| {
-            let old_selections = this.local_selections::<usize>(cx);
+            let old_selections = this.selections.all::<usize>(cx);
             let selection_anchors = this.buffer.update(cx, |buffer, cx| {
                 let anchors = {
                     let snapshot = buffer.read(cx);
@@ -2019,12 +1879,15 @@ impl Editor {
                     })
                     .collect()
             };
-            this.update_selections(selections, Some(Autoscroll::Fit), cx);
+
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.select(selections);
+            })
         });
     }
 
     fn trigger_completion_on_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
-        let selection = self.newest_anchor_selection();
+        let selection = self.selections.newest_anchor();
         if self
             .buffer
             .read(cx)
@@ -2044,64 +1907,58 @@ impl Editor {
             .cloned()
         {
             if self
-                .local_selections::<usize>(cx)
+                .selections
+                .all::<usize>(cx)
                 .iter()
                 .any(|selection| selection.is_empty())
             {
-                false
-            } else {
-                let mut selections = self.selections.to_vec();
-                for selection in &mut selections {
-                    selection.end = selection.end.bias_left(&snapshot);
-                }
-                drop(snapshot);
-
-                self.buffer.update(cx, |buffer, cx| {
-                    let pair_start: Arc<str> = pair.start.clone().into();
-                    buffer.edit(
-                        selections
-                            .iter()
-                            .map(|s| (s.start.clone()..s.start.clone(), pair_start.clone())),
-                        cx,
-                    );
-                    let pair_end: Arc<str> = pair.end.clone().into();
-                    buffer.edit(
-                        selections
-                            .iter()
-                            .map(|s| (s.end.clone()..s.end.clone(), pair_end.clone())),
-                        cx,
-                    );
-                });
-
-                let snapshot = self.buffer.read(cx).read(cx);
-                for selection in &mut selections {
-                    selection.end = selection.end.bias_right(&snapshot);
-                }
-                drop(snapshot);
-
-                self.set_selections(selections.into(), None, true, cx);
-                true
+                return false;
             }
+
+            let mut selections = self.selections.disjoint_anchors().to_vec();
+            for selection in &mut selections {
+                selection.end = selection.end.bias_left(&snapshot);
+            }
+            drop(snapshot);
+
+            self.buffer.update(cx, |buffer, cx| {
+                let pair_start: Arc<str> = pair.start.clone().into();
+                let pair_end: Arc<str> = pair.end.clone().into();
+                buffer.edit(
+                    selections
+                        .iter()
+                        .map(|s| (s.start.clone()..s.start.clone(), pair_start.clone()))
+                        .chain(
+                            selections
+                                .iter()
+                                .map(|s| (s.end.clone()..s.end.clone(), pair_end.clone())),
+                        ),
+                    cx,
+                );
+            });
+
+            let snapshot = self.buffer.read(cx).read(cx);
+            for selection in &mut selections {
+                selection.end = selection.end.bias_right(&snapshot);
+            }
+            drop(snapshot);
+
+            self.change_selections(None, cx, |s| s.select_anchors(selections));
+            true
         } else {
             false
         }
     }
 
     fn autoclose_bracket_pairs(&mut self, cx: &mut ViewContext<Self>) {
-        let selections = self.local_selections::<usize>(cx);
+        let selections = self.selections.all::<usize>(cx);
         let mut bracket_pair_state = None;
         let mut new_selections = None;
         self.buffer.update(cx, |buffer, cx| {
             let mut snapshot = buffer.snapshot(cx);
             let left_biased_selections = selections
                 .iter()
-                .map(|selection| Selection {
-                    id: selection.id,
-                    start: snapshot.anchor_before(selection.start),
-                    end: snapshot.anchor_before(selection.end),
-                    reversed: selection.reversed,
-                    goal: selection.goal,
-                })
+                .map(|selection| selection.map(|p| snapshot.anchor_before(p)))
                 .collect::<Vec<_>>();
 
             let autoclose_pair = snapshot.language().and_then(|language| {
@@ -2155,7 +2012,7 @@ impl Editor {
                 snapshot = buffer.snapshot(cx);
 
                 new_selections = Some(
-                    self.resolve_selections::<usize, _>(left_biased_selections.iter(), &snapshot)
+                    resolve_multiple::<usize, _>(left_biased_selections.iter(), &snapshot)
                         .collect::<Vec<_>>(),
                 );
 
@@ -2177,7 +2034,9 @@ impl Editor {
         });
 
         if let Some(new_selections) = new_selections {
-            self.update_selections(new_selections, None, cx);
+            self.change_selections(None, cx, |s| {
+                s.select(new_selections);
+            });
         }
         if let Some(bracket_pair_state) = bracket_pair_state {
             self.autoclose_stack.push(bracket_pair_state);
@@ -2185,7 +2044,8 @@ impl Editor {
     }
 
     fn skip_autoclose_end(&mut self, text: &str, cx: &mut ViewContext<Self>) -> bool {
-        let old_selections = self.local_selections::<usize>(cx);
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let old_selections = self.selections.all::<usize>(cx);
         let autoclose_pair = if let Some(autoclose_pair) = self.autoclose_stack.last() {
             autoclose_pair
         } else {
@@ -2197,7 +2057,6 @@ impl Editor {
 
         debug_assert_eq!(old_selections.len(), autoclose_pair.ranges.len());
 
-        let buffer = self.buffer.read(cx).snapshot(cx);
         if old_selections
             .iter()
             .zip(autoclose_pair.ranges.iter().map(|r| r.to_offset(&buffer)))
@@ -2220,7 +2079,9 @@ impl Editor {
                 })
                 .collect();
             self.autoclose_stack.pop();
-            self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+            self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.select(new_selections);
+            });
             true
         } else {
             false
@@ -2252,7 +2113,7 @@ impl Editor {
             return;
         };
 
-        let position = self.newest_anchor_selection().head();
+        let position = self.selections.newest_anchor().head();
         let (buffer, buffer_position) = if let Some(output) = self
             .buffer
             .read(cx)
@@ -2353,12 +2214,12 @@ impl Editor {
             snippet = None;
             text = completion.new_text.clone();
         };
+        let selections = self.selections.all::<usize>(cx);
         let buffer = buffer_handle.read(cx);
         let old_range = completion.old_range.to_offset(&buffer);
         let old_text = buffer.text_for_range(old_range.clone()).collect::<String>();
 
-        let selections = self.local_selections::<usize>(cx);
-        let newest_selection = self.newest_anchor_selection();
+        let newest_selection = self.selections.newest_anchor();
         if newest_selection.start.buffer_id != Some(buffer_handle.id()) {
             return None;
         }
@@ -2524,7 +2385,7 @@ impl Editor {
                     editor
                         .buffer()
                         .read(cx)
-                        .excerpt_containing(editor.newest_anchor_selection().head(), cx)
+                        .excerpt_containing(editor.selections.newest_anchor().head(), cx)
                 });
                 if let Some((excerpted_buffer, excerpt_range)) = excerpt {
                     if excerpted_buffer == *buffer {
@@ -2585,7 +2446,7 @@ impl Editor {
     fn refresh_code_actions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
         let project = self.project.as_ref()?;
         let buffer = self.buffer.read(cx);
-        let newest_selection = self.newest_anchor_selection().clone();
+        let newest_selection = self.selections.newest_anchor().clone();
         let (start_buffer, start) = buffer.text_anchor_for_position(newest_selection.start, cx)?;
         let (end_buffer, end) = buffer.text_anchor_for_position(newest_selection.end, cx)?;
         if start_buffer != end_buffer {
@@ -2620,7 +2481,7 @@ impl Editor {
 
         let project = self.project.as_ref()?;
         let buffer = self.buffer.read(cx);
-        let newest_selection = self.newest_anchor_selection().clone();
+        let newest_selection = self.selections.newest_anchor().clone();
         let cursor_position = newest_selection.head();
         let (cursor_buffer, cursor_buffer_position) =
             buffer.text_anchor_for_position(cursor_position.clone(), cx)?;
@@ -2808,7 +2669,9 @@ impl Editor {
         });
 
         if let Some(tabstop) = tabstops.first() {
-            self.select_ranges(tabstop.iter().cloned(), Some(Autoscroll::Fit), cx);
+            self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.select_ranges(tabstop.iter().cloned());
+            });
             self.snippet_stack.push(SnippetState {
                 active_index: 0,
                 ranges: tabstops,
@@ -2827,14 +2690,13 @@ impl Editor {
     }
 
     pub fn move_to_snippet_tabstop(&mut self, bias: Bias, cx: &mut ViewContext<Self>) -> bool {
-        let buffer = self.buffer.read(cx).snapshot(cx);
-
-        if let Some(snippet) = self.snippet_stack.last_mut() {
+        if let Some(mut snippet) = self.snippet_stack.pop() {
             match bias {
                 Bias::Left => {
                     if snippet.active_index > 0 {
                         snippet.active_index -= 1;
                     } else {
+                        self.snippet_stack.push(snippet);
                         return false;
                     }
                 }
@@ -2842,34 +2704,21 @@ impl Editor {
                     if snippet.active_index + 1 < snippet.ranges.len() {
                         snippet.active_index += 1;
                     } else {
+                        self.snippet_stack.push(snippet);
                         return false;
                     }
                 }
             }
             if let Some(current_ranges) = snippet.ranges.get(snippet.active_index) {
-                let new_selections = current_ranges
-                    .iter()
-                    .map(|new_range| {
-                        let new_range = new_range.to_offset(&buffer);
-                        Selection {
-                            id: post_inc(&mut self.next_selection_id),
-                            start: new_range.start,
-                            end: new_range.end,
-                            reversed: false,
-                            goal: SelectionGoal::None,
-                        }
-                    })
-                    .collect();
-
-                // Remove the snippet state when moving to the last tabstop.
-                if snippet.active_index + 1 == snippet.ranges.len() {
-                    self.snippet_stack.pop();
+                self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                    s.select_anchor_ranges(current_ranges.into_iter().cloned())
+                });
+                // If snippet state is not at the last tabstop, push it back on the stack
+                if snippet.active_index + 1 < snippet.ranges.len() {
+                    self.snippet_stack.push(snippet);
                 }
-
-                self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
                 return true;
             }
-            self.snippet_stack.pop();
         }
 
         false
@@ -2883,8 +2732,8 @@ impl Editor {
     }
 
     pub fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
-        let mut selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let mut selections = self.selections.all::<Point>(cx);
         for selection in &mut selections {
             if selection.is_empty() {
                 let old_head = selection.head();
@@ -2911,18 +2760,20 @@ impl Editor {
         }
 
         self.transact(cx, |this, cx| {
-            this.update_selections(selections, Some(Autoscroll::Fit), cx);
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
             this.insert("", cx);
         });
     }
 
     pub fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            this.move_selections(cx, |map, selection| {
-                if selection.is_empty() {
-                    let cursor = movement::right(map, selection.head());
-                    selection.set_head(cursor, SelectionGoal::None);
-                }
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.move_with(|map, selection| {
+                    if selection.is_empty() {
+                        let cursor = movement::right(map, selection.head());
+                        selection.set_head(cursor, SelectionGoal::None);
+                    }
+                })
             });
             this.insert(&"", cx);
         });
@@ -2941,7 +2792,7 @@ impl Editor {
             return;
         }
 
-        let mut selections = self.local_selections::<Point>(cx);
+        let mut selections = self.selections.all::<Point>(cx);
         if selections.iter().all(|s| s.is_empty()) {
             self.transact(cx, |this, cx| {
                 this.buffer.update(cx, |buffer, cx| {
@@ -2966,7 +2817,9 @@ impl Editor {
                         selection.end = selection.start;
                     }
                 });
-                this.update_selections(selections, Some(Autoscroll::Fit), cx);
+                this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                    s.select(selections);
+                });
             });
         } else {
             self.indent(&Indent, cx);
@@ -2974,7 +2827,7 @@ impl Editor {
     }
 
     pub fn indent(&mut self, _: &Indent, cx: &mut ViewContext<Self>) {
-        let mut selections = self.local_selections::<Point>(cx);
+        let mut selections = self.selections.all::<Point>(cx);
         self.transact(cx, |this, cx| {
             let mut last_indent = None;
             this.buffer.update(cx, |buffer, cx| {
@@ -3029,13 +2882,15 @@ impl Editor {
                 }
             });
 
-            this.update_selections(selections, Some(Autoscroll::Fit), cx);
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.select(selections);
+            });
         });
     }
 
     pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
-        let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let selections = self.selections.all::<Point>(cx);
         let mut deletion_ranges = Vec::new();
         let mut last_outdent = None;
         {
@@ -3078,18 +2933,14 @@ impl Editor {
                     cx,
                 );
             });
-            this.update_selections(
-                this.local_selections::<usize>(cx),
-                Some(Autoscroll::Fit),
-                cx,
-            );
+            let selections = this.selections.all::<usize>(cx);
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
         });
     }
 
     pub fn delete_line(&mut self, _: &DeleteLine, cx: &mut ViewContext<Self>) {
-        let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx).snapshot(cx);
+        let selections = self.selections.all::<Point>(cx);
 
         let mut new_cursors = Vec::new();
         let mut edit_ranges = Vec::new();
@@ -3109,6 +2960,7 @@ impl Editor {
                 }
             }
 
+            let buffer = &display_map.buffer_snapshot;
             let mut edit_start = Point::new(rows.start, 0).to_offset(&buffer);
             let edit_end;
             let cursor_buffer_row;
@@ -3160,14 +3012,17 @@ impl Editor {
                     }
                 })
                 .collect();
-            this.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.select(new_selections);
+            });
         });
     }
 
     pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
-        let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
+        let selections = self.selections.all::<Point>(cx);
 
         let mut edits = Vec::new();
         let mut selections_iter = selections.iter().peekable();
@@ -3212,7 +3067,7 @@ impl Editor {
         let mut unfold_ranges = Vec::new();
         let mut refold_ranges = Vec::new();
 
-        let selections = self.local_selections::<Point>(cx);
+        let selections = self.selections.all::<Point>(cx);
         let mut selections = selections.iter().peekable();
         let mut contiguous_row_selections = Vec::new();
         let mut new_selections = Vec::new();
@@ -3310,7 +3165,9 @@ impl Editor {
                 }
             });
             this.fold_ranges(refold_ranges, cx);
-            this.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.select(new_selections);
+            })
         });
     }
 
@@ -3322,7 +3179,7 @@ impl Editor {
         let mut unfold_ranges = Vec::new();
         let mut refold_ranges = Vec::new();
 
-        let selections = self.local_selections::<Point>(cx);
+        let selections = self.selections.all::<Point>(cx);
         let mut selections = selections.iter().peekable();
         let mut contiguous_row_selections = Vec::new();
         let mut new_selections = Vec::new();
@@ -3413,62 +3270,66 @@ impl Editor {
                 }
             });
             this.fold_ranges(refold_ranges, cx);
-            this.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(new_selections));
         });
     }
 
     pub fn transpose(&mut self, _: &Transpose, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            let mut edits: Vec<(Range<usize>, String)> = Default::default();
-            this.move_selections(cx, |display_map, selection| {
-                if !selection.is_empty() {
-                    return;
-                }
+            let edits = this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                let mut edits: Vec<(Range<usize>, String)> = Default::default();
+                s.move_with(|display_map, selection| {
+                    if !selection.is_empty() {
+                        return;
+                    }
 
-                let mut head = selection.head();
-                let mut transpose_offset = head.to_offset(display_map, Bias::Right);
-                if head.column() == display_map.line_len(head.row()) {
-                    transpose_offset = display_map
+                    let mut head = selection.head();
+                    let mut transpose_offset = head.to_offset(display_map, Bias::Right);
+                    if head.column() == display_map.line_len(head.row()) {
+                        transpose_offset = display_map
+                            .buffer_snapshot
+                            .clip_offset(transpose_offset.saturating_sub(1), Bias::Left);
+                    }
+
+                    if transpose_offset == 0 {
+                        return;
+                    }
+
+                    *head.column_mut() += 1;
+                    head = display_map.clip_point(head, Bias::Right);
+                    selection.collapse_to(head, SelectionGoal::Column(head.column()));
+
+                    let transpose_start = display_map
                         .buffer_snapshot
                         .clip_offset(transpose_offset.saturating_sub(1), Bias::Left);
-                }
-
-                if transpose_offset == 0 {
-                    return;
-                }
-
-                *head.column_mut() += 1;
-                head = display_map.clip_point(head, Bias::Right);
-                selection.collapse_to(head, SelectionGoal::Column(head.column()));
-
-                let transpose_start = display_map
-                    .buffer_snapshot
-                    .clip_offset(transpose_offset.saturating_sub(1), Bias::Left);
-                if edits.last().map_or(true, |e| e.0.end <= transpose_start) {
-                    let transpose_end = display_map
-                        .buffer_snapshot
-                        .clip_offset(transpose_offset + 1, Bias::Right);
-                    if let Some(ch) = display_map.buffer_snapshot.chars_at(transpose_start).next() {
-                        edits.push((transpose_start..transpose_offset, String::new()));
-                        edits.push((transpose_end..transpose_end, ch.to_string()));
+                    if edits.last().map_or(true, |e| e.0.end <= transpose_start) {
+                        let transpose_end = display_map
+                            .buffer_snapshot
+                            .clip_offset(transpose_offset + 1, Bias::Right);
+                        if let Some(ch) =
+                            display_map.buffer_snapshot.chars_at(transpose_start).next()
+                        {
+                            edits.push((transpose_start..transpose_offset, String::new()));
+                            edits.push((transpose_end..transpose_end, ch.to_string()));
+                        }
                     }
-                }
+                });
+                edits
             });
             this.buffer.update(cx, |buffer, cx| buffer.edit(edits, cx));
-            this.update_selections(
-                this.local_selections::<usize>(cx),
-                Some(Autoscroll::Fit),
-                cx,
-            );
+            let selections = this.selections.all::<usize>(cx);
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.select(selections);
+            });
         });
     }
 
     pub fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
         let mut text = String::new();
-        let mut selections = self.local_selections::<Point>(cx);
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let mut selections = self.selections.all::<Point>(cx);
         let mut clipboard_selections = Vec::with_capacity(selections.len());
         {
-            let buffer = self.buffer.read(cx).read(cx);
             let max_point = buffer.max_point();
             for selection in &mut selections {
                 let is_entire_line = selection.is_empty();
@@ -3490,18 +3351,20 @@ impl Editor {
         }
 
         self.transact(cx, |this, cx| {
-            this.update_selections(selections, Some(Autoscroll::Fit), cx);
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.select(selections);
+            });
             this.insert("", cx);
             cx.write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
         });
     }
 
     pub fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
-        let selections = self.local_selections::<Point>(cx);
+        let selections = self.selections.all::<Point>(cx);
+        let buffer = self.buffer.read(cx).read(cx);
         let mut text = String::new();
         let mut clipboard_selections = Vec::with_capacity(selections.len());
         {
-            let buffer = self.buffer.read(cx).read(cx);
             let max_point = buffer.max_point();
             for selection in selections.iter() {
                 let mut start = selection.start;
@@ -3531,7 +3394,7 @@ impl Editor {
             if let Some(item) = cx.as_mut().read_from_clipboard() {
                 let mut clipboard_text = Cow::Borrowed(item.text());
                 if let Some(mut clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
-                    let old_selections = this.local_selections::<usize>(cx);
+                    let old_selections = this.selections.all::<usize>(cx);
                     let all_selections_were_entire_line =
                         clipboard_selections.iter().all(|s| s.is_entire_line);
                     if clipboard_selections.len() != old_selections.len() {
@@ -3584,8 +3447,8 @@ impl Editor {
                         buffer.edit_with_autoindent(edits, cx);
                     });
 
-                    let selections = this.local_selections::<usize>(cx);
-                    this.update_selections(selections, Some(Autoscroll::Fit), cx);
+                    let selections = this.selections.all::<usize>(cx);
+                    this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
                 } else {
                     this.insert(&clipboard_text, cx);
                 }
@@ -3596,7 +3459,9 @@ impl Editor {
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
             if let Some((selections, _)) = self.selection_history.transaction(tx_id).cloned() {
-                self.set_selections(selections, None, true, cx);
+                self.change_selections(None, cx, |s| {
+                    s.select_anchors(selections.to_vec());
+                });
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
             cx.emit(Event::Edited);
@@ -3607,7 +3472,9 @@ impl Editor {
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
             if let Some((_, Some(selections))) = self.selection_history.transaction(tx_id).cloned()
             {
-                self.set_selections(selections, None, true, cx);
+                self.change_selections(None, cx, |s| {
+                    s.select_anchors(selections.to_vec());
+                });
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
             cx.emit(Event::Edited);
@@ -3620,37 +3487,41 @@ impl Editor {
     }
 
     pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
-        self.move_selections(cx, |map, selection| {
-            let cursor = if selection.is_empty() {
-                movement::left(map, selection.start)
-            } else {
-                selection.start
-            };
-            selection.collapse_to(cursor, SelectionGoal::None);
-        });
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_with(|map, selection| {
+                let cursor = if selection.is_empty() {
+                    movement::left(map, selection.start)
+                } else {
+                    selection.start
+                };
+                selection.collapse_to(cursor, SelectionGoal::None);
+            });
+        })
     }
 
     pub fn select_left(&mut self, _: &SelectLeft, cx: &mut ViewContext<Self>) {
-        self.move_selection_heads(cx, |map, head, _| {
-            (movement::left(map, head), SelectionGoal::None)
-        });
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_heads_with(|map, head, _| (movement::left(map, head), SelectionGoal::None));
+        })
     }
 
     pub fn move_right(&mut self, _: &MoveRight, cx: &mut ViewContext<Self>) {
-        self.move_selections(cx, |map, selection| {
-            let cursor = if selection.is_empty() {
-                movement::right(map, selection.end)
-            } else {
-                selection.end
-            };
-            selection.collapse_to(cursor, SelectionGoal::None)
-        });
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_with(|map, selection| {
+                let cursor = if selection.is_empty() {
+                    movement::right(map, selection.end)
+                } else {
+                    selection.end
+                };
+                selection.collapse_to(cursor, SelectionGoal::None)
+            });
+        })
     }
 
     pub fn select_right(&mut self, _: &SelectRight, cx: &mut ViewContext<Self>) {
-        self.move_selection_heads(cx, |map, head, _| {
-            (movement::right(map, head), SelectionGoal::None)
-        });
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_heads_with(|map, head, _| (movement::right(map, head), SelectionGoal::None));
+        })
     }
 
     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
@@ -3669,17 +3540,21 @@ impl Editor {
             return;
         }
 
-        self.move_selections(cx, |map, selection| {
-            if !selection.is_empty() {
-                selection.goal = SelectionGoal::None;
-            }
-            let (cursor, goal) = movement::up(&map, selection.start, selection.goal, false);
-            selection.collapse_to(cursor, goal);
-        });
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_with(|map, selection| {
+                if !selection.is_empty() {
+                    selection.goal = SelectionGoal::None;
+                }
+                let (cursor, goal) = movement::up(&map, selection.start, selection.goal, false);
+                selection.collapse_to(cursor, goal);
+            });
+        })
     }
 
     pub fn select_up(&mut self, _: &SelectUp, cx: &mut ViewContext<Self>) {
-        self.move_selection_heads(cx, |map, head, goal| movement::up(map, head, goal, false))
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_heads_with(|map, head, goal| movement::up(map, head, goal, false))
+        })
     }
 
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
@@ -3696,17 +3571,21 @@ impl Editor {
             return;
         }
 
-        self.move_selections(cx, |map, selection| {
-            if !selection.is_empty() {
-                selection.goal = SelectionGoal::None;
-            }
-            let (cursor, goal) = movement::down(&map, selection.end, selection.goal, false);
-            selection.collapse_to(cursor, goal);
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_with(|map, selection| {
+                if !selection.is_empty() {
+                    selection.goal = SelectionGoal::None;
+                }
+                let (cursor, goal) = movement::down(&map, selection.end, selection.goal, false);
+                selection.collapse_to(cursor, goal);
+            });
         });
     }
 
     pub fn select_down(&mut self, _: &SelectDown, cx: &mut ViewContext<Self>) {
-        self.move_selection_heads(cx, |map, head, goal| movement::down(map, head, goal, false))
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_heads_with(|map, head, goal| movement::down(map, head, goal, false))
+        });
     }
 
     pub fn move_to_previous_word_start(
@@ -3714,12 +3593,14 @@ impl Editor {
         _: &MoveToPreviousWordStart,
         cx: &mut ViewContext<Self>,
     ) {
-        self.move_cursors(cx, |map, head, _| {
-            (
-                movement::previous_word_start(map, head),
-                SelectionGoal::None,
-            )
-        });
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_cursors_with(|map, head, _| {
+                (
+                    movement::previous_word_start(map, head),
+                    SelectionGoal::None,
+                )
+            });
+        })
     }
 
     pub fn move_to_previous_subword_start(
@@ -3727,12 +3608,14 @@ impl Editor {
         _: &MoveToPreviousSubwordStart,
         cx: &mut ViewContext<Self>,
     ) {
-        self.move_cursors(cx, |map, head, _| {
-            (
-                movement::previous_subword_start(map, head),
-                SelectionGoal::None,
-            )
-        });
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_cursors_with(|map, head, _| {
+                (
+                    movement::previous_subword_start(map, head),
+                    SelectionGoal::None,
+                )
+            });
+        })
     }
 
     pub fn select_to_previous_word_start(
@@ -3740,12 +3623,14 @@ impl Editor {
         _: &SelectToPreviousWordStart,
         cx: &mut ViewContext<Self>,
     ) {
-        self.move_selection_heads(cx, |map, head, _| {
-            (
-                movement::previous_word_start(map, head),
-                SelectionGoal::None,
-            )
-        });
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_heads_with(|map, head, _| {
+                (
+                    movement::previous_word_start(map, head),
+                    SelectionGoal::None,
+                )
+            });
+        })
     }
 
     pub fn select_to_previous_subword_start(
@@ -3753,12 +3638,14 @@ impl Editor {
         _: &SelectToPreviousSubwordStart,
         cx: &mut ViewContext<Self>,
     ) {
-        self.move_selection_heads(cx, |map, head, _| {
-            (
-                movement::previous_subword_start(map, head),
-                SelectionGoal::None,
-            )
-        });
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_heads_with(|map, head, _| {
+                (
+                    movement::previous_subword_start(map, head),
+                    SelectionGoal::None,
+                )
+            });
+        })
     }
 
     pub fn delete_to_previous_word_start(
@@ -3767,11 +3654,13 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
-            this.move_selections(cx, |map, selection| {
-                if selection.is_empty() {
-                    let cursor = movement::previous_word_start(map, selection.head());
-                    selection.set_head(cursor, SelectionGoal::None);
-                }
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.move_with(|map, selection| {
+                    if selection.is_empty() {
+                        let cursor = movement::previous_word_start(map, selection.head());
+                        selection.set_head(cursor, SelectionGoal::None);
+                    }
+                });
             });
             this.insert("", cx);
         });
@@ -3783,20 +3672,24 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
-            this.move_selections(cx, |map, selection| {
-                if selection.is_empty() {
-                    let cursor = movement::previous_subword_start(map, selection.head());
-                    selection.set_head(cursor, SelectionGoal::None);
-                }
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.move_with(|map, selection| {
+                    if selection.is_empty() {
+                        let cursor = movement::previous_subword_start(map, selection.head());
+                        selection.set_head(cursor, SelectionGoal::None);
+                    }
+                });
             });
             this.insert("", cx);
         });
     }
 
     pub fn move_to_next_word_end(&mut self, _: &MoveToNextWordEnd, cx: &mut ViewContext<Self>) {
-        self.move_cursors(cx, |map, head, _| {
-            (movement::next_word_end(map, head), SelectionGoal::None)
-        });
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_cursors_with(|map, head, _| {
+                (movement::next_word_end(map, head), SelectionGoal::None)
+            });
+        })
     }
 
     pub fn move_to_next_subword_end(
@@ -3804,15 +3697,19 @@ impl Editor {
         _: &MoveToNextSubwordEnd,
         cx: &mut ViewContext<Self>,
     ) {
-        self.move_cursors(cx, |map, head, _| {
-            (movement::next_subword_end(map, head), SelectionGoal::None)
-        });
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_cursors_with(|map, head, _| {
+                (movement::next_subword_end(map, head), SelectionGoal::None)
+            });
+        })
     }
 
     pub fn select_to_next_word_end(&mut self, _: &SelectToNextWordEnd, cx: &mut ViewContext<Self>) {
-        self.move_selection_heads(cx, |map, head, _| {
-            (movement::next_word_end(map, head), SelectionGoal::None)
-        });
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_heads_with(|map, head, _| {
+                (movement::next_word_end(map, head), SelectionGoal::None)
+            });
+        })
     }
 
     pub fn select_to_next_subword_end(
@@ -3820,18 +3717,22 @@ impl Editor {
         _: &SelectToNextSubwordEnd,
         cx: &mut ViewContext<Self>,
     ) {
-        self.move_selection_heads(cx, |map, head, _| {
-            (movement::next_subword_end(map, head), SelectionGoal::None)
-        });
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_heads_with(|map, head, _| {
+                (movement::next_subword_end(map, head), SelectionGoal::None)
+            });
+        })
     }
 
     pub fn delete_to_next_word_end(&mut self, _: &DeleteToNextWordEnd, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            this.move_selections(cx, |map, selection| {
-                if selection.is_empty() {
-                    let cursor = movement::next_word_end(map, selection.head());
-                    selection.set_head(cursor, SelectionGoal::None);
-                }
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.move_with(|map, selection| {
+                    if selection.is_empty() {
+                        let cursor = movement::next_word_end(map, selection.head());
+                        selection.set_head(cursor, SelectionGoal::None);
+                    }
+                });
             });
             this.insert("", cx);
         });
@@ -3843,11 +3744,13 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
-            this.move_selections(cx, |map, selection| {
-                if selection.is_empty() {
-                    let cursor = movement::next_subword_end(map, selection.head());
-                    selection.set_head(cursor, SelectionGoal::None);
-                }
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.move_with(|map, selection| {
+                    if selection.is_empty() {
+                        let cursor = movement::next_subword_end(map, selection.head());
+                        selection.set_head(cursor, SelectionGoal::None);
+                    }
+                });
             });
             this.insert("", cx);
         });
@@ -3858,12 +3761,14 @@ impl Editor {
         _: &MoveToBeginningOfLine,
         cx: &mut ViewContext<Self>,
     ) {
-        self.move_cursors(cx, |map, head, _| {
-            (
-                movement::line_beginning(map, head, true),
-                SelectionGoal::None,
-            )
-        });
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_cursors_with(|map, head, _| {
+                (
+                    movement::line_beginning(map, head, true),
+                    SelectionGoal::None,
+                )
+            });
+        })
     }
 
     pub fn select_to_beginning_of_line(
@@ -3871,11 +3776,13 @@ impl Editor {
         action: &SelectToBeginningOfLine,
         cx: &mut ViewContext<Self>,
     ) {
-        self.move_selection_heads(cx, |map, head, _| {
-            (
-                movement::line_beginning(map, head, action.stop_at_soft_wraps),
-                SelectionGoal::None,
-            )
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_heads_with(|map, head, _| {
+                (
+                    movement::line_beginning(map, head, action.stop_at_soft_wraps),
+                    SelectionGoal::None,
+                )
+            });
         });
     }
 
@@ -3885,8 +3792,10 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
-            this.move_selections(cx, |_, selection| {
-                selection.reversed = true;
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.move_with(|_, selection| {
+                    selection.reversed = true;
+                });
             });
 
             this.select_to_beginning_of_line(
@@ -3900,9 +3809,11 @@ impl Editor {
     }
 
     pub fn move_to_end_of_line(&mut self, _: &MoveToEndOfLine, cx: &mut ViewContext<Self>) {
-        self.move_cursors(cx, |map, head, _| {
-            (movement::line_end(map, head, true), SelectionGoal::None)
-        });
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_cursors_with(|map, head, _| {
+                (movement::line_end(map, head, true), SelectionGoal::None)
+            });
+        })
     }
 
     pub fn select_to_end_of_line(
@@ -3910,12 +3821,14 @@ impl Editor {
         action: &SelectToEndOfLine,
         cx: &mut ViewContext<Self>,
     ) {
-        self.move_selection_heads(cx, |map, head, _| {
-            (
-                movement::line_end(map, head, action.stop_at_soft_wraps),
-                SelectionGoal::None,
-            )
-        });
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.move_heads_with(|map, head, _| {
+                (
+                    movement::line_end(map, head, action.stop_at_soft_wraps),
+                    SelectionGoal::None,
+                )
+            });
+        })
     }
 
     pub fn delete_to_end_of_line(&mut self, _: &DeleteToEndOfLine, cx: &mut ViewContext<Self>) {
@@ -3948,20 +3861,18 @@ impl Editor {
             return;
         }
 
-        let selection = Selection {
-            id: post_inc(&mut self.next_selection_id),
-            start: 0,
-            end: 0,
-            reversed: false,
-            goal: SelectionGoal::None,
-        };
-        self.update_selections(vec![selection], Some(Autoscroll::Fit), cx);
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.select_ranges(vec![0..0]);
+        });
     }
 
     pub fn select_to_beginning(&mut self, _: &SelectToBeginning, cx: &mut ViewContext<Self>) {
-        let mut selection = self.local_selections::<Point>(cx).last().unwrap().clone();
+        let mut selection = self.selections.last::<Point>(cx);
         selection.set_head(Point::zero(), SelectionGoal::None);
-        self.update_selections(vec![selection], Some(Autoscroll::Fit), cx);
+
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.select(vec![selection]);
+        });
     }
 
     pub fn move_to_end(&mut self, _: &MoveToEnd, cx: &mut ViewContext<Self>) {
@@ -3971,14 +3882,9 @@ impl Editor {
         }
 
         let cursor = self.buffer.read(cx).read(cx).len();
-        let selection = Selection {
-            id: post_inc(&mut self.next_selection_id),
-            start: cursor,
-            end: cursor,
-            reversed: false,
-            goal: SelectionGoal::None,
-        };
-        self.update_selections(vec![selection], Some(Autoscroll::Fit), cx);
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.select_ranges(vec![cursor..cursor])
+        });
     }
 
     pub fn set_nav_history(&mut self, nav_history: Option<ItemNavHistory>) {
@@ -4019,25 +3925,24 @@ impl Editor {
     }
 
     pub fn select_to_end(&mut self, _: &SelectToEnd, cx: &mut ViewContext<Self>) {
-        let mut selection = self.local_selections::<usize>(cx).first().unwrap().clone();
-        selection.set_head(self.buffer.read(cx).read(cx).len(), SelectionGoal::None);
-        self.update_selections(vec![selection], Some(Autoscroll::Fit), cx);
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let mut selection = self.selections.first::<usize>(cx);
+        selection.set_head(buffer.len(), SelectionGoal::None);
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.select(vec![selection]);
+        });
     }
 
     pub fn select_all(&mut self, _: &SelectAll, cx: &mut ViewContext<Self>) {
-        let selection = Selection {
-            id: post_inc(&mut self.next_selection_id),
-            start: 0,
-            end: self.buffer.read(cx).read(cx).len(),
-            reversed: false,
-            goal: SelectionGoal::None,
-        };
-        self.update_selections(vec![selection], None, cx);
+        let end = self.buffer.read(cx).read(cx).len();
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.select_ranges(vec![0..end]);
+        });
     }
 
     pub fn select_line(&mut self, _: &SelectLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
+        let mut selections = self.selections.all::<Point>(cx);
         let max_point = display_map.buffer_snapshot.max_point();
         for selection in &mut selections {
             let rows = selection.spanned_rows(true, &display_map);
@@ -4045,7 +3950,9 @@ impl Editor {
             selection.end = cmp::min(max_point, Point::new(rows.end, 0));
             selection.reversed = false;
         }
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.select(selections);
+        });
     }
 
     pub fn split_selection_into_lines(
@@ -4054,33 +3961,23 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let mut to_unfold = Vec::new();
-        let mut new_selections = Vec::new();
+        let mut new_selection_ranges = Vec::new();
         {
-            let selections = self.local_selections::<Point>(cx);
+            let selections = self.selections.all::<Point>(cx);
             let buffer = self.buffer.read(cx).read(cx);
             for selection in selections {
                 for row in selection.start.row..selection.end.row {
                     let cursor = Point::new(row, buffer.line_len(row));
-                    new_selections.push(Selection {
-                        id: post_inc(&mut self.next_selection_id),
-                        start: cursor,
-                        end: cursor,
-                        reversed: false,
-                        goal: SelectionGoal::None,
-                    });
+                    new_selection_ranges.push(cursor..cursor);
                 }
-                new_selections.push(Selection {
-                    id: selection.id,
-                    start: selection.end,
-                    end: selection.end,
-                    reversed: false,
-                    goal: SelectionGoal::None,
-                });
+                new_selection_ranges.push(selection.end..selection.end);
                 to_unfold.push(selection.start..selection.end);
             }
         }
         self.unfold_ranges(to_unfold, true, cx);
-        self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.select_ranges(new_selection_ranges);
+        });
     }
 
     pub fn add_selection_above(&mut self, _: &AddSelectionAbove, cx: &mut ViewContext<Self>) {
@@ -4092,9 +3989,8 @@ impl Editor {
     }
 
     fn add_selection(&mut self, above: bool, cx: &mut ViewContext<Self>) {
-        self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.local_selections::<Point>(cx);
+        let mut selections = self.selections.all::<Point>(cx);
         let mut state = self.add_selections_state.take().unwrap_or_else(|| {
             let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
             let range = oldest_selection.display_range(&display_map).sorted();
@@ -4104,7 +4000,7 @@ impl Editor {
             selections.clear();
             let mut stack = Vec::new();
             for row in range.start.row()..=range.end.row() {
-                if let Some(selection) = self.build_columnar_selection(
+                if let Some(selection) = self.selections.build_columnar_selection(
                     &display_map,
                     row,
                     &columns,
@@ -4151,7 +4047,7 @@ impl Editor {
                             row += 1;
                         }
 
-                        if let Some(new_selection) = self.build_columnar_selection(
+                        if let Some(new_selection) = self.selections.build_columnar_selection(
                             &display_map,
                             row,
                             &columns,
@@ -4179,7 +4075,9 @@ impl Editor {
             state.stack.pop();
         }
 
-        self.update_selections(new_selections, Some(Autoscroll::Newest), cx);
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.select(new_selections);
+        });
         if state.stack.len() > 1 {
             self.add_selections_state = Some(state);
         }
@@ -4189,7 +4087,7 @@ impl Editor {
         self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
-        let mut selections = self.local_selections::<usize>(cx);
+        let mut selections = self.selections.all::<usize>(cx);
         if let Some(mut select_next_state) = self.select_next_state.take() {
             let query = &select_next_state.query;
             if !select_next_state.done {
@@ -4225,22 +4123,13 @@ impl Editor {
                 }
 
                 if let Some(next_selected_range) = next_selected_range {
-                    if action.replace_newest {
-                        if let Some(newest_id) =
-                            selections.iter().max_by_key(|s| s.id).map(|s| s.id)
-                        {
-                            selections.retain(|s| s.id != newest_id);
+                    self.unfold_ranges([next_selected_range.clone()], false, cx);
+                    self.change_selections(Some(Autoscroll::Newest), cx, |s| {
+                        if action.replace_newest {
+                            s.delete(s.newest_anchor().id);
                         }
-                    }
-                    selections.push(Selection {
-                        id: post_inc(&mut self.next_selection_id),
-                        start: next_selected_range.start,
-                        end: next_selected_range.end,
-                        reversed: false,
-                        goal: SelectionGoal::None,
+                        s.insert_range(next_selected_range);
                     });
-                    self.unfold_ranges([next_selected_range], false, cx);
-                    self.update_selections(selections, Some(Autoscroll::Newest), cx);
                 } else {
                     select_next_state.done = true;
                 }
@@ -4268,7 +4157,9 @@ impl Editor {
                     done: false,
                 };
                 self.unfold_ranges([selection.start..selection.end], false, cx);
-                self.update_selections(selections, Some(Autoscroll::Newest), cx);
+                self.change_selections(Some(Autoscroll::Newest), cx, |s| {
+                    s.select(selections);
+                });
                 self.select_next_state = Some(select_state);
             } else {
                 let query = buffer
@@ -4286,7 +4177,7 @@ impl Editor {
 
     pub fn toggle_comments(&mut self, _: &ToggleComments, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            let mut selections = this.local_selections::<Point>(cx);
+            let mut selections = this.selections.all::<Point>(cx);
             let mut all_selection_lines_are_comments = true;
             let mut edit_ranges = Vec::new();
             let mut last_toggled_row = None;
@@ -4387,11 +4278,8 @@ impl Editor {
                 }
             });
 
-            this.update_selections(
-                this.local_selections::<usize>(cx),
-                Some(Autoscroll::Fit),
-                cx,
-            );
+            let selections = this.selections.all::<usize>(cx);
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
         });
     }
 
@@ -4400,9 +4288,9 @@ impl Editor {
         _: &SelectLargerSyntaxNode,
         cx: &mut ViewContext<Self>,
     ) {
-        let old_selections = self.local_selections::<usize>(cx).into_boxed_slice();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
+        let old_selections = self.selections.all::<usize>(cx).into_boxed_slice();
 
         let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
         let mut selected_larger_node = false;
@@ -4435,7 +4323,9 @@ impl Editor {
 
         if selected_larger_node {
             stack.push(old_selections);
-            self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+            self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.select(new_selections);
+            });
         }
         self.select_larger_syntax_node_stack = stack;
     }
@@ -4447,7 +4337,9 @@ impl Editor {
     ) {
         let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
         if let Some(selections) = stack.pop() {
-            self.update_selections(selections.to_vec(), Some(Autoscroll::Fit), cx);
+            self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.select(selections.to_vec());
+            });
         }
         self.select_larger_syntax_node_stack = stack;
     }
@@ -4457,8 +4349,8 @@ impl Editor {
         _: &MoveToEnclosingBracket,
         cx: &mut ViewContext<Self>,
     ) {
-        let mut selections = self.local_selections::<usize>(cx);
         let buffer = self.buffer.read(cx).snapshot(cx);
+        let mut selections = self.selections.all::<usize>(cx);
         for selection in &mut selections {
             if let Some((open_range, close_range)) =
                 buffer.enclosing_bracket_ranges(selection.start..selection.end)
@@ -4476,14 +4368,16 @@ impl Editor {
             }
         }
 
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.select(selections);
+        });
     }
 
     pub fn undo_selection(&mut self, _: &UndoSelection, cx: &mut ViewContext<Self>) {
         self.end_selection(cx);
         self.selection_history.mode = SelectionHistoryMode::Undoing;
         if let Some(entry) = self.selection_history.undo_stack.pop_back() {
-            self.set_selections(entry.selections, None, true, cx);
+            self.change_selections(None, cx, |s| s.select_anchors(entry.selections.to_vec()));
             self.select_next_state = entry.select_next_state;
             self.add_selections_state = entry.add_selections_state;
             self.request_autoscroll(Autoscroll::Newest, cx);
@@ -4495,7 +4389,7 @@ impl Editor {
         self.end_selection(cx);
         self.selection_history.mode = SelectionHistoryMode::Redoing;
         if let Some(entry) = self.selection_history.redo_stack.pop_back() {
-            self.set_selections(entry.selections, None, true, cx);
+            self.change_selections(None, cx, |s| s.select_anchors(entry.selections.to_vec()));
             self.select_next_state = entry.select_next_state;
             self.add_selections_state = entry.add_selections_state;
             self.request_autoscroll(Autoscroll::Newest, cx);
@@ -4513,7 +4407,7 @@ impl Editor {
 
     pub fn go_to_diagnostic(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let selection = self.newest_selection_with_snapshot::<usize>(&buffer);
+        let selection = self.selections.newest::<usize>(cx);
         let mut active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
             active_diagnostics
                 .primary_range
@@ -4550,17 +4444,15 @@ impl Editor {
 
             if let Some((primary_range, group_id)) = group {
                 self.activate_diagnostics(group_id, cx);
-                self.update_selections(
-                    vec![Selection {
+                self.change_selections(Some(Autoscroll::Center), cx, |s| {
+                    s.select(vec![Selection {
                         id: selection.id,
                         start: primary_range.start,
                         end: primary_range.start,
                         reversed: false,
                         goal: SelectionGoal::None,
-                    }],
-                    Some(Autoscroll::Center),
-                    cx,
-                );
+                    }]);
+                });
                 break;
             } else {
                 // Cycle around to the start of the buffer, potentially moving back to the start of
@@ -4599,13 +4491,13 @@ impl Editor {
         };
 
         let editor = editor_handle.read(cx);
-        let head = editor.newest_selection::<usize>(cx).head();
-        let (buffer, head) =
-            if let Some(text_anchor) = editor.buffer.read(cx).text_anchor_for_position(head, cx) {
-                text_anchor
-            } else {
-                return;
-            };
+        let buffer = editor.buffer.read(cx);
+        let head = editor.selections.newest::<usize>(cx).head();
+        let (buffer, head) = if let Some(text_anchor) = buffer.text_anchor_for_position(head, cx) {
+            text_anchor
+        } else {
+            return;
+        };
 
         let project = workspace.project().clone();
         let definitions = project.update(cx, |project, cx| project.definition(&buffer, head, cx));
@@ -4623,7 +4515,10 @@ impl Editor {
                         if editor_handle != target_editor_handle {
                             nav_history.borrow_mut().disable();
                         }
-                        target_editor.select_ranges([range], Some(Autoscroll::Center), cx);
+                        target_editor.change_selections(Some(Autoscroll::Center), cx, |s| {
+                            s.select_ranges([range]);
+                        });
+
                         nav_history.borrow_mut().enable();
                     });
                 }
@@ -4643,8 +4538,9 @@ impl Editor {
         let editor_handle = active_item.act_as::<Self>(cx)?;
 
         let editor = editor_handle.read(cx);
-        let head = editor.newest_selection::<usize>(cx).head();
-        let (buffer, head) = editor.buffer.read(cx).text_anchor_for_position(head, cx)?;
+        let buffer = editor.buffer.read(cx);
+        let head = editor.selections.newest::<usize>(cx).head();
+        let (buffer, head) = buffer.text_anchor_for_position(head, cx)?;
         let replica_id = editor.replica_id(cx);
 
         let project = workspace.project().clone();
@@ -4712,7 +4608,7 @@ impl Editor {
         use language::ToOffset as _;
 
         let project = self.project.clone()?;
-        let selection = self.newest_anchor_selection().clone();
+        let selection = self.selections.newest_anchor().clone();
         let (cursor_buffer, cursor_buffer_position) = self
             .buffer
             .read(cx)
@@ -4901,8 +4797,8 @@ impl Editor {
         self.show_local_selections = true;
 
         if moving_cursor {
-            let cursor_in_rename_editor =
-                rename.editor.read(cx).newest_selection::<usize>(cx).head();
+            let rename_editor = rename.editor.read(cx);
+            let cursor_in_rename_editor = rename_editor.selections.newest::<usize>(cx).head();
 
             // Update the selection to match the position of the selection inside
             // the rename editor.
@@ -4913,17 +4809,9 @@ impl Editor {
                 .min(rename_range.end);
             drop(snapshot);
 
-            self.update_selections(
-                vec![Selection {
-                    id: self.newest_anchor_selection().id,
-                    start: cursor_in_editor,
-                    end: cursor_in_editor,
-                    reversed: false,
-                    goal: SelectionGoal::None,
-                }],
-                None,
-                cx,
-            );
+            self.change_selections(None, cx, |s| {
+                s.select_ranges(vec![cursor_in_editor..cursor_in_editor])
+            });
         }
 
         Some(rename)
@@ -5034,457 +4922,21 @@ impl Editor {
         }
     }
 
-    fn build_columnar_selection(
-        &mut self,
-        display_map: &DisplaySnapshot,
-        row: u32,
-        columns: &Range<u32>,
-        reversed: bool,
-    ) -> Option<Selection<Point>> {
-        let is_empty = columns.start == columns.end;
-        let line_len = display_map.line_len(row);
-        if columns.start < line_len || (is_empty && columns.start == line_len) {
-            let start = DisplayPoint::new(row, columns.start);
-            let end = DisplayPoint::new(row, cmp::min(columns.end, line_len));
-            Some(Selection {
-                id: post_inc(&mut self.next_selection_id),
-                start: start.to_point(display_map),
-                end: end.to_point(display_map),
-                reversed,
-                goal: SelectionGoal::ColumnRange {
-                    start: columns.start,
-                    end: columns.end,
-                },
-            })
-        } else {
-            None
-        }
-    }
-
-    pub fn local_selections_in_range(
-        &self,
-        range: Range<Anchor>,
-        display_map: &DisplaySnapshot,
-    ) -> Vec<Selection<Point>> {
-        let buffer = &display_map.buffer_snapshot;
-
-        let start_ix = match self
-            .selections
-            .binary_search_by(|probe| probe.end.cmp(&range.start, &buffer))
-        {
-            Ok(ix) | Err(ix) => ix,
-        };
-        let end_ix = match self
-            .selections
-            .binary_search_by(|probe| probe.start.cmp(&range.end, &buffer))
-        {
-            Ok(ix) => ix + 1,
-            Err(ix) => ix,
-        };
-
-        fn point_selection(
-            selection: &Selection<Anchor>,
-            buffer: &MultiBufferSnapshot,
-        ) -> Selection<Point> {
-            let start = selection.start.to_point(&buffer);
-            let end = selection.end.to_point(&buffer);
-            Selection {
-                id: selection.id,
-                start,
-                end,
-                reversed: selection.reversed,
-                goal: selection.goal,
-            }
-        }
-
-        self.selections[start_ix..end_ix]
-            .iter()
-            .chain(
-                self.pending_selection
-                    .as_ref()
-                    .map(|pending| &pending.selection),
-            )
-            .map(|s| point_selection(s, &buffer))
-            .collect()
-    }
-
-    pub fn local_selections<'a, D>(&self, cx: &'a AppContext) -> Vec<Selection<D>>
-    where
-        D: 'a + TextDimension + Ord + Sub<D, Output = D>,
-    {
-        let buffer = self.buffer.read(cx).snapshot(cx);
-        let mut selections = self
-            .resolve_selections::<D, _>(self.selections.iter(), &buffer)
-            .peekable();
-
-        let mut pending_selection = self.pending_selection::<D>(&buffer);
-
-        iter::from_fn(move || {
-            if let Some(pending) = pending_selection.as_mut() {
-                while let Some(next_selection) = selections.peek() {
-                    if pending.start <= next_selection.end && pending.end >= next_selection.start {
-                        let next_selection = selections.next().unwrap();
-                        if next_selection.start < pending.start {
-                            pending.start = next_selection.start;
-                        }
-                        if next_selection.end > pending.end {
-                            pending.end = next_selection.end;
-                        }
-                    } else if next_selection.end < pending.start {
-                        return selections.next();
-                    } else {
-                        break;
-                    }
-                }
-
-                pending_selection.take()
-            } else {
-                selections.next()
-            }
-        })
-        .collect()
-    }
-
-    fn resolve_selections<'a, D, I>(
-        &self,
-        selections: I,
-        snapshot: &MultiBufferSnapshot,
-    ) -> impl 'a + Iterator<Item = Selection<D>>
-    where
-        D: TextDimension + Ord + Sub<D, Output = D>,
-        I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
-    {
-        let (to_summarize, selections) = selections.into_iter().tee();
-        let mut summaries = snapshot
-            .summaries_for_anchors::<D, _>(to_summarize.flat_map(|s| [&s.start, &s.end]))
-            .into_iter();
-        selections.map(move |s| Selection {
-            id: s.id,
-            start: summaries.next().unwrap(),
-            end: summaries.next().unwrap(),
-            reversed: s.reversed,
-            goal: s.goal,
-        })
-    }
-
-    fn pending_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
-        &self,
-        snapshot: &MultiBufferSnapshot,
-    ) -> Option<Selection<D>> {
-        self.pending_selection
-            .as_ref()
-            .map(|pending| self.resolve_selection(&pending.selection, &snapshot))
-    }
-
-    fn resolve_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
-        &self,
-        selection: &Selection<Anchor>,
-        buffer: &MultiBufferSnapshot,
-    ) -> Selection<D> {
-        Selection {
-            id: selection.id,
-            start: selection.start.summary::<D>(&buffer),
-            end: selection.end.summary::<D>(&buffer),
-            reversed: selection.reversed,
-            goal: selection.goal,
-        }
-    }
-
-    fn selection_count<'a>(&self) -> usize {
-        let mut count = self.selections.len();
-        if self.pending_selection.is_some() {
-            count += 1;
-        }
-        count
-    }
-
-    pub fn oldest_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
-        &self,
-        cx: &AppContext,
-    ) -> Selection<D> {
-        let snapshot = self.buffer.read(cx).read(cx);
-        self.selections
-            .iter()
-            .min_by_key(|s| s.id)
-            .map(|selection| self.resolve_selection(selection, &snapshot))
-            .or_else(|| self.pending_selection(&snapshot))
-            .unwrap()
-    }
-
-    pub fn newest_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
-        &self,
-        cx: &AppContext,
-    ) -> Selection<D> {
-        self.resolve_selection(
-            self.newest_anchor_selection(),
-            &self.buffer.read(cx).read(cx),
-        )
-    }
-
-    pub fn newest_selection_with_snapshot<D: TextDimension + Ord + Sub<D, Output = D>>(
-        &self,
-        snapshot: &MultiBufferSnapshot,
-    ) -> Selection<D> {
-        self.resolve_selection(self.newest_anchor_selection(), snapshot)
-    }
-
-    pub fn newest_anchor_selection(&self) -> &Selection<Anchor> {
-        self.pending_selection
-            .as_ref()
-            .map(|s| &s.selection)
-            .or_else(|| self.selections.iter().max_by_key(|s| s.id))
-            .unwrap()
-    }
-
-    pub fn update_selections<T>(
-        &mut self,
-        mut selections: Vec<Selection<T>>,
-        autoscroll: Option<Autoscroll>,
-        cx: &mut ViewContext<Self>,
-    ) where
-        T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
-    {
-        let buffer = self.buffer.read(cx).snapshot(cx);
-        selections.sort_unstable_by_key(|s| s.start);
-
-        // Merge overlapping selections.
-        let mut i = 1;
-        while i < selections.len() {
-            if selections[i - 1].end >= selections[i].start {
-                let removed = selections.remove(i);
-                if removed.start < selections[i - 1].start {
-                    selections[i - 1].start = removed.start;
-                }
-                if removed.end > selections[i - 1].end {
-                    selections[i - 1].end = removed.end;
-                }
-            } else {
-                i += 1;
-            }
-        }
-
-        if let Some(autoscroll) = autoscroll {
-            self.request_autoscroll(autoscroll, cx);
-        }
-
-        self.set_selections(
-            Arc::from_iter(selections.into_iter().map(|selection| {
-                let end_bias = if selection.end > selection.start {
-                    Bias::Left
-                } else {
-                    Bias::Right
-                };
-                Selection {
-                    id: selection.id,
-                    start: buffer.anchor_after(selection.start),
-                    end: buffer.anchor_at(selection.end, end_bias),
-                    reversed: selection.reversed,
-                    goal: selection.goal,
-                }
-            })),
-            None,
-            true,
-            cx,
-        );
-    }
-
     pub fn set_selections_from_remote(
         &mut self,
-        mut selections: Vec<Selection<Anchor>>,
+        selections: Vec<Selection<Anchor>>,
         cx: &mut ViewContext<Self>,
     ) {
-        let buffer = self.buffer.read(cx);
-        let buffer = buffer.read(cx);
-        selections.sort_by(|a, b| {
-            a.start
-                .cmp(&b.start, &*buffer)
-                .then_with(|| b.end.cmp(&a.end, &*buffer))
+        let old_cursor_position = self.selections.newest_anchor().head();
+        self.selections.change_with(cx, |s| {
+            s.select_anchors(selections);
         });
-
-        // Merge overlapping selections
-        let mut i = 1;
-        while i < selections.len() {
-            if selections[i - 1]
-                .end
-                .cmp(&selections[i].start, &*buffer)
-                .is_ge()
-            {
-                let removed = selections.remove(i);
-                if removed
-                    .start
-                    .cmp(&selections[i - 1].start, &*buffer)
-                    .is_lt()
-                {
-                    selections[i - 1].start = removed.start;
-                }
-                if removed.end.cmp(&selections[i - 1].end, &*buffer).is_gt() {
-                    selections[i - 1].end = removed.end;
-                }
-            } else {
-                i += 1;
-            }
-        }
-
-        drop(buffer);
-        self.set_selections(selections.into(), None, false, cx);
-    }
-
-    /// Compute new ranges for any selections that were located in excerpts that have
-    /// since been removed.
-    ///
-    /// Returns a `HashMap` indicating which selections whose former head position
-    /// was no longer present. The keys of the map are selection ids. The values are
-    /// the id of the new excerpt where the head of the selection has been moved.
-    pub fn refresh_selections(&mut self, cx: &mut ViewContext<Self>) -> HashMap<usize, ExcerptId> {
-        let snapshot = self.buffer.read(cx).read(cx);
-        let mut selections_with_lost_position = HashMap::default();
-
-        let mut pending_selection = self.pending_selection.take();
-        if let Some(pending) = pending_selection.as_mut() {
-            let anchors =
-                snapshot.refresh_anchors([&pending.selection.start, &pending.selection.end]);
-            let (_, start, kept_start) = anchors[0].clone();
-            let (_, end, kept_end) = anchors[1].clone();
-            let kept_head = if pending.selection.reversed {
-                kept_start
-            } else {
-                kept_end
-            };
-            if !kept_head {
-                selections_with_lost_position.insert(
-                    pending.selection.id,
-                    pending.selection.head().excerpt_id.clone(),
-                );
-            }
-
-            pending.selection.start = start;
-            pending.selection.end = end;
-        }
-
-        let anchors_with_status = snapshot.refresh_anchors(
-            self.selections
-                .iter()
-                .flat_map(|selection| [&selection.start, &selection.end]),
-        );
-        self.selections = anchors_with_status
-            .chunks(2)
-            .map(|selection_anchors| {
-                let (anchor_ix, start, kept_start) = selection_anchors[0].clone();
-                let (_, end, kept_end) = selection_anchors[1].clone();
-                let selection = &self.selections[anchor_ix / 2];
-                let kept_head = if selection.reversed {
-                    kept_start
-                } else {
-                    kept_end
-                };
-                if !kept_head {
-                    selections_with_lost_position
-                        .insert(selection.id, selection.head().excerpt_id.clone());
-                }
-
-                Selection {
-                    id: selection.id,
-                    start,
-                    end,
-                    reversed: selection.reversed,
-                    goal: selection.goal,
-                }
-            })
-            .collect();
-        drop(snapshot);
-
-        let new_selections = self.local_selections::<usize>(cx);
-        if !new_selections.is_empty() {
-            self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
-        }
-        self.pending_selection = pending_selection;
-
-        selections_with_lost_position
-    }
-
-    fn set_selections(
-        &mut self,
-        selections: Arc<[Selection<Anchor>]>,
-        pending_selection: Option<PendingSelection>,
-        local: bool,
-        cx: &mut ViewContext<Self>,
-    ) {
-        assert!(
-            !selections.is_empty() || pending_selection.is_some(),
-            "must have at least one selection"
-        );
-
-        let old_cursor_position = self.newest_anchor_selection().head();
-
-        self.push_to_selection_history();
-        self.selections = selections;
-        self.pending_selection = pending_selection;
-        if self.focused && self.leader_replica_id.is_none() {
-            self.buffer.update(cx, |buffer, cx| {
-                buffer.set_active_selections(&self.selections, cx)
-            });
-        }
-
-        let display_map = self
-            .display_map
-            .update(cx, |display_map, cx| display_map.snapshot(cx));
-        let buffer = &display_map.buffer_snapshot;
-        self.add_selections_state = None;
-        self.select_next_state = None;
-        self.select_larger_syntax_node_stack.clear();
-        self.autoclose_stack.invalidate(&self.selections, &buffer);
-        self.snippet_stack.invalidate(&self.selections, &buffer);
-        self.take_rename(false, cx);
-
-        let new_cursor_position = self.newest_anchor_selection().head();
-
-        self.push_to_nav_history(
-            old_cursor_position.clone(),
-            Some(new_cursor_position.to_point(&buffer)),
-            cx,
-        );
-
-        if local {
-            let completion_menu = match self.context_menu.as_mut() {
-                Some(ContextMenu::Completions(menu)) => Some(menu),
-                _ => {
-                    self.context_menu.take();
-                    None
-                }
-            };
-
-            if let Some(completion_menu) = completion_menu {
-                let cursor_position = new_cursor_position.to_offset(&buffer);
-                let (word_range, kind) =
-                    buffer.surrounding_word(completion_menu.initial_position.clone());
-                if kind == Some(CharKind::Word)
-                    && word_range.to_inclusive().contains(&cursor_position)
-                {
-                    let query = Self::completion_query(&buffer, cursor_position);
-                    cx.background()
-                        .block(completion_menu.filter(query.as_deref(), cx.background().clone()));
-                    self.show_completions(&ShowCompletions, cx);
-                } else {
-                    self.hide_context_menu(cx);
-                }
-            }
-
-            if old_cursor_position.to_display_point(&display_map).row()
-                != new_cursor_position.to_display_point(&display_map).row()
-            {
-                self.available_code_actions.take();
-            }
-            self.refresh_code_actions(cx);
-            self.refresh_document_highlights(cx);
-        }
-
-        self.pause_cursor_blinking(cx);
-        cx.emit(Event::SelectionsChanged { local });
+        self.selections_did_change(false, &old_cursor_position, cx);
     }
 
     fn push_to_selection_history(&mut self) {
         self.selection_history.push(SelectionHistoryEntry {
-            selections: self.selections.clone(),
+            selections: self.selections.disjoint_anchors().clone(),
             select_next_state: self.select_next_state.clone(),
             add_selections_state: self.add_selections_state.clone(),
         });
@@ -5517,7 +4969,7 @@ impl Editor {
             .update(cx, |buffer, cx| buffer.start_transaction_at(now, cx))
         {
             self.selection_history
-                .insert_transaction(tx_id, self.selections.clone());
+                .insert_transaction(tx_id, self.selections.disjoint_anchors().clone());
         }
     }
 
@@ -5527,7 +4979,7 @@ impl Editor {
             .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
         {
             if let Some((_, end_selections)) = self.selection_history.transaction_mut(tx_id) {
-                *end_selections = Some(self.selections.clone());
+                *end_selections = Some(self.selections.disjoint_anchors().clone());
             } else {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
@@ -5547,8 +4999,8 @@ impl Editor {
     pub fn fold(&mut self, _: &Fold, cx: &mut ViewContext<Self>) {
         let mut fold_ranges = Vec::new();
 
-        let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let selections = self.selections.all::<Point>(cx);
         for selection in selections {
             let range = selection.display_range(&display_map).sorted();
             let buffer_start_row = range.start.to_point(&display_map).row;
@@ -5570,9 +5022,9 @@ impl Editor {
     }
 
     pub fn unfold_lines(&mut self, _: &UnfoldLines, cx: &mut ViewContext<Self>) {
-        let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
+        let selections = self.selections.all::<Point>(cx);
         let ranges = selections
             .iter()
             .map(|s| {
@@ -5630,7 +5082,7 @@ impl Editor {
     }
 
     pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {
-        let selections = self.local_selections::<Point>(cx);
+        let selections = self.selections.all::<Point>(cx);
         let ranges = selections.into_iter().map(|s| s.start..s.end);
         self.fold_ranges(ranges, cx);
     }
@@ -6007,7 +5459,7 @@ impl Editor {
         }
 
         let mut new_selections_by_buffer = HashMap::default();
-        for selection in editor.local_selections::<usize>(cx) {
+        for selection in editor.selections.all::<usize>(cx) {
             for (buffer, mut range) in
                 buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
             {
@@ -6022,7 +5474,7 @@ impl Editor {
         }
 
         editor_handle.update(cx, |editor, cx| {
-            editor.push_to_nav_history(editor.newest_anchor_selection().head(), None, cx);
+            editor.push_to_nav_history(editor.selections.newest_anchor().head(), None, cx);
         });
         let nav_history = workspace.active_pane().read(cx).nav_history().clone();
         nav_history.borrow_mut().disable();
@@ -6034,7 +5486,9 @@ impl Editor {
             for (buffer, ranges) in new_selections_by_buffer.into_iter() {
                 let editor = workspace.open_project_item::<Self>(buffer, cx);
                 editor.update(cx, |editor, cx| {
-                    editor.select_ranges(ranges, Some(Autoscroll::Newest), cx);
+                    editor.change_selections(Some(Autoscroll::Newest), cx, |s| {
+                        s.select_ranges(ranges);
+                    });
                 });
             }
 
@@ -6134,7 +5588,7 @@ impl View for Editor {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
                 if self.leader_replica_id.is_none() {
-                    buffer.set_active_selections(&self.selections, cx);
+                    buffer.set_active_selections(&self.selections.disjoint_anchors(), cx);
                 }
             });
         }
@@ -6571,7 +6025,7 @@ mod tests {
     use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
-    use util::test::{marked_text_by, marked_text_ranges, sample_text};
+    use util::test::{marked_text_by, marked_text_ranges, marked_text_ranges_by, sample_text};
     use workspace::{FollowableItem, ItemHandle};
 
     #[gpui::test]
@@ -6676,7 +6130,8 @@ mod tests {
 
         // No event is emitted when the mutation is a no-op.
         editor2.update(cx, |editor, cx| {
-            editor.select_ranges([0..0], None, cx);
+            editor.change_selections(None, cx, |s| s.select_ranges([0..0]));
+
             editor.backspace(&Backspace, cx);
         });
         assert_eq!(mem::take(&mut *events.borrow_mut()), []);
@@ -6693,21 +6148,22 @@ mod tests {
 
         editor.update(cx, |editor, cx| {
             editor.start_transaction_at(now, cx);
-            editor.select_ranges([2..4], None, cx);
+            editor.change_selections(None, cx, |s| s.select_ranges([2..4]));
+
             editor.insert("cd", cx);
             editor.end_transaction_at(now, cx);
             assert_eq!(editor.text(cx), "12cd56");
-            assert_eq!(editor.selected_ranges(cx), vec![4..4]);
+            assert_eq!(editor.selections.ranges(cx), vec![4..4]);
 
             editor.start_transaction_at(now, cx);
-            editor.select_ranges([4..5], None, cx);
+            editor.change_selections(None, cx, |s| s.select_ranges([4..5]));
             editor.insert("e", cx);
             editor.end_transaction_at(now, cx);
             assert_eq!(editor.text(cx), "12cde6");
-            assert_eq!(editor.selected_ranges(cx), vec![5..5]);
+            assert_eq!(editor.selections.ranges(cx), vec![5..5]);
 
             now += group_interval + Duration::from_millis(1);
-            editor.select_ranges([2..2], None, cx);
+            editor.change_selections(None, cx, |s| s.select_ranges([2..2]));
 
             // Simulate an edit in another editor
             buffer.update(cx, |buffer, cx| {
@@ -6718,30 +6174,30 @@ mod tests {
             });
 
             assert_eq!(editor.text(cx), "ab2cde6");
-            assert_eq!(editor.selected_ranges(cx), vec![3..3]);
+            assert_eq!(editor.selections.ranges(cx), vec![3..3]);
 
             // Last transaction happened past the group interval in a different editor.
             // Undo it individually and don't restore selections.
             editor.undo(&Undo, cx);
             assert_eq!(editor.text(cx), "12cde6");
-            assert_eq!(editor.selected_ranges(cx), vec![2..2]);
+            assert_eq!(editor.selections.ranges(cx), vec![2..2]);
 
             // First two transactions happened within the group interval in this editor.
             // Undo them together and restore selections.
             editor.undo(&Undo, cx);
             editor.undo(&Undo, cx); // Undo stack is empty here, so this is a no-op.
             assert_eq!(editor.text(cx), "123456");
-            assert_eq!(editor.selected_ranges(cx), vec![0..0]);
+            assert_eq!(editor.selections.ranges(cx), vec![0..0]);
 
             // Redo the first two transactions together.
             editor.redo(&Redo, cx);
             assert_eq!(editor.text(cx), "12cde6");
-            assert_eq!(editor.selected_ranges(cx), vec![5..5]);
+            assert_eq!(editor.selections.ranges(cx), vec![5..5]);
 
             // Redo the last transaction on its own.
             editor.redo(&Redo, cx);
             assert_eq!(editor.text(cx), "ab2cde6");
-            assert_eq!(editor.selected_ranges(cx), vec![6..6]);
+            assert_eq!(editor.selections.ranges(cx), vec![6..6]);
 
             // Test empty transactions.
             editor.start_transaction_at(now, cx);
@@ -6761,7 +6217,7 @@ mod tests {
             view.begin_selection(DisplayPoint::new(2, 2), false, 1, cx);
         });
         assert_eq!(
-            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
+            editor.update(cx, |view, cx| view.selections.display_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
         );
 
@@ -6770,7 +6226,7 @@ mod tests {
         });
 
         assert_eq!(
-            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
+            editor.update(cx, |view, cx| view.selections.display_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
         );
 
@@ -6779,7 +6235,7 @@ mod tests {
         });
 
         assert_eq!(
-            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
+            editor.update(cx, |view, cx| view.selections.display_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
         );
 
@@ -6789,7 +6245,7 @@ mod tests {
         });
 
         assert_eq!(
-            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
+            editor.update(cx, |view, cx| view.selections.display_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
         );
 
@@ -6799,7 +6255,7 @@ mod tests {
         });
 
         assert_eq!(
-            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
+            editor.update(cx, |view, cx| view.selections.display_ranges(cx)),
             [
                 DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1),
                 DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)
@@ -6811,7 +6267,7 @@ mod tests {
         });
 
         assert_eq!(
-            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
+            editor.update(cx, |view, cx| view.selections.display_ranges(cx)),
             [DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)]
         );
     }
@@ -6825,7 +6281,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.begin_selection(DisplayPoint::new(2, 2), false, 1, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
             );
         });
@@ -6833,7 +6289,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.update_selection(DisplayPoint::new(3, 3), 0, Vector2F::zero(), cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
             );
         });
@@ -6842,7 +6298,7 @@ mod tests {
             view.cancel(&Cancel, cx);
             view.update_selection(DisplayPoint::new(1, 1), 0, Vector2F::zero(), cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
             );
         });
@@ -6861,18 +6317,24 @@ mod tests {
 
             // Move the cursor a small distance.
             // Nothing is added to the navigation history.
-            editor.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
-            editor.select_display_ranges(&[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)], cx);
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)])
+            });
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)])
+            });
             assert!(nav_history.borrow_mut().pop_backward().is_none());
 
             // Move the cursor a large distance.
             // The history can jump back to the previous position.
-            editor.select_display_ranges(&[DisplayPoint::new(13, 0)..DisplayPoint::new(13, 3)], cx);
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(13, 0)..DisplayPoint::new(13, 3)])
+            });
             let nav_entry = nav_history.borrow_mut().pop_backward().unwrap();
             editor.navigate(nav_entry.data.unwrap(), cx);
             assert_eq!(nav_entry.item.id(), cx.view_id());
             assert_eq!(
-                editor.selected_display_ranges(cx),
+                editor.selections.display_ranges(cx),
                 &[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)]
             );
             assert!(nav_history.borrow_mut().pop_backward().is_none());
@@ -6882,7 +6344,7 @@ mod tests {
             editor.begin_selection(DisplayPoint::new(5, 0), false, 1, cx);
             editor.end_selection(cx);
             assert_eq!(
-                editor.selected_display_ranges(cx),
+                editor.selections.display_ranges(cx),
                 &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
             );
             assert!(nav_history.borrow_mut().pop_backward().is_none());
@@ -6892,14 +6354,14 @@ mod tests {
             editor.begin_selection(DisplayPoint::new(15, 0), false, 1, cx);
             editor.end_selection(cx);
             assert_eq!(
-                editor.selected_display_ranges(cx),
+                editor.selections.display_ranges(cx),
                 &[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)]
             );
             let nav_entry = nav_history.borrow_mut().pop_backward().unwrap();
             editor.navigate(nav_entry.data.unwrap(), cx);
             assert_eq!(nav_entry.item.id(), cx.view_id());
             assert_eq!(
-                editor.selected_display_ranges(cx),
+                editor.selections.display_ranges(cx),
                 &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
             );
             assert!(nav_history.borrow_mut().pop_backward().is_none());
@@ -6935,7 +6397,7 @@ mod tests {
                 cx,
             );
             assert_eq!(
-                editor.selected_display_ranges(cx),
+                editor.selections.display_ranges(cx),
                 &[editor.max_point(cx)..editor.max_point(cx)]
             );
             assert_eq!(
@@ -6962,7 +6424,7 @@ mod tests {
             view.update_selection(DisplayPoint::new(0, 3), 0, Vector2F::zero(), cx);
             view.end_selection(cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 [
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1),
@@ -6973,7 +6435,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.cancel(&Cancel, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 [DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1)]
             );
         });
@@ -6981,7 +6443,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.cancel(&Cancel, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 [DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1)]
             );
         });
@@ -7014,7 +6476,9 @@ mod tests {
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
         view.update(cx, |view, cx| {
-            view.select_display_ranges(&[DisplayPoint::new(8, 0)..DisplayPoint::new(12, 0)], cx);
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(8, 0)..DisplayPoint::new(12, 0)]);
+            });
             view.fold(&Fold, cx);
             assert_eq!(
                 view.display_text(cx),
@@ -7090,56 +6554,58 @@ mod tests {
 
         view.update(cx, |view, cx| {
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
             );
 
             view.move_down(&MoveDown, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
             );
 
             view.move_right(&MoveRight, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4)]
             );
 
             view.move_left(&MoveLeft, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
             );
 
             view.move_up(&MoveUp, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
             );
 
             view.move_to_end(&MoveToEnd, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[DisplayPoint::new(5, 6)..DisplayPoint::new(5, 6)]
             );
 
             view.move_to_beginning(&MoveToBeginning, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
             );
 
-            view.select_display_ranges(&[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2)], cx);
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2)]);
+            });
             view.select_to_beginning(&SelectToBeginning, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 0)]
             );
 
             view.select_to_end(&SelectToEnd, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[DisplayPoint::new(0, 1)..DisplayPoint::new(5, 6)]
             );
         });
@@ -7167,80 +6633,80 @@ mod tests {
 
             view.move_right(&MoveRight, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(0, "ⓐ".len())]
             );
             view.move_right(&MoveRight, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(0, "ⓐⓑ".len())]
             );
             view.move_right(&MoveRight, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(0, "ⓐⓑ…".len())]
             );
 
             view.move_down(&MoveDown, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(1, "ab…".len())]
             );
             view.move_left(&MoveLeft, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(1, "ab".len())]
             );
             view.move_left(&MoveLeft, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(1, "a".len())]
             );
 
             view.move_down(&MoveDown, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(2, "α".len())]
             );
             view.move_right(&MoveRight, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(2, "αβ".len())]
             );
             view.move_right(&MoveRight, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(2, "αβ…".len())]
             );
             view.move_right(&MoveRight, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(2, "αβ…ε".len())]
             );
 
             view.move_up(&MoveUp, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(1, "ab…e".len())]
             );
             view.move_up(&MoveUp, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(0, "ⓐⓑ…ⓔ".len())]
             );
             view.move_left(&MoveLeft, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(0, "ⓐⓑ…".len())]
             );
             view.move_left(&MoveLeft, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(0, "ⓐⓑ".len())]
             );
             view.move_left(&MoveLeft, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(0, "ⓐ".len())]
             );
         });
@@ -7252,40 +6718,42 @@ mod tests {
         let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
         view.update(cx, |view, cx| {
-            view.select_display_ranges(&[empty_range(0, "ⓐⓑⓒⓓⓔ".len())], cx);
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([empty_range(0, "ⓐⓑⓒⓓⓔ".len())]);
+            });
             view.move_down(&MoveDown, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(1, "abcd".len())]
             );
 
             view.move_down(&MoveDown, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(2, "αβγ".len())]
             );
 
             view.move_down(&MoveDown, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(3, "abcd".len())]
             );
 
             view.move_down(&MoveDown, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(4, "ⓐⓑⓒⓓⓔ".len())]
             );
 
             view.move_up(&MoveUp, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(3, "abcd".len())]
             );
 
             view.move_up(&MoveUp, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[empty_range(2, "αβγ".len())]
             );
         });
@@ -7297,19 +6765,18 @@ mod tests {
         let buffer = MultiBuffer::build_simple("abc\n  def", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4),
-                ],
-                cx,
-            );
+                ]);
+            });
         });
 
         view.update(cx, |view, cx| {
             view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
@@ -7320,7 +6787,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
@@ -7331,7 +6798,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
@@ -7342,7 +6809,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_end_of_line(&MoveToEndOfLine, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
@@ -7354,7 +6821,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_end_of_line(&MoveToEndOfLine, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
@@ -7371,7 +6838,7 @@ mod tests {
                 cx,
             );
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
@@ -7387,7 +6854,7 @@ mod tests {
                 cx,
             );
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 0),
@@ -7403,7 +6870,7 @@ mod tests {
                 cx,
             );
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
@@ -7419,7 +6886,7 @@ mod tests {
                 cx,
             );
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 5),
@@ -7431,7 +6898,7 @@ mod tests {
             view.delete_to_end_of_line(&DeleteToEndOfLine, cx);
             assert_eq!(view.display_text(cx), "ab\n  de");
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4),
@@ -7443,7 +6910,7 @@ mod tests {
             view.delete_to_beginning_of_line(&DeleteToBeginningOfLine, cx);
             assert_eq!(view.display_text(cx), "\n");
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
@@ -7458,13 +6925,12 @@ mod tests {
         let buffer = MultiBuffer::build_simple("use std::str::{foo, bar}\n\n  {baz.qux()}", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     DisplayPoint::new(0, 11)..DisplayPoint::new(0, 11),
                     DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4),
-                ],
-                cx,
-            );
+                ])
+            });
 
             view.move_to_previous_word_start(&MoveToPreviousWordStart, cx);
             assert_selection_ranges(
@@ -7570,41 +7036,43 @@ mod tests {
                 "use one::{\n    two::three::\n    four::five\n};"
             );
 
-            view.select_display_ranges(&[DisplayPoint::new(1, 7)..DisplayPoint::new(1, 7)], cx);
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(1, 7)..DisplayPoint::new(1, 7)]);
+            });
 
             view.move_to_next_word_end(&MoveToNextWordEnd, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[DisplayPoint::new(1, 9)..DisplayPoint::new(1, 9)]
             );
 
             view.move_to_next_word_end(&MoveToNextWordEnd, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
             );
 
             view.move_to_next_word_end(&MoveToNextWordEnd, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
             );
 
             view.move_to_next_word_end(&MoveToNextWordEnd, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[DisplayPoint::new(2, 8)..DisplayPoint::new(2, 8)]
             );
 
             view.move_to_previous_word_start(&MoveToPreviousWordStart, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
             );
 
             view.move_to_previous_word_start(&MoveToPreviousWordStart, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
             );
         });
@@ -7619,7 +7087,7 @@ mod tests {
         let (_, editor) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
         editor.update(cx, |editor, cx| {
-            editor.select_ranges(ranges, None, cx);
+            editor.change_selections(None, cx, |s| s.select_ranges(ranges));
             editor.delete_to_beginning_of_line(&DeleteToBeginningOfLine, cx);
             assert_eq!(editor.text(cx), " four");
         });
@@ -7632,30 +7100,28 @@ mod tests {
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     // an empty selection - the preceding word fragment is deleted
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                     // characters selected - they are deleted
                     DisplayPoint::new(0, 9)..DisplayPoint::new(0, 12),
-                ],
-                cx,
-            );
+                ])
+            });
             view.delete_to_previous_word_start(&DeleteToPreviousWordStart, cx);
         });
 
         assert_eq!(buffer.read(cx).read(cx).text(), "e two te four");
 
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     // an empty selection - the following word fragment is deleted
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                     // characters selected - they are deleted
                     DisplayPoint::new(0, 9)..DisplayPoint::new(0, 10),
-                ],
-                cx,
-            );
+                ])
+            });
             view.delete_to_next_word_end(&DeleteToNextWordEnd, cx);
         });
 
@@ -7669,14 +7135,13 @@ mod tests {
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                     DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
                     DisplayPoint::new(1, 6)..DisplayPoint::new(1, 6),
-                ],
-                cx,
-            );
+                ])
+            });
 
             view.newline(&Newline, cx);
             assert_eq!(view.text(cx), "aa\naa\n  \n    bb\n    bb\n");
@@ -7703,14 +7168,12 @@ mod tests {
 
         let (_, editor) = cx.add_window(Default::default(), |cx| {
             let mut editor = build_editor(buffer.clone(), cx);
-            editor.select_ranges(
-                [
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges([
                     Point::new(2, 4)..Point::new(2, 5),
                     Point::new(5, 4)..Point::new(5, 5),
-                ],
-                None,
-                cx,
-            );
+                ])
+            });
             editor
         });
 
@@ -7736,7 +7199,7 @@ mod tests {
 
         editor.update(cx, |editor, cx| {
             assert_eq!(
-                editor.selected_ranges(cx),
+                editor.selections.ranges(cx),
                 &[
                     Point::new(1, 2)..Point::new(1, 2),
                     Point::new(2, 2)..Point::new(2, 2),
@@ -7758,7 +7221,7 @@ mod tests {
 
             // The selections are moved after the inserted newlines
             assert_eq!(
-                editor.selected_ranges(cx),
+                editor.selections.ranges(cx),
                 &[
                     Point::new(2, 0)..Point::new(2, 0),
                     Point::new(4, 0)..Point::new(4, 0),
@@ -7773,7 +7236,7 @@ mod tests {
         let buffer = MultiBuffer::build_simple("a( X ), b( Y ), c( Z )", cx);
         let (_, editor) = cx.add_window(Default::default(), |cx| {
             let mut editor = build_editor(buffer.clone(), cx);
-            editor.select_ranges([3..4, 11..12, 19..20], None, cx);
+            editor.change_selections(None, cx, |s| s.select_ranges([3..4, 11..12, 19..20]));
             editor
         });
 
@@ -7784,13 +7247,13 @@ mod tests {
         });
 
         editor.update(cx, |editor, cx| {
-            assert_eq!(editor.selected_ranges(cx), &[2..2, 7..7, 12..12],);
+            assert_eq!(editor.selections.ranges(cx), &[2..2, 7..7, 12..12],);
 
             editor.insert("Z", cx);
             assert_eq!(editor.text(cx), "a(Z), b(Z), c(Z)");
 
             // The selections are moved after the inserted characters
-            assert_eq!(editor.selected_ranges(cx), &[3..3, 9..9, 15..15],);
+            assert_eq!(editor.selections.ranges(cx), &[3..3, 9..9, 15..15],);
         });
     }
 
@@ -8022,23 +7485,22 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.set_text("one two three\nfour five six\nseven eight nine\nten\n", cx);
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     // an empty selection - the preceding character is deleted
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                     // one character selected - it is deleted
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
                     // a line suffix selected - it is deleted
                     DisplayPoint::new(2, 6)..DisplayPoint::new(3, 0),
-                ],
-                cx,
-            );
+                ])
+            });
             view.backspace(&Backspace, cx);
             assert_eq!(view.text(cx), "oe two three\nfou five six\nseven ten\n");
 
             view.set_text("    one\n        two\n        three\n   four", cx);
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     // cursors at the the end of leading indent - last indent is deleted
                     DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
                     DisplayPoint::new(1, 8)..DisplayPoint::new(1, 8),
@@ -8050,9 +7512,8 @@ mod tests {
                     DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
                     // selection inside leading indent - only the selected character is deleted
                     DisplayPoint::new(3, 2)..DisplayPoint::new(3, 3),
-                ],
-                cx,
-            );
+                ])
+            });
             view.backspace(&Backspace, cx);
             assert_eq!(view.text(cx), "one\n    two\n  three  four");
         });
@@ -8066,17 +7527,16 @@ mod tests {
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
 
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     // an empty selection - the following character is deleted
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                     // one character selected - it is deleted
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
                     // a line suffix selected - it is deleted
                     DisplayPoint::new(2, 6)..DisplayPoint::new(3, 0),
-                ],
-                cx,
-            );
+                ])
+            });
             view.delete(&Delete, cx);
         });
 
@@ -8092,18 +7552,17 @@ mod tests {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
-                ],
-                cx,
-            );
+                ])
+            });
             view.delete_line(&DeleteLine, cx);
             assert_eq!(view.display_text(cx), "ghi");
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)
@@ -8115,11 +7574,13 @@ mod tests {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
-            view.select_display_ranges(&[DisplayPoint::new(2, 0)..DisplayPoint::new(0, 1)], cx);
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(2, 0)..DisplayPoint::new(0, 1)])
+            });
             view.delete_line(&DeleteLine, cx);
             assert_eq!(view.display_text(cx), "ghi\n");
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)]
             );
         });
@@ -8131,19 +7592,18 @@ mod tests {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
                     DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
-                ],
-                cx,
-            );
+                ])
+            });
             view.duplicate_line(&DuplicateLine, cx);
             assert_eq!(view.display_text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
@@ -8156,17 +7616,16 @@ mod tests {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     DisplayPoint::new(0, 1)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(1, 2)..DisplayPoint::new(2, 1),
-                ],
-                cx,
-            );
+                ])
+            });
             view.duplicate_line(&DuplicateLine, cx);
             assert_eq!(view.display_text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(3, 1)..DisplayPoint::new(4, 1),
                     DisplayPoint::new(4, 2)..DisplayPoint::new(5, 1),
@@ -8189,15 +7648,14 @@ mod tests {
                 ],
                 cx,
             );
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
                     DisplayPoint::new(3, 2)..DisplayPoint::new(4, 3),
                     DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2),
-                ],
-                cx,
-            );
+                ])
+            });
             assert_eq!(
                 view.display_text(cx),
                 "aa…bbb\nccc…eeee\nfffff\nggggg\n…i\njjjjj"
@@ -8209,7 +7667,7 @@ mod tests {
                 "aa…bbb\nccc…eeee\nggggg\n…i\njjjjj\nfffff"
             );
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
@@ -8226,7 +7684,7 @@ mod tests {
                 "ccc…eeee\naa…bbb\nfffff\nggggg\n…i\njjjjj"
             );
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
@@ -8243,7 +7701,7 @@ mod tests {
                 "ccc…eeee\nfffff\naa…bbb\nggggg\n…i\njjjjj"
             );
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
                     DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
@@ -8260,7 +7718,7 @@ mod tests {
                 "ccc…eeee\naa…bbb\nggggg\n…i\njjjjj\nfffff"
             );
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
@@ -8287,7 +7745,9 @@ mod tests {
                 }],
                 cx,
             );
-            editor.select_ranges([Point::new(2, 0)..Point::new(2, 0)], None, cx);
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
+            });
             editor.move_line_down(&MoveLineDown, cx);
         });
     }
@@ -8299,18 +7759,18 @@ mod tests {
         cx.add_window(Default::default(), |cx| {
             let mut editor = build_editor(MultiBuffer::build_simple("abc", cx), cx);
 
-            editor.select_ranges([1..1], None, cx);
+            editor.change_selections(None, cx, |s| s.select_ranges([1..1]));
             editor.transpose(&Default::default(), cx);
             assert_eq!(editor.text(cx), "bac");
-            assert_eq!(editor.selected_ranges(cx), [2..2]);
+            assert_eq!(editor.selections.ranges(cx), [2..2]);
 
             editor.transpose(&Default::default(), cx);
             assert_eq!(editor.text(cx), "bca");
-            assert_eq!(editor.selected_ranges(cx), [3..3]);
+            assert_eq!(editor.selections.ranges(cx), [3..3]);
 
             editor.transpose(&Default::default(), cx);
             assert_eq!(editor.text(cx), "bac");
-            assert_eq!(editor.selected_ranges(cx), [3..3]);
+            assert_eq!(editor.selections.ranges(cx), [3..3]);
 
             editor
         })
@@ -8319,23 +7779,23 @@ mod tests {
         cx.add_window(Default::default(), |cx| {
             let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), cx);
 
-            editor.select_ranges([3..3], None, cx);
+            editor.change_selections(None, cx, |s| s.select_ranges([3..3]));
             editor.transpose(&Default::default(), cx);
             assert_eq!(editor.text(cx), "acb\nde");
-            assert_eq!(editor.selected_ranges(cx), [3..3]);
+            assert_eq!(editor.selections.ranges(cx), [3..3]);
 
-            editor.select_ranges([4..4], None, cx);
+            editor.change_selections(None, cx, |s| s.select_ranges([4..4]));
             editor.transpose(&Default::default(), cx);
             assert_eq!(editor.text(cx), "acbd\ne");
-            assert_eq!(editor.selected_ranges(cx), [5..5]);
+            assert_eq!(editor.selections.ranges(cx), [5..5]);
 
             editor.transpose(&Default::default(), cx);
             assert_eq!(editor.text(cx), "acbde\n");
-            assert_eq!(editor.selected_ranges(cx), [6..6]);
+            assert_eq!(editor.selections.ranges(cx), [6..6]);
 
             editor.transpose(&Default::default(), cx);
             assert_eq!(editor.text(cx), "acbd\ne");
-            assert_eq!(editor.selected_ranges(cx), [6..6]);
+            assert_eq!(editor.selections.ranges(cx), [6..6]);
 
             editor
         })
@@ -8344,26 +7804,26 @@ mod tests {
         cx.add_window(Default::default(), |cx| {
             let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), cx);
 
-            editor.select_ranges([1..1, 2..2, 4..4], None, cx);
+            editor.change_selections(None, cx, |s| s.select_ranges([1..1, 2..2, 4..4]));
             editor.transpose(&Default::default(), cx);
             assert_eq!(editor.text(cx), "bacd\ne");
-            assert_eq!(editor.selected_ranges(cx), [2..2, 3..3, 5..5]);
+            assert_eq!(editor.selections.ranges(cx), [2..2, 3..3, 5..5]);
 
             editor.transpose(&Default::default(), cx);
             assert_eq!(editor.text(cx), "bcade\n");
-            assert_eq!(editor.selected_ranges(cx), [3..3, 4..4, 6..6]);
+            assert_eq!(editor.selections.ranges(cx), [3..3, 4..4, 6..6]);
 
             editor.transpose(&Default::default(), cx);
             assert_eq!(editor.text(cx), "bcda\ne");
-            assert_eq!(editor.selected_ranges(cx), [4..4, 6..6]);
+            assert_eq!(editor.selections.ranges(cx), [4..4, 6..6]);
 
             editor.transpose(&Default::default(), cx);
             assert_eq!(editor.text(cx), "bcade\n");
-            assert_eq!(editor.selected_ranges(cx), [4..4, 6..6]);
+            assert_eq!(editor.selections.ranges(cx), [4..4, 6..6]);
 
             editor.transpose(&Default::default(), cx);
             assert_eq!(editor.text(cx), "bcaed\n");
-            assert_eq!(editor.selected_ranges(cx), [5..5, 6..6]);
+            assert_eq!(editor.selections.ranges(cx), [5..5, 6..6]);
 
             editor
         })
@@ -8372,18 +7832,18 @@ mod tests {
         cx.add_window(Default::default(), |cx| {
             let mut editor = build_editor(MultiBuffer::build_simple("🍐🏀✋", cx), cx);
 
-            editor.select_ranges([4..4], None, cx);
+            editor.change_selections(None, cx, |s| s.select_ranges([4..4]));
             editor.transpose(&Default::default(), cx);
             assert_eq!(editor.text(cx), "🏀🍐✋");
-            assert_eq!(editor.selected_ranges(cx), [8..8]);
+            assert_eq!(editor.selections.ranges(cx), [8..8]);
 
             editor.transpose(&Default::default(), cx);
             assert_eq!(editor.text(cx), "🏀✋🍐");
-            assert_eq!(editor.selected_ranges(cx), [11..11]);
+            assert_eq!(editor.selections.ranges(cx), [11..11]);
 
             editor.transpose(&Default::default(), cx);
             assert_eq!(editor.text(cx), "🏀🍐✋");
-            assert_eq!(editor.selected_ranges(cx), [11..11]);
+            assert_eq!(editor.selections.ranges(cx), [11..11]);
 
             editor
         })
@@ -8400,18 +7860,18 @@ mod tests {
 
         // Cut with three selections. Clipboard text is divided into three slices.
         view.update(cx, |view, cx| {
-            view.select_ranges(vec![0..7, 11..17, 22..27], None, cx);
+            view.change_selections(None, cx, |s| s.select_ranges(vec![0..7, 11..17, 22..27]));
             view.cut(&Cut, cx);
             assert_eq!(view.display_text(cx), "two four six ");
         });
 
         // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
         view.update(cx, |view, cx| {
-            view.select_ranges(vec![4..4, 9..9, 13..13], None, cx);
+            view.change_selections(None, cx, |s| s.select_ranges(vec![4..4, 9..9, 13..13]));
             view.paste(&Paste, cx);
             assert_eq!(view.display_text(cx), "two one✅ four three six five ");
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 11)..DisplayPoint::new(0, 11),
                     DisplayPoint::new(0, 22)..DisplayPoint::new(0, 22),
@@ -8424,7 +7884,7 @@ mod tests {
         // match the number of slices in the clipboard, the entire clipboard text
         // is pasted at each cursor.
         view.update(cx, |view, cx| {
-            view.select_ranges(vec![0..0, 31..31], None, cx);
+            view.change_selections(None, cx, |s| s.select_ranges(vec![0..0, 31..31]));
             view.handle_input(&Input("( ".into()), cx);
             view.paste(&Paste, cx);
             view.handle_input(&Input(") ".into()), cx);
@@ -8435,7 +7895,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_ranges(vec![0..0], None, cx);
+            view.change_selections(None, cx, |s| s.select_ranges(vec![0..0]));
             view.handle_input(&Input("123\n4567\n89\n".into()), cx);
             assert_eq!(
                 view.display_text(cx),
@@ -8445,14 +7905,13 @@ mod tests {
 
         // Cut with three selections, one of which is full-line.
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| s.select_display_ranges(
+                [
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2),
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(2, 0)..DisplayPoint::new(2, 1),
                 ],
-                cx,
-            );
+            ));
             view.cut(&Cut, cx);
             assert_eq!(
                 view.display_text(cx),
@@ -8463,21 +7922,20 @@ mod tests {
         // Paste with three selections, noticing how the copied selection that was full-line
         // gets inserted before the second cursor.
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| s.select_display_ranges(
+                [
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(2, 2)..DisplayPoint::new(2, 3),
                 ],
-                cx,
-            );
+            ));
             view.paste(&Paste, cx);
             assert_eq!(
                 view.display_text(cx),
                 "123\n4567\n9\n( 8ne✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
             );
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
@@ -8488,28 +7946,29 @@ mod tests {
 
         // Copy with a single cursor only, which writes the whole line into the clipboard.
         view.update(cx, |view, cx| {
-            view.select_display_ranges(&[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)], cx);
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)])
+            });
             view.copy(&Copy, cx);
         });
 
         // Paste with three selections, noticing how the copied full-line selection is inserted
         // before the empty selections but replaces the selection that is non-empty.
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| s.select_display_ranges(
+                [
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 2),
                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
                 ],
-                cx,
-            );
+            ));
             view.paste(&Paste, cx);
             assert_eq!(
                 view.display_text(cx),
                 "123\n123\n123\n67\n123\n9\n( 8ne✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
             );
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
@@ -8527,7 +7986,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_all(&SelectAll, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(2, 3)]
             );
         });
@@ -8539,18 +7998,17 @@ mod tests {
         let buffer = MultiBuffer::build_simple(&sample_text(6, 5, 'a'), cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
                     DisplayPoint::new(4, 2)..DisplayPoint::new(4, 2),
-                ],
-                cx,
-            );
+                ])
+            });
             view.select_line(&SelectLine, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 0)..DisplayPoint::new(2, 0),
                     DisplayPoint::new(4, 0)..DisplayPoint::new(5, 0),
@@ -8561,7 +8019,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_line(&SelectLine, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 0)..DisplayPoint::new(3, 0),
                     DisplayPoint::new(4, 0)..DisplayPoint::new(5, 5),
@@ -8572,7 +8030,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_line(&SelectLine, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![DisplayPoint::new(0, 0)..DisplayPoint::new(5, 5)]
             );
         });
@@ -8592,15 +8050,14 @@ mod tests {
                 ],
                 cx,
             );
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
                     DisplayPoint::new(4, 4)..DisplayPoint::new(4, 4),
-                ],
-                cx,
-            );
+                ])
+            });
             assert_eq!(view.display_text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i");
         });
 
@@ -8611,7 +8068,7 @@ mod tests {
                 "aaaaa\nbbbbb\nccc…eeee\nfffff\nggggg\n…i"
             );
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 [
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
@@ -8622,14 +8079,16 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_display_ranges(&[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 1)], cx);
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(5, 0)..DisplayPoint::new(0, 1)])
+            });
             view.split_selection_into_lines(&SplitSelectionIntoLines, cx);
             assert_eq!(
                 view.display_text(cx),
                 "aaaaa\nbbbbb\nccccc\nddddd\neeeee\nfffff\nggggg\nhhhhh\niiiii"
             );
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 [
                     DisplayPoint::new(0, 5)..DisplayPoint::new(0, 5),
                     DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
@@ -8651,12 +8110,14 @@ mod tests {
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
 
         view.update(cx, |view, cx| {
-            view.select_display_ranges(&[DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)], cx);
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)])
+            });
         });
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
@@ -8667,7 +8128,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
@@ -8678,13 +8139,13 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
             );
 
             view.undo_selection(&UndoSelection, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
@@ -8693,7 +8154,7 @@ mod tests {
 
             view.redo_selection(&RedoSelection, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
             );
         });
@@ -8701,7 +8162,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
                     DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
@@ -8712,7 +8173,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
                     DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
@@ -8721,12 +8182,14 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_display_ranges(&[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)], cx);
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)])
+            });
         });
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
                     DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
@@ -8737,7 +8200,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
                     DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
@@ -8748,7 +8211,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
             );
         });
@@ -8756,16 +8219,18 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
             );
         });
 
         view.update(cx, |view, cx| {
-            view.select_display_ranges(&[DisplayPoint::new(0, 1)..DisplayPoint::new(1, 4)], cx);
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(0, 1)..DisplayPoint::new(1, 4)])
+            });
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
@@ -8777,7 +8242,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
@@ -8790,7 +8255,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
@@ -8800,12 +8265,14 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_display_ranges(&[DisplayPoint::new(4, 3)..DisplayPoint::new(1, 1)], cx);
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(4, 3)..DisplayPoint::new(1, 1)])
+            });
         });
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
@@ -8818,7 +8285,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
@@ -8837,14 +8304,16 @@ mod tests {
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
 
         view.update(cx, |view, cx| {
-            view.select_ranges([ranges[1].start + 1..ranges[1].start + 1], None, cx);
+            view.change_selections(None, cx, |s| {
+                s.select_ranges([ranges[1].start + 1..ranges[1].start + 1])
+            });
             view.select_next(
                 &SelectNext {
                     replace_newest: false,
                 },
                 cx,
             );
-            assert_eq!(view.selected_ranges(cx), &ranges[1..2]);
+            assert_eq!(view.selections.ranges(cx), &ranges[1..2]);
 
             view.select_next(
                 &SelectNext {
@@ -8852,13 +8321,13 @@ mod tests {
                 },
                 cx,
             );
-            assert_eq!(view.selected_ranges(cx), &ranges[1..3]);
+            assert_eq!(view.selections.ranges(cx), &ranges[1..3]);
 
             view.undo_selection(&UndoSelection, cx);
-            assert_eq!(view.selected_ranges(cx), &ranges[1..2]);
+            assert_eq!(view.selections.ranges(cx), &ranges[1..2]);
 
             view.redo_selection(&RedoSelection, cx);
-            assert_eq!(view.selected_ranges(cx), &ranges[1..3]);
+            assert_eq!(view.selections.ranges(cx), &ranges[1..3]);
 
             view.select_next(
                 &SelectNext {
@@ -8866,7 +8335,7 @@ mod tests {
                 },
                 cx,
             );
-            assert_eq!(view.selected_ranges(cx), &ranges[1..4]);
+            assert_eq!(view.selections.ranges(cx), &ranges[1..4]);
 
             view.select_next(
                 &SelectNext {
@@ -8874,7 +8343,7 @@ mod tests {
                 },
                 cx,
             );
-            assert_eq!(view.selected_ranges(cx), &ranges[0..4]);
+            assert_eq!(view.selections.ranges(cx), &ranges[0..4]);
         });
     }
 
@@ -8902,18 +8371,17 @@ mod tests {
             .await;
 
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
                     DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
                     DisplayPoint::new(3, 18)..DisplayPoint::new(3, 18),
-                ],
-                cx,
-            );
+                ]);
+            });
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| { view.selections.display_ranges(cx) }),
             &[
                 DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -8925,7 +8393,7 @@ mod tests {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| view.selections.display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
                 DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
@@ -8936,7 +8404,7 @@ mod tests {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| view.selections.display_ranges(cx)),
             &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
         );
 
@@ -8945,7 +8413,7 @@ mod tests {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| view.selections.display_ranges(cx)),
             &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
         );
 
@@ -8953,7 +8421,7 @@ mod tests {
             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| view.selections.display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
                 DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
@@ -8964,7 +8432,7 @@ mod tests {
             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| view.selections.display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -8976,7 +8444,7 @@ mod tests {
             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| view.selections.display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
                 DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
@@ -8989,7 +8457,7 @@ mod tests {
             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| view.selections.display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
                 DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
@@ -9010,7 +8478,7 @@ mod tests {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(cx, |view, cx| view.selected_display_ranges(cx)),
+            view.update(cx, |view, cx| view.selections.display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -9062,11 +8530,11 @@ mod tests {
             .await;
 
         editor.update(cx, |editor, cx| {
-            editor.select_ranges([5..5, 8..8, 9..9], None, cx);
+            editor.change_selections(None, cx, |s| s.select_ranges([5..5, 8..8, 9..9]));
             editor.newline(&Newline, cx);
             assert_eq!(editor.text(cx), "fn a(\n    \n) {\n    \n}\n");
             assert_eq!(
-                editor.selected_ranges(cx),
+                editor.selections.ranges(cx),
                 &[
                     Point::new(1, 4)..Point::new(1, 4),
                     Point::new(3, 4)..Point::new(3, 4),
@@ -9116,13 +8584,12 @@ mod tests {
             .await;
 
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-                ],
-                cx,
-            );
+                ])
+            });
 
             view.handle_input(&Input("{".to_string()), cx);
             view.handle_input(&Input("{".to_string()), cx);
@@ -9168,13 +8635,12 @@ mod tests {
             );
 
             view.undo(&Undo, cx);
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
                     DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
-                ],
-                cx,
-            );
+                ])
+            });
             view.handle_input(&Input("*".to_string()), cx);
             assert_eq!(
                 view.text(cx),
@@ -9190,7 +8656,9 @@ mod tests {
             // Don't autoclose if the next character isn't whitespace and isn't
             // listed in the language's "autoclose_before" section.
             view.finalize_last_transaction(cx);
-            view.select_display_ranges(&[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)], cx);
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)])
+            });
             view.handle_input(&Input("{".to_string()), cx);
             assert_eq!(
                 view.text(cx),
@@ -9204,7 +8672,9 @@ mod tests {
             );
 
             view.undo(&Undo, cx);
-            view.select_display_ranges(&[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1)], cx);
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1)])
+            });
             view.handle_input(&Input("{".to_string()), cx);
             assert_eq!(
                 view.text(cx),
@@ -9217,7 +8687,7 @@ mod tests {
                 .unindent()
             );
             assert_eq!(
-                view.selected_display_ranges(cx),
+                view.selections.display_ranges(cx),
                 [DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2)]
             );
         });
@@ -9227,105 +8697,96 @@ mod tests {
     async fn test_snippets(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| cx.set_global(Settings::test(cx)));
 
-        let text = "
-            a. b
-            a. b
-            a. b
-        "
-        .unindent();
+        let (text, insertion_ranges) = marked_text_ranges(indoc! {"
+            a.| b
+            a.| b
+            a.| b"});
         let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, cx));
 
         editor.update(cx, |editor, cx| {
-            let buffer = &editor.snapshot(cx).buffer_snapshot;
             let snippet = Snippet::parse("f(${1:one}, ${2:two}, ${1:three})$0").unwrap();
-            let insertion_ranges = [
-                Point::new(0, 2).to_offset(buffer)..Point::new(0, 2).to_offset(buffer),
-                Point::new(1, 2).to_offset(buffer)..Point::new(1, 2).to_offset(buffer),
-                Point::new(2, 2).to_offset(buffer)..Point::new(2, 2).to_offset(buffer),
-            ];
 
             editor
                 .insert_snippet(&insertion_ranges, snippet, cx)
                 .unwrap();
-            assert_eq!(
-                editor.text(cx),
-                "
-                    a.f(one, two, three) b
-                    a.f(one, two, three) b
-                    a.f(one, two, three) b
-                "
-                .unindent()
-            );
-            assert_eq!(
-                editor.selected_ranges::<Point>(cx),
-                &[
-                    Point::new(0, 4)..Point::new(0, 7),
-                    Point::new(0, 14)..Point::new(0, 19),
-                    Point::new(1, 4)..Point::new(1, 7),
-                    Point::new(1, 14)..Point::new(1, 19),
-                    Point::new(2, 4)..Point::new(2, 7),
-                    Point::new(2, 14)..Point::new(2, 19),
-                ]
+
+            fn assert(editor: &mut Editor, cx: &mut ViewContext<Editor>, marked_text_ranges: &str) {
+                let range_markers = ('<', '>');
+                let (expected_text, mut selection_ranges_lookup) =
+                    marked_text_ranges_by(marked_text_ranges, vec![range_markers.clone()]);
+                let selection_ranges = selection_ranges_lookup.remove(&range_markers).unwrap();
+                assert_eq!(editor.text(cx), expected_text);
+                assert_eq!(editor.selections.ranges::<usize>(cx), selection_ranges);
+            }
+            assert(
+                editor,
+                cx,
+                indoc! {"
+                    a.f(<one>, two, <three>) b
+                    a.f(<one>, two, <three>) b
+                    a.f(<one>, two, <three>) b"},
             );
 
             // Can't move earlier than the first tab stop
-            editor.move_to_prev_snippet_tabstop(cx);
-            assert_eq!(
-                editor.selected_ranges::<Point>(cx),
-                &[
-                    Point::new(0, 4)..Point::new(0, 7),
-                    Point::new(0, 14)..Point::new(0, 19),
-                    Point::new(1, 4)..Point::new(1, 7),
-                    Point::new(1, 14)..Point::new(1, 19),
-                    Point::new(2, 4)..Point::new(2, 7),
-                    Point::new(2, 14)..Point::new(2, 19),
-                ]
+            assert!(!editor.move_to_prev_snippet_tabstop(cx));
+            assert(
+                editor,
+                cx,
+                indoc! {"
+                    a.f(<one>, two, <three>) b
+                    a.f(<one>, two, <three>) b
+                    a.f(<one>, two, <three>) b"},
             );
 
             assert!(editor.move_to_next_snippet_tabstop(cx));
-            assert_eq!(
-                editor.selected_ranges::<Point>(cx),
-                &[
-                    Point::new(0, 9)..Point::new(0, 12),
-                    Point::new(1, 9)..Point::new(1, 12),
-                    Point::new(2, 9)..Point::new(2, 12)
-                ]
+            assert(
+                editor,
+                cx,
+                indoc! {"
+                    a.f(one, <two>, three) b
+                    a.f(one, <two>, three) b
+                    a.f(one, <two>, three) b"},
             );
 
             editor.move_to_prev_snippet_tabstop(cx);
-            assert_eq!(
-                editor.selected_ranges::<Point>(cx),
-                &[
-                    Point::new(0, 4)..Point::new(0, 7),
-                    Point::new(0, 14)..Point::new(0, 19),
-                    Point::new(1, 4)..Point::new(1, 7),
-                    Point::new(1, 14)..Point::new(1, 19),
-                    Point::new(2, 4)..Point::new(2, 7),
-                    Point::new(2, 14)..Point::new(2, 19),
-                ]
+            assert(
+                editor,
+                cx,
+                indoc! {"
+                    a.f(<one>, two, <three>) b
+                    a.f(<one>, two, <three>) b
+                    a.f(<one>, two, <three>) b"},
             );
 
             assert!(editor.move_to_next_snippet_tabstop(cx));
+            assert(
+                editor,
+                cx,
+                indoc! {"
+                    a.f(one, <two>, three) b
+                    a.f(one, <two>, three) b
+                    a.f(one, <two>, three) b"},
+            );
             assert!(editor.move_to_next_snippet_tabstop(cx));
-            assert_eq!(
-                editor.selected_ranges::<Point>(cx),
-                &[
-                    Point::new(0, 20)..Point::new(0, 20),
-                    Point::new(1, 20)..Point::new(1, 20),
-                    Point::new(2, 20)..Point::new(2, 20)
-                ]
+            assert(
+                editor,
+                cx,
+                indoc! {"
+                    a.f(one, two, three)<> b
+                    a.f(one, two, three)<> b
+                    a.f(one, two, three)<> b"},
             );
 
             // As soon as the last tab stop is reached, snippet state is gone
             editor.move_to_prev_snippet_tabstop(cx);
-            assert_eq!(
-                editor.selected_ranges::<Point>(cx),
-                &[
-                    Point::new(0, 20)..Point::new(0, 20),
-                    Point::new(1, 20)..Point::new(1, 20),
-                    Point::new(2, 20)..Point::new(2, 20)
-                ]
+            assert(
+                editor,
+                cx,
+                indoc! {"
+                    a.f(one, two, three)<> b
+                    a.f(one, two, three)<> b
+                    a.f(one, two, three)<> b"},
             );
         });
     }
@@ -9489,7 +8950,9 @@ mod tests {
 
         editor.update(cx, |editor, cx| {
             editor.project = Some(project);
-            editor.select_ranges([Point::new(0, 3)..Point::new(0, 3)], None, cx);
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges([Point::new(0, 3)..Point::new(0, 3)])
+            });
             editor.handle_input(&Input(".".to_string()), cx);
         });
 
@@ -9542,14 +9005,12 @@ mod tests {
         );
 
         editor.update(cx, |editor, cx| {
-            editor.select_ranges(
-                [
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges([
                     Point::new(1, 3)..Point::new(1, 3),
                     Point::new(2, 5)..Point::new(2, 5),
-                ],
-                None,
-                cx,
-            );
+                ])
+            });
 
             editor.handle_input(&Input(" ".to_string()), cx);
             assert!(editor.context_menu.is_none());
@@ -9702,13 +9163,12 @@ mod tests {
         view.update(cx, |editor, cx| {
             // If multiple selections intersect a line, the line is only
             // toggled once.
-            editor.select_display_ranges(
-                &[
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     DisplayPoint::new(1, 3)..DisplayPoint::new(2, 3),
                     DisplayPoint::new(3, 5)..DisplayPoint::new(3, 6),
-                ],
-                cx,
-            );
+                ])
+            });
             editor.toggle_comments(&ToggleComments, cx);
             assert_eq!(
                 editor.text(cx),
@@ -9724,7 +9184,9 @@ mod tests {
 
             // The comment prefix is inserted at the same column for every line
             // in a selection.
-            editor.select_display_ranges(&[DisplayPoint::new(1, 3)..DisplayPoint::new(3, 6)], cx);
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(1, 3)..DisplayPoint::new(3, 6)])
+            });
             editor.toggle_comments(&ToggleComments, cx);
             assert_eq!(
                 editor.text(cx),
@@ -9739,7 +9201,9 @@ mod tests {
             );
 
             // If a selection ends at the beginning of a line, that line is not toggled.
-            editor.select_display_ranges(&[DisplayPoint::new(2, 0)..DisplayPoint::new(3, 0)], cx);
+            editor.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(2, 0)..DisplayPoint::new(3, 0)])
+            });
             editor.toggle_comments(&ToggleComments, cx);
             assert_eq!(
                 editor.text(cx),
@@ -9777,19 +9241,17 @@ mod tests {
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(multibuffer, cx));
         view.update(cx, |view, cx| {
             assert_eq!(view.text(cx), "aaaa\nbbbb");
-            view.select_ranges(
-                [
+            view.change_selections(None, cx, |s| {
+                s.select_ranges([
                     Point::new(0, 0)..Point::new(0, 0),
                     Point::new(1, 0)..Point::new(1, 0),
-                ],
-                None,
-                cx,
-            );
+                ])
+            });
 
             view.handle_input(&Input("X".to_string()), cx);
             assert_eq!(view.text(cx), "Xaaaa\nXbbbb");
             assert_eq!(
-                view.selected_ranges(cx),
+                view.selections.ranges(cx),
                 [
                     Point::new(0, 1)..Point::new(0, 1),
                     Point::new(1, 1)..Point::new(1, 1),
@@ -9820,7 +9282,7 @@ mod tests {
                 b|bb|b
                 cccc"});
             assert_eq!(view.text(cx), expected_text);
-            view.select_ranges(selection_ranges, None, cx);
+            view.change_selections(None, cx, |s| s.select_ranges(selection_ranges));
 
             view.handle_input(&Input("X".to_string()), cx);
 
@@ -9830,7 +9292,7 @@ mod tests {
                 bX|bbX|b
                 cccc"});
             assert_eq!(view.text(cx), expected_text);
-            assert_eq!(view.selected_ranges(cx), expected_selections);
+            assert_eq!(view.selections.ranges(cx), expected_selections);
 
             view.newline(&Newline, cx);
             let (expected_text, expected_selections) = marked_text_ranges(indoc! {"
@@ -9843,7 +9305,7 @@ mod tests {
                 |b
                 cccc"});
             assert_eq!(view.text(cx), expected_text);
-            assert_eq!(view.selected_ranges(cx), expected_selections);
+            assert_eq!(view.selections.ranges(cx), expected_selections);
         });
     }
 
@@ -9874,10 +9336,12 @@ mod tests {
         let (_, editor) = cx.add_window(Default::default(), |cx| {
             let mut editor = build_editor(multibuffer.clone(), cx);
             let snapshot = editor.snapshot(cx);
-            editor.select_ranges([Point::new(1, 3)..Point::new(1, 3)], None, cx);
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges([Point::new(1, 3)..Point::new(1, 3)])
+            });
             editor.begin_selection(Point::new(2, 1).to_display_point(&snapshot), true, 1, cx);
             assert_eq!(
-                editor.selected_ranges(cx),
+                editor.selections.ranges(cx),
                 [
                     Point::new(1, 3)..Point::new(1, 3),
                     Point::new(2, 1)..Point::new(2, 1),
@@ -9888,9 +9352,11 @@ mod tests {
 
         // Refreshing selections is a no-op when excerpts haven't changed.
         editor.update(cx, |editor, cx| {
-            editor.refresh_selections(cx);
+            editor.change_selections(None, cx, |s| {
+                s.refresh();
+            });
             assert_eq!(
-                editor.selected_ranges(cx),
+                editor.selections.ranges(cx),
                 [
                     Point::new(1, 3)..Point::new(1, 3),
                     Point::new(2, 1)..Point::new(2, 1),
@@ -9904,7 +9370,7 @@ mod tests {
         editor.update(cx, |editor, cx| {
             // Removing an excerpt causes the first selection to become degenerate.
             assert_eq!(
-                editor.selected_ranges(cx),
+                editor.selections.ranges(cx),
                 [
                     Point::new(0, 0)..Point::new(0, 0),
                     Point::new(0, 1)..Point::new(0, 1)
@@ -9913,15 +9379,17 @@ mod tests {
 
             // Refreshing selections will relocate the first selection to the original buffer
             // location.
-            editor.refresh_selections(cx);
+            editor.change_selections(None, cx, |s| {
+                s.refresh();
+            });
             assert_eq!(
-                editor.selected_ranges(cx),
+                editor.selections.ranges(cx),
                 [
                     Point::new(0, 1)..Point::new(0, 1),
                     Point::new(0, 3)..Point::new(0, 3)
                 ]
             );
-            assert!(editor.pending_selection.is_some());
+            assert!(editor.selections.pending_anchor().is_some());
         });
     }
 
@@ -9954,7 +9422,7 @@ mod tests {
             let snapshot = editor.snapshot(cx);
             editor.begin_selection(Point::new(1, 3).to_display_point(&snapshot), false, 1, cx);
             assert_eq!(
-                editor.selected_ranges(cx),
+                editor.selections.ranges(cx),
                 [Point::new(1, 3)..Point::new(1, 3)]
             );
             editor
@@ -9965,17 +9433,19 @@ mod tests {
         });
         editor.update(cx, |editor, cx| {
             assert_eq!(
-                editor.selected_ranges(cx),
+                editor.selections.ranges(cx),
                 [Point::new(0, 0)..Point::new(0, 0)]
             );
 
             // Ensure we don't panic when selections are refreshed and that the pending selection is finalized.
-            editor.refresh_selections(cx);
+            editor.change_selections(None, cx, |s| {
+                s.refresh();
+            });
             assert_eq!(
-                editor.selected_ranges(cx),
+                editor.selections.ranges(cx),
                 [Point::new(0, 3)..Point::new(0, 3)]
             );
-            assert!(editor.pending_selection.is_some());
+            assert!(editor.selections.pending_anchor().is_some());
         });
     }
 
@@ -10018,14 +9488,13 @@ mod tests {
             .await;
 
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
                     DisplayPoint::new(4, 4)..DisplayPoint::new(4, 4),
-                ],
-                cx,
-            );
+                ])
+            });
             view.newline(&Newline, cx);
 
             assert_eq!(
@@ -10158,14 +9627,14 @@ mod tests {
 
         // Update the selections only
         leader.update(cx, |leader, cx| {
-            leader.select_ranges([1..1], None, cx);
+            leader.change_selections(None, cx, |s| s.select_ranges([1..1]));
         });
         follower.update(cx, |follower, cx| {
             follower
                 .apply_update_proto(pending_update.borrow_mut().take().unwrap(), cx)
                 .unwrap();
         });
-        assert_eq!(follower.read(cx).selected_ranges(cx), vec![1..1]);
+        assert_eq!(follower.read(cx).selections.ranges(cx), vec![1..1]);
 
         // Update the scroll position only
         leader.update(cx, |leader, cx| {
@@ -10183,7 +9652,7 @@ mod tests {
 
         // Update the selections and scroll position
         leader.update(cx, |leader, cx| {
-            leader.select_ranges([0..0], None, cx);
+            leader.change_selections(None, cx, |s| s.select_ranges([0..0]));
             leader.request_autoscroll(Autoscroll::Newest, cx);
             leader.set_scroll_position(vec2f(1.5, 3.5), cx);
         });
@@ -10195,11 +9664,11 @@ mod tests {
             assert_eq!(follower.scroll_position(cx), initial_scroll_position);
             assert!(follower.autoscroll_request.is_some());
         });
-        assert_eq!(follower.read(cx).selected_ranges(cx), vec![0..0]);
+        assert_eq!(follower.read(cx).selections.ranges(cx), vec![0..0]);
 
         // Creating a pending selection that precedes another selection
         leader.update(cx, |leader, cx| {
-            leader.select_ranges([1..1], None, cx);
+            leader.change_selections(None, cx, |s| s.select_ranges([1..1]));
             leader.begin_selection(DisplayPoint::new(0, 0), true, 1, cx);
         });
         follower.update(cx, |follower, cx| {
@@ -10207,7 +9676,7 @@ mod tests {
                 .apply_update_proto(pending_update.borrow_mut().take().unwrap(), cx)
                 .unwrap();
         });
-        assert_eq!(follower.read(cx).selected_ranges(cx), vec![0..0, 1..1]);
+        assert_eq!(follower.read(cx).selections.ranges(cx), vec![0..0, 1..1]);
 
         // Extend the pending selection so that it surrounds another selection
         leader.update(cx, |leader, cx| {
@@ -10218,7 +9687,7 @@ mod tests {
                 .apply_update_proto(pending_update.borrow_mut().take().unwrap(), cx)
                 .unwrap();
         });
-        assert_eq!(follower.read(cx).selected_ranges(cx), vec![0..2]);
+        assert_eq!(follower.read(cx).selections.ranges(cx), vec![0..2]);
     }
 
     #[test]
@@ -10321,7 +9790,7 @@ mod tests {
             })
             .collect();
         assert_eq!(
-            view.selected_display_ranges(cx),
+            view.selections.display_ranges(cx),
             &asserted_ranges[..],
             "Assert selections are {}",
             marked_text

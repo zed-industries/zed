@@ -102,7 +102,7 @@ impl FollowableItem for Editor {
         } else {
             self.buffer.update(cx, |buffer, cx| {
                 if self.focused {
-                    buffer.set_active_selections(&self.selections, cx);
+                    buffer.set_active_selections(&self.selections.disjoint_anchors(), cx);
                 }
             });
         }
@@ -118,7 +118,12 @@ impl FollowableItem for Editor {
             )),
             scroll_x: self.scroll_position.x(),
             scroll_y: self.scroll_position.y(),
-            selections: self.selections.iter().map(serialize_selection).collect(),
+            selections: self
+                .selections
+                .disjoint_anchors()
+                .iter()
+                .map(serialize_selection)
+                .collect(),
         }))
     }
 
@@ -144,8 +149,9 @@ impl FollowableItem for Editor {
                 Event::SelectionsChanged { .. } => {
                     update.selections = self
                         .selections
+                        .disjoint_anchors()
                         .iter()
-                        .chain(self.pending_selection.as_ref().map(|p| &p.selection))
+                        .chain(self.selections.pending_anchor().as_ref())
                         .map(serialize_selection)
                         .collect();
                     true
@@ -246,13 +252,13 @@ fn deserialize_selection(
 impl Item for Editor {
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
         if let Ok(data) = data.downcast::<NavigationData>() {
+            let newest_selection = self.selections.newest::<Point>(cx);
             let buffer = self.buffer.read(cx).read(cx);
             let offset = if buffer.can_resolve(&data.cursor_anchor) {
                 data.cursor_anchor.to_point(&buffer)
             } else {
                 buffer.clip_point(data.cursor_position, Bias::Left)
             };
-            let newest_selection = self.newest_selection_with_snapshot::<Point>(&buffer);
 
             let scroll_top_anchor = if buffer.can_resolve(&data.scroll_top_anchor) {
                 data.scroll_top_anchor
@@ -270,7 +276,9 @@ impl Item for Editor {
                 let nav_history = self.nav_history.take();
                 self.scroll_position = data.scroll_position;
                 self.scroll_top_anchor = scroll_top_anchor;
-                self.select_ranges([offset..offset], Some(Autoscroll::Fit), cx);
+                self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                    s.select_ranges([offset..offset])
+                });
                 self.nav_history = nav_history;
                 true
             }
@@ -307,7 +315,7 @@ impl Item for Editor {
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
-        let selection = self.newest_anchor_selection();
+        let selection = self.selections.newest_anchor();
         self.push_to_nav_history(selection.head(), None, cx);
     }
 
@@ -457,7 +465,7 @@ impl CursorPosition {
 
         self.selected_count = 0;
         let mut last_selection: Option<Selection<usize>> = None;
-        for selection in editor.local_selections::<usize>(cx) {
+        for selection in editor.selections.all::<usize>(cx) {
             self.selected_count += selection.end - selection.start;
             if last_selection
                 .as_ref()

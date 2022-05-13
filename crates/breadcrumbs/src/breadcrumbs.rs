@@ -37,7 +37,7 @@ impl Breadcrumbs {
         cx: &AppContext,
     ) -> Option<(ModelHandle<Buffer>, Vec<OutlineItem<Anchor>>)> {
         let editor = self.editor.as_ref()?.read(cx);
-        let cursor = editor.newest_anchor_selection().head();
+        let cursor = editor.selections.newest_anchor().head();
         let multibuffer = &editor.buffer().read(cx);
         let (buffer_id, symbols) = multibuffer
             .read(cx)
