@@ -1392,20 +1392,6 @@ impl Editor {
         result
     }
 
-    pub fn display_selections(
-        &mut self,
-        cx: &mut ViewContext<Self>,
-    ) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let selections = self
-            .selections
-            .interleaved::<Point>(cx)
-            .into_iter()
-            .map(|selection| selection.map(|point| point.to_display_point(&display_map)))
-            .collect();
-        (display_map, selections)
-    }
-
     pub fn edit<I, S, T>(&mut self, edits: I, cx: &mut ViewContext<Self>)
     where
         I: IntoIterator<Item = (Range<S>, T)>,
@@ -1464,25 +1450,27 @@ impl Editor {
         let position = position.to_offset(&display_map, Bias::Left);
         let tail_anchor = display_map.buffer_snapshot.anchor_before(tail);
 
+        let mut pending_selection = self
+            .selections
+            .pending_anchor()
+            .expect("extend_selection not called with pending selection");
+        if position >= tail {
+            pending_selection.start = tail_anchor.clone();
+        } else {
+            pending_selection.end = tail_anchor.clone();
+            pending_selection.reversed = true;
+        }
+
+        let mut pending_mode = self.selections.pending_mode().unwrap();
+        match &mut pending_mode {
+            SelectMode::Word(range) | SelectMode::Line(range) => {
+                *range = tail_anchor.clone()..tail_anchor
+            }
+            _ => {}
+        }
+
         self.change_selections(Some(Autoscroll::Fit), cx, |s| {
-            let mut pending = s
-                .pending_mut()
-                .as_mut()
-                .expect("extend_selection not called with pending selection");
-
-            if position >= tail {
-                pending.selection.start = tail_anchor.clone();
-            } else {
-                pending.selection.end = tail_anchor.clone();
-                pending.selection.reversed = true;
-            }
-
-            match &mut pending.mode {
-                SelectMode::Word(range) | SelectMode::Line(range) => {
-                    *range = tail_anchor.clone()..tail_anchor
-                }
-                _ => {}
-            }
+            s.set_pending(pending_selection, pending_mode)
         });
     }
 
@@ -1591,7 +1579,8 @@ impl Editor {
             let buffer = self.buffer.read(cx).snapshot(cx);
             let head;
             let tail;
-            match &self.selections.pending_mode().unwrap() {
+            let mode = self.selections.pending_mode().unwrap();
+            match &mode {
                 SelectMode::Character => {
                     head = position.to_point(&display_map);
                     tail = pending.tail().to_point(&buffer);
@@ -1660,7 +1649,7 @@ impl Editor {
             }
 
             self.change_selections(None, cx, |s| {
-                s.pending_mut().as_mut().unwrap().selection = pending;
+                s.set_pending(pending, mode);
             });
         } else {
             log::error!("update_selection dispatched with no pending selection");
@@ -1745,8 +1734,7 @@ impl Editor {
                 return;
             }
 
-            if self.change_selections(None, cx, |s| s.try_cancel()) {
-                self.request_autoscroll(Autoscroll::Fit, cx);
+            if self.change_selections(Some(Autoscroll::Fit), cx, |s| s.try_cancel()) {
                 return;
             }
         }
@@ -1851,8 +1839,6 @@ impl Editor {
                 .collect();
 
             this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(new_selections));
-
-            this.request_autoscroll(Autoscroll::Fit, cx);
         });
     }
 
@@ -1972,13 +1958,7 @@ impl Editor {
             let mut snapshot = buffer.snapshot(cx);
             let left_biased_selections = selections
                 .iter()
-                .map(|selection| Selection {
-                    id: selection.id,
-                    start: snapshot.anchor_before(selection.start),
-                    end: snapshot.anchor_before(selection.end),
-                    reversed: selection.reversed,
-                    goal: selection.goal,
-                })
+                .map(|selection| selection.map(|p| snapshot.anchor_before(p)))
                 .collect::<Vec<_>>();
 
             let autoclose_pair = snapshot.language().and_then(|language| {
@@ -2730,13 +2710,6 @@ impl Editor {
                 }
             }
             if let Some(current_ranges) = snippet.ranges.get(snippet.active_index) {
-                let snapshot = self.buffer.read(cx).snapshot(cx);
-                let current_ranges_resolved = current_ranges
-                    .iter()
-                    .map(|range| range.start.to_point(&snapshot)..range.end.to_point(&snapshot))
-                    .collect::<Vec<_>>();
-                dbg!(&current_ranges, current_ranges_resolved);
-
                 self.change_selections(Some(Autoscroll::Fit), cx, |s| {
                     s.select_anchor_ranges(current_ranges.into_iter().cloned())
                 });
@@ -4024,7 +3997,6 @@ impl Editor {
     }
 
     fn add_selection(&mut self, above: bool, cx: &mut ViewContext<Self>) {
-        self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections.interleaved::<Point>(cx);
         let mut state = self.add_selections_state.take().unwrap_or_else(|| {

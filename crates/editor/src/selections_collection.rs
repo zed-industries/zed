@@ -169,6 +169,19 @@ impl SelectionsCollection {
             .collect()
     }
 
+    pub fn display_interleaved(
+        &mut self,
+        cx: &mut MutableAppContext,
+    ) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
+        let display_map = self.display_map(cx);
+        let selections = self
+            .interleaved::<Point>(cx)
+            .into_iter()
+            .map(|selection| selection.map(|point| point.to_display_point(&display_map)))
+            .collect();
+        (display_map, selections)
+    }
+
     pub fn newest_anchor(&self) -> &Selection<Anchor> {
         self.pending
             .as_ref()
@@ -308,12 +321,12 @@ impl<'a> MutableSelectionsCollection<'a> {
             mode,
         })
     }
-    pub fn pending_mut(&mut self) -> &mut Option<PendingSelection> {
-        &mut self.collection.pending
+
+    pub fn set_pending(&mut self, selection: Selection<Anchor>, mode: SelectMode) {
+        self.collection.pending = Some(PendingSelection { selection, mode });
     }
 
     pub fn try_cancel(&mut self) -> bool {
-        let buffer = self.buffer.read(self.cx).snapshot(self.cx);
         if let Some(pending) = self.collection.pending.take() {
             if self.disjoint.is_empty() {
                 self.collection.disjoint = Arc::from([pending.selection]);
@@ -327,7 +340,7 @@ impl<'a> MutableSelectionsCollection<'a> {
             return true;
         }
 
-        if !oldest.start.cmp(&oldest.end, &buffer).is_eq() {
+        if !oldest.start.cmp(&oldest.end, &self.buffer()).is_eq() {
             let head = oldest.head();
             oldest.start = head.clone();
             oldest.end = head;
@@ -584,7 +597,8 @@ impl<'a> MutableSelectionsCollection<'a> {
     pub fn refresh(&mut self) -> HashMap<usize, ExcerptId> {
         // TODO: Pull disjoint constraint out of update_selections so we don't have to
         // store the pending_selection here.
-        let buffer = self.buffer.read(self.cx).snapshot(self.cx);
+        let buffer = self.buffer();
+
         let mut pending = self.collection.pending.take();
         let mut selections_with_lost_position = HashMap::default();
 
