@@ -72,7 +72,6 @@ type FollowableItemBuilders = HashMap<
 actions!(
     workspace,
     [
-        ToggleShare,
         Unfollow,
         Save,
         ActivatePreviousPane,
@@ -121,7 +120,6 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
         join_project(action.project_id, &action.app_state, cx).detach();
     });
 
-    cx.add_action(Workspace::toggle_share);
     cx.add_async_action(Workspace::toggle_follow);
     cx.add_async_action(Workspace::follow_next_collaborator);
     cx.add_action(
@@ -692,6 +690,7 @@ impl WorkspaceParams {
 
 pub enum Event {
     PaneAdded(ViewHandle<Pane>),
+    ContactRequestedJoin(u64),
 }
 
 pub struct Workspace {
@@ -1366,18 +1365,6 @@ impl Workspace {
         &self.active_pane
     }
 
-    fn toggle_share(&mut self, _: &ToggleShare, cx: &mut ViewContext<Self>) {
-        self.project.update(cx, |project, cx| {
-            if project.is_local() {
-                if project.is_shared() {
-                    project.unshare(cx);
-                } else if project.can_share(cx) {
-                    project.share(cx).detach();
-                }
-            }
-        });
-    }
-
     fn project_remote_id_changed(&mut self, remote_id: Option<u64>, cx: &mut ViewContext<Self>) {
         if let Some(remote_id) = remote_id {
             self.remote_entity_subscription =
@@ -1580,7 +1567,6 @@ impl Workspace {
                                     cx,
                                 ))
                                 .with_children(self.render_connection_status(cx))
-                                .with_children(self.render_share_icon(theme, cx))
                                 .boxed(),
                         )
                         .right()
@@ -1698,39 +1684,6 @@ impl Workspace {
                 .boxed()
         } else {
             content
-        }
-    }
-
-    fn render_share_icon(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
-        if self.project().read(cx).is_local()
-            && self.client.user_id().is_some()
-            && self.project().read(cx).can_share(cx)
-        {
-            Some(
-                MouseEventHandler::new::<ToggleShare, _, _>(0, cx, |state, cx| {
-                    let style = &theme
-                        .workspace
-                        .titlebar
-                        .share_icon
-                        .style_for(state, self.project().read(cx).is_shared());
-                    Svg::new("icons/share.svg")
-                        .with_color(style.color)
-                        .constrained()
-                        .with_height(14.)
-                        .aligned()
-                        .contained()
-                        .with_style(style.container)
-                        .constrained()
-                        .with_width(24.)
-                        .aligned()
-                        .boxed()
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(|_, cx| cx.dispatch_action(ToggleShare))
-                .boxed(),
-            )
-        } else {
-            None
         }
     }
 

@@ -66,6 +66,11 @@ impl<R: RequestMessage> Response<R> {
         self.server.peer.respond(self.receipt, payload)?;
         Ok(())
     }
+
+    fn into_receipt(self) -> Receipt<R> {
+        self.responded.store(true, SeqCst);
+        self.receipt
+    }
 }
 
 pub struct Server {
@@ -115,10 +120,9 @@ impl Server {
             .add_request_handler(Server::ping)
             .add_request_handler(Server::register_project)
             .add_message_handler(Server::unregister_project)
-            .add_request_handler(Server::share_project)
-            .add_message_handler(Server::unshare_project)
             .add_request_handler(Server::join_project)
             .add_message_handler(Server::leave_project)
+            .add_message_handler(Server::respond_to_join_project_request)
             .add_request_handler(Server::register_worktree)
             .add_message_handler(Server::unregister_worktree)
             .add_request_handler(Server::update_worktree)
@@ -336,12 +340,10 @@ impl Server {
         let removed_connection = self.store_mut().await.remove_connection(connection_id)?;
 
         for (project_id, project) in removed_connection.hosted_projects {
-            if let Some(share) = project.share {
-                broadcast(connection_id, share.guests.keys().copied(), |conn_id| {
-                    self.peer
-                        .send(conn_id, proto::UnshareProject { project_id })
-                });
-            }
+            broadcast(connection_id, project.guests.keys().copied(), |conn_id| {
+                self.peer
+                    .send(conn_id, proto::UnregisterProject { project_id })
+            });
         }
 
         for (project_id, peer_ids) in removed_connection.guest_project_ids {
@@ -402,20 +404,20 @@ impl Server {
         Ok(())
     }
 
-    async fn share_project(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::ShareProject>,
-        response: Response<proto::ShareProject>,
-    ) -> Result<()> {
-        let user_id = {
-            let mut state = self.store_mut().await;
-            state.share_project(request.payload.project_id, request.sender_id)?;
-            state.user_id_for_connection(request.sender_id)?
-        };
-        self.update_user_contacts(user_id).await?;
-        response.send(proto::Ack {})?;
-        Ok(())
-    }
+    // async fn share_project(
+    //     self: Arc<Server>,
+    //     request: TypedEnvelope<proto::ShareProject>,
+    //     response: Response<proto::ShareProject>,
+    // ) -> Result<()> {
+    //     let user_id = {
+    //         let mut state = self.store_mut().await;
+    //         state.share_project(request.payload.project_id, request.sender_id)?;
+    //         state.user_id_for_connection(request.sender_id)?
+    //     };
+    //     self.update_user_contacts(user_id).await?;
+    //     response.send(proto::Ack {})?;
+    //     Ok(())
+    // }
 
     async fn update_user_contacts(self: &Arc<Server>, user_id: UserId) -> Result<()> {
         let contacts = self.app_state.db.get_contacts(user_id).await?;
@@ -447,24 +449,6 @@ impl Server {
         Ok(())
     }
 
-    async fn unshare_project(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::UnshareProject>,
-    ) -> Result<()> {
-        let project_id = request.payload.project_id;
-        let project;
-        {
-            let mut state = self.store_mut().await;
-            project = state.unshare_project(project_id, request.sender_id)?;
-            broadcast(request.sender_id, project.connection_ids, |conn_id| {
-                self.peer
-                    .send(conn_id, proto::UnshareProject { project_id })
-            });
-        }
-        self.update_user_contacts(project.host_user_id).await?;
-        Ok(())
-    }
-
     async fn join_project(
         self: Arc<Server>,
         request: TypedEnvelope<proto::JoinProject>,
@@ -473,9 +457,12 @@ impl Server {
         let project_id = request.payload.project_id;
         let host_user_id;
         let guest_user_id;
+        let host_connection_id;
         {
             let state = self.store().await;
-            host_user_id = state.project(project_id)?.host_user_id;
+            let project = state.project(project_id)?;
+            host_user_id = project.host_user_id;
+            host_connection_id = project.host_connection_id;
             guest_user_id = state.user_id_for_connection(request.sender_id)?;
         };
 
@@ -488,22 +475,71 @@ impl Server {
             return Err(anyhow!("no such project"))?;
         }
 
+        self.store_mut().await.request_join_project(
+            guest_user_id,
+            project_id,
+            response.into_receipt(),
+        )?;
+        self.peer.send(
+            host_connection_id,
+            proto::RequestJoinProject {
+                project_id,
+                requester_id: guest_user_id.to_proto(),
+            },
+        )?;
+        Ok(())
+    }
+
+    async fn respond_to_join_project_request(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::RespondToJoinProjectRequest>,
+    ) -> Result<()> {
+        let host_user_id;
+
         {
-            let state = &mut *self.store_mut().await;
-            let joined = state.join_project(request.sender_id, guest_user_id, project_id)?;
-            let share = joined.project.share()?;
-            let peer_count = share.guests.len();
+            let mut state = self.store_mut().await;
+            let project_id = request.payload.project_id;
+            let project = state.project(project_id)?;
+            if project.host_connection_id != request.sender_id {
+                Err(anyhow!("no such connection"))?;
+            }
+
+            host_user_id = project.host_user_id;
+            let guest_user_id = UserId::from_proto(request.payload.requester_id);
+
+            if !request.payload.allow {
+                let receipts = state
+                    .deny_join_project_request(request.sender_id, guest_user_id, project_id)
+                    .ok_or_else(|| anyhow!("no such request"))?;
+                for receipt in receipts {
+                    self.peer.respond(
+                        receipt,
+                        proto::JoinProjectResponse {
+                            variant: Some(proto::join_project_response::Variant::Decline(
+                                proto::join_project_response::Decline {},
+                            )),
+                        },
+                    )?;
+                }
+                return Ok(());
+            }
+
+            let (receipts_with_replica_ids, project) = state
+                .accept_join_project_request(request.sender_id, guest_user_id, project_id)
+                .ok_or_else(|| anyhow!("no such request"))?;
+
+            let peer_count = project.guests.len();
             let mut collaborators = Vec::with_capacity(peer_count);
             collaborators.push(proto::Collaborator {
-                peer_id: joined.project.host_connection_id.0,
+                peer_id: project.host_connection_id.0,
                 replica_id: 0,
-                user_id: joined.project.host_user_id.to_proto(),
+                user_id: project.host_user_id.to_proto(),
             });
-            let worktrees = share
+            let worktrees = project
                 .worktrees
                 .iter()
                 .filter_map(|(id, shared_worktree)| {
-                    let worktree = joined.project.worktrees.get(&id)?;
+                    let worktree = project.worktrees.get(&id)?;
                     Some(proto::Worktree {
                         id: *id,
                         root_name: worktree.root_name.clone(),
@@ -517,8 +553,8 @@ impl Server {
                         scan_id: shared_worktree.scan_id,
                     })
                 })
-                .collect();
-            for (peer_conn_id, (peer_replica_id, peer_user_id)) in &share.guests {
+                .collect::<Vec<_>>();
+            for (peer_conn_id, (peer_replica_id, peer_user_id)) in &project.guests {
                 if *peer_conn_id != request.sender_id {
                     collaborators.push(proto::Collaborator {
                         peer_id: peer_conn_id.0,
@@ -527,30 +563,41 @@ impl Server {
                     });
                 }
             }
-            broadcast(
-                request.sender_id,
-                joined.project.connection_ids(),
-                |conn_id| {
-                    self.peer.send(
-                        conn_id,
-                        proto::AddProjectCollaborator {
-                            project_id,
-                            collaborator: Some(proto::Collaborator {
-                                peer_id: request.sender_id.0,
-                                replica_id: joined.replica_id as u32,
-                                user_id: guest_user_id.to_proto(),
-                            }),
-                        },
-                    )
-                },
-            );
-            response.send(proto::JoinProjectResponse {
-                worktrees,
-                replica_id: joined.replica_id as u32,
-                collaborators,
-                language_servers: joined.project.language_servers.clone(),
-            })?;
+            for conn_id in project.connection_ids() {
+                for (receipt, replica_id) in &receipts_with_replica_ids {
+                    if conn_id != receipt.sender_id {
+                        self.peer.send(
+                            conn_id,
+                            proto::AddProjectCollaborator {
+                                project_id,
+                                collaborator: Some(proto::Collaborator {
+                                    peer_id: receipt.sender_id.0,
+                                    replica_id: *replica_id as u32,
+                                    user_id: guest_user_id.to_proto(),
+                                }),
+                            },
+                        )?;
+                    }
+                }
+            }
+
+            for (receipt, replica_id) in receipts_with_replica_ids {
+                self.peer.respond(
+                    receipt,
+                    proto::JoinProjectResponse {
+                        variant: Some(proto::join_project_response::Variant::Accept(
+                            proto::join_project_response::Accept {
+                                worktrees: worktrees.clone(),
+                                replica_id: replica_id as u32,
+                                collaborators: collaborators.clone(),
+                                language_servers: project.language_servers.clone(),
+                            },
+                        )),
+                    },
+                )?;
+            }
         }
+
         self.update_user_contacts(host_user_id).await?;
         Ok(())
     }
@@ -599,6 +646,7 @@ impl Server {
                 Worktree {
                     root_name: request.payload.root_name.clone(),
                     visible: request.payload.visible,
+                    ..Default::default()
                 },
             )?;
 
@@ -2781,9 +2829,6 @@ mod tests {
             .condition(|store| {
                 let worktree = store
                     .project(project_id)
-                    .unwrap()
-                    .share
-                    .as_ref()
                     .unwrap()
                     .worktrees
                     .get(&worktree_id.to_proto())
@@ -5055,7 +5100,7 @@ mod tests {
                 assert_eq!(
                     contacts(store),
                     [
-                        ("user_a", true, vec![("a", false, vec![])]),
+                        ("user_a", true, vec![("a", vec![])]),
                         ("user_b", true, vec![]),
                         ("user_c", true, vec![])
                     ]
@@ -5077,7 +5122,7 @@ mod tests {
                 assert_eq!(
                     contacts(store),
                     [
-                        ("user_a", true, vec![("a", true, vec![])]),
+                        ("user_a", true, vec![("a", vec![])]),
                         ("user_b", true, vec![]),
                         ("user_c", true, vec![])
                     ]
@@ -5093,7 +5138,7 @@ mod tests {
                 assert_eq!(
                     contacts(store),
                     [
-                        ("user_a", true, vec![("a", true, vec!["user_b"])]),
+                        ("user_a", true, vec![("a", vec!["user_b"])]),
                         ("user_b", true, vec![]),
                         ("user_c", true, vec![])
                     ]
@@ -5112,8 +5157,8 @@ mod tests {
                 assert_eq!(
                     contacts(store),
                     [
-                        ("user_a", true, vec![("a", true, vec!["user_b"])]),
-                        ("user_b", true, vec![("b", false, vec![])]),
+                        ("user_a", true, vec![("a", vec!["user_b"])]),
+                        ("user_b", true, vec![("b", vec![])]),
                         ("user_c", true, vec![])
                     ]
                 )
@@ -5135,7 +5180,7 @@ mod tests {
                     contacts(store),
                     [
                         ("user_a", true, vec![]),
-                        ("user_b", true, vec![("b", false, vec![])]),
+                        ("user_b", true, vec![("b", vec![])]),
                         ("user_c", true, vec![])
                     ]
                 )
@@ -5151,7 +5196,7 @@ mod tests {
                     contacts(store),
                     [
                         ("user_a", true, vec![]),
-                        ("user_b", true, vec![("b", false, vec![])]),
+                        ("user_b", true, vec![("b", vec![])]),
                         ("user_c", false, vec![])
                     ]
                 )
@@ -5174,14 +5219,14 @@ mod tests {
                     contacts(store),
                     [
                         ("user_a", true, vec![]),
-                        ("user_b", true, vec![("b", false, vec![])]),
+                        ("user_b", true, vec![("b", vec![])]),
                         ("user_c", true, vec![])
                     ]
                 )
             });
         }
 
-        fn contacts(user_store: &UserStore) -> Vec<(&str, bool, Vec<(&str, bool, Vec<&str>)>)> {
+        fn contacts(user_store: &UserStore) -> Vec<(&str, bool, Vec<(&str, Vec<&str>)>)> {
             user_store
                 .contacts()
                 .iter()
@@ -5192,7 +5237,6 @@ mod tests {
                         .map(|p| {
                             (
                                 p.worktree_root_names[0].as_str(),
-                                p.is_shared,
                                 p.guests.iter().map(|p| p.github_login.as_str()).collect(),
                             )
                         })

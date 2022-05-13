@@ -386,11 +386,15 @@ impl<'a> EventContext<'a> {
         }
     }
 
-    pub fn dispatch_action<A: Action>(&mut self, action: A) {
+    pub fn dispatch_any_action(&mut self, action: Box<dyn Action>) {
         self.dispatched_actions.push(DispatchDirective {
             path: self.view_stack.clone(),
-            action: Box::new(action),
+            action,
         });
+    }
+
+    pub fn dispatch_action<A: Action>(&mut self, action: A) {
+        self.dispatch_any_action(Box::new(action));
     }
 
     pub fn notify(&mut self) {

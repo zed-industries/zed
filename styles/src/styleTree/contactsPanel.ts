@@ -122,7 +122,7 @@ export default function contactsPanel(theme: Theme) {
       background: backgroundColor(theme, 100),
       color: iconColor(theme, "muted"),
     },
-    sharedProjectRow: {
+    projectRow: {
       ...projectRow,
       background: backgroundColor(theme, 300),
       name: {
@@ -136,19 +136,5 @@ export default function contactsPanel(theme: Theme) {
         background: backgroundColor(theme, 300, "active"),
       }
     },
-    unsharedProjectRow: {
-      ...projectRow,
-      background: backgroundColor(theme, 300),
-      name: {
-        ...projectRow.name,
-        ...text(theme, "mono", "secondary", { size: "sm" }),
-      },
-      hover: {
-        background: backgroundColor(theme, 300, "hovered"),
-      },
-      active: {
-        background: backgroundColor(theme, 300, "active"),
-      }
-    }
   }
 }

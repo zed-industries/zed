@@ -17,6 +17,12 @@ pub struct User {
     pub avatar: Option<Arc<ImageData>>,
 }
 
+impl PartialEq for User {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && self.github_login == other.github_login
+    }
+}
+
 #[derive(Debug)]
 pub struct Contact {
     pub user: Arc<User>,
@@ -27,7 +33,6 @@ pub struct Contact {
 #[derive(Debug)]
 pub struct ProjectMetadata {
     pub id: u64,
-    pub is_shared: bool,
     pub worktree_root_names: Vec<String>,
     pub guests: Vec<Arc<User>>,
 }
@@ -560,7 +565,6 @@ impl Contact {
             projects.push(ProjectMetadata {
                 id: project.id,
                 worktree_root_names: project.worktree_root_names.clone(),
-                is_shared: project.is_shared,
                 guests,
             });
         }

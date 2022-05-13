@@ -1359,41 +1359,7 @@
       "button_width": 16,
       "corner_radius": 8
     },
-    "shared_project_row": {
-      "guest_avatar_spacing": 4,
-      "height": 24,
-      "guest_avatar": {
-        "corner_radius": 8,
-        "width": 14
-      },
-      "name": {
-        "family": "Zed Mono",
-        "color": "#93a1a1",
-        "size": 14,
-        "margin": {
-          "left": 8,
-          "right": 6
-        }
-      },
-      "guests": {
-        "margin": {
-          "left": 8,
-          "right": 8
-        }
-      },
-      "padding": {
-        "left": 12,
-        "right": 12
-      },
-      "background": "#073642",
-      "hover": {
-        "background": "#586e753d"
-      },
-      "active": {
-        "background": "#586e755c"
-      }
-    },
-    "unshared_project_row": {
+    "project_row": {
       "guest_avatar_spacing": 4,
       "height": 24,
       "guest_avatar": {

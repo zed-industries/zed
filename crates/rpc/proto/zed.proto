@@ -14,8 +14,8 @@ message Envelope {
         RegisterProject register_project = 8;
         RegisterProjectResponse register_project_response = 9;
         UnregisterProject unregister_project = 10;
-        ShareProject share_project = 11;
-        UnshareProject unshare_project = 12;
+        RequestJoinProject request_join_project = 11;
+        RespondToJoinProjectRequest respond_to_join_project_request = 12;
         JoinProject join_project = 13;
         JoinProjectResponse join_project_response = 14;
         LeaveProject leave_project = 15;
@@ -124,12 +124,15 @@ message UnregisterProject {
     uint64 project_id = 1;
 }
 
-message ShareProject {
-    uint64 project_id = 1;
+message RequestJoinProject {
+    uint64 requester_id = 1;
+    uint64 project_id = 2;
 }
 
-message UnshareProject {
-    uint64 project_id = 1;
+message RespondToJoinProjectRequest {
+    uint64 requester_id = 1;
+    uint64 project_id = 2;
+    bool allow = 3;
 }
 
 message JoinProject {
@@ -137,10 +140,19 @@ message JoinProject {
 }
 
 message JoinProjectResponse {
-    uint32 replica_id = 1;
-    repeated Worktree worktrees = 2;
-    repeated Collaborator collaborators = 3;
-    repeated LanguageServer language_servers = 4;
+    oneof variant {
+        Accept accept = 1;
+        Decline decline = 2;
+    }
+
+    message Accept {
+        uint32 replica_id = 1;
+        repeated Worktree worktrees = 2;
+        repeated Collaborator collaborators = 3;
+        repeated LanguageServer language_servers = 4;        
+    }
+    
+    message Decline {}
 }
 
 message LeaveProject {
@@ -882,7 +894,6 @@ message Contact {
 
 message ProjectMetadata {
     uint64 id = 1;
-    bool is_shared = 2;
     repeated string worktree_root_names = 3;
     repeated uint64 guests = 4;
 }
