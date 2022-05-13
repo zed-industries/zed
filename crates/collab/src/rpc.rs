@@ -351,6 +351,15 @@ impl Server {
 
             for project_id in removed_connection.guest_project_ids {
                 if let Some(project) = store.project(project_id).trace_err() {
+                    broadcast(connection_id, project.connection_ids(), |conn_id| {
+                        self.peer.send(
+                            conn_id,
+                            proto::RemoveProjectCollaborator {
+                                project_id,
+                                peer_id: connection_id.0,
+                            },
+                        )
+                    });
                     if project.guests.is_empty() {
                         self.peer
                             .send(
@@ -358,16 +367,6 @@ impl Server {
                                 proto::ProjectUnshared { project_id },
                             )
                             .trace_err();
-                    } else {
-                        broadcast(connection_id, project.connection_ids(), |conn_id| {
-                            self.peer.send(
-                                conn_id,
-                                proto::RemoveProjectCollaborator {
-                                    project_id,
-                                    peer_id: connection_id.0,
-                                },
-                            )
-                        });
                     }
                 }
             }
