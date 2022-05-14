@@ -457,7 +457,7 @@ impl ProjectSearchView {
                 &results_editor.selections.newest_anchor().head(),
                 index,
                 direction,
-                &results_editor.buffer().read(cx).read(cx),
+                &results_editor.buffer().read(cx).snapshot(cx),
             );
             let range_to_select = model.match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
@@ -515,7 +515,7 @@ impl ProjectSearchView {
         let new_index = active_match_index(
             &self.model.read(cx).match_ranges,
             &results_editor.selections.newest_anchor().head(),
-            &results_editor.buffer().read(cx).read(cx),
+            &results_editor.buffer().read(cx).snapshot(cx),
         );
         if self.active_match_index != new_index {
             self.active_match_index = new_index;

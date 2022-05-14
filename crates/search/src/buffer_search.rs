@@ -265,7 +265,7 @@ impl BufferSearchBar {
     fn set_query(&mut self, query: &str, cx: &mut ViewContext<Self>) {
         self.query_editor.update(cx, |query_editor, cx| {
             query_editor.buffer().update(cx, |query_buffer, cx| {
-                let len = query_buffer.read(cx).len();
+                let len = query_buffer.len(cx);
                 query_buffer.edit([(0..len, query)], cx);
             });
         });
@@ -388,7 +388,7 @@ impl BufferSearchBar {
                             &editor.selections.newest_anchor().head(),
                             index,
                             direction,
-                            &editor.buffer().read(cx).read(cx),
+                            &editor.buffer().read(cx).snapshot(cx),
                         );
                         let range_to_select = ranges[new_index].clone();
                         editor.unfold_ranges([range_to_select.clone()], false, cx);
@@ -565,7 +565,7 @@ impl BufferSearchBar {
             active_match_index(
                 &ranges,
                 &editor.selections.newest_anchor().head(),
-                &editor.buffer().read(cx).read(cx),
+                &editor.buffer().read(cx).snapshot(cx),
             )
         });
         if new_index != self.active_match_index {
