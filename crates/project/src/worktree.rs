@@ -838,6 +838,7 @@ impl LocalWorktree {
                 snapshot.remove_path(&old_path);
             }
             let entry = snapshot.insert_entry(entry, fs.as_ref());
+            snapshot.scan_id += 1;
             if let Some(tx) = shared_snapshots_tx {
                 tx.send(snapshot.clone()).await.ok();
             }
@@ -2171,8 +2172,7 @@ impl BackgroundScanner {
         let root_abs_path;
         let next_entry_id;
         {
-            let mut snapshot = self.snapshot.lock();
-            snapshot.scan_id += 1;
+            let snapshot = self.snapshot.lock();
             root_char_bag = snapshot.root_char_bag;
             root_abs_path = snapshot.abs_path.clone();
             next_entry_id = snapshot.next_entry_id.clone();
@@ -2197,6 +2197,7 @@ impl BackgroundScanner {
         let (scan_queue_tx, scan_queue_rx) = channel::unbounded();
         {
             let mut snapshot = self.snapshot.lock();
+            snapshot.scan_id += 1;
             for event in &events {
                 if let Ok(path) = event.path.strip_prefix(&root_abs_path) {
                     snapshot.remove_path(&path);
