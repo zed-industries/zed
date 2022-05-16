@@ -32,7 +32,6 @@ export interface BackgroundColorSet {
   base: ColorToken;
   hovered: ColorToken;
   active: ColorToken;
-  focused: ColorToken;
 }
 
 export interface Syntax {
@@ -85,7 +84,6 @@ export default interface Theme {
     primary: ColorToken;
     secondary: ColorToken;
     muted: ColorToken;
-    focused: ColorToken;
     active: ColorToken;
     /**
     * Used for rendering borders on top of media like avatars, images, video, etc.

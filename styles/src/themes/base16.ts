@@ -24,55 +24,46 @@ export function createTheme(name: string, isLight: boolean, neutral: ColorToken[
       base: neutral[1],
       hovered: withOpacity(neutral[2], blend),
       active: withOpacity(neutral[2], blend * 1.5),
-      focused: withOpacity(neutral[2], blend),
     },
     300: {
       base: neutral[1],
       hovered: withOpacity(neutral[2], blend),
       active: withOpacity(neutral[2], blend * 1.5),
-      focused: withOpacity(neutral[2], blend),
     },
     500: {
       base: neutral[0],
       hovered: withOpacity(neutral[1], blend),
       active: withOpacity(neutral[1], blend * 1.5),
-      focused: withOpacity(neutral[1], blend),
     },
     on300: {
       base: neutral[0],
       hovered: withOpacity(neutral[1], blend),
       active: withOpacity(neutral[1], blend * 2),
-      focused: withOpacity(neutral[1], blend),
     },
     on500: {
       base: neutral[1],
       hovered: withOpacity(neutral[2], blend),
       active: withOpacity(neutral[2], blend * 2),
-      focused: withOpacity(neutral[2], blend),
     },
     ok: {
       base: withOpacity(accent.green, 0.15),
       hovered: withOpacity(accent.green, 0.20),
       active: withOpacity(accent.green, 0.25),
-      focused: withOpacity(accent.green, 0.20),
     },
     error: {
       base: withOpacity(accent.red, 0.15),
       hovered: withOpacity(accent.red, 0.20),
       active: withOpacity(accent.red, 0.25),
-      focused: withOpacity(accent.red, 0.20),
     },
     warning: {
       base: withOpacity(accent.yellow, 0.15),
       hovered: withOpacity(accent.yellow, 0.20),
       active: withOpacity(accent.yellow, 0.25),
-      focused: withOpacity(accent.yellow, 0.20),
     },
     info: {
       base: withOpacity(accent.blue, 0.15),
       hovered: withOpacity(accent.blue, 0.20),
       active: withOpacity(accent.blue, 0.25),
-      focused: withOpacity(accent.blue, 0.20),
     },
   };
 
@@ -80,7 +71,6 @@ export function createTheme(name: string, isLight: boolean, neutral: ColorToken[
     primary: neutral[0],
     secondary: neutral[1],
     muted: neutral[3],
-    focused: neutral[3],
     active: neutral[3],
     onMedia: withOpacity(neutral[0], 0.1),
     ok: withOpacity(accent.green, 0.15),
@@ -131,7 +121,7 @@ export function createTheme(name: string, isLight: boolean, neutral: ColorToken[
       matchingBracket: backgroundColor[500].active,
       match: withOpacity(accent.violet, blend * 2),
       activeMatch: withOpacity(accent.violet, blend * 3),
-      related: backgroundColor[500].focused,
+      related: backgroundColor[500].hovered,
     },
     gutter: {
       primary: textColor.placeholder,

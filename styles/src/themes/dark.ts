@@ -7,55 +7,46 @@ const backgroundColor = {
     base: colors.neutral[750],
     hovered: colors.neutral[725],
     active: colors.neutral[800],
-    focused: colors.neutral[675],
   },
   300: {
     base: colors.neutral[800],
     hovered: colors.neutral[775],
     active: colors.neutral[750],
-    focused: colors.neutral[775],
   },
   500: {
     base: colors.neutral[900],
     hovered: withOpacity(colors.neutral[0], 0.08),
     active: withOpacity(colors.neutral[0], 0.12),
-    focused: colors.neutral[825],
   },
   on300: {
     base: withOpacity(colors.neutral[850], 0.5),
     hovered: colors.neutral[875],
     active: colors.neutral[900],
-    focused: colors.neutral[875],
   },
   on500: {
     base: colors.neutral[850],
     hovered: colors.neutral[800],
     active: colors.neutral[775],
-    focused: colors.neutral[800],
   },
   ok: {
     base: withOpacity(colors.green[600], 0.15),
     hovered: withOpacity(colors.green[600], 0.20),
     active: withOpacity(colors.green[600], 0.25),
-    focused: withOpacity(colors.green[600], 0.20),
   },
   error: {
     base: withOpacity(colors.red[600], 0.15),
     hovered: withOpacity(colors.red[600], 0.20),
     active: withOpacity(colors.red[600], 0.25),
-    focused: withOpacity(colors.red[600], 0.20),
   },
   warning: {
     base: withOpacity(colors.amber[400], 0.15),
     hovered: withOpacity(colors.amber[400], 0.20),
     active: withOpacity(colors.amber[400], 0.25),
-    focused: withOpacity(colors.amber[400], 0.20),
   },
   info: {
     base: withOpacity(colors.blue[500], 0.15),
     hovered: withOpacity(colors.blue[500], 0.20),
     active: withOpacity(colors.blue[500], 0.25),
-    focused: withOpacity(colors.blue[500], 0.20),
   },
 };
 
@@ -63,7 +54,6 @@ const borderColor = {
   primary: colors.neutral[875],
   secondary: colors.neutral[775],
   muted: colors.neutral[675],
-  focused: colors.indigo[500],
   active: colors.neutral[900],
   onMedia: withOpacity(colors.neutral[875], 0.1),
   ok: withOpacity(colors.green[600], 0.15),
@@ -127,7 +117,7 @@ const editor = {
     matchingBracket: backgroundColor[500].active,
     match: withOpacity(colors.violet[700], 0.5),
     activeMatch: withOpacity(colors.violet[600], 0.7),
-    related: backgroundColor[500].focused,
+    related: backgroundColor[500].hovered,
   },
   gutter: {
     primary: textColor.placeholder,

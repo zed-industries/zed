@@ -7,55 +7,46 @@ const backgroundColor = {
     base: colors.neutral[75],
     hovered: colors.neutral[100],
     active: colors.neutral[150],
-    focused: colors.neutral[100],
   },
   300: {
     base: colors.neutral[25],
     hovered: colors.neutral[75],
     active: colors.neutral[100],
-    focused: colors.neutral[75],
   },
   500: {
     base: colors.neutral[0],
     hovered: withOpacity(colors.neutral[900], 0.03),
     active: withOpacity(colors.neutral[900], 0.06),
-    focused: colors.neutral[50],
   },
   on300: {
     base: colors.neutral[50],
     hovered: colors.neutral[100],
     active: colors.neutral[150],
-    focused: colors.neutral[100],
   },
   on500: {
     base: colors.neutral[50],
     hovered: colors.neutral[25],
     active: colors.neutral[0],
-    focused: colors.neutral[25],
   },
   ok: {
     base: withOpacity(colors.green[600], 0.15),
     hovered: withOpacity(colors.green[600], 0.20),
     active: withOpacity(colors.green[600], 0.25),
-    focused: withOpacity(colors.green[600], 0.20),
   },
   error: {
     base: withOpacity(colors.red[600], 0.15),
     hovered: withOpacity(colors.red[600], 0.20),
     active: withOpacity(colors.red[600], 0.25),
-    focused: withOpacity(colors.red[600], 0.20),
   },
   warning: {
     base: withOpacity(colors.amber[400], 0.15),
     hovered: withOpacity(colors.amber[400], 0.20),
     active: withOpacity(colors.amber[400], 0.25),
-    focused: withOpacity(colors.amber[400], 0.20),
   },
   info: {
     base: withOpacity(colors.blue[500], 0.15),
     hovered: withOpacity(colors.blue[500], 0.20),
     active: withOpacity(colors.blue[500], 0.25),
-    focused: withOpacity(colors.blue[500], 0.20),
   },
 };
 
@@ -63,7 +54,6 @@ const borderColor = {
   primary: colors.neutral[150],
   secondary: colors.neutral[150],
   muted: colors.neutral[100],
-  focused: colors.indigo[500],
   active: colors.neutral[250],
   onMedia: withOpacity(colors.neutral[250], 0.3),
   ok: withOpacity(colors.green[600], 0.15),
