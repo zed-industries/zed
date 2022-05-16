@@ -5928,16 +5928,23 @@ mod tests {
                     if let Some(guest_err) = guest_err {
                         log::error!("{} error - {:?}", guest.username, guest_err);
                     }
-                    // TODO
-                    // let contacts = server
-                    //     .store
-                    //     .read()
-                    //     .await
-                    //     .contacts_for_user(guest.current_user_id(&guest_cx));
-                    // assert!(!contacts
-                    //     .iter()
-                    //     .flat_map(|contact| &contact.projects)
-                    //     .any(|project| project.id == host_project_id));
+
+                    let contacts = server
+                        .app_state
+                        .db
+                        .get_contacts(guest.current_user_id(&guest_cx))
+                        .await
+                        .unwrap();
+                    let contacts = server
+                        .store
+                        .read()
+                        .await
+                        .build_initial_contacts_update(contacts)
+                        .contacts;
+                    assert!(!contacts
+                        .iter()
+                        .flat_map(|contact| &contact.projects)
+                        .any(|project| project.id == host_project_id));
                     guest
                         .project
                         .as_ref()
@@ -5997,9 +6004,12 @@ mod tests {
                     let removed_guest_id = user_ids.remove(guest_ix);
                     let guest = clients.remove(guest_ix);
                     op_start_signals.remove(guest_ix);
+                    server.forbid_connections();
                     server.disconnect_client(removed_guest_id);
                     cx.foreground().advance_clock(RECEIVE_TIMEOUT);
                     let (guest, mut guest_cx, guest_err) = guest.await;
+                    server.allow_connections();
+
                     if let Some(guest_err) = guest_err {
                         log::error!("{} error - {:?}", guest.username, guest_err);
                     }
@@ -6008,23 +6018,31 @@ mod tests {
                         .as_ref()
                         .unwrap()
                         .read_with(&guest_cx, |project, _| assert!(project.is_read_only()));
-                    // TODO
-                    // for user_id in &user_ids {
-                    //     for contact in server.store.read().await.contacts_for_user(*user_id) {
-                    //         assert_ne!(
-                    //             contact.user_id, removed_guest_id.0 as u64,
-                    //             "removed guest is still a contact of another peer"
-                    //         );
-                    //         for project in contact.projects {
-                    //             for project_guest_id in project.guests {
-                    //                 assert_ne!(
-                    //                     project_guest_id, removed_guest_id.0 as u64,
-                    //                     "removed guest appears as still participating on a project"
-                    //                 );
-                    //             }
-                    //         }
-                    //     }
-                    // }
+                    for user_id in &user_ids {
+                        let contacts = server.app_state.db.get_contacts(*user_id).await.unwrap();
+                        let contacts = server
+                            .store
+                            .read()
+                            .await
+                            .build_initial_contacts_update(contacts)
+                            .contacts;
+                        for contact in contacts {
+                            if contact.online {
+                                assert_ne!(
+                                    contact.user_id, removed_guest_id.0 as u64,
+                                    "removed guest is still a contact of another peer"
+                                );
+                            }
+                            for project in contact.projects {
+                                for project_guest_id in project.guests {
+                                    assert_ne!(
+                                        project_guest_id, removed_guest_id.0 as u64,
+                                        "removed guest appears as still participating on a project"
+                                    );
+                                }
+                            }
+                        }
+                    }
 
                     log::info!("{} removed", guest.username);
                     available_guests.push(guest.username.clone());
