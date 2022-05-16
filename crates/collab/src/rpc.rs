@@ -419,21 +419,6 @@ impl Server {
         Ok(())
     }
 
-    // async fn share_project(
-    //     self: Arc<Server>,
-    //     request: TypedEnvelope<proto::ShareProject>,
-    //     response: Response<proto::ShareProject>,
-    // ) -> Result<()> {
-    //     let user_id = {
-    //         let mut state = self.store_mut().await;
-    //         state.share_project(request.payload.project_id, request.sender_id)?;
-    //         state.user_id_for_connection(request.sender_id)?
-    //     };
-    //     self.update_user_contacts(user_id).await?;
-    //     response.send(proto::Ack {})?;
-    //     Ok(())
-    // }
-
     async fn update_user_contacts(self: &Arc<Server>, user_id: UserId) -> Result<()> {
         let contacts = self.app_state.db.get_contacts(user_id).await?;
         let store = self.store().await;
@@ -1191,29 +1176,6 @@ impl Server {
         response.send(proto::Ack {})?;
         Ok(())
     }
-
-    // #[instrument(skip(self, state, user_ids))]
-    // fn update_contacts_for_users<'a>(
-    //     self: &Arc<Self>,
-    //     state: &Store,
-    //     user_ids: impl IntoIterator<Item = &'a UserId>,
-    // ) {
-    //     for user_id in user_ids {
-    //         let contacts = state.contacts_for_user(*user_id);
-    //         for connection_id in state.connection_ids_for_user(*user_id) {
-    //             self.peer
-    //                 .send(
-    //                     connection_id,
-    //                     proto::UpdateContacts {
-    //                         contacts: contacts.clone(),
-    //                         pending_requests_from_user_ids: Default::default(),
-    //                         pending_requests_to_user_ids: Default::default(),
-    //                     },
-    //                 )
-    //                 .trace_err();
-    //         }
-    //     }
-    // }
 
     async fn join_channel(
         self: Arc<Self>,
