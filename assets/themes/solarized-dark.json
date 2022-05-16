@@ -23,7 +23,7 @@
         "size": 14
       },
       "active": {
-        "background": "#586e755c",
+        "background": "#30525c",
         "text": {
           "family": "Zed Sans",
           "color": "#eee8d5",
@@ -31,7 +31,7 @@
         }
       },
       "hover": {
-        "background": "#586e753d"
+        "background": "#1b444f"
       }
     },
     "border": {
@@ -215,7 +215,7 @@
             "size": 14
           },
           "icon_color": "#eee8d5",
-          "background": "#586e753d"
+          "background": "#1b444f"
         }
       },
       "diagnostic_message": {
@@ -288,7 +288,7 @@
               "left": 7,
               "right": 7
             },
-            "background": "#586e753d"
+            "background": "#1b444f"
           },
           "container_warning": {
             "corner_radius": 6,
@@ -335,11 +335,11 @@
           "icon_color": "#93a1a1",
           "hover": {
             "icon_color": "#eee8d5",
-            "background": "#586e753d"
+            "background": "#1b444f"
           },
           "active": {
             "icon_color": "#fdf6e3",
-            "background": "#586e755c"
+            "background": "#30525c"
           }
         },
         "badge": {
@@ -361,7 +361,7 @@
       "avatar_width": 18,
       "avatar_margin": 8,
       "height": 33,
-      "background": "#073642",
+      "background": "#1b444f",
       "padding": {
         "left": 80,
         "right": 6
@@ -426,15 +426,15 @@
         },
         "color": "#93a1a1",
         "hover": {
-          "background": "#586e753d",
+          "background": "#30525c",
           "color": "#93a1a1"
         },
         "active": {
-          "background": "#586e755c",
+          "background": "#446068",
           "color": "#fdf6e3"
         },
         "active_hover": {
-          "background": "#586e753d",
+          "background": "#30525c",
           "color": "#fdf6e3"
         }
       },
@@ -515,16 +515,16 @@
   "editor": {
     "text_color": "#fdf6e3",
     "background": "#002b36",
-    "active_line_background": "#fdf6e312",
+    "active_line_background": "#073642",
     "code_actions_indicator": "#93a1a1",
     "diff_background_deleted": "#dc322f26",
     "diff_background_inserted": "#85990026",
-    "document_highlight_read_background": "#fdf6e31f",
-    "document_highlight_write_background": "#fdf6e33d",
+    "document_highlight_read_background": "#586e753d",
+    "document_highlight_write_background": "#586e757a",
     "error_color": "#dc322f",
     "gutter_background": "#002b36",
     "gutter_padding_factor": 3.5,
-    "highlighted_line_background": "#fdf6e31f",
+    "highlighted_line_background": "#1b444f",
     "line_number": "#839496",
     "line_number_active": "#fdf6e3",
     "rename_fade": 0.6,
@@ -588,7 +588,7 @@
           "right": 6,
           "top": 2
         },
-        "background": "#0736423d"
+        "background": "#022e39"
       },
       "margin": {
         "left": -14
@@ -606,7 +606,7 @@
           "right": 6,
           "top": 2
         },
-        "background": "#0736425c"
+        "background": "#04313c"
       }
     },
     "diagnostic_header": {
@@ -642,7 +642,7 @@
       }
     },
     "diagnostic_path_header": {
-      "background": "#fdf6e312",
+      "background": "#073642",
       "text_scale_factor": 0.857,
       "filename": {
         "family": "Zed Mono",
@@ -852,7 +852,7 @@
         "weight": "normal"
       },
       "punctuation": {
-        "color": "#93a1a1",
+        "color": "#eee8d5",
         "weight": "normal"
       },
       "constant": {
@@ -989,7 +989,7 @@
         "size": 14
       },
       "hover": {
-        "background": "#586e753d",
+        "background": "#1b444f",
         "text": {
           "family": "Zed Mono",
           "color": "#eee8d5",
@@ -997,7 +997,7 @@
         }
       },
       "active": {
-        "background": "#586e755c",
+        "background": "#30525c",
         "text": {
           "family": "Zed Mono",
           "color": "#eee8d5",
@@ -1005,7 +1005,7 @@
         }
       },
       "active_hover": {
-        "background": "#586e753d",
+        "background": "#1b444f",
         "text": {
           "family": "Zed Mono",
           "color": "#fdf6e3",
@@ -1014,7 +1014,7 @@
       }
     },
     "filename_editor": {
-      "background": "#0736425c",
+      "background": "#04313c",
       "text": {
         "family": "Zed Mono",
         "color": "#eee8d5",
@@ -1098,7 +1098,7 @@
             "right": 8
           }
         },
-        "background": "#586e753d",
+        "background": "#1b444f",
         "corner_radius": 6
       },
       "active_item": {
@@ -1133,7 +1133,7 @@
             "right": 8
           }
         },
-        "background": "#586e753d",
+        "background": "#1b444f",
         "corner_radius": 6
       },
       "menu": {
@@ -1307,7 +1307,7 @@
         "family": "Zed Mono",
         "color": "#eee8d5",
         "size": 14,
-        "background": "#586e755c"
+        "background": "#446068"
       }
     },
     "contact_row": {
@@ -1316,7 +1316,7 @@
         "right": 12
       },
       "active": {
-        "background": "#586e755c"
+        "background": "#446068"
       }
     },
     "tree_branch": {
@@ -1343,17 +1343,17 @@
     },
     "contact_button_spacing": 8,
     "contact_button": {
-      "background": "#073642",
+      "background": "#1b444f",
       "color": "#eee8d5",
       "icon_width": 8,
       "button_width": 16,
       "corner_radius": 8,
       "hover": {
-        "background": "#586e753d"
+        "background": "#30525c"
       }
     },
     "disabled_contact_button": {
-      "background": "#073642",
+      "background": "#1b444f",
       "color": "#93a1a1",
       "icon_width": 8,
       "button_width": 16,
@@ -1387,10 +1387,10 @@
       },
       "background": "#073642",
       "hover": {
-        "background": "#586e753d"
+        "background": "#1b444f"
       },
       "active": {
-        "background": "#586e755c"
+        "background": "#30525c"
       }
     },
     "unshared_project_row": {
@@ -1421,10 +1421,10 @@
       },
       "background": "#073642",
       "hover": {
-        "background": "#586e753d"
+        "background": "#1b444f"
       },
       "active": {
-        "background": "#586e755c"
+        "background": "#30525c"
       }
     }
   },
@@ -1452,7 +1452,7 @@
         "size": 14
       },
       "active": {
-        "background": "#586e755c",
+        "background": "#30525c",
         "text": {
           "family": "Zed Sans",
           "color": "#eee8d5",
@@ -1460,7 +1460,7 @@
         }
       },
       "hover": {
-        "background": "#586e753d"
+        "background": "#1b444f"
       }
     },
     "border": {
@@ -1527,17 +1527,17 @@
       }
     },
     "contact_button": {
-      "background": "#073642",
+      "background": "#1b444f",
       "color": "#eee8d5",
       "icon_width": 8,
       "button_width": 16,
       "corner_radius": 8,
       "hover": {
-        "background": "#586e753d"
+        "background": "#30525c"
       }
     },
     "disabled_contact_button": {
-      "background": "#073642",
+      "background": "#1b444f",
       "color": "#93a1a1",
       "icon_width": 8,
       "button_width": 16,
@@ -1545,14 +1545,14 @@
     }
   },
   "search": {
-    "match_background": "#6c71c47a",
+    "match_background": "#1b1f6b",
     "tab_icon_spacing": 8,
     "tab_icon_width": 14,
     "option_button": {
       "family": "Zed Mono",
       "color": "#93a1a1",
       "size": 14,
-      "background": "#073642",
+      "background": "#1b444f",
       "corner_radius": 6,
       "border": {
         "color": "#073642",
@@ -1571,7 +1571,7 @@
         "family": "Zed Mono",
         "color": "#fdf6e3",
         "size": 14,
-        "background": "#586e757a",
+        "background": "#446068",
         "border": {
           "color": "#657b83",
           "width": 1
@@ -1581,7 +1581,7 @@
         "family": "Zed Mono",
         "color": "#fdf6e3",
         "size": 14,
-        "background": "#586e753d",
+        "background": "#30525c",
         "border": {
           "color": "#657b83",
           "width": 1
@@ -1717,7 +1717,7 @@
         "left": 6
       },
       "hover": {
-        "background": "#0736423d"
+        "background": "#022e39"
       }
     },
     "dismiss_button": {

@@ -125,9 +125,6 @@ export default interface Theme {
     line: {
       active: ColorToken;
       highlighted: ColorToken;
-      inserted: ColorToken;
-      deleted: ColorToken;
-      modified: ColorToken;
     };
     highlight: {
       selection: ColorToken;

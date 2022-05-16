@@ -99,10 +99,6 @@
       "active": {
         "value": "#586e755c",
         "type": "color"
-      },
-      "focused": {
-        "value": "#586e753d",
-        "type": "color"
       }
     },
     "300": {
@@ -116,10 +112,6 @@
       },
       "active": {
         "value": "#586e755c",
-        "type": "color"
-      },
-      "focused": {
-        "value": "#586e753d",
         "type": "color"
       }
     },
@@ -135,10 +127,6 @@
       "active": {
         "value": "#0736425c",
         "type": "color"
-      },
-      "focused": {
-        "value": "#0736423d",
-        "type": "color"
       }
     },
     "on300": {
@@ -152,10 +140,6 @@
       },
       "active": {
         "value": "#0736427a",
-        "type": "color"
-      },
-      "focused": {
-        "value": "#0736423d",
         "type": "color"
       }
     },
@@ -171,10 +155,6 @@
       "active": {
         "value": "#586e757a",
         "type": "color"
-      },
-      "focused": {
-        "value": "#586e753d",
-        "type": "color"
       }
     },
     "ok": {
@@ -188,10 +168,6 @@
       },
       "active": {
         "value": "#85990040",
-        "type": "color"
-      },
-      "focused": {
-        "value": "#85990033",
         "type": "color"
       }
     },
@@ -207,10 +183,6 @@
       "active": {
         "value": "#dc322f40",
         "type": "color"
-      },
-      "focused": {
-        "value": "#dc322f33",
-        "type": "color"
       }
     },
     "warning": {
@@ -224,10 +196,6 @@
       },
       "active": {
         "value": "#b5890040",
-        "type": "color"
-      },
-      "focused": {
-        "value": "#b5890033",
         "type": "color"
       }
     },
@@ -243,10 +211,6 @@
       "active": {
         "value": "#268bd240",
         "type": "color"
-      },
-      "focused": {
-        "value": "#268bd233",
-        "type": "color"
       }
     }
   },
@@ -260,10 +224,6 @@
       "type": "color"
     },
     "muted": {
-      "value": "#657b83",
-      "type": "color"
-    },
-    "focused": {
       "value": "#657b83",
       "type": "color"
     },

@@ -1,8 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
-import dark from "./themes/dark";
-import light from "./themes/light";
 import { light as solarizedLight, dark as solarizedDark } from "./themes/solarized";
+// Use cave as "light" and "dark" themes
+import { light, dark } from "./themes/cave";
 import Theme from "./themes/theme";
 import { colors, fontFamilies, fontSizes, fontWeights, sizes } from "./tokens";
 

@@ -1,106 +1,123 @@
-import { ColorToken, fontWeights, NumberToken } from "../tokens";
+import chroma from "chroma-js";
+import { Scale, Color } from "chroma-js";
+import { color, ColorToken, fontWeights, NumberToken } from "../tokens";
 import { withOpacity } from "../utils/color";
 import Theme, { buildPlayer, Syntax } from "./theme";
 
-export interface Accents {
-  "red": ColorToken,
-  "orange": ColorToken,
-  "yellow": ColorToken,
-  "green": ColorToken,
-  "cyan": ColorToken,
-  "blue": ColorToken,
-  "violet": ColorToken,
-  "magenta": ColorToken,
+export function colorRamp(color: Color): Scale {
+  let hue = color.hsl()[0];
+  let endColor = chroma.hsl(hue, 0.88, 0.96);
+  let startColor = chroma.hsl(hue, 0.68, 0.12);
+  return chroma
+    .scale([startColor, color, endColor])
+    .mode("hsl");
 }
 
-export function createTheme(name: string, isLight: boolean, neutral: ColorToken[], accent: Accents): Theme {
+// Neutral. 8 stops from 0 to 1.
+
+export function createTheme(name: string, isLight: boolean, ramps: { [rampName: string]: Scale }, blend?: number): Theme {
   if (isLight) {
-    neutral = [...neutral].reverse();
+    for (var rampName in ramps) {
+      ramps[rampName] = ramps[rampName].domain([1, 0]);
+    }
+    ramps.neutral = ramps.neutral.domain([7, 0]);
+  } else {
+    ramps.neutral = ramps.neutral.domain([0, 7]);
   }
-  let blend = isLight ? 0.12 : 0.24;
+
+  if (blend === undefined) {
+    blend = isLight ? 0.12 : 0.24;
+  }
+
+  function rampColor(ramp: Scale, index: number): ColorToken {
+    return color(ramp(index).hex());
+  }
 
   const backgroundColor = {
+    // Title bar
     100: {
-      base: neutral[1],
-      hovered: withOpacity(neutral[2], blend),
-      active: withOpacity(neutral[2], blend * 1.5),
+      base: rampColor(ramps.neutral, 1.25),
+      hovered: rampColor(ramps.neutral, 1.5),
+      active: rampColor(ramps.neutral, 1.75),
     },
+    // Midground (panels, etc)
     300: {
-      base: neutral[1],
-      hovered: withOpacity(neutral[2], blend),
-      active: withOpacity(neutral[2], blend * 1.5),
+      base: rampColor(ramps.neutral, 1),
+      hovered: rampColor(ramps.neutral, 1.25),
+      active: rampColor(ramps.neutral, 1.5),
     },
+    // Editor
     500: {
-      base: neutral[0],
-      hovered: withOpacity(neutral[1], blend),
-      active: withOpacity(neutral[1], blend * 1.5),
+      base: rampColor(ramps.neutral, 0),
+      hovered: rampColor(ramps.neutral, 0.25),
+      active: rampColor(ramps.neutral, 0.5),
     },
     on300: {
-      base: neutral[0],
-      hovered: withOpacity(neutral[1], blend),
-      active: withOpacity(neutral[1], blend * 2),
+      base: rampColor(ramps.neutral, 0),
+      hovered: rampColor(ramps.neutral, 0.25),
+      active: rampColor(ramps.neutral, 0.5),
     },
     on500: {
-      base: neutral[1],
-      hovered: withOpacity(neutral[2], blend),
-      active: withOpacity(neutral[2], blend * 2),
+      base: rampColor(ramps.neutral, 1.25),
+      hovered: rampColor(ramps.neutral, 1.5),
+      active: rampColor(ramps.neutral, 1.75),
     },
     ok: {
-      base: withOpacity(accent.green, 0.15),
-      hovered: withOpacity(accent.green, 0.20),
-      active: withOpacity(accent.green, 0.25),
+      base: withOpacity(rampColor(ramps.green, 0.5), 0.15),
+      hovered: withOpacity(rampColor(ramps.green, 0.5), 0.20),
+      active: withOpacity(rampColor(ramps.green, 0.5), 0.25),
     },
     error: {
-      base: withOpacity(accent.red, 0.15),
-      hovered: withOpacity(accent.red, 0.20),
-      active: withOpacity(accent.red, 0.25),
+      base: withOpacity(rampColor(ramps.red, 0.5), 0.15),
+      hovered: withOpacity(rampColor(ramps.red, 0.5), 0.20),
+      active: withOpacity(rampColor(ramps.red, 0.5), 0.25),
     },
     warning: {
-      base: withOpacity(accent.yellow, 0.15),
-      hovered: withOpacity(accent.yellow, 0.20),
-      active: withOpacity(accent.yellow, 0.25),
+      base: withOpacity(rampColor(ramps.yellow, 0.5), 0.15),
+      hovered: withOpacity(rampColor(ramps.yellow, 0.5), 0.20),
+      active: withOpacity(rampColor(ramps.yellow, 0.5), 0.25),
     },
     info: {
-      base: withOpacity(accent.blue, 0.15),
-      hovered: withOpacity(accent.blue, 0.20),
-      active: withOpacity(accent.blue, 0.25),
+      base: withOpacity(rampColor(ramps.blue, 0.5), 0.15),
+      hovered: withOpacity(rampColor(ramps.blue, 0.5), 0.20),
+      active: withOpacity(rampColor(ramps.blue, 0.5), 0.25),
     },
   };
 
   const borderColor = {
-    primary: neutral[0],
-    secondary: neutral[1],
-    muted: neutral[3],
-    active: neutral[3],
-    onMedia: withOpacity(neutral[0], 0.1),
-    ok: withOpacity(accent.green, 0.15),
-    error: withOpacity(accent.red, 0.15),
-    warning: withOpacity(accent.yellow, 0.15),
-    info: withOpacity(accent.blue, 0.15),
+    primary: rampColor(ramps.neutral, isLight ? 2 : 0),
+    secondary: rampColor(ramps.neutral, isLight ? 2 : 1),
+    muted: rampColor(ramps.neutral, isLight ? 4 : 3),
+    active: rampColor(ramps.neutral, isLight ? 4 : 3),
+    onMedia: withOpacity(rampColor(ramps.neutral, 0), 0.1),
+    ok: withOpacity(rampColor(ramps.green, 0.5), 0.15),
+    error: withOpacity(rampColor(ramps.red, 0.5), 0.15),
+    warning: withOpacity(rampColor(ramps.yellow, 0.5), 0.15),
+    info: withOpacity(rampColor(ramps.blue, 0.5), 0.15),
   };
 
   const textColor = {
-    primary: neutral[6],
-    secondary: neutral[5],
-    muted: neutral[5],
-    placeholder: neutral[4],
-    active: neutral[7],
-    feature: accent.blue,
-    ok: accent.green,
-    error: accent.red,
-    warning: accent.yellow,
-    info: accent.blue,
+    primary: rampColor(ramps.neutral, 6),
+    secondary: rampColor(ramps.neutral, 5),
+    muted: rampColor(ramps.neutral, 5),
+    placeholder: rampColor(ramps.neutral, 4),
+    active: rampColor(ramps.neutral, 7),
+    feature: rampColor(ramps.blue, 0.5),
+    ok: rampColor(ramps.green, 0.5),
+    error: rampColor(ramps.red, 0.5),
+    warning: rampColor(ramps.yellow, 0.5),
+    info: rampColor(ramps.blue, 0.5),
   };
 
   const player = {
-    1: buildPlayer(accent.blue),
-    2: buildPlayer(accent.green),
-    3: buildPlayer(accent.magenta),
-    4: buildPlayer(accent.orange),
-    5: buildPlayer(accent.violet),
-    6: buildPlayer(accent.cyan),
-    7: buildPlayer(accent.red),
-    8: buildPlayer(accent.yellow),
+    1: buildPlayer(rampColor(ramps.blue, 0.5)),
+    2: buildPlayer(rampColor(ramps.green, 0.5)),
+    3: buildPlayer(rampColor(ramps.magenta, 0.5)),
+    4: buildPlayer(rampColor(ramps.orange, 0.5)),
+    5: buildPlayer(rampColor(ramps.violet, 0.5)),
+    6: buildPlayer(rampColor(ramps.cyan, 0.5)),
+    7: buildPlayer(rampColor(ramps.red, 0.5)),
+    8: buildPlayer(rampColor(ramps.yellow, 0.5)),
   };
 
   const editor = {
@@ -108,19 +125,16 @@ export function createTheme(name: string, isLight: boolean, neutral: ColorToken[
     indent_guide: borderColor.muted,
     indent_guide_active: borderColor.secondary,
     line: {
-      active: withOpacity(neutral[7], 0.07),
-      highlighted: withOpacity(neutral[7], 0.12),
-      inserted: backgroundColor.ok.active,
-      deleted: backgroundColor.error.active,
-      modified: backgroundColor.info.active,
+      active: rampColor(ramps.neutral, 1),
+      highlighted: rampColor(ramps.neutral, 1.25), // TODO: Where is this used?
     },
     highlight: {
       selection: player[1].selectionColor,
-      occurrence: withOpacity(neutral[7], blend / 2),
-      activeOccurrence: withOpacity(neutral[7], blend),
-      matchingBracket: backgroundColor[500].active,
-      match: withOpacity(accent.violet, blend * 2),
-      activeMatch: withOpacity(accent.violet, blend * 3),
+      occurrence: withOpacity(rampColor(ramps.neutral, 2), blend),
+      activeOccurrence: withOpacity(rampColor(ramps.neutral, 2), blend * 2), // TODO: Not hooked up - https://github.com/zed-industries/zed/issues/751
+      matchingBracket: backgroundColor[500].active, // TODO: Not hooked up
+      match: rampColor(ramps.violet, 0.15),
+      activeMatch: withOpacity(rampColor(ramps.violet, 0.4), blend * 2), // TODO: Not hooked up - https://github.com/zed-industries/zed/issues/751
       related: backgroundColor[500].hovered,
     },
     gutter: {
@@ -131,59 +145,59 @@ export function createTheme(name: string, isLight: boolean, neutral: ColorToken[
 
   const syntax: Syntax = {
     primary: {
-      color: neutral[7],
+      color: rampColor(ramps.neutral, 7),
       weight: fontWeights.normal,
     },
     comment: {
-      color: neutral[5],
+      color: rampColor(ramps.neutral, 5),
       weight: fontWeights.normal,
     },
     punctuation: {
-      color: neutral[5],
+      color: rampColor(ramps.neutral, 6),
       weight: fontWeights.normal,
     },
     constant: {
-      color: neutral[4],
+      color: rampColor(ramps.neutral, 4),
       weight: fontWeights.normal,
     },
     keyword: {
-      color: accent.blue,
+      color: rampColor(ramps.blue, 0.5),
       weight: fontWeights.normal,
     },
     function: {
-      color: accent.yellow,
+      color: rampColor(ramps.yellow, 0.5),
       weight: fontWeights.normal,
     },
     type: {
-      color: accent.cyan,
+      color: rampColor(ramps.cyan, 0.5),
       weight: fontWeights.normal,
     },
     variant: {
-      color: accent.blue,
+      color: rampColor(ramps.blue, 0.5),
       weight: fontWeights.normal,
     },
     property: {
-      color: accent.blue,
+      color: rampColor(ramps.blue, 0.5),
       weight: fontWeights.normal,
     },
     enum: {
-      color: accent.orange,
+      color: rampColor(ramps.orange, 0.5),
       weight: fontWeights.normal,
     },
     operator: {
-      color: accent.orange,
+      color: rampColor(ramps.orange, 0.5),
       weight: fontWeights.normal,
     },
     string: {
-      color: accent.orange,
+      color: rampColor(ramps.orange, 0.5),
       weight: fontWeights.normal,
     },
     number: {
-      color: accent.green,
+      color: rampColor(ramps.green, 0.5),
       weight: fontWeights.normal,
     },
     boolean: {
-      color: accent.green,
+      color: rampColor(ramps.green, 0.5),
       weight: fontWeights.normal,
     },
     predictive: {
@@ -191,7 +205,7 @@ export function createTheme(name: string, isLight: boolean, neutral: ColorToken[
       weight: fontWeights.normal,
     },
     title: {
-      color: accent.yellow,
+      color: rampColor(ramps.yellow, 0.5),
       weight: fontWeights.bold,
     },
     emphasis: {
@@ -203,12 +217,12 @@ export function createTheme(name: string, isLight: boolean, neutral: ColorToken[
       weight: fontWeights.bold,
     },
     linkUri: {
-      color: accent.green,
+      color: rampColor(ramps.green, 0.5),
       weight: fontWeights.normal,
       underline: true,
     },
     linkText: {
-      color: accent.orange,
+      color: rampColor(ramps.orange, 0.5),
       weight: fontWeights.normal,
       italic: true,
     },
