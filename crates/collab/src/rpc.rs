@@ -4868,7 +4868,9 @@ mod tests {
                         ("user_a", true, vec![]),
                         ("user_b", true, vec![]),
                         ("user_c", true, vec![])
-                    ]
+                    ],
+                    "{} has the wrong contacts",
+                    client.username
                 )
             });
         }
@@ -4887,7 +4889,9 @@ mod tests {
                         ("user_a", true, vec![("a", vec![])]),
                         ("user_b", true, vec![]),
                         ("user_c", true, vec![])
-                    ]
+                    ],
+                    "{} has the wrong contacts",
+                    client.username
                 )
             });
         }
@@ -4903,7 +4907,9 @@ mod tests {
                         ("user_a", true, vec![("a", vec!["user_b"])]),
                         ("user_b", true, vec![]),
                         ("user_c", true, vec![])
-                    ]
+                    ],
+                    "{} has the wrong contacts",
+                    client.username
                 )
             });
         }
@@ -4922,7 +4928,9 @@ mod tests {
                         ("user_a", true, vec![("a", vec!["user_b"])]),
                         ("user_b", true, vec![("b", vec![])]),
                         ("user_c", true, vec![])
-                    ]
+                    ],
+                    "{} has the wrong contacts",
+                    client.username
                 )
             });
         }
@@ -4944,7 +4952,9 @@ mod tests {
                         ("user_a", true, vec![]),
                         ("user_b", true, vec![("b", vec![])]),
                         ("user_c", true, vec![])
-                    ]
+                    ],
+                    "{} has the wrong contacts",
+                    client.username
                 )
             });
         }
@@ -4960,7 +4970,9 @@ mod tests {
                         ("user_a", true, vec![]),
                         ("user_b", true, vec![("b", vec![])]),
                         ("user_c", false, vec![])
-                    ]
+                    ],
+                    "{} has the wrong contacts",
+                    client.username
                 )
             });
         }
@@ -4983,7 +4995,9 @@ mod tests {
                         ("user_a", true, vec![]),
                         ("user_b", true, vec![("b", vec![])]),
                         ("user_c", true, vec![])
-                    ]
+                    ],
+                    "{} has the wrong contacts",
+                    client.username
                 )
             });
         }
@@ -6279,19 +6293,18 @@ mod tests {
                     })
                 });
 
-            client
-                .authenticate_and_connect(false, &cx.to_async())
-                .await
-                .unwrap();
-
             Channel::init(&client);
             Project::init(&client);
             cx.update(|cx| {
                 workspace::init(&client, cx);
             });
 
-            let peer_id = PeerId(connection_id_rx.next().await.unwrap().0);
             let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
+            client
+                .authenticate_and_connect(false, &cx.to_async())
+                .await
+                .unwrap();
+            let peer_id = PeerId(connection_id_rx.next().await.unwrap().0);
 
             let client = TestClient {
                 client,
