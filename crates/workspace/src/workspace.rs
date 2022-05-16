@@ -8,7 +8,8 @@ mod toolbar;
 
 use anyhow::{anyhow, Context, Result};
 use client::{
-    proto, Authenticate, ChannelList, Client, PeerId, Subscription, TypedEnvelope, User, UserStore,
+    proto, Authenticate, ChannelList, Client, Contact, PeerId, Subscription, TypedEnvelope, User,
+    UserStore,
 };
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
@@ -97,7 +98,8 @@ pub struct ToggleFollow(pub PeerId);
 
 #[derive(Clone)]
 pub struct JoinProject {
-    pub project_id: u64,
+    pub contact: Arc<Contact>,
+    pub project_index: usize,
     pub app_state: Arc<AppState>,
 }
 
@@ -117,7 +119,13 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
         open_new(&action.0, cx)
     });
     cx.add_global_action(move |action: &JoinProject, cx: &mut MutableAppContext| {
-        join_project(action.project_id, &action.app_state, cx).detach();
+        join_project(
+            action.contact.clone(),
+            action.project_index,
+            &action.app_state,
+            cx,
+        )
+        .detach();
     });
 
     cx.add_async_action(Workspace::toggle_follow);
@@ -2268,12 +2276,16 @@ pub fn open_paths(
 }
 
 pub fn join_project(
-    project_id: u64,
+    contact: Arc<Contact>,
+    project_index: usize,
     app_state: &Arc<AppState>,
     cx: &mut MutableAppContext,
 ) -> Task<Result<ViewHandle<Workspace>>> {
+    let project_id = contact.projects[project_index].id;
+
     struct JoiningNotice {
-        message: &'static str,
+        avatar: Option<Arc<ImageData>>,
+        message: String,
     }
 
     impl Entity for JoiningNotice {
@@ -2287,16 +2299,28 @@ pub fn join_project(
 
         fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
             let theme = &cx.global::<Settings>().theme.workspace;
-            Text::new(
-                self.message.to_string(),
-                theme.joining_project_message.text.clone(),
-            )
-            .contained()
-            .with_style(theme.joining_project_message.container)
-            .aligned()
-            .contained()
-            .with_background_color(theme.background)
-            .boxed()
+
+            Flex::column()
+                .with_children(self.avatar.clone().map(|avatar| {
+                    Image::new(avatar)
+                        .with_style(theme.joining_project_avatar)
+                        .aligned()
+                        .boxed()
+                }))
+                .with_child(
+                    Text::new(
+                        self.message.clone(),
+                        theme.joining_project_message.text.clone(),
+                    )
+                    .contained()
+                    .with_style(theme.joining_project_message.container)
+                    .aligned()
+                    .boxed(),
+                )
+                .aligned()
+                .contained()
+                .with_background_color(theme.background)
+                .boxed()
         }
     }
 
@@ -2312,7 +2336,12 @@ pub fn join_project(
     cx.spawn(|mut cx| async move {
         let (window, joining_notice) = cx.update(|cx| {
             cx.add_window((app_state.build_window_options)(), |_| JoiningNotice {
-                message: "Loading remote project...",
+                avatar: contact.user.avatar.clone(),
+                message: format!(
+                    "Asking to join @{}'s copy of {}...",
+                    contact.user.github_login,
+                    humanize_list(&contact.projects[project_index].worktree_root_names)
+                ),
             })
         });
         let project = Project::remote(
@@ -2338,15 +2367,22 @@ pub fn join_project(
                 workspace
             })),
             Err(error @ _) => {
+                let login = &contact.user.github_login;
                 let message = match error {
                     project::JoinProjectError::HostDeclined => {
-                        "The host declined your request to join."
+                        format!("@{} declined your request.", login)
                     }
-                    project::JoinProjectError::HostClosedProject => "The host closed the project.",
-                    project::JoinProjectError::HostWentOffline => "The host went offline.",
-                    project::JoinProjectError::Other(_) => {
-                        "An error occurred when attempting to join the project."
+                    project::JoinProjectError::HostClosedProject => {
+                        format!(
+                            "@{} closed their copy of {}.",
+                            login,
+                            humanize_list(&contact.projects[project_index].worktree_root_names)
+                        )
                     }
+                    project::JoinProjectError::HostWentOffline => {
+                        format!("@{} went offline.", login)
+                    }
+                    project::JoinProjectError::Other(_) => "An error occurred.".to_string(),
                 };
                 joining_notice.update(cx, |notice, cx| {
                     notice.message = message;
@@ -2371,4 +2407,19 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
         (app_state.build_workspace)(project, &app_state, cx)
     });
     cx.dispatch_action(window_id, vec![workspace.id()], &OpenNew(app_state.clone()));
+}
+
+fn humanize_list<'a>(items: impl IntoIterator<Item = &'a String>) -> String {
+    let mut list = String::new();
+    let mut items = items.into_iter().enumerate().peekable();
+    while let Some((ix, item)) = items.next() {
+        if ix > 0 {
+            list.push_str(", ");
+        }
+        if items.peek().is_none() {
+            list.push_str("and ");
+        }
+        list.push_str(item);
+    }
+    list
 }

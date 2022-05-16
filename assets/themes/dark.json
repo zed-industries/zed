@@ -90,6 +90,10 @@
   },
   "workspace": {
     "background": "#1c1c1c",
+    "joining_project_avatar": {
+      "corner_radius": 40,
+      "width": 80
+    },
     "joining_project_message": {
       "padding": 12,
       "family": "Zed Sans",

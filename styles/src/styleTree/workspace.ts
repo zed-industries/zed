@@ -41,6 +41,10 @@ export default function workspace(theme: Theme) {
 
   return {
     background: backgroundColor(theme, 300),
+    joiningProjectAvatar: {
+      cornerRadius: 40,
+      width: 80,
+    },
     joiningProjectMessage: {
       padding: 12,
       ...text(theme, "sans", "primary", { size: "lg" })

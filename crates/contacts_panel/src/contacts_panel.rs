@@ -336,14 +336,14 @@ impl ContactsPanel {
     fn render_contact_project(
         contact: Arc<Contact>,
         current_user_id: Option<u64>,
-        project_ix: usize,
+        project_index: usize,
         app_state: Arc<AppState>,
         theme: &theme::ContactsPanel,
         is_last_project: bool,
         is_selected: bool,
         cx: &mut LayoutContext,
     ) -> ElementBox {
-        let project = &contact.projects[project_ix];
+        let project = &contact.projects[project_index];
         let project_id = project.id;
         let is_host = Some(contact.user.id) == current_user_id;
         let is_guest = !is_host
@@ -445,7 +445,8 @@ impl ContactsPanel {
         .on_click(move |_, cx| {
             if !is_host && !is_guest {
                 cx.dispatch_global_action(JoinProject {
-                    project_id,
+                    contact: contact.clone(),
+                    project_index,
                     app_state: app_state.clone(),
                 });
             }
@@ -768,12 +769,12 @@ impl ContactsPanel {
                         let section = *section;
                         self.toggle_expanded(&ToggleExpanded(section), cx);
                     }
-                    ContactEntry::ContactProject(contact, project_ix) => {
-                        cx.dispatch_global_action(JoinProject {
-                            project_id: contact.projects[*project_ix].id,
+                    ContactEntry::ContactProject(contact, project_index) => cx
+                        .dispatch_global_action(JoinProject {
+                            contact: contact.clone(),
+                            project_index: *project_index,
                             app_state: self.app_state.clone(),
-                        })
-                    }
+                        }),
                     _ => {}
                 }
             }
