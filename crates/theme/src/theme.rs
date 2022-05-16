@@ -48,6 +48,7 @@ pub struct Workspace {
     pub modal: ContainerStyle,
     pub notification: ContainerStyle,
     pub notifications: Notifications,
+    pub joining_project_message: ContainedText,
 }
 
 #[derive(Clone, Deserialize, Default)]

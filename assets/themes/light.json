@@ -90,6 +90,12 @@
   },
   "workspace": {
     "background": "#f8f8f8",
+    "joining_project_message": {
+      "padding": 12,
+      "family": "Zed Sans",
+      "color": "#2b2b2b",
+      "size": 18
+    },
     "leader_border_opacity": 0.7,
     "leader_border_width": 2,
     "tab": {

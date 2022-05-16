@@ -1604,6 +1604,20 @@ impl MutableAppContext {
         })
     }
 
+    pub fn replace_root_view<T, F>(&mut self, window_id: usize, build_root_view: F) -> ViewHandle<T>
+    where
+        T: View,
+        F: FnOnce(&mut ViewContext<T>) -> T,
+    {
+        self.update(|this| {
+            let root_view = this.add_view(window_id, build_root_view);
+            let window = this.cx.windows.get_mut(&window_id).unwrap();
+            window.root_view = root_view.clone().into();
+            window.focused_view_id = Some(root_view.id());
+            root_view
+        })
+    }
+
     pub fn remove_window(&mut self, window_id: usize) {
         self.cx.windows.remove(&window_id);
         self.presenters_and_platform_windows.remove(&window_id);

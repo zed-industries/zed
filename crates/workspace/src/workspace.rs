@@ -2272,6 +2272,34 @@ pub fn join_project(
     app_state: &Arc<AppState>,
     cx: &mut MutableAppContext,
 ) -> Task<Result<ViewHandle<Workspace>>> {
+    struct JoiningNotice {
+        message: &'static str,
+    }
+
+    impl Entity for JoiningNotice {
+        type Event = ();
+    }
+
+    impl View for JoiningNotice {
+        fn ui_name() -> &'static str {
+            "JoiningProjectWindow"
+        }
+
+        fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+            let theme = &cx.global::<Settings>().theme.workspace;
+            Text::new(
+                self.message.to_string(),
+                theme.joining_project_message.text.clone(),
+            )
+            .contained()
+            .with_style(theme.joining_project_message.container)
+            .aligned()
+            .contained()
+            .with_background_color(theme.background)
+            .boxed()
+        }
+    }
+
     for window_id in cx.window_ids().collect::<Vec<_>>() {
         if let Some(workspace) = cx.root_view::<Workspace>(window_id) {
             if workspace.read(cx).project().read(cx).remote_id() == Some(project_id) {
@@ -2282,6 +2310,10 @@ pub fn join_project(
 
     let app_state = app_state.clone();
     cx.spawn(|mut cx| async move {
+        let (window, joining_notice) =
+            cx.update(|cx| cx.add_window((app_state.build_window_options)(), |_| JoiningNotice {
+                message: "Loading remote project...",
+            }));
         let project = Project::remote(
             project_id,
             app_state.client.clone(),
@@ -2290,13 +2322,28 @@ pub fn join_project(
             app_state.fs.clone(),
             &mut cx,
         )
-        .await?;
-        Ok(cx.update(|cx| {
-            cx.add_window((app_state.build_window_options)(), |cx| {
-                (app_state.build_workspace)(project, &app_state, cx)
-            })
-            .1
-        }))
+        .await;
+
+        cx.update(|cx| match project {
+            Ok(project) => Ok(cx.replace_root_view(window, |cx| {
+                let mut workspace = (app_state.build_workspace)(project, &app_state, cx);
+                workspace.toggle_sidebar_item(
+                    &ToggleSidebarItem {
+                        side: Side::Left,
+                        item_index: 0,
+                    },
+                    cx,
+                );
+                workspace
+            })),
+            Err(error) => {
+                joining_notice.update(cx, |joining_notice, cx| {
+                    joining_notice.message = "An error occurred trying to join the project. Please, close this window and retry.";
+                    cx.notify();
+                });
+                Err(error)
+            },
+        })
     })
 }
 
