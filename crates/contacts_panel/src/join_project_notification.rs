@@ -57,7 +57,7 @@ impl View for JoinProjectNotification {
         render_user_notification(
             self.user.clone(),
             "wants to join your project",
-            Some("They won't know if you decline."),
+            None,
             Decline,
             vec![("Decline", Box::new(Decline)), ("Accept", Box::new(Accept))],
             cx,
