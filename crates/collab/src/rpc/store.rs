@@ -338,6 +338,20 @@ impl Store {
                         }
                     }
 
+                    for requester_user_id in project.join_requests.keys() {
+                        if let Some(requester_connection_ids) =
+                            self.connections_by_user_id.get_mut(&requester_user_id)
+                        {
+                            for requester_connection_id in requester_connection_ids.iter() {
+                                if let Some(requester_connection) =
+                                    self.connections.get_mut(requester_connection_id)
+                                {
+                                    requester_connection.requested_projects.remove(&project_id);
+                                }
+                            }
+                        }
+                    }
+
                     Ok(project)
                 } else {
                     Err(anyhow!("no such project"))?

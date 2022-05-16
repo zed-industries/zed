@@ -347,6 +347,19 @@ impl Server {
                     self.peer
                         .send(conn_id, proto::UnregisterProject { project_id })
                 });
+
+                for (_, receipts) in project.join_requests {
+                    for receipt in receipts {
+                        self.peer.respond(
+                            receipt,
+                            proto::JoinProjectResponse {
+                                variant: Some(proto::join_project_response::Variant::Decline(
+                                    proto::join_project_response::Decline {},
+                                )),
+                            },
+                        )?;
+                    }
+                }
             }
 
             for project_id in removed_connection.guest_project_ids {
@@ -409,11 +422,24 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::UnregisterProject>,
     ) -> Result<()> {
-        let user_id = {
+        let (user_id, project) = {
             let mut state = self.store_mut().await;
-            state.unregister_project(request.payload.project_id, request.sender_id)?;
-            state.user_id_for_connection(request.sender_id)?
+            let project =
+                state.unregister_project(request.payload.project_id, request.sender_id)?;
+            (state.user_id_for_connection(request.sender_id)?, project)
         };
+        for (_, receipts) in project.join_requests {
+            for receipt in receipts {
+                self.peer.respond(
+                    receipt,
+                    proto::JoinProjectResponse {
+                        variant: Some(proto::join_project_response::Variant::Decline(
+                            proto::join_project_response::Decline {},
+                        )),
+                    },
+                )?;
+            }
+        }
 
         self.update_user_contacts(user_id).await?;
         Ok(())
