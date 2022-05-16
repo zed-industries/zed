@@ -826,7 +826,7 @@ impl LocalWorktree {
             root_char_bag = snapshot.root_char_bag;
             next_entry_id = snapshot.next_entry_id.clone();
         }
-        cx.spawn_weak(|this, cx| async move {
+        cx.spawn_weak(|this, mut cx| async move {
             let entry = Entry::new(
                 path,
                 &fs.metadata(&abs_path)
@@ -836,20 +836,21 @@ impl LocalWorktree {
                 root_char_bag,
             );
 
-            let (entry, snapshot, snapshots_tx) = this
+            let this = this
                 .upgrade(&cx)
-                .ok_or_else(|| anyhow!("worktree was dropped"))?
-                .read_with(&cx, |this, _| {
-                    let this = this.as_local().unwrap();
-                    let mut snapshot = this.background_snapshot.lock();
-                    if let Some(old_path) = old_path {
-                        snapshot.remove_path(&old_path);
-                    }
-                    let entry = snapshot.insert_entry(entry, fs.as_ref());
-                    snapshot.scan_id += 1;
-                    let snapshots_tx = this.share.as_ref().map(|s| s.snapshots_tx.clone());
-                    (entry, snapshot.clone(), snapshots_tx)
-                });
+                .ok_or_else(|| anyhow!("worktree was dropped"))?;
+            let (entry, snapshot, snapshots_tx) = this.read_with(&cx, |this, _| {
+                let this = this.as_local().unwrap();
+                let mut snapshot = this.background_snapshot.lock();
+                if let Some(old_path) = old_path {
+                    snapshot.remove_path(&old_path);
+                }
+                let entry = snapshot.insert_entry(entry, fs.as_ref());
+                snapshot.scan_id += 1;
+                let snapshots_tx = this.share.as_ref().map(|s| s.snapshots_tx.clone());
+                (entry, snapshot.clone(), snapshots_tx)
+            });
+            this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
 
             if let Some(snapshots_tx) = snapshots_tx {
                 snapshots_tx.send(snapshot).await.ok();
