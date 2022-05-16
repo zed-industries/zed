@@ -616,8 +616,10 @@ impl LocalWorktree {
             let text = fs.load(&abs_path).await?;
             // Eagerly populate the snapshot with an updated entry for the loaded file
             let entry = this
-                .update(&mut cx, |this, _| {
-                    this.as_local().unwrap().refresh_entry(path, abs_path, None)
+                .update(&mut cx, |this, cx| {
+                    this.as_local()
+                        .unwrap()
+                        .refresh_entry(path, abs_path, None, cx)
                 })
                 .await?;
             this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
@@ -753,11 +755,12 @@ impl LocalWorktree {
         Some(cx.spawn(|this, mut cx| async move {
             rename.await?;
             let entry = this
-                .update(&mut cx, |this, _| {
+                .update(&mut cx, |this, cx| {
                     this.as_local_mut().unwrap().refresh_entry(
                         new_path.clone(),
                         abs_new_path,
                         Some(old_path),
+                        cx,
                     )
                 })
                 .await?;
@@ -793,10 +796,10 @@ impl LocalWorktree {
         cx.spawn(|this, mut cx| async move {
             write.await?;
             let entry = this
-                .update(&mut cx, |this, _| {
+                .update(&mut cx, |this, cx| {
                     this.as_local_mut()
                         .unwrap()
-                        .refresh_entry(path, abs_path, None)
+                        .refresh_entry(path, abs_path, None, cx)
                 })
                 .await?;
             this.update(&mut cx, |this, cx| {
@@ -813,18 +816,17 @@ impl LocalWorktree {
         path: Arc<Path>,
         abs_path: PathBuf,
         old_path: Option<Arc<Path>>,
-    ) -> impl Future<Output = Result<Entry>> {
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<Entry>> {
+        let fs = self.fs.clone();
         let root_char_bag;
         let next_entry_id;
-        let fs = self.fs.clone();
-        let shared_snapshots_tx = self.share.as_ref().map(|share| share.snapshots_tx.clone());
-        let snapshot = self.background_snapshot.clone();
         {
-            let snapshot = snapshot.lock();
+            let snapshot = self.background_snapshot.lock();
             root_char_bag = snapshot.root_char_bag;
             next_entry_id = snapshot.next_entry_id.clone();
         }
-        async move {
+        cx.spawn_weak(|this, cx| async move {
             let entry = Entry::new(
                 path,
                 &fs.metadata(&abs_path)
@@ -833,17 +835,28 @@ impl LocalWorktree {
                 &next_entry_id,
                 root_char_bag,
             );
-            let mut snapshot = snapshot.lock();
-            if let Some(old_path) = old_path {
-                snapshot.remove_path(&old_path);
+
+            let (entry, snapshot, snapshots_tx) = this
+                .upgrade(&cx)
+                .ok_or_else(|| anyhow!("worktree was dropped"))?
+                .read_with(&cx, |this, _| {
+                    let this = this.as_local().unwrap();
+                    let mut snapshot = this.background_snapshot.lock();
+                    if let Some(old_path) = old_path {
+                        snapshot.remove_path(&old_path);
+                    }
+                    let entry = snapshot.insert_entry(entry, fs.as_ref());
+                    snapshot.scan_id += 1;
+                    let snapshots_tx = this.share.as_ref().map(|s| s.snapshots_tx.clone());
+                    (entry, snapshot.clone(), snapshots_tx)
+                });
+
+            if let Some(snapshots_tx) = snapshots_tx {
+                snapshots_tx.send(snapshot).await.ok();
             }
-            let entry = snapshot.insert_entry(entry, fs.as_ref());
-            snapshot.scan_id += 1;
-            if let Some(tx) = shared_snapshots_tx {
-                tx.send(snapshot.clone()).await.ok();
-            }
+
             Ok(entry)
-        }
+        })
     }
 
     pub fn register(
