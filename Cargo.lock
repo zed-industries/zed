@@ -3394,6 +3394,7 @@ dependencies = [
  "sum_tree",
  "tempdir",
  "text",
+ "thiserror",
  "toml",
  "unindent",
  "util",

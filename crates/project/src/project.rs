@@ -49,6 +49,7 @@ use std::{
     },
     time::Instant,
 };
+use thiserror::Error;
 use util::{post_inc, ResultExt, TryFutureExt as _};
 
 pub use fs::*;
@@ -88,6 +89,18 @@ pub struct Project {
     opened_buffers: HashMap<u64, OpenBuffer>,
     buffer_snapshots: HashMap<u64, Vec<(i32, TextBufferSnapshot)>>,
     nonce: u128,
+}
+
+#[derive(Error, Debug)]
+pub enum JoinProjectError {
+    #[error("host declined join request")]
+    HostDeclined,
+    #[error("host closed the project")]
+    HostClosedProject,
+    #[error("host went offline")]
+    HostWentOffline,
+    #[error("{0}")]
+    Other(#[from] anyhow::Error),
 }
 
 enum OpenBuffer {
@@ -356,7 +369,7 @@ impl Project {
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         cx: &mut AsyncAppContext,
-    ) -> Result<ModelHandle<Self>> {
+    ) -> Result<ModelHandle<Self>, JoinProjectError> {
         client.authenticate_and_connect(true, &cx).await?;
 
         let response = client
@@ -367,7 +380,20 @@ impl Project {
 
         let response = match response.variant.ok_or_else(|| anyhow!("missing variant"))? {
             proto::join_project_response::Variant::Accept(response) => response,
-            proto::join_project_response::Variant::Decline(_) => Err(anyhow!("rejected"))?,
+            proto::join_project_response::Variant::Decline(decline) => {
+                match proto::join_project_response::decline::Reason::from_i32(decline.reason) {
+                    Some(proto::join_project_response::decline::Reason::Declined) => {
+                        Err(JoinProjectError::HostDeclined)?
+                    }
+                    Some(proto::join_project_response::decline::Reason::Closed) => {
+                        Err(JoinProjectError::HostClosedProject)?
+                    }
+                    Some(proto::join_project_response::decline::Reason::WentOffline) => {
+                        Err(JoinProjectError::HostWentOffline)?
+                    }
+                    None => Err(anyhow!("missing decline reason"))?,
+                }
+            }
         };
 
         let replica_id = response.replica_id as ReplicaId;

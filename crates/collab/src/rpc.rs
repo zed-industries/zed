@@ -354,7 +354,9 @@ impl Server {
                             receipt,
                             proto::JoinProjectResponse {
                                 variant: Some(proto::join_project_response::Variant::Decline(
-                                    proto::join_project_response::Decline {},
+                                    proto::join_project_response::Decline {
+                                        reason: proto::join_project_response::decline::Reason::WentOffline as i32
+                                    },
                                 )),
                             },
                         )?;
@@ -434,7 +436,10 @@ impl Server {
                     receipt,
                     proto::JoinProjectResponse {
                         variant: Some(proto::join_project_response::Variant::Decline(
-                            proto::join_project_response::Decline {},
+                            proto::join_project_response::Decline {
+                                reason: proto::join_project_response::decline::Reason::Closed
+                                    as i32,
+                            },
                         )),
                     },
                 )?;
@@ -542,7 +547,10 @@ impl Server {
                         receipt,
                         proto::JoinProjectResponse {
                             variant: Some(proto::join_project_response::Variant::Decline(
-                                proto::join_project_response::Decline {},
+                                proto::join_project_response::Decline {
+                                    reason: proto::join_project_response::decline::Reason::Declined
+                                        as i32,
+                                },
                             )),
                         },
                     )?;
@@ -1837,17 +1845,26 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_host_disconnect(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    async fn test_host_disconnect(
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
+        cx_c: &mut TestAppContext,
+    ) {
         let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
         cx_a.foreground().forbid_parking();
 
-        // Connect to a server as 2 clients.
+        // Connect to a server as 3 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
         let mut client_b = server.create_client(cx_b, "user_b").await;
+        let client_c = server.create_client(cx_c, "user_c").await;
         server
-            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .make_contacts(vec![
+                (&client_a, cx_a),
+                (&client_b, cx_b),
+                (&client_c, cx_c),
+            ])
             .await;
 
         // Share a project as client A
@@ -1868,6 +1885,9 @@ mod tests {
                 cx,
             )
         });
+        let project_id = project_a
+            .read_with(cx_a, |project, _| project.next_remote_id())
+            .await;
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/a", true, cx)
@@ -1887,6 +1907,24 @@ mod tests {
             .await
             .unwrap();
 
+        // Request to join that project as client C
+        let project_c = cx_c.spawn(|mut cx| {
+            let client = client_c.client.clone();
+            let user_store = client_c.user_store.clone();
+            let lang_registry = lang_registry.clone();
+            async move {
+                Project::remote(
+                    project_id,
+                    client,
+                    user_store,
+                    lang_registry.clone(),
+                    FakeFs::new(cx.background()),
+                    &mut cx,
+                )
+                .await
+            }
+        });
+
         // Drop client A's connection. Collaborators should disappear and the project should not be shown as shared.
         server.disconnect_client(client_a.current_user_id(cx_a));
         cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
@@ -1901,6 +1939,10 @@ mod tests {
         cx_b.update(|_| {
             drop(project_b);
         });
+        assert!(matches!(
+            project_c.await.unwrap_err(),
+            project::JoinProjectError::HostWentOffline
+        ));
 
         // Ensure guests can still join.
         let project_b2 = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
@@ -1909,6 +1951,102 @@ mod tests {
             .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_decline_join_request(
+        deterministic: Arc<Deterministic>,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
+    ) {
+        let lang_registry = Arc::new(LanguageRegistry::test());
+        let fs = FakeFs::new(cx_a.background());
+        cx_a.foreground().forbid_parking();
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
+
+        // Share a project as client A
+        fs.insert_tree("/a", json!({})).await;
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let project_id = project_a
+            .read_with(cx_a, |project, _| project.next_remote_id())
+            .await;
+        let (worktree_a, _) = project_a
+            .update(cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/a", true, cx)
+            })
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+
+        // Request to join that project as client B
+        let project_b = cx_b.spawn(|mut cx| {
+            let client = client_b.client.clone();
+            let user_store = client_b.user_store.clone();
+            let lang_registry = lang_registry.clone();
+            async move {
+                Project::remote(
+                    project_id,
+                    client,
+                    user_store,
+                    lang_registry.clone(),
+                    FakeFs::new(cx.background()),
+                    &mut cx,
+                )
+                .await
+            }
+        });
+        deterministic.run_until_parked();
+        project_a.update(cx_a, |project, cx| {
+            project.respond_to_join_request(client_b.user_id().unwrap(), false, cx)
+        });
+        assert!(matches!(
+            project_b.await.unwrap_err(),
+            project::JoinProjectError::HostDeclined
+        ));
+
+        // Request to join the project again as client B
+        let project_b = cx_b.spawn(|mut cx| {
+            let client = client_b.client.clone();
+            let user_store = client_b.user_store.clone();
+            let lang_registry = lang_registry.clone();
+            async move {
+                Project::remote(
+                    project_id,
+                    client,
+                    user_store,
+                    lang_registry.clone(),
+                    FakeFs::new(cx.background()),
+                    &mut cx,
+                )
+                .await
+            }
+        });
+
+        // Close the project on the host
+        deterministic.run_until_parked();
+        cx_a.update(|_| drop(project_a));
+        deterministic.run_until_parked();
+        assert!(matches!(
+            project_b.await.unwrap_err(),
+            project::JoinProjectError::HostClosedProject
+        ));
     }
 
     #[gpui::test(iterations = 10)]

@@ -2310,10 +2310,11 @@ pub fn join_project(
 
     let app_state = app_state.clone();
     cx.spawn(|mut cx| async move {
-        let (window, joining_notice) =
-            cx.update(|cx| cx.add_window((app_state.build_window_options)(), |_| JoiningNotice {
+        let (window, joining_notice) = cx.update(|cx| {
+            cx.add_window((app_state.build_window_options)(), |_| JoiningNotice {
                 message: "Loading remote project...",
-            }));
+            })
+        });
         let project = Project::remote(
             project_id,
             app_state.client.clone(),
@@ -2336,13 +2337,24 @@ pub fn join_project(
                 );
                 workspace
             })),
-            Err(error) => {
-                joining_notice.update(cx, |joining_notice, cx| {
-                    joining_notice.message = "An error occurred trying to join the project. Please, close this window and retry.";
+            Err(error @ _) => {
+                let message = match error {
+                    project::JoinProjectError::HostDeclined => {
+                        "The host declined your request to join."
+                    }
+                    project::JoinProjectError::HostClosedProject => "The host closed the project.",
+                    project::JoinProjectError::HostWentOffline => "The host went offline.",
+                    project::JoinProjectError::Other(_) => {
+                        "An error occurred when attempting to join the project."
+                    }
+                };
+                joining_notice.update(cx, |notice, cx| {
+                    notice.message = message;
                     cx.notify();
                 });
-                Err(error)
-            },
+
+                Err(error)?
+            }
         })
     })
 }

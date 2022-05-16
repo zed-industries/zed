@@ -153,7 +153,15 @@ message JoinProjectResponse {
         repeated LanguageServer language_servers = 4;        
     }
     
-    message Decline {}
+    message Decline {
+        Reason reason = 1;
+
+        enum Reason {
+            Declined = 0;
+            Closed = 1;
+            WentOffline = 2;
+        }
+    }
 }
 
 message LeaveProject {
