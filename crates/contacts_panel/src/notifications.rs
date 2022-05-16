@@ -13,7 +13,8 @@ enum Button {}
 
 pub fn render_user_notification<V: View, A: Action + Clone>(
     user: Arc<User>,
-    message: &str,
+    title: &str,
+    body: Option<&str>,
     dismiss_action: A,
     buttons: Vec<(&'static str, Box<dyn Action>)>,
     cx: &mut RenderContext<V>,
@@ -39,7 +40,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                 }))
                 .with_child(
                     Text::new(
-                        format!("{} {}", user.github_login, message),
+                        format!("{} {}", user.github_login, title),
                         theme.header_message.text.clone(),
                     )
                     .contained()
@@ -74,15 +75,15 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                 )
                 .named("contact notification header"),
         )
-        .with_child(
+        .with_children(body.map(|body| {
             Label::new(
-                "They won't know if you decline.".to_string(),
+                body.to_string(),
                 theme.body_message.text.clone(),
             )
             .contained()
             .with_style(theme.body_message.container)
-            .boxed(),
-        )
+            .boxed()
+        }))
         .with_children(if buttons.is_empty() {
             None
         } else {

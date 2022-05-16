@@ -45,6 +45,7 @@ impl View for ContactNotification {
             ContactEventKind::Requested => render_user_notification(
                 self.event.user.clone(),
                 "wants to add you as a contact",
+                Some("They won't know if you decline."),
                 RespondToContactRequest {
                     user_id: self.event.user.id,
                     accept: false,
@@ -70,6 +71,7 @@ impl View for ContactNotification {
             ContactEventKind::Accepted => render_user_notification(
                 self.event.user.clone(),
                 "accepted your contact request",
+                None,
                 Dismiss(self.event.user.id),
                 vec![],
                 cx,
