@@ -1635,20 +1635,22 @@ impl MutableAppContext {
 
         {
             let mut app = self.upgrade();
-            let presenter = presenter.clone();
+            let presenter = Rc::downgrade(&presenter);
             window.on_event(Box::new(move |event| {
                 app.update(|cx| {
-                    if let Event::KeyDown { keystroke, .. } = &event {
-                        if cx.dispatch_keystroke(
-                            window_id,
-                            presenter.borrow().dispatch_path(cx.as_ref()),
-                            keystroke,
-                        ) {
-                            return;
+                    if let Some(presenter) = presenter.upgrade() {
+                        if let Event::KeyDown { keystroke, .. } = &event {
+                            if cx.dispatch_keystroke(
+                                window_id,
+                                presenter.borrow().dispatch_path(cx.as_ref()),
+                                keystroke,
+                            ) {
+                                return;
+                            }
                         }
-                    }
 
-                    presenter.borrow_mut().dispatch_event(event, cx);
+                        presenter.borrow_mut().dispatch_event(event, cx);
+                    }
                 })
             }));
         }
