@@ -350,11 +350,6 @@ impl ContactsPanel {
         let project = &contact.projects[project_index];
         let project_id = project.id;
         let is_host = Some(contact.user.id) == current_user_id;
-        let is_guest = !is_host
-            && project
-                .guests
-                .iter()
-                .any(|guest| Some(guest.id) == current_user_id);
 
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
@@ -447,7 +442,7 @@ impl ContactsPanel {
             CursorStyle::Arrow
         })
         .on_click(move |_, cx| {
-            if !is_host && !is_guest {
+            if !is_host {
                 cx.dispatch_global_action(JoinProject {
                     contact: contact.clone(),
                     project_index,
