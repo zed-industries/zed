@@ -1,6 +1,6 @@
 use crate::{
     sidebar::{Side, ToggleSidebarItem},
-    AppState,
+    AppState, ToggleFollow,
 };
 use anyhow::Result;
 use client::{proto, Client, Contact};
@@ -96,8 +96,11 @@ impl WaitingRoom {
                         match project {
                             Ok(project) => {
                                 cx.replace_root_view(|cx| {
-                                    let mut workspace =
-                                        (app_state.build_workspace)(project, &app_state, cx);
+                                    let mut workspace = (app_state.build_workspace)(
+                                        project.clone(),
+                                        &app_state,
+                                        cx,
+                                    );
                                     workspace.toggle_sidebar_item(
                                         &ToggleSidebarItem {
                                             side: Side::Left,
@@ -105,6 +108,18 @@ impl WaitingRoom {
                                         },
                                         cx,
                                     );
+                                    if let Some((host_peer_id, _)) = project
+                                        .read(cx)
+                                        .collaborators()
+                                        .iter()
+                                        .find(|(_, collaborator)| collaborator.replica_id == 0)
+                                    {
+                                        if let Some(follow) = workspace
+                                            .toggle_follow(&ToggleFollow(*host_peer_id), cx)
+                                        {
+                                            follow.detach_and_log_err(cx);
+                                        }
+                                    }
                                     workspace
                                 });
                             }
