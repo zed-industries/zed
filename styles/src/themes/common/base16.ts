@@ -13,8 +13,6 @@ export function colorRamp(color: Color): Scale {
     .mode("hsl");
 }
 
-// Neutral. 8 stops from 0 to 1.
-
 export function createTheme(name: string, isLight: boolean, ramps: { [rampName: string]: Scale }, blend?: number): Theme {
   if (isLight) {
     for (var rampName in ramps) {
@@ -85,9 +83,9 @@ export function createTheme(name: string, isLight: boolean, ramps: { [rampName: 
   };
 
   const borderColor = {
-    primary: rampColor(ramps.neutral, isLight ? 2 : 0),
-    secondary: rampColor(ramps.neutral, isLight ? 2 : 1),
-    muted: rampColor(ramps.neutral, isLight ? 4 : 3),
+    primary: rampColor(ramps.neutral, isLight ? 1.5 : 0),
+    secondary: rampColor(ramps.neutral, isLight ? 1.25 : 1),
+    muted: rampColor(ramps.neutral, isLight ? 1 : 3),
     active: rampColor(ramps.neutral, isLight ? 4 : 3),
     onMedia: withOpacity(rampColor(ramps.neutral, 0), 0.1),
     ok: withOpacity(rampColor(ramps.green, 0.5), 0.15),
