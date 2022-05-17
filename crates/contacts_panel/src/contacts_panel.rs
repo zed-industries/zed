@@ -133,8 +133,12 @@ impl ContactsPanel {
                                 if let Some(workspace) = workspace.upgrade(cx) {
                                     workspace.update(cx, |workspace, cx| {
                                         workspace.show_notification(
-                                            cx.add_view(|_| {
-                                                JoinProjectNotification::new(project, user.clone())
+                                            cx.add_view(|cx| {
+                                                JoinProjectNotification::new(
+                                                    project,
+                                                    user.clone(),
+                                                    cx,
+                                                )
                                             }),
                                             cx,
                                         )

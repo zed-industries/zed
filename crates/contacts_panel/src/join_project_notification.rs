@@ -25,7 +25,15 @@ pub struct JoinProjectNotification {
 }
 
 impl JoinProjectNotification {
-    pub fn new(project: ModelHandle<Project>, user: Arc<User>) -> Self {
+    pub fn new(project: ModelHandle<Project>, user: Arc<User>, cx: &mut ViewContext<Self>) -> Self {
+        cx.subscribe(&project, |this, _, event, cx| {
+            if let project::Event::ContactCancelledJoinRequest(user) = event {
+                if *user == this.user {
+                    cx.emit(Event::Dismiss);
+                }
+            }
+        })
+        .detach();
         Self { project, user }
     }
 

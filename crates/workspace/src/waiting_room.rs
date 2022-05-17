@@ -3,25 +3,35 @@ use crate::{
     AppState,
 };
 use anyhow::Result;
-use client::Contact;
-use gpui::{elements::*, ElementBox, Entity, ImageData, RenderContext, Task, View, ViewContext};
+use client::{proto, Client, Contact};
+use gpui::{
+    elements::*, ElementBox, Entity, ImageData, MutableAppContext, RenderContext, Task, View,
+    ViewContext,
+};
 use project::Project;
 use settings::Settings;
 use std::sync::Arc;
+use util::ResultExt;
 
 pub struct WaitingRoom {
+    project_id: u64,
     avatar: Option<Arc<ImageData>>,
     message: String,
-    joined: bool,
+    waiting: bool,
+    client: Arc<Client>,
     _join_task: Task<Result<()>>,
 }
 
 impl Entity for WaitingRoom {
     type Event = ();
 
-    fn release(&mut self, _: &mut gpui::MutableAppContext) {
-        if !self.joined {
-            // TODO: Cancel the join request
+    fn release(&mut self, _: &mut MutableAppContext) {
+        if self.waiting {
+            self.client
+                .send(proto::LeaveProject {
+                    project_id: self.project_id,
+                })
+                .log_err();
         }
     }
 }
@@ -66,7 +76,7 @@ impl WaitingRoom {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let project_id = contact.projects[project_index].id;
-
+        let client = app_state.client.clone();
         let _join_task = cx.spawn_weak({
             let contact = contact.clone();
             |this, mut cx| async move {
@@ -81,47 +91,50 @@ impl WaitingRoom {
                 .await;
 
                 if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, cx| match project {
-                        Ok(project) => {
-                            this.joined = true;
-                            cx.replace_root_view(|cx| {
-                                let mut workspace =
-                                    (app_state.build_workspace)(project, &app_state, cx);
-                                workspace.toggle_sidebar_item(
-                                    &ToggleSidebarItem {
-                                        side: Side::Left,
-                                        item_index: 0,
-                                    },
-                                    cx,
-                                );
-                                workspace
-                            });
-                        }
-                        Err(error @ _) => {
-                            let login = &contact.user.github_login;
-                            let message = match error {
-                                project::JoinProjectError::HostDeclined => {
-                                    format!("@{} declined your request.", login)
-                                }
-                                project::JoinProjectError::HostClosedProject => {
-                                    format!(
-                                        "@{} closed their copy of {}.",
-                                        login,
-                                        humanize_list(
-                                            &contact.projects[project_index].worktree_root_names
+                    this.update(&mut cx, |this, cx| {
+                        this.waiting = false;
+                        match project {
+                            Ok(project) => {
+                                cx.replace_root_view(|cx| {
+                                    let mut workspace =
+                                        (app_state.build_workspace)(project, &app_state, cx);
+                                    workspace.toggle_sidebar_item(
+                                        &ToggleSidebarItem {
+                                            side: Side::Left,
+                                            item_index: 0,
+                                        },
+                                        cx,
+                                    );
+                                    workspace
+                                });
+                            }
+                            Err(error @ _) => {
+                                let login = &contact.user.github_login;
+                                let message = match error {
+                                    project::JoinProjectError::HostDeclined => {
+                                        format!("@{} declined your request.", login)
+                                    }
+                                    project::JoinProjectError::HostClosedProject => {
+                                        format!(
+                                            "@{} closed their copy of {}.",
+                                            login,
+                                            humanize_list(
+                                                &contact.projects[project_index]
+                                                    .worktree_root_names
+                                            )
                                         )
-                                    )
-                                }
-                                project::JoinProjectError::HostWentOffline => {
-                                    format!("@{} went offline.", login)
-                                }
-                                project::JoinProjectError::Other(error) => {
-                                    log::error!("error joining project: {}", error);
-                                    "An error occurred.".to_string()
-                                }
-                            };
-                            this.message = message;
-                            cx.notify();
+                                    }
+                                    project::JoinProjectError::HostWentOffline => {
+                                        format!("@{} went offline.", login)
+                                    }
+                                    project::JoinProjectError::Other(error) => {
+                                        log::error!("error joining project: {}", error);
+                                        "An error occurred.".to_string()
+                                    }
+                                };
+                                this.message = message;
+                                cx.notify();
+                            }
                         }
                     })
                 }
@@ -131,13 +144,15 @@ impl WaitingRoom {
         });
 
         Self {
+            project_id,
             avatar: contact.user.avatar.clone(),
             message: format!(
                 "Asking to join @{}'s copy of {}...",
                 contact.user.github_login,
                 humanize_list(&contact.projects[project_index].worktree_root_names)
             ),
-            joined: false,
+            waiting: true,
+            client,
             _join_task,
         }
     }
@@ -149,10 +164,11 @@ fn humanize_list<'a>(items: impl IntoIterator<Item = &'a String>) -> String {
     while let Some((ix, item)) = items.next() {
         if ix > 0 {
             list.push_str(", ");
+            if items.peek().is_none() {
+                list.push_str("and ");
+            }
         }
-        if items.peek().is_none() {
-            list.push_str("and ");
-        }
+
         list.push_str(item);
     }
     list
