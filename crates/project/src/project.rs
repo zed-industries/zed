@@ -3805,11 +3805,19 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let user_id = message.payload.requester_id;
-        let user_store = this.read_with(&cx, |this, _| this.user_store.clone());
-        let user = user_store
-            .update(&mut cx, |store, cx| store.fetch_user(user_id, cx))
-            .await?;
-        this.update(&mut cx, |_, cx| cx.emit(Event::ContactRequestedJoin(user)));
+        if this.read_with(&cx, |project, _| {
+            project.collaborators.values().any(|c| c.user.id == user_id)
+        }) {
+            this.update(&mut cx, |this, cx| {
+                this.respond_to_join_request(user_id, true, cx)
+            });
+        } else {
+            let user_store = this.read_with(&cx, |this, _| this.user_store.clone());
+            let user = user_store
+                .update(&mut cx, |store, cx| store.fetch_user(user_id, cx))
+                .await?;
+            this.update(&mut cx, |_, cx| cx.emit(Event::ContactRequestedJoin(user)));
+        }
         Ok(())
     }
 

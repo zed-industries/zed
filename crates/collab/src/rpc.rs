@@ -1669,7 +1669,12 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_share_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    async fn test_share_project(
+        deterministic: Arc<Deterministic>,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
+        cx_b2: &mut TestAppContext,
+    ) {
         let (window_b, _) = cx_b.add_window(|_| EmptyView);
         let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
@@ -1701,6 +1706,9 @@ mod tests {
                 cx,
             )
         });
+        let project_id = project_a
+            .read_with(cx_a, |project, _| project.next_remote_id())
+            .await;
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/a", true, cx)
@@ -1776,14 +1784,41 @@ mod tests {
         //     .condition(&cx_a, |buffer, _| buffer.selection_sets().count() == 0)
         //     .await;
 
-        // Dropping the client B's project removes client B from client A's collaborators.
+        // Client B can join again on a different window because they are already a participant.
+        let client_b2 = server.create_client(cx_b2, "user_b").await;
+        let project_b2 = Project::remote(
+            project_id,
+            client_b2.client.clone(),
+            client_b2.user_store.clone(),
+            lang_registry.clone(),
+            FakeFs::new(cx_b2.background()),
+            &mut cx_b2.to_async(),
+        )
+        .await
+        .unwrap();
+        deterministic.run_until_parked();
+        project_a.read_with(cx_a, |project, _| {
+            assert_eq!(project.collaborators().len(), 2);
+        });
+        project_b.read_with(cx_b, |project, _| {
+            assert_eq!(project.collaborators().len(), 2);
+        });
+        project_b2.read_with(cx_b2, |project, _| {
+            assert_eq!(project.collaborators().len(), 2);
+        });
+
+        // Dropping client B's first project removes only that from client A's collaborators.
         cx_b.update(move |_| {
             drop(client_b.project.take());
             drop(project_b);
         });
-        project_a
-            .condition(&cx_a, |project, _| project.collaborators().is_empty())
-            .await;
+        deterministic.run_until_parked();
+        project_a.read_with(cx_a, |project, _| {
+            assert_eq!(project.collaborators().len(), 1);
+        });
+        project_b2.read_with(cx_b2, |project, _| {
+            assert_eq!(project.collaborators().len(), 1);
+        });
     }
 
     #[gpui::test(iterations = 10)]
