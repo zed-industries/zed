@@ -1895,6 +1895,7 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_host_disconnect(
+        deterministic: Arc<Deterministic>,
         cx_a: &mut TestAppContext,
         cx_b: &mut TestAppContext,
         cx_c: &mut TestAppContext,
@@ -1973,6 +1974,7 @@ mod tests {
                 .await
             }
         });
+        deterministic.run_until_parked();
 
         // Drop client A's connection. Collaborators should disappear and the project should not be shown as shared.
         server.disconnect_client(client_a.current_user_id(cx_a));
