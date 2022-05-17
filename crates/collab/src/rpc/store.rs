@@ -2,7 +2,7 @@ use crate::db::{self, ChannelId, UserId};
 use anyhow::{anyhow, Result};
 use collections::{hash_map::Entry, BTreeMap, HashMap, HashSet};
 use rpc::{proto, ConnectionId, Receipt};
-use std::{collections::hash_map, path::PathBuf};
+use std::{collections::hash_map, mem, path::PathBuf};
 use tracing::instrument;
 
 #[derive(Default)]
@@ -112,36 +112,39 @@ impl Store {
         &mut self,
         connection_id: ConnectionId,
     ) -> Result<RemovedConnectionState> {
-        let connection = if let Some(connection) = self.connections.remove(&connection_id) {
-            connection
-        } else {
-            return Err(anyhow!("no such connection"))?;
-        };
+        let connection = self
+            .connections
+            .get_mut(&connection_id)
+            .ok_or_else(|| anyhow!("no such connection"))?;
 
-        for channel_id in &connection.channels {
-            if let Some(channel) = self.channels.get_mut(&channel_id) {
-                channel.connection_ids.remove(&connection_id);
-            }
-        }
-
-        let user_connections = self
-            .connections_by_user_id
-            .get_mut(&connection.user_id)
-            .unwrap();
-        user_connections.remove(&connection_id);
-        if user_connections.is_empty() {
-            self.connections_by_user_id.remove(&connection.user_id);
-        }
+        let user_id = connection.user_id;
+        let connection_projects = mem::take(&mut connection.projects);
+        let connection_channels = mem::take(&mut connection.channels);
 
         let mut result = RemovedConnectionState::default();
-        result.user_id = connection.user_id;
-        for project_id in connection.projects.clone() {
+        result.user_id = user_id;
+
+        // Leave all channels.
+        for channel_id in connection_channels {
+            self.leave_channel(connection_id, channel_id);
+        }
+
+        // Unregister and leave all projects.
+        for project_id in connection_projects {
             if let Ok(project) = self.unregister_project(project_id, connection_id) {
                 result.hosted_projects.insert(project_id, project);
             } else if self.leave_project(connection_id, project_id).is_ok() {
                 result.guest_project_ids.insert(project_id);
             }
         }
+
+        let user_connections = self.connections_by_user_id.get_mut(&user_id).unwrap();
+        user_connections.remove(&connection_id);
+        if user_connections.is_empty() {
+            self.connections_by_user_id.remove(&user_id);
+        }
+
+        self.connections.remove(&connection_id).unwrap();
 
         Ok(result)
     }
