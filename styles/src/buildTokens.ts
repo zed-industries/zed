@@ -1,9 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
-import { light as solarizedLight, dark as solarizedDark } from "./themes/solarized";
-// Use cave as "light" and "dark" themes
-import { light, dark } from "./themes/cave";
-import Theme from "./themes/theme";
+import themes from "./themes";
+import Theme from "./themes/common/theme";
 import { colors, fontFamilies, fontSizes, fontWeights, sizes } from "./tokens";
 
 // Organize theme tokens
@@ -50,6 +48,9 @@ const coreTokens = {
 const combinedTokens: any = {};
 
 const distPath = path.resolve(`${__dirname}/../dist`);
+for (const file of fs.readdirSync(distPath)) {
+  fs.unlinkSync(path.join(distPath, file));
+}
 
 // Add core tokens to the combined tokens and write `core.json`.
 // We write `core.json` as a separate file for the design team's convenience, but it isn't consumed by Figma Tokens directly.
@@ -60,7 +61,6 @@ combinedTokens.core = coreTokens;
 
 // Add each theme to the combined tokens and write ${theme}.json.
 // We write `${theme}.json` as a separate file for the design team's convenience, but it isn't consumed by Figma Tokens directly.
-let themes = [dark, light, solarizedDark, solarizedLight];
 themes.forEach((theme) => {
   const themePath = `${distPath}/${theme.name}.json`
   fs.writeFileSync(themePath, JSON.stringify(themeTokens(theme), null, 2));

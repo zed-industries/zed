@@ -14,89 +14,91 @@ message Envelope {
         RegisterProject register_project = 8;
         RegisterProjectResponse register_project_response = 9;
         UnregisterProject unregister_project = 10;
-        ShareProject share_project = 11;
-        UnshareProject unshare_project = 12;
-        JoinProject join_project = 13;
-        JoinProjectResponse join_project_response = 14;
-        LeaveProject leave_project = 15;
-        AddProjectCollaborator add_project_collaborator = 16;
-        RemoveProjectCollaborator remove_project_collaborator = 17;
+        RequestJoinProject request_join_project = 11;
+        RespondToJoinProjectRequest respond_to_join_project_request = 12;
+        JoinProjectRequestCancelled join_project_request_cancelled = 13;
+        JoinProject join_project = 14;
+        JoinProjectResponse join_project_response = 15;
+        LeaveProject leave_project = 16;
+        AddProjectCollaborator add_project_collaborator = 17;
+        RemoveProjectCollaborator remove_project_collaborator = 18;
+        ProjectUnshared project_unshared = 19;
 
-        GetDefinition get_definition = 18;
-        GetDefinitionResponse get_definition_response = 19;
-        GetReferences get_references = 20;
-        GetReferencesResponse get_references_response = 21;
-        GetDocumentHighlights get_document_highlights = 22;
-        GetDocumentHighlightsResponse get_document_highlights_response = 23;
-        GetProjectSymbols get_project_symbols = 24;
-        GetProjectSymbolsResponse get_project_symbols_response = 25;
-        OpenBufferForSymbol open_buffer_for_symbol = 26;
-        OpenBufferForSymbolResponse open_buffer_for_symbol_response = 27;
+        GetDefinition get_definition = 20;
+        GetDefinitionResponse get_definition_response = 21;
+        GetReferences get_references = 22;
+        GetReferencesResponse get_references_response = 23;
+        GetDocumentHighlights get_document_highlights = 24;
+        GetDocumentHighlightsResponse get_document_highlights_response = 25;
+        GetProjectSymbols get_project_symbols = 26;
+        GetProjectSymbolsResponse get_project_symbols_response = 27;
+        OpenBufferForSymbol open_buffer_for_symbol = 28;
+        OpenBufferForSymbolResponse open_buffer_for_symbol_response = 29;
 
-        RegisterWorktree register_worktree = 28;
-        UnregisterWorktree unregister_worktree = 29;
-        UpdateWorktree update_worktree = 31;
+        RegisterWorktree register_worktree = 30;
+        UnregisterWorktree unregister_worktree = 31;
+        UpdateWorktree update_worktree = 32;
 
-        CreateProjectEntry create_project_entry = 32;
-        RenameProjectEntry rename_project_entry = 33;
-        DeleteProjectEntry delete_project_entry = 34;
-        ProjectEntryResponse project_entry_response = 35;
+        CreateProjectEntry create_project_entry = 33;
+        RenameProjectEntry rename_project_entry = 34;
+        DeleteProjectEntry delete_project_entry = 35;
+        ProjectEntryResponse project_entry_response = 36;
 
-        UpdateDiagnosticSummary update_diagnostic_summary = 36;
-        StartLanguageServer start_language_server = 37;
-        UpdateLanguageServer update_language_server = 38;
+        UpdateDiagnosticSummary update_diagnostic_summary = 37;
+        StartLanguageServer start_language_server = 38;
+        UpdateLanguageServer update_language_server = 39;
 
-        OpenBufferById open_buffer_by_id = 39;
-        OpenBufferByPath open_buffer_by_path = 40;
-        OpenBufferResponse open_buffer_response = 41;
-        UpdateBuffer update_buffer = 42;
-        UpdateBufferFile update_buffer_file = 43;
-        SaveBuffer save_buffer = 44;
-        BufferSaved buffer_saved = 45;
-        BufferReloaded buffer_reloaded = 46;
-        ReloadBuffers reload_buffers = 47;
-        ReloadBuffersResponse reload_buffers_response = 48;
-        FormatBuffers format_buffers = 49;
-        FormatBuffersResponse format_buffers_response = 50;
-        GetCompletions get_completions = 51;
-        GetCompletionsResponse get_completions_response = 52;
-        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 53;
-        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 54;
-        GetCodeActions get_code_actions = 55;
-        GetCodeActionsResponse get_code_actions_response = 56;
-        ApplyCodeAction apply_code_action = 57;
-        ApplyCodeActionResponse apply_code_action_response = 58;
-        PrepareRename prepare_rename = 59;
-        PrepareRenameResponse prepare_rename_response = 60;
-        PerformRename perform_rename = 61;
-        PerformRenameResponse perform_rename_response = 62;
-        SearchProject search_project = 63;
-        SearchProjectResponse search_project_response = 64;
+        OpenBufferById open_buffer_by_id = 40;
+        OpenBufferByPath open_buffer_by_path = 41;
+        OpenBufferResponse open_buffer_response = 42;
+        UpdateBuffer update_buffer = 43;
+        UpdateBufferFile update_buffer_file = 44;
+        SaveBuffer save_buffer = 45;
+        BufferSaved buffer_saved = 46;
+        BufferReloaded buffer_reloaded = 47;
+        ReloadBuffers reload_buffers = 48;
+        ReloadBuffersResponse reload_buffers_response = 49;
+        FormatBuffers format_buffers = 50;
+        FormatBuffersResponse format_buffers_response = 51;
+        GetCompletions get_completions = 52;
+        GetCompletionsResponse get_completions_response = 53;
+        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 54;
+        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 55;
+        GetCodeActions get_code_actions = 56;
+        GetCodeActionsResponse get_code_actions_response = 57;
+        ApplyCodeAction apply_code_action = 58;
+        ApplyCodeActionResponse apply_code_action_response = 59;
+        PrepareRename prepare_rename = 60;
+        PrepareRenameResponse prepare_rename_response = 61;
+        PerformRename perform_rename = 62;
+        PerformRenameResponse perform_rename_response = 63;
+        SearchProject search_project = 64;
+        SearchProjectResponse search_project_response = 65;
 
-        GetChannels get_channels = 65;
-        GetChannelsResponse get_channels_response = 66;
-        JoinChannel join_channel = 67;
-        JoinChannelResponse join_channel_response = 68;
-        LeaveChannel leave_channel = 69;
-        SendChannelMessage send_channel_message = 70;
-        SendChannelMessageResponse send_channel_message_response = 71;
-        ChannelMessageSent channel_message_sent = 72;
-        GetChannelMessages get_channel_messages = 73;
-        GetChannelMessagesResponse get_channel_messages_response = 74;
+        GetChannels get_channels = 66;
+        GetChannelsResponse get_channels_response = 67;
+        JoinChannel join_channel = 68;
+        JoinChannelResponse join_channel_response = 69;
+        LeaveChannel leave_channel = 70;
+        SendChannelMessage send_channel_message = 71;
+        SendChannelMessageResponse send_channel_message_response = 72;
+        ChannelMessageSent channel_message_sent = 73;
+        GetChannelMessages get_channel_messages = 74;
+        GetChannelMessagesResponse get_channel_messages_response = 75;
 
-        UpdateContacts update_contacts = 75;
+        UpdateContacts update_contacts = 76;
 
-        GetUsers get_users = 76;
-        FuzzySearchUsers fuzzy_search_users = 77;
-        UsersResponse users_response = 78;
-        RequestContact request_contact = 79;
-        RespondToContactRequest respond_to_contact_request = 80;
-        RemoveContact remove_contact = 81;
+        GetUsers get_users = 77;
+        FuzzySearchUsers fuzzy_search_users = 78;
+        UsersResponse users_response = 79;
+        RequestContact request_contact = 80;
+        RespondToContactRequest respond_to_contact_request = 81;
+        RemoveContact remove_contact = 82;
 
-        Follow follow = 82;
-        FollowResponse follow_response = 83;
-        UpdateFollowers update_followers = 84;
-        Unfollow unfollow = 85;
+        Follow follow = 83;
+        FollowResponse follow_response = 84;
+        UpdateFollowers update_followers = 85;
+        Unfollow unfollow = 86;
     }
 }
 
@@ -124,12 +126,20 @@ message UnregisterProject {
     uint64 project_id = 1;
 }
 
-message ShareProject {
-    uint64 project_id = 1;
+message RequestJoinProject {
+    uint64 requester_id = 1;
+    uint64 project_id = 2;
 }
 
-message UnshareProject {
-    uint64 project_id = 1;
+message RespondToJoinProjectRequest {
+    uint64 requester_id = 1;
+    uint64 project_id = 2;
+    bool allow = 3;
+}
+
+message JoinProjectRequestCancelled {
+    uint64 requester_id = 1;
+    uint64 project_id = 2;
 }
 
 message JoinProject {
@@ -137,10 +147,27 @@ message JoinProject {
 }
 
 message JoinProjectResponse {
-    uint32 replica_id = 1;
-    repeated Worktree worktrees = 2;
-    repeated Collaborator collaborators = 3;
-    repeated LanguageServer language_servers = 4;
+    oneof variant {
+        Accept accept = 1;
+        Decline decline = 2;
+    }
+
+    message Accept {
+        uint32 replica_id = 1;
+        repeated Worktree worktrees = 2;
+        repeated Collaborator collaborators = 3;
+        repeated LanguageServer language_servers = 4;        
+    }
+    
+    message Decline {
+        Reason reason = 1;
+
+        enum Reason {
+            Declined = 0;
+            Closed = 1;
+            WentOffline = 2;
+        }
+    }
 }
 
 message LeaveProject {
@@ -199,6 +226,10 @@ message AddProjectCollaborator {
 message RemoveProjectCollaborator {
     uint64 project_id = 1;
     uint32 peer_id = 2;
+}
+
+message ProjectUnshared {
+    uint64 project_id = 1;
 }
 
 message GetDefinition {
@@ -882,7 +913,6 @@ message Contact {
 
 message ProjectMetadata {
     uint64 id = 1;
-    bool is_shared = 2;
     repeated string worktree_root_names = 3;
     repeated uint64 guests = 4;
 }

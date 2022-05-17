@@ -66,6 +66,11 @@ impl<R: RequestMessage> Response<R> {
         self.server.peer.respond(self.receipt, payload)?;
         Ok(())
     }
+
+    fn into_receipt(self) -> Receipt<R> {
+        self.responded.store(true, SeqCst);
+        self.receipt
+    }
 }
 
 pub struct Server {
@@ -115,10 +120,9 @@ impl Server {
             .add_request_handler(Server::ping)
             .add_request_handler(Server::register_project)
             .add_message_handler(Server::unregister_project)
-            .add_request_handler(Server::share_project)
-            .add_message_handler(Server::unshare_project)
             .add_request_handler(Server::join_project)
             .add_message_handler(Server::leave_project)
+            .add_message_handler(Server::respond_to_join_project_request)
             .add_request_handler(Server::register_worktree)
             .add_message_handler(Server::unregister_worktree)
             .add_request_handler(Server::update_worktree)
@@ -337,31 +341,59 @@ impl Server {
     #[instrument(skip(self), err)]
     async fn sign_out(self: &mut Arc<Self>, connection_id: ConnectionId) -> Result<()> {
         self.peer.disconnect(connection_id);
-        let removed_connection = self.store_mut().await.remove_connection(connection_id)?;
 
-        for (project_id, project) in removed_connection.hosted_projects {
-            if let Some(share) = project.share {
-                broadcast(connection_id, share.guests.keys().copied(), |conn_id| {
+        let removed_user_id = {
+            let mut store = self.store_mut().await;
+            let removed_connection = store.remove_connection(connection_id)?;
+
+            for (project_id, project) in removed_connection.hosted_projects {
+                broadcast(connection_id, project.guests.keys().copied(), |conn_id| {
                     self.peer
-                        .send(conn_id, proto::UnshareProject { project_id })
+                        .send(conn_id, proto::UnregisterProject { project_id })
                 });
+
+                for (_, receipts) in project.join_requests {
+                    for receipt in receipts {
+                        self.peer.respond(
+                            receipt,
+                            proto::JoinProjectResponse {
+                                variant: Some(proto::join_project_response::Variant::Decline(
+                                    proto::join_project_response::Decline {
+                                        reason: proto::join_project_response::decline::Reason::WentOffline as i32
+                                    },
+                                )),
+                            },
+                        )?;
+                    }
+                }
             }
-        }
 
-        for (project_id, peer_ids) in removed_connection.guest_project_ids {
-            broadcast(connection_id, peer_ids, |conn_id| {
-                self.peer.send(
-                    conn_id,
-                    proto::RemoveProjectCollaborator {
-                        project_id,
-                        peer_id: connection_id.0,
-                    },
-                )
-            });
-        }
+            for project_id in removed_connection.guest_project_ids {
+                if let Some(project) = store.project(project_id).trace_err() {
+                    broadcast(connection_id, project.connection_ids(), |conn_id| {
+                        self.peer.send(
+                            conn_id,
+                            proto::RemoveProjectCollaborator {
+                                project_id,
+                                peer_id: connection_id.0,
+                            },
+                        )
+                    });
+                    if project.guests.is_empty() {
+                        self.peer
+                            .send(
+                                project.host_connection_id,
+                                proto::ProjectUnshared { project_id },
+                            )
+                            .trace_err();
+                    }
+                }
+            }
 
-        self.update_user_contacts(removed_connection.user_id)
-            .await?;
+            removed_connection.user_id
+        };
+
+        self.update_user_contacts(removed_user_id).await?;
 
         Ok(())
     }
@@ -396,28 +428,29 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::UnregisterProject>,
     ) -> Result<()> {
-        let user_id = {
+        let (user_id, project) = {
             let mut state = self.store_mut().await;
-            state.unregister_project(request.payload.project_id, request.sender_id)?;
-            state.user_id_for_connection(request.sender_id)?
+            let project =
+                state.unregister_project(request.payload.project_id, request.sender_id)?;
+            (state.user_id_for_connection(request.sender_id)?, project)
         };
+        for (_, receipts) in project.join_requests {
+            for receipt in receipts {
+                self.peer.respond(
+                    receipt,
+                    proto::JoinProjectResponse {
+                        variant: Some(proto::join_project_response::Variant::Decline(
+                            proto::join_project_response::Decline {
+                                reason: proto::join_project_response::decline::Reason::Closed
+                                    as i32,
+                            },
+                        )),
+                    },
+                )?;
+            }
+        }
 
         self.update_user_contacts(user_id).await?;
-        Ok(())
-    }
-
-    async fn share_project(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::ShareProject>,
-        response: Response<proto::ShareProject>,
-    ) -> Result<()> {
-        let user_id = {
-            let mut state = self.store_mut().await;
-            state.share_project(request.payload.project_id, request.sender_id)?;
-            state.user_id_for_connection(request.sender_id)?
-        };
-        self.update_user_contacts(user_id).await?;
-        response.send(proto::Ack {})?;
         Ok(())
     }
 
@@ -451,24 +484,6 @@ impl Server {
         Ok(())
     }
 
-    async fn unshare_project(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::UnshareProject>,
-    ) -> Result<()> {
-        let project_id = request.payload.project_id;
-        let project;
-        {
-            let mut state = self.store_mut().await;
-            project = state.unshare_project(project_id, request.sender_id)?;
-            broadcast(request.sender_id, project.connection_ids, |conn_id| {
-                self.peer
-                    .send(conn_id, proto::UnshareProject { project_id })
-            });
-        }
-        self.update_user_contacts(project.host_user_id).await?;
-        Ok(())
-    }
-
     async fn join_project(
         self: Arc<Server>,
         request: TypedEnvelope<proto::JoinProject>,
@@ -477,9 +492,12 @@ impl Server {
         let project_id = request.payload.project_id;
         let host_user_id;
         let guest_user_id;
+        let host_connection_id;
         {
             let state = self.store().await;
-            host_user_id = state.project(project_id)?.host_user_id;
+            let project = state.project(project_id)?;
+            host_user_id = project.host_user_id;
+            host_connection_id = project.host_connection_id;
             guest_user_id = state.user_id_for_connection(request.sender_id)?;
         };
 
@@ -492,22 +510,74 @@ impl Server {
             return Err(anyhow!("no such project"))?;
         }
 
+        self.store_mut().await.request_join_project(
+            guest_user_id,
+            project_id,
+            response.into_receipt(),
+        )?;
+        self.peer.send(
+            host_connection_id,
+            proto::RequestJoinProject {
+                project_id,
+                requester_id: guest_user_id.to_proto(),
+            },
+        )?;
+        Ok(())
+    }
+
+    async fn respond_to_join_project_request(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::RespondToJoinProjectRequest>,
+    ) -> Result<()> {
+        let host_user_id;
+
         {
-            let state = &mut *self.store_mut().await;
-            let joined = state.join_project(request.sender_id, guest_user_id, project_id)?;
-            let share = joined.project.share()?;
-            let peer_count = share.guests.len();
+            let mut state = self.store_mut().await;
+            let project_id = request.payload.project_id;
+            let project = state.project(project_id)?;
+            if project.host_connection_id != request.sender_id {
+                Err(anyhow!("no such connection"))?;
+            }
+
+            host_user_id = project.host_user_id;
+            let guest_user_id = UserId::from_proto(request.payload.requester_id);
+
+            if !request.payload.allow {
+                let receipts = state
+                    .deny_join_project_request(request.sender_id, guest_user_id, project_id)
+                    .ok_or_else(|| anyhow!("no such request"))?;
+                for receipt in receipts {
+                    self.peer.respond(
+                        receipt,
+                        proto::JoinProjectResponse {
+                            variant: Some(proto::join_project_response::Variant::Decline(
+                                proto::join_project_response::Decline {
+                                    reason: proto::join_project_response::decline::Reason::Declined
+                                        as i32,
+                                },
+                            )),
+                        },
+                    )?;
+                }
+                return Ok(());
+            }
+
+            let (receipts_with_replica_ids, project) = state
+                .accept_join_project_request(request.sender_id, guest_user_id, project_id)
+                .ok_or_else(|| anyhow!("no such request"))?;
+
+            let peer_count = project.guests.len();
             let mut collaborators = Vec::with_capacity(peer_count);
             collaborators.push(proto::Collaborator {
-                peer_id: joined.project.host_connection_id.0,
+                peer_id: project.host_connection_id.0,
                 replica_id: 0,
-                user_id: joined.project.host_user_id.to_proto(),
+                user_id: project.host_user_id.to_proto(),
             });
-            let worktrees = share
+            let worktrees = project
                 .worktrees
                 .iter()
                 .filter_map(|(id, shared_worktree)| {
-                    let worktree = joined.project.worktrees.get(&id)?;
+                    let worktree = project.worktrees.get(&id)?;
                     Some(proto::Worktree {
                         id: *id,
                         root_name: worktree.root_name.clone(),
@@ -521,9 +591,14 @@ impl Server {
                         scan_id: shared_worktree.scan_id,
                     })
                 })
-                .collect();
-            for (peer_conn_id, (peer_replica_id, peer_user_id)) in &share.guests {
-                if *peer_conn_id != request.sender_id {
+                .collect::<Vec<_>>();
+
+            // Add all guests other than the requesting user's own connections as collaborators
+            for (peer_conn_id, (peer_replica_id, peer_user_id)) in &project.guests {
+                if receipts_with_replica_ids
+                    .iter()
+                    .all(|(receipt, _)| receipt.sender_id != *peer_conn_id)
+                {
                     collaborators.push(proto::Collaborator {
                         peer_id: peer_conn_id.0,
                         replica_id: *peer_replica_id as u32,
@@ -531,30 +606,42 @@ impl Server {
                     });
                 }
             }
-            broadcast(
-                request.sender_id,
-                joined.project.connection_ids(),
-                |conn_id| {
-                    self.peer.send(
-                        conn_id,
-                        proto::AddProjectCollaborator {
-                            project_id,
-                            collaborator: Some(proto::Collaborator {
-                                peer_id: request.sender_id.0,
-                                replica_id: joined.replica_id as u32,
-                                user_id: guest_user_id.to_proto(),
-                            }),
-                        },
-                    )
-                },
-            );
-            response.send(proto::JoinProjectResponse {
-                worktrees,
-                replica_id: joined.replica_id as u32,
-                collaborators,
-                language_servers: joined.project.language_servers.clone(),
-            })?;
+
+            for conn_id in project.connection_ids() {
+                for (receipt, replica_id) in &receipts_with_replica_ids {
+                    if conn_id != receipt.sender_id {
+                        self.peer.send(
+                            conn_id,
+                            proto::AddProjectCollaborator {
+                                project_id,
+                                collaborator: Some(proto::Collaborator {
+                                    peer_id: receipt.sender_id.0,
+                                    replica_id: *replica_id as u32,
+                                    user_id: guest_user_id.to_proto(),
+                                }),
+                            },
+                        )?;
+                    }
+                }
+            }
+
+            for (receipt, replica_id) in receipts_with_replica_ids {
+                self.peer.respond(
+                    receipt,
+                    proto::JoinProjectResponse {
+                        variant: Some(proto::join_project_response::Variant::Accept(
+                            proto::join_project_response::Accept {
+                                worktrees: worktrees.clone(),
+                                replica_id: replica_id as u32,
+                                collaborators: collaborators.clone(),
+                                language_servers: project.language_servers.clone(),
+                            },
+                        )),
+                    },
+                )?;
+            }
         }
+
         self.update_user_contacts(host_user_id).await?;
         Ok(())
     }
@@ -567,17 +654,37 @@ impl Server {
         let project_id = request.payload.project_id;
         let project;
         {
-            let mut state = self.store_mut().await;
-            project = state.leave_project(sender_id, project_id)?;
-            broadcast(sender_id, project.connection_ids, |conn_id| {
+            let mut store = self.store_mut().await;
+            project = store.leave_project(sender_id, project_id)?;
+
+            if project.remove_collaborator {
+                broadcast(sender_id, project.connection_ids, |conn_id| {
+                    self.peer.send(
+                        conn_id,
+                        proto::RemoveProjectCollaborator {
+                            project_id,
+                            peer_id: sender_id.0,
+                        },
+                    )
+                });
+            }
+
+            if let Some(requester_id) = project.cancel_request {
                 self.peer.send(
-                    conn_id,
-                    proto::RemoveProjectCollaborator {
+                    project.host_connection_id,
+                    proto::JoinProjectRequestCancelled {
                         project_id,
-                        peer_id: sender_id.0,
+                        requester_id: requester_id.to_proto(),
                     },
-                )
-            });
+                )?;
+            }
+
+            if project.unshare {
+                self.peer.send(
+                    project.host_connection_id,
+                    proto::ProjectUnshared { project_id },
+                )?;
+            }
         }
         self.update_user_contacts(project.host_user_id).await?;
         Ok(())
@@ -603,6 +710,7 @@ impl Server {
                 Worktree {
                     root_name: request.payload.root_name.clone(),
                     visible: request.payload.visible,
+                    ..Default::default()
                 },
             )?;
 
@@ -1542,6 +1650,7 @@ mod tests {
     use settings::Settings;
     use sqlx::types::time::OffsetDateTime;
     use std::{
+        cell::RefCell,
         env,
         ops::Deref,
         path::{Path, PathBuf},
@@ -1564,7 +1673,12 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_share_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    async fn test_share_project(
+        deterministic: Arc<Deterministic>,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
+        cx_b2: &mut TestAppContext,
+    ) {
         let (window_b, _) = cx_b.add_window(|_| EmptyView);
         let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
@@ -1573,7 +1687,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -1596,6 +1710,9 @@ mod tests {
                 cx,
             )
         });
+        let project_id = project_a
+            .read_with(cx_a, |project, _| project.next_remote_id())
+            .await;
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/a", true, cx)
@@ -1606,20 +1723,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that project as client B
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let client_b_peer_id = client_b.peer_id;
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         let replica_id_b = project_b.read_with(cx_b, |project, _| {
             assert_eq!(
@@ -1636,7 +1743,7 @@ mod tests {
         project_a
             .condition(&cx_a, |tree, _| {
                 tree.collaborators()
-                    .get(&client_b.peer_id)
+                    .get(&client_b_peer_id)
                     .map_or(false, |collaborator| {
                         collaborator.replica_id == replica_id_b
                             && collaborator.user.github_login == "user_b"
@@ -1681,15 +1788,49 @@ mod tests {
         //     .condition(&cx_a, |buffer, _| buffer.selection_sets().count() == 0)
         //     .await;
 
-        // Dropping the client B's project removes client B from client A's collaborators.
-        cx_b.update(move |_| drop(project_b));
-        project_a
-            .condition(&cx_a, |project, _| project.collaborators().is_empty())
-            .await;
+        // Client B can join again on a different window because they are already a participant.
+        let client_b2 = server.create_client(cx_b2, "user_b").await;
+        let project_b2 = Project::remote(
+            project_id,
+            client_b2.client.clone(),
+            client_b2.user_store.clone(),
+            lang_registry.clone(),
+            FakeFs::new(cx_b2.background()),
+            &mut cx_b2.to_async(),
+        )
+        .await
+        .unwrap();
+        deterministic.run_until_parked();
+        project_a.read_with(cx_a, |project, _| {
+            assert_eq!(project.collaborators().len(), 2);
+        });
+        project_b.read_with(cx_b, |project, _| {
+            assert_eq!(project.collaborators().len(), 2);
+        });
+        project_b2.read_with(cx_b2, |project, _| {
+            assert_eq!(project.collaborators().len(), 2);
+        });
+
+        // Dropping client B's first project removes only that from client A's collaborators.
+        cx_b.update(move |_| {
+            drop(client_b.project.take());
+            drop(project_b);
+        });
+        deterministic.run_until_parked();
+        project_a.read_with(cx_a, |project, _| {
+            assert_eq!(project.collaborators().len(), 1);
+        });
+        project_b2.read_with(cx_b2, |project, _| {
+            assert_eq!(project.collaborators().len(), 1);
+        });
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_unshare_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    async fn test_unshare_project(
+        deterministic: Arc<Deterministic>,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
+    ) {
         let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
         cx_a.foreground().forbid_parking();
@@ -1697,7 +1838,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -1729,54 +1870,27 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
-        assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
         // Join that project as client B
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+        assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
         project_b
             .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
 
-        // Unshare the project as client A
-        project_a.update(cx_a, |project, cx| project.unshare(cx));
-        project_b
-            .condition(cx_b, |project, _| project.is_read_only())
-            .await;
-        assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
+        // When client B leaves the project, it gets automatically unshared.
         cx_b.update(|_| {
+            drop(client_b.project.take());
             drop(project_b);
         });
+        deterministic.run_until_parked();
+        assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
 
-        // Share the project again and ensure guests can still join.
-        project_a
-            .update(cx_a, |project, cx| project.share(cx))
-            .await
-            .unwrap();
+        // When client B joins again, the project gets re-shared.
+        let project_b2 = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
         assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
-
-        let project_b2 = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
         project_b2
             .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
@@ -1784,17 +1898,27 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_host_disconnect(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    async fn test_host_disconnect(
+        deterministic: Arc<Deterministic>,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
+        cx_c: &mut TestAppContext,
+    ) {
         let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
         cx_a.foreground().forbid_parking();
 
-        // Connect to a server as 2 clients.
+        // Connect to a server as 3 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
+        let client_c = server.create_client(cx_c, "user_c").await;
         server
-            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .make_contacts(vec![
+                (&client_a, cx_a),
+                (&client_b, cx_b),
+                (&client_c, cx_c),
+            ])
             .await;
 
         // Share a project as client A
@@ -1815,6 +1939,9 @@ mod tests {
                 cx,
             )
         });
+        let project_id = project_a
+            .read_with(cx_a, |project, _| project.next_remote_id())
+            .await;
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/a", true, cx)
@@ -1824,26 +1951,34 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
-        assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
         // Join that project as client B
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+        assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
         project_b
             .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
+
+        // Request to join that project as client C
+        let project_c = cx_c.spawn(|mut cx| {
+            let client = client_c.client.clone();
+            let user_store = client_c.user_store.clone();
+            let lang_registry = lang_registry.clone();
+            async move {
+                Project::remote(
+                    project_id,
+                    client,
+                    user_store,
+                    lang_registry.clone(),
+                    FakeFs::new(cx.background()),
+                    &mut cx,
+                )
+                .await
+            }
+        });
+        deterministic.run_until_parked();
 
         // Drop client A's connection. Collaborators should disappear and the project should not be shown as shared.
         server.disconnect_client(client_a.current_user_id(cx_a));
@@ -1859,31 +1994,213 @@ mod tests {
         cx_b.update(|_| {
             drop(project_b);
         });
+        assert!(matches!(
+            project_c.await.unwrap_err(),
+            project::JoinProjectError::HostWentOffline
+        ));
 
-        // Await reconnection
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
-
-        // Share the project again and ensure guests can still join.
-        project_a
-            .update(cx_a, |project, cx| project.share(cx))
-            .await
-            .unwrap();
+        // Ensure guests can still join.
+        let project_b2 = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
         assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
-
-        let project_b2 = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
         project_b2
             .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_decline_join_request(
+        deterministic: Arc<Deterministic>,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
+    ) {
+        let lang_registry = Arc::new(LanguageRegistry::test());
+        let fs = FakeFs::new(cx_a.background());
+        cx_a.foreground().forbid_parking();
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
+
+        // Share a project as client A
+        fs.insert_tree("/a", json!({})).await;
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let project_id = project_a
+            .read_with(cx_a, |project, _| project.next_remote_id())
+            .await;
+        let (worktree_a, _) = project_a
+            .update(cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/a", true, cx)
+            })
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+
+        // Request to join that project as client B
+        let project_b = cx_b.spawn(|mut cx| {
+            let client = client_b.client.clone();
+            let user_store = client_b.user_store.clone();
+            let lang_registry = lang_registry.clone();
+            async move {
+                Project::remote(
+                    project_id,
+                    client,
+                    user_store,
+                    lang_registry.clone(),
+                    FakeFs::new(cx.background()),
+                    &mut cx,
+                )
+                .await
+            }
+        });
+        deterministic.run_until_parked();
+        project_a.update(cx_a, |project, cx| {
+            project.respond_to_join_request(client_b.user_id().unwrap(), false, cx)
+        });
+        assert!(matches!(
+            project_b.await.unwrap_err(),
+            project::JoinProjectError::HostDeclined
+        ));
+
+        // Request to join the project again as client B
+        let project_b = cx_b.spawn(|mut cx| {
+            let client = client_b.client.clone();
+            let user_store = client_b.user_store.clone();
+            let lang_registry = lang_registry.clone();
+            async move {
+                Project::remote(
+                    project_id,
+                    client,
+                    user_store,
+                    lang_registry.clone(),
+                    FakeFs::new(cx.background()),
+                    &mut cx,
+                )
+                .await
+            }
+        });
+
+        // Close the project on the host
+        deterministic.run_until_parked();
+        cx_a.update(|_| drop(project_a));
+        deterministic.run_until_parked();
+        assert!(matches!(
+            project_b.await.unwrap_err(),
+            project::JoinProjectError::HostClosedProject
+        ));
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_cancel_join_request(
+        deterministic: Arc<Deterministic>,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
+    ) {
+        let lang_registry = Arc::new(LanguageRegistry::test());
+        let fs = FakeFs::new(cx_a.background());
+        cx_a.foreground().forbid_parking();
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
+
+        // Share a project as client A
+        fs.insert_tree("/a", json!({})).await;
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let project_id = project_a
+            .read_with(cx_a, |project, _| project.next_remote_id())
+            .await;
+
+        let project_a_events = Rc::new(RefCell::new(Vec::new()));
+        let user_b = client_a
+            .user_store
+            .update(cx_a, |store, cx| {
+                store.fetch_user(client_b.user_id().unwrap(), cx)
+            })
+            .await
+            .unwrap();
+        project_a.update(cx_a, {
+            let project_a_events = project_a_events.clone();
+            move |_, cx| {
+                cx.subscribe(&cx.handle(), move |_, _, event, _| {
+                    project_a_events.borrow_mut().push(event.clone());
+                })
+                .detach();
+            }
+        });
+
+        let (worktree_a, _) = project_a
+            .update(cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/a", true, cx)
+            })
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+
+        // Request to join that project as client B
+        let project_b = cx_b.spawn(|mut cx| {
+            let client = client_b.client.clone();
+            let user_store = client_b.user_store.clone();
+            let lang_registry = lang_registry.clone();
+            async move {
+                Project::remote(
+                    project_id,
+                    client,
+                    user_store,
+                    lang_registry.clone(),
+                    FakeFs::new(cx.background()),
+                    &mut cx,
+                )
+                .await
+            }
+        });
+        deterministic.run_until_parked();
+        assert_eq!(
+            &*project_a_events.borrow(),
+            &[project::Event::ContactRequestedJoin(user_b.clone())]
+        );
+        project_a_events.borrow_mut().clear();
+
+        // Cancel the join request by leaving the project
+        client_b
+            .client
+            .send(proto::LeaveProject { project_id })
+            .unwrap();
+        drop(project_b);
+
+        deterministic.run_until_parked();
+        assert_eq!(
+            &*project_a_events.borrow(),
+            &[project::Event::ContactCancelledJoinRequest(user_b.clone())]
+        );
     }
 
     #[gpui::test(iterations = 10)]
@@ -1899,8 +2216,8 @@ mod tests {
         // Connect to a server as 3 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
-        let client_c = server.create_client(cx_c, "user_c").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_c = server.create_client(cx_c, "user_c").await;
         server
             .make_contacts(vec![
                 (&client_a, cx_a),
@@ -1936,31 +2253,11 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that worktree as clients B and C.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
-        let project_c = Project::remote(
-            project_id,
-            client_c.clone(),
-            client_c.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_c.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+        let project_c = client_c.build_remote_project(&project_a, cx_a, cx_c).await;
         let worktree_b = project_b.read_with(cx_b, |p, cx| p.worktrees(cx).next().unwrap());
         let worktree_c = project_c.read_with(cx_c, |p, cx| p.worktrees(cx).next().unwrap());
 
@@ -2099,13 +2396,7 @@ mod tests {
         .await;
 
         let (project_a, worktree_id) = client_a.build_local_project(fs, "/dir", cx_a).await;
-        let project_id = project_a.read_with(cx_a, |project, _| project.remote_id().unwrap());
-        project_a
-            .update(cx_a, |project, cx| project.share(cx))
-            .await
-            .unwrap();
-
-        let project_b = client_b.build_remote_project(project_id, cx_b).await;
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         let worktree_a =
             project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
@@ -2252,7 +2543,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -2284,21 +2575,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that project as client B
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Open a buffer as client B
         let buffer_b = project_b
@@ -2336,7 +2616,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -2368,21 +2648,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that project as client B
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
         let _worktree_b = project_b.update(cx_b, |p, cx| p.worktrees(cx).next().unwrap());
 
         // Open a buffer as client B
@@ -2420,7 +2689,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -2451,21 +2720,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that project as client B
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Open a buffer as client A
         let buffer_a = project_a
@@ -2501,7 +2759,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -2532,21 +2790,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join that project as client B
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // See that a guest has joined as client A.
         project_a
@@ -2557,7 +2804,10 @@ mod tests {
         let buffer_b = cx_b
             .background()
             .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx)));
-        cx_b.update(|_| drop(project_b));
+        cx_b.update(|_| {
+            drop(client_b.project.take());
+            drop(project_b);
+        });
         drop(buffer_b);
 
         // See that the guest has left.
@@ -2575,7 +2825,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -2607,25 +2857,9 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a
-            .update(cx_a, |project, _| project.next_remote_id())
-            .await;
-        project_a
-            .update(cx_a, |project, cx| project.share(cx))
-            .await
-            .unwrap();
 
         // Join that project as client B
-        let _project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let _project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Client A sees that a guest has joined.
         project_a
@@ -2639,16 +2873,7 @@ mod tests {
             .await;
 
         // Rejoin the project as client B
-        let _project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let _project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Client A sees that a guest has re-joined.
         project_a
@@ -2666,10 +2891,12 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_collaborating_with_diagnostics(
+        deterministic: Arc<Deterministic>,
         cx_a: &mut TestAppContext,
         cx_b: &mut TestAppContext,
+        cx_c: &mut TestAppContext,
     ) {
-        cx_a.foreground().forbid_parking();
+        deterministic.forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::test());
         let fs = FakeFs::new(cx_a.background());
 
@@ -2688,9 +2915,14 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_c = server.create_client(cx_c, "user_c").await;
         server
-            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .make_contacts(vec![
+                (&client_a, cx_a),
+                (&client_b, cx_b),
+                (&client_c, cx_c),
+            ])
             .await;
 
         // Share a project as client A
@@ -2722,10 +2954,9 @@ mod tests {
             .await;
         let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Cause the language server to start.
-        let _ = cx_a
+        let _buffer = cx_a
             .background()
             .spawn(project_a.update(cx_a, |project, cx| {
                 project.open_buffer(
@@ -2738,6 +2969,9 @@ mod tests {
             }))
             .await
             .unwrap();
+
+        // Join the worktree as client B.
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Simulate a language server reporting errors for a file.
         let mut fake_language_server = fake_language_servers.next().await.unwrap();
@@ -2758,35 +2992,35 @@ mod tests {
         );
 
         // Wait for server to see the diagnostics update.
-        server
-            .condition(|store| {
-                let worktree = store
-                    .project(project_id)
-                    .unwrap()
-                    .share
-                    .as_ref()
-                    .unwrap()
-                    .worktrees
-                    .get(&worktree_id.to_proto())
-                    .unwrap();
+        deterministic.run_until_parked();
+        {
+            let store = server.store.read().await;
+            let project = store.project(project_id).unwrap();
+            let worktree = project.worktrees.get(&worktree_id.to_proto()).unwrap();
+            assert!(!worktree.diagnostic_summaries.is_empty());
+        }
 
-                !worktree.diagnostic_summaries.is_empty()
-            })
-            .await;
-
-        // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
-
+        // Ensure client B observes the new diagnostics.
         project_b.read_with(cx_b, |project, cx| {
+            assert_eq!(
+                project.diagnostic_summaries(cx).collect::<Vec<_>>(),
+                &[(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("a.rs")),
+                    },
+                    DiagnosticSummary {
+                        error_count: 1,
+                        warning_count: 0,
+                        ..Default::default()
+                    },
+                )]
+            )
+        });
+
+        // Join project as client C and observe the diagnostics.
+        let project_c = client_c.build_remote_project(&project_a, cx_a, cx_c).await;
+        project_c.read_with(cx_c, |project, cx| {
             assert_eq!(
                 project.diagnostic_summaries(cx).collect::<Vec<_>>(),
                 &[(
@@ -2828,23 +3062,40 @@ mod tests {
             },
         );
 
-        // Client b gets the updated summaries
-        project_b
-            .condition(&cx_b, |project, cx| {
-                project.diagnostic_summaries(cx).collect::<Vec<_>>()
-                    == &[(
-                        ProjectPath {
-                            worktree_id,
-                            path: Arc::from(Path::new("a.rs")),
-                        },
-                        DiagnosticSummary {
-                            error_count: 1,
-                            warning_count: 1,
-                            ..Default::default()
-                        },
-                    )]
-            })
-            .await;
+        // Clients B and C get the updated summaries
+        deterministic.run_until_parked();
+        project_b.read_with(cx_b, |project, cx| {
+            assert_eq!(
+                project.diagnostic_summaries(cx).collect::<Vec<_>>(),
+                [(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("a.rs")),
+                    },
+                    DiagnosticSummary {
+                        error_count: 1,
+                        warning_count: 1,
+                        ..Default::default()
+                    },
+                )]
+            );
+        });
+        project_c.read_with(cx_c, |project, cx| {
+            assert_eq!(
+                project.diagnostic_summaries(cx).collect::<Vec<_>>(),
+                [(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("a.rs")),
+                    },
+                    DiagnosticSummary {
+                        error_count: 1,
+                        warning_count: 1,
+                        ..Default::default()
+                    },
+                )]
+            );
+        });
 
         // Open the file with the errors on client B. They should be present.
         let buffer_b = cx_b
@@ -2893,16 +3144,16 @@ mod tests {
                 diagnostics: vec![],
             },
         );
-        project_a
-            .condition(cx_a, |project, cx| {
-                project.diagnostic_summaries(cx).collect::<Vec<_>>() == &[]
-            })
-            .await;
-        project_b
-            .condition(cx_b, |project, cx| {
-                project.diagnostic_summaries(cx).collect::<Vec<_>>() == &[]
-            })
-            .await;
+        deterministic.run_until_parked();
+        project_a.read_with(cx_a, |project, cx| {
+            assert_eq!(project.diagnostic_summaries(cx).collect::<Vec<_>>(), [])
+        });
+        project_b.read_with(cx_b, |project, cx| {
+            assert_eq!(project.diagnostic_summaries(cx).collect::<Vec<_>>(), [])
+        });
+        project_c.read_with(cx_c, |project, cx| {
+            assert_eq!(project.diagnostic_summaries(cx).collect::<Vec<_>>(), [])
+        });
     }
 
     #[gpui::test(iterations = 10)]
@@ -2938,7 +3189,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -2970,21 +3221,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Open a file in an editor as the guest.
         let buffer_b = project_b
@@ -3121,7 +3361,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -3152,25 +3392,14 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
         let buffer_a = project_a
             .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
             .await
             .unwrap();
 
         // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         let buffer_b = cx_b
             .background()
@@ -3252,7 +3481,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -3283,21 +3512,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
-        // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        // Join the project as client B.
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         let buffer_b = cx_b
             .background()
@@ -3366,7 +3584,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -3390,21 +3608,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
-        // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        // Join the project as client B.
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Open the file on client B.
         let buffer_b = cx_b
@@ -3513,7 +3720,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -3537,21 +3744,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Open the file on client B.
         let buffer_b = cx_b
@@ -3646,7 +3842,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -3661,7 +3857,6 @@ mod tests {
                 cx,
             )
         });
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
 
         let (worktree_1, _) = project_a
             .update(cx_a, |p, cx| {
@@ -3682,20 +3877,8 @@ mod tests {
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
 
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
-
         // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
-
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
         let results = project_b
             .update(cx_b, |project, cx| {
                 project.search(SearchQuery::text("world", false, false), cx)
@@ -3757,7 +3940,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -3781,21 +3964,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Open the file on client B.
         let buffer_b = cx_b
@@ -3904,7 +4076,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -3928,21 +4100,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Cause the language server to start.
         let _buffer = cx_b
@@ -4036,7 +4197,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -4061,21 +4222,10 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
-        // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        // Join the project as client B.
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         let buffer_b1 = cx_b
             .background()
@@ -4136,7 +4286,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -4168,26 +4318,15 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
-        // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        // Join the project as client B.
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
         let mut params = cx_b.update(WorkspaceParams::test);
         params.languages = lang_registry.clone();
+        params.project = project_b.clone();
         params.client = client_b.client.clone();
         params.user_store = client_b.user_store.clone();
-        params.project = project_b;
 
         let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
         let editor_b = workspace_b
@@ -4388,7 +4527,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(cx_a, "user_a").await;
-        let client_b = server.create_client(cx_b, "user_b").await;
+        let mut client_b = server.create_client(cx_b, "user_b").await;
         server
             .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
             .await;
@@ -4420,26 +4559,15 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(cx_a, |tree, _| tree.id());
-        project_a.update(cx_a, |p, cx| p.share(cx)).await.unwrap();
 
         // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
         let mut params = cx_b.update(WorkspaceParams::test);
         params.languages = lang_registry.clone();
+        params.project = project_b.clone();
         params.client = client_b.client.clone();
         params.user_store = client_b.user_store.clone();
-        params.project = project_b;
 
         let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
         let editor_b = workspace_b
@@ -5022,7 +5150,9 @@ mod tests {
                         ("user_a", true, vec![]),
                         ("user_b", true, vec![]),
                         ("user_c", true, vec![])
-                    ]
+                    ],
+                    "{} has the wrong contacts",
+                    client.username
                 )
             });
         }
@@ -5038,21 +5168,17 @@ mod tests {
                 assert_eq!(
                     contacts(store),
                     [
-                        ("user_a", true, vec![("a", false, vec![])]),
+                        ("user_a", true, vec![("a", vec![])]),
                         ("user_b", true, vec![]),
                         ("user_c", true, vec![])
-                    ]
+                    ],
+                    "{} has the wrong contacts",
+                    client.username
                 )
             });
         }
 
-        let project_id = project_a
-            .update(cx_a, |project, _| project.next_remote_id())
-            .await;
-        project_a
-            .update(cx_a, |project, cx| project.share(cx))
-            .await
-            .unwrap();
+        let _project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         deterministic.run_until_parked();
         for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
@@ -5060,26 +5186,12 @@ mod tests {
                 assert_eq!(
                     contacts(store),
                     [
-                        ("user_a", true, vec![("a", true, vec![])]),
+                        ("user_a", true, vec![("a", vec!["user_b"])]),
                         ("user_b", true, vec![]),
                         ("user_c", true, vec![])
-                    ]
-                )
-            });
-        }
-
-        let _project_b = client_b.build_remote_project(project_id, cx_b).await;
-
-        deterministic.run_until_parked();
-        for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
-            client.user_store.read_with(*cx, |store, _| {
-                assert_eq!(
-                    contacts(store),
-                    [
-                        ("user_a", true, vec![("a", true, vec!["user_b"])]),
-                        ("user_b", true, vec![]),
-                        ("user_c", true, vec![])
-                    ]
+                    ],
+                    "{} has the wrong contacts",
+                    client.username
                 )
             });
         }
@@ -5095,10 +5207,12 @@ mod tests {
                 assert_eq!(
                     contacts(store),
                     [
-                        ("user_a", true, vec![("a", true, vec!["user_b"])]),
-                        ("user_b", true, vec![("b", false, vec![])]),
+                        ("user_a", true, vec![("a", vec!["user_b"])]),
+                        ("user_b", true, vec![("b", vec![])]),
                         ("user_c", true, vec![])
-                    ]
+                    ],
+                    "{} has the wrong contacts",
+                    client.username
                 )
             });
         }
@@ -5118,9 +5232,11 @@ mod tests {
                     contacts(store),
                     [
                         ("user_a", true, vec![]),
-                        ("user_b", true, vec![("b", false, vec![])]),
+                        ("user_b", true, vec![("b", vec![])]),
                         ("user_c", true, vec![])
-                    ]
+                    ],
+                    "{} has the wrong contacts",
+                    client.username
                 )
             });
         }
@@ -5134,9 +5250,11 @@ mod tests {
                     contacts(store),
                     [
                         ("user_a", true, vec![]),
-                        ("user_b", true, vec![("b", false, vec![])]),
+                        ("user_b", true, vec![("b", vec![])]),
                         ("user_c", false, vec![])
-                    ]
+                    ],
+                    "{} has the wrong contacts",
+                    client.username
                 )
             });
         }
@@ -5157,14 +5275,16 @@ mod tests {
                     contacts(store),
                     [
                         ("user_a", true, vec![]),
-                        ("user_b", true, vec![("b", false, vec![])]),
+                        ("user_b", true, vec![("b", vec![])]),
                         ("user_c", true, vec![])
-                    ]
+                    ],
+                    "{} has the wrong contacts",
+                    client.username
                 )
             });
         }
 
-        fn contacts(user_store: &UserStore) -> Vec<(&str, bool, Vec<(&str, bool, Vec<&str>)>)> {
+        fn contacts(user_store: &UserStore) -> Vec<(&str, bool, Vec<(&str, Vec<&str>)>)> {
             user_store
                 .contacts()
                 .iter()
@@ -5175,7 +5295,6 @@ mod tests {
                         .map(|p| {
                             (
                                 p.worktree_root_names[0].as_str(),
-                                p.is_shared,
                                 p.guests.iter().map(|p| p.github_login.as_str()).collect(),
                             )
                         })
@@ -5408,20 +5527,9 @@ mod tests {
         )
         .await;
         let (project_a, worktree_id) = client_a.build_local_project(fs.clone(), "/a", cx_a).await;
-        project_a
-            .update(cx_a, |project, cx| project.share(cx))
-            .await
-            .unwrap();
 
         // Client B joins the project.
-        let project_b = client_b
-            .build_remote_project(
-                project_a
-                    .read_with(cx_a, |project, _| project.remote_id())
-                    .unwrap(),
-                cx_b,
-            )
-            .await;
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Client A opens some editors.
         let workspace_a = client_a.build_workspace(&project_a, cx_a);
@@ -5476,6 +5584,7 @@ mod tests {
             })
             .await
             .unwrap();
+
         let editor_b2 = workspace_b.read_with(cx_b, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -5628,20 +5737,9 @@ mod tests {
         )
         .await;
         let (project_a, worktree_id) = client_a.build_local_project(fs.clone(), "/a", cx_a).await;
-        project_a
-            .update(cx_a, |project, cx| project.share(cx))
-            .await
-            .unwrap();
 
         // Client B joins the project.
-        let project_b = client_b
-            .build_remote_project(
-                project_a
-                    .read_with(cx_a, |project, _| project.remote_id())
-                    .unwrap(),
-                cx_b,
-            )
-            .await;
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Client A opens some editors.
         let workspace_a = client_a.build_workspace(&project_a, cx_a);
@@ -5775,20 +5873,9 @@ mod tests {
         )
         .await;
         let (project_a, worktree_id) = client_a.build_local_project(fs.clone(), "/a", cx_a).await;
-        project_a
-            .update(cx_a, |project, cx| project.share(cx))
-            .await
-            .unwrap();
 
         // Client B joins the project.
-        let project_b = client_b
-            .build_remote_project(
-                project_a
-                    .read_with(cx_a, |project, _| project.remote_id())
-                    .unwrap(),
-                cx_b,
-            )
-            .await;
+        let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
         // Client A opens some editors.
         let workspace_a = client_a.build_workspace(&project_a, cx_a);
@@ -5997,10 +6084,6 @@ mod tests {
         collab_worktree
             .read_with(&host_cx, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        host_project
-            .update(&mut host_cx, |project, cx| project.share(cx))
-            .await
-            .unwrap();
 
         // Set up fake language servers.
         let mut language = Language::new(
@@ -6161,7 +6244,7 @@ mod tests {
 
                 let (host, mut host_cx, host_err) = clients.remove(0);
                 if let Some(host_err) = host_err {
-                    log::error!("host error - {}", host_err);
+                    log::error!("host error - {:?}", host_err);
                 }
                 host.project
                     .as_ref()
@@ -6169,18 +6252,25 @@ mod tests {
                     .read_with(&host_cx, |project, _| assert!(!project.is_shared()));
                 for (guest, mut guest_cx, guest_err) in clients {
                     if let Some(guest_err) = guest_err {
-                        log::error!("{} error - {}", guest.username, guest_err);
+                        log::error!("{} error - {:?}", guest.username, guest_err);
                     }
-                    // TODO
-                    // let contacts = server
-                    //     .store
-                    //     .read()
-                    //     .await
-                    //     .contacts_for_user(guest.current_user_id(&guest_cx));
-                    // assert!(!contacts
-                    //     .iter()
-                    //     .flat_map(|contact| &contact.projects)
-                    //     .any(|project| project.id == host_project_id));
+
+                    let contacts = server
+                        .app_state
+                        .db
+                        .get_contacts(guest.current_user_id(&guest_cx))
+                        .await
+                        .unwrap();
+                    let contacts = server
+                        .store
+                        .read()
+                        .await
+                        .build_initial_contacts_update(contacts)
+                        .contacts;
+                    assert!(!contacts
+                        .iter()
+                        .flat_map(|contact| &contact.projects)
+                        .any(|project| project.id == host_project_id));
                     guest
                         .project
                         .as_ref()
@@ -6240,34 +6330,45 @@ mod tests {
                     let removed_guest_id = user_ids.remove(guest_ix);
                     let guest = clients.remove(guest_ix);
                     op_start_signals.remove(guest_ix);
+                    server.forbid_connections();
                     server.disconnect_client(removed_guest_id);
                     cx.foreground().advance_clock(RECEIVE_TIMEOUT);
                     let (guest, mut guest_cx, guest_err) = guest.await;
+                    server.allow_connections();
+
                     if let Some(guest_err) = guest_err {
-                        log::error!("{} error - {}", guest.username, guest_err);
+                        log::error!("{} error - {:?}", guest.username, guest_err);
                     }
                     guest
                         .project
                         .as_ref()
                         .unwrap()
                         .read_with(&guest_cx, |project, _| assert!(project.is_read_only()));
-                    // TODO
-                    // for user_id in &user_ids {
-                    //     for contact in server.store.read().await.contacts_for_user(*user_id) {
-                    //         assert_ne!(
-                    //             contact.user_id, removed_guest_id.0 as u64,
-                    //             "removed guest is still a contact of another peer"
-                    //         );
-                    //         for project in contact.projects {
-                    //             for project_guest_id in project.guests {
-                    //                 assert_ne!(
-                    //                     project_guest_id, removed_guest_id.0 as u64,
-                    //                     "removed guest appears as still participating on a project"
-                    //                 );
-                    //             }
-                    //         }
-                    //     }
-                    // }
+                    for user_id in &user_ids {
+                        let contacts = server.app_state.db.get_contacts(*user_id).await.unwrap();
+                        let contacts = server
+                            .store
+                            .read()
+                            .await
+                            .build_initial_contacts_update(contacts)
+                            .contacts;
+                        for contact in contacts {
+                            if contact.online {
+                                assert_ne!(
+                                    contact.user_id, removed_guest_id.0 as u64,
+                                    "removed guest is still a contact of another peer"
+                                );
+                            }
+                            for project in contact.projects {
+                                for project_guest_id in project.guests {
+                                    assert_ne!(
+                                        project_guest_id, removed_guest_id.0 as u64,
+                                        "removed guest appears as still participating on a project"
+                                    );
+                                }
+                            }
+                        }
+                    }
 
                     log::info!("{} removed", guest.username);
                     available_guests.push(guest.username.clone());
@@ -6298,7 +6399,7 @@ mod tests {
 
         let (host_client, mut host_cx, host_err) = clients.remove(0);
         if let Some(host_err) = host_err {
-            panic!("host error - {}", host_err);
+            panic!("host error - {:?}", host_err);
         }
         let host_project = host_client.project.as_ref().unwrap();
         let host_worktree_snapshots = host_project.read_with(&host_cx, |project, cx| {
@@ -6319,7 +6420,7 @@ mod tests {
 
         for (guest_client, mut guest_cx, guest_err) in clients.into_iter() {
             if let Some(guest_err) = guest_err {
-                panic!("{} error - {}", guest_client.username, guest_err);
+                panic!("{} error - {:?}", guest_client.username, guest_err);
             }
             let worktree_snapshots =
                 guest_client
@@ -6501,19 +6602,18 @@ mod tests {
                     })
                 });
 
-            client
-                .authenticate_and_connect(false, &cx.to_async())
-                .await
-                .unwrap();
-
             Channel::init(&client);
             Project::init(&client);
             cx.update(|cx| {
                 workspace::init(&client, cx);
             });
 
-            let peer_id = PeerId(connection_id_rx.next().await.unwrap().0);
             let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
+            client
+                .authenticate_and_connect(false, &cx.to_async())
+                .await
+                .unwrap();
+            let peer_id = PeerId(connection_id_rx.next().await.unwrap().0);
 
             let client = TestClient {
                 client,
@@ -6705,19 +6805,37 @@ mod tests {
 
         async fn build_remote_project(
             &mut self,
-            project_id: u64,
-            cx: &mut TestAppContext,
+            host_project: &ModelHandle<Project>,
+            host_cx: &mut TestAppContext,
+            guest_cx: &mut TestAppContext,
         ) -> ModelHandle<Project> {
-            let project = Project::remote(
-                project_id,
-                self.client.clone(),
-                self.user_store.clone(),
-                self.language_registry.clone(),
-                FakeFs::new(cx.background()),
-                &mut cx.to_async(),
-            )
-            .await
-            .unwrap();
+            let host_project_id = host_project
+                .read_with(host_cx, |project, _| project.next_remote_id())
+                .await;
+            let guest_user_id = self.user_id().unwrap();
+            let languages =
+                host_project.read_with(host_cx, |project, _| project.languages().clone());
+            let project_b = guest_cx.spawn(|mut cx| {
+                let user_store = self.user_store.clone();
+                let guest_client = self.client.clone();
+                async move {
+                    Project::remote(
+                        host_project_id,
+                        guest_client,
+                        user_store.clone(),
+                        languages,
+                        FakeFs::new(cx.background()),
+                        &mut cx,
+                    )
+                    .await
+                    .unwrap()
+                }
+            });
+            host_cx.foreground().run_until_parked();
+            host_project.update(host_cx, |project, cx| {
+                project.respond_to_join_request(guest_user_id, true, cx)
+            });
+            let project = project_b.await;
             self.project = Some(project.clone());
             project
         }
@@ -6763,11 +6881,23 @@ mod tests {
             ) -> anyhow::Result<()> {
                 let fs = project.read_with(cx, |project, _| project.fs().clone());
 
+                cx.update(|cx| {
+                    cx.subscribe(&project, move |project, event, cx| {
+                        if let project::Event::ContactRequestedJoin(user) = event {
+                            log::info!("Host: accepting join request from {}", user.github_login);
+                            project.update(cx, |project, cx| {
+                                project.respond_to_join_request(user.id, true, cx)
+                            });
+                        }
+                    })
+                    .detach();
+                });
+
                 while op_start_signal.next().await.is_some() {
                     let distribution = rng.lock().gen_range::<usize, _>(0..100);
                     let files = fs.as_fake().files().await;
                     match distribution {
-                        0..=20 if !files.is_empty() => {
+                        0..=19 if !files.is_empty() => {
                             let path = files.choose(&mut *rng.lock()).unwrap();
                             let mut path = path.as_path();
                             while let Some(parent_path) = path.parent() {
@@ -6787,7 +6917,7 @@ mod tests {
                                 find_or_create_worktree.await?;
                             }
                         }
-                        10..=80 if !files.is_empty() => {
+                        20..=79 if !files.is_empty() => {
                             let buffer = if client.buffers.is_empty() || rng.lock().gen() {
                                 let file = files.choose(&mut *rng.lock()).unwrap();
                                 let (worktree, path) = project

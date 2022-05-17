@@ -49,6 +49,7 @@ use std::{
     },
     time::Instant,
 };
+use thiserror::Error;
 use util::{post_inc, ResultExt, TryFutureExt as _};
 
 pub use fs::*;
@@ -90,6 +91,18 @@ pub struct Project {
     nonce: u128,
 }
 
+#[derive(Error, Debug)]
+pub enum JoinProjectError {
+    #[error("host declined join request")]
+    HostDeclined,
+    #[error("host closed the project")]
+    HostClosedProject,
+    #[error("host went offline")]
+    HostWentOffline,
+    #[error("{0}")]
+    Other(#[from] anyhow::Error),
+}
+
 enum OpenBuffer {
     Strong(ModelHandle<Buffer>),
     Weak(WeakModelHandle<Buffer>),
@@ -123,7 +136,7 @@ pub struct Collaborator {
     pub replica_id: ReplicaId,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     ActiveEntryChanged(Option<ProjectEntryId>),
     WorktreeRemoved(WorktreeId),
@@ -133,6 +146,8 @@ pub enum Event {
     DiagnosticsUpdated(ProjectPath),
     RemoteIdChanged(Option<u64>),
     CollaboratorLeft(PeerId),
+    ContactRequestedJoin(Arc<User>),
+    ContactCancelledJoinRequest(Arc<User>),
 }
 
 #[derive(Serialize)]
@@ -248,15 +263,18 @@ impl ProjectEntryId {
 
 impl Project {
     pub fn init(client: &Arc<Client>) {
+        client.add_model_message_handler(Self::handle_request_join_project);
         client.add_model_message_handler(Self::handle_add_collaborator);
         client.add_model_message_handler(Self::handle_buffer_reloaded);
         client.add_model_message_handler(Self::handle_buffer_saved);
         client.add_model_message_handler(Self::handle_start_language_server);
         client.add_model_message_handler(Self::handle_update_language_server);
         client.add_model_message_handler(Self::handle_remove_collaborator);
+        client.add_model_message_handler(Self::handle_join_project_request_cancelled);
         client.add_model_message_handler(Self::handle_register_worktree);
         client.add_model_message_handler(Self::handle_unregister_worktree);
-        client.add_model_message_handler(Self::handle_unshare_project);
+        client.add_model_message_handler(Self::handle_unregister_project);
+        client.add_model_message_handler(Self::handle_project_unshared);
         client.add_model_message_handler(Self::handle_update_buffer_file);
         client.add_model_message_handler(Self::handle_update_buffer);
         client.add_model_message_handler(Self::handle_update_diagnostic_summary);
@@ -353,7 +371,7 @@ impl Project {
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         cx: &mut AsyncAppContext,
-    ) -> Result<ModelHandle<Self>> {
+    ) -> Result<ModelHandle<Self>, JoinProjectError> {
         client.authenticate_and_connect(true, &cx).await?;
 
         let response = client
@@ -361,6 +379,24 @@ impl Project {
                 project_id: remote_id,
             })
             .await?;
+
+        let response = match response.variant.ok_or_else(|| anyhow!("missing variant"))? {
+            proto::join_project_response::Variant::Accept(response) => response,
+            proto::join_project_response::Variant::Decline(decline) => {
+                match proto::join_project_response::decline::Reason::from_i32(decline.reason) {
+                    Some(proto::join_project_response::decline::Reason::Declined) => {
+                        Err(JoinProjectError::HostDeclined)?
+                    }
+                    Some(proto::join_project_response::decline::Reason::Closed) => {
+                        Err(JoinProjectError::HostClosedProject)?
+                    }
+                    Some(proto::join_project_response::decline::Reason::WentOffline) => {
+                        Err(JoinProjectError::HostWentOffline)?
+                    }
+                    None => Err(anyhow!("missing decline reason"))?,
+                }
+            }
+        };
 
         let replica_id = response.replica_id as ReplicaId;
 
@@ -400,7 +436,7 @@ impl Project {
                             // Even if we're initially connected, any future change of the status means we momentarily disconnected.
                             if !is_connected || status.next().await.is_some() {
                                 if let Some(this) = this.upgrade(&cx) {
-                                    this.update(&mut cx, |this, cx| this.project_unshared(cx))
+                                    this.update(&mut cx, |this, cx| this.removed_from_project(cx))
                                 }
                             }
                             Ok(())
@@ -550,7 +586,7 @@ impl Project {
     }
 
     fn unregister(&mut self, cx: &mut ModelContext<Self>) {
-        self.unshare(cx);
+        self.unshared(cx);
         for worktree in &self.worktrees {
             if let Some(worktree) = worktree.upgrade(cx) {
                 worktree.update(cx, |worktree, _| {
@@ -810,64 +846,59 @@ impl Project {
         }
     }
 
-    pub fn can_share(&self, cx: &AppContext) -> bool {
-        self.is_local() && self.visible_worktrees(cx).next().is_some()
-    }
+    fn share(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let project_id;
+        if let ProjectClientState::Local {
+            remote_id_rx,
+            is_shared,
+            ..
+        } = &mut self.client_state
+        {
+            if *is_shared {
+                return Task::ready(Ok(()));
+            }
+            *is_shared = true;
+            if let Some(id) = *remote_id_rx.borrow() {
+                project_id = id;
+            } else {
+                return Task::ready(Err(anyhow!("project hasn't been registered")));
+            }
+        } else {
+            return Task::ready(Err(anyhow!("can't share a remote project")));
+        };
 
-    pub fn share(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        let rpc = self.client.clone();
-        cx.spawn(|this, mut cx| async move {
-            let project_id = this.update(&mut cx, |this, cx| {
-                if let ProjectClientState::Local {
-                    is_shared,
-                    remote_id_rx,
-                    ..
-                } = &mut this.client_state
-                {
-                    *is_shared = true;
-
-                    for open_buffer in this.opened_buffers.values_mut() {
-                        match open_buffer {
-                            OpenBuffer::Strong(_) => {}
-                            OpenBuffer::Weak(buffer) => {
-                                if let Some(buffer) = buffer.upgrade(cx) {
-                                    *open_buffer = OpenBuffer::Strong(buffer);
-                                }
-                            }
-                            OpenBuffer::Loading(_) => unreachable!(),
-                        }
+        for open_buffer in self.opened_buffers.values_mut() {
+            match open_buffer {
+                OpenBuffer::Strong(_) => {}
+                OpenBuffer::Weak(buffer) => {
+                    if let Some(buffer) = buffer.upgrade(cx) {
+                        *open_buffer = OpenBuffer::Strong(buffer);
                     }
+                }
+                OpenBuffer::Loading(_) => unreachable!(),
+            }
+        }
 
-                    for worktree_handle in this.worktrees.iter_mut() {
-                        match worktree_handle {
-                            WorktreeHandle::Strong(_) => {}
-                            WorktreeHandle::Weak(worktree) => {
-                                if let Some(worktree) = worktree.upgrade(cx) {
-                                    *worktree_handle = WorktreeHandle::Strong(worktree);
-                                }
-                            }
-                        }
+        for worktree_handle in self.worktrees.iter_mut() {
+            match worktree_handle {
+                WorktreeHandle::Strong(_) => {}
+                WorktreeHandle::Weak(worktree) => {
+                    if let Some(worktree) = worktree.upgrade(cx) {
+                        *worktree_handle = WorktreeHandle::Strong(worktree);
                     }
-
-                    remote_id_rx
-                        .borrow()
-                        .ok_or_else(|| anyhow!("no project id"))
-                } else {
-                    Err(anyhow!("can't share a remote project"))
                 }
-            })?;
+            }
+        }
 
-            rpc.request(proto::ShareProject { project_id }).await?;
-
-            let mut tasks = Vec::new();
-            this.update(&mut cx, |this, cx| {
-                for worktree in this.worktrees(cx).collect::<Vec<_>>() {
-                    worktree.update(cx, |worktree, cx| {
-                        let worktree = worktree.as_local_mut().unwrap();
-                        tasks.push(worktree.share(project_id, cx));
-                    });
-                }
+        let mut tasks = Vec::new();
+        for worktree in self.worktrees(cx).collect::<Vec<_>>() {
+            worktree.update(cx, |worktree, cx| {
+                let worktree = worktree.as_local_mut().unwrap();
+                tasks.push(worktree.share(project_id, cx));
             });
+        }
+
+        cx.spawn(|this, mut cx| async move {
             for task in tasks {
                 task.await?;
             }
@@ -876,15 +907,8 @@ impl Project {
         })
     }
 
-    pub fn unshare(&mut self, cx: &mut ModelContext<Self>) {
-        let rpc = self.client.clone();
-
-        if let ProjectClientState::Local {
-            is_shared,
-            remote_id_rx,
-            ..
-        } = &mut self.client_state
-        {
+    fn unshared(&mut self, cx: &mut ModelContext<Self>) {
+        if let ProjectClientState::Local { is_shared, .. } = &mut self.client_state {
             if !*is_shared {
                 return;
             }
@@ -913,17 +937,35 @@ impl Project {
                 }
             }
 
-            if let Some(project_id) = *remote_id_rx.borrow() {
-                rpc.send(proto::UnshareProject { project_id }).log_err();
-            }
-
             cx.notify();
         } else {
             log::error!("attempted to unshare a remote project");
         }
     }
 
-    fn project_unshared(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn respond_to_join_request(
+        &mut self,
+        requester_id: u64,
+        allow: bool,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some(project_id) = self.remote_id() {
+            let share = self.share(cx);
+            let client = self.client.clone();
+            cx.foreground()
+                .spawn(async move {
+                    share.await?;
+                    client.send(proto::RespondToJoinProjectRequest {
+                        requester_id,
+                        project_id,
+                        allow,
+                    })
+                })
+                .detach_and_log_err(cx);
+        }
+    }
+
+    fn removed_from_project(&mut self, cx: &mut ModelContext<Self>) {
         if let ProjectClientState::Remote {
             sharing_has_stopped,
             ..
@@ -3504,25 +3546,36 @@ impl Project {
                         });
                         let worktree = worktree?;
 
-                        let (remote_project_id, is_shared) =
-                            project.update(&mut cx, |project, cx| {
-                                project.add_worktree(&worktree, cx);
-                                (project.remote_id(), project.is_shared())
-                            });
+                        let remote_project_id = project.update(&mut cx, |project, cx| {
+                            project.add_worktree(&worktree, cx);
+                            project.remote_id()
+                        });
 
                         if let Some(project_id) = remote_project_id {
-                            if is_shared {
-                                worktree
-                                    .update(&mut cx, |worktree, cx| {
-                                        worktree.as_local_mut().unwrap().share(project_id, cx)
-                                    })
-                                    .await?;
-                            } else {
-                                worktree
-                                    .update(&mut cx, |worktree, cx| {
-                                        worktree.as_local_mut().unwrap().register(project_id, cx)
-                                    })
-                                    .await?;
+                            // Because sharing is async, we may have *unshared* the project by the time it completes,
+                            // in which case we need to register the worktree instead.
+                            loop {
+                                if project.read_with(&cx, |project, _| project.is_shared()) {
+                                    if worktree
+                                        .update(&mut cx, |worktree, cx| {
+                                            worktree.as_local_mut().unwrap().share(project_id, cx)
+                                        })
+                                        .await
+                                        .is_ok()
+                                    {
+                                        break;
+                                    }
+                                } else {
+                                    worktree
+                                        .update(&mut cx, |worktree, cx| {
+                                            worktree
+                                                .as_local_mut()
+                                                .unwrap()
+                                                .register(project_id, cx)
+                                        })
+                                        .await?;
+                                    break;
+                                }
                             }
                         }
 
@@ -3745,13 +3798,46 @@ impl Project {
 
     // RPC message handlers
 
-    async fn handle_unshare_project(
+    async fn handle_request_join_project(
         this: ModelHandle<Self>,
-        _: TypedEnvelope<proto::UnshareProject>,
+        message: TypedEnvelope<proto::RequestJoinProject>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        this.update(&mut cx, |this, cx| this.project_unshared(cx));
+        let user_id = message.payload.requester_id;
+        if this.read_with(&cx, |project, _| {
+            project.collaborators.values().any(|c| c.user.id == user_id)
+        }) {
+            this.update(&mut cx, |this, cx| {
+                this.respond_to_join_request(user_id, true, cx)
+            });
+        } else {
+            let user_store = this.read_with(&cx, |this, _| this.user_store.clone());
+            let user = user_store
+                .update(&mut cx, |store, cx| store.fetch_user(user_id, cx))
+                .await?;
+            this.update(&mut cx, |_, cx| cx.emit(Event::ContactRequestedJoin(user)));
+        }
+        Ok(())
+    }
+
+    async fn handle_unregister_project(
+        this: ModelHandle<Self>,
+        _: TypedEnvelope<proto::UnregisterProject>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| this.removed_from_project(cx));
+        Ok(())
+    }
+
+    async fn handle_project_unshared(
+        this: ModelHandle<Self>,
+        _: TypedEnvelope<proto::ProjectUnshared>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| this.unshared(cx));
         Ok(())
     }
 
@@ -3796,10 +3882,32 @@ impl Project {
                     buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
                 }
             }
+
             cx.emit(Event::CollaboratorLeft(peer_id));
             cx.notify();
             Ok(())
         })
+    }
+
+    async fn handle_join_project_request_cancelled(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::JoinProjectRequestCancelled>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let user = this
+            .update(&mut cx, |this, cx| {
+                this.user_store.update(cx, |user_store, cx| {
+                    user_store.fetch_user(envelope.payload.requester_id, cx)
+                })
+            })
+            .await?;
+
+        this.update(&mut cx, |_, cx| {
+            cx.emit(Event::ContactCancelledJoinRequest(user));
+        });
+
+        Ok(())
     }
 
     async fn handle_register_worktree(
@@ -4052,6 +4160,7 @@ impl Project {
                 .into_iter()
                 .map(|op| language::proto::deserialize_operation(op))
                 .collect::<Result<Vec<_>, _>>()?;
+            let is_remote = this.is_remote();
             match this.opened_buffers.entry(buffer_id) {
                 hash_map::Entry::Occupied(mut e) => match e.get_mut() {
                     OpenBuffer::Strong(buffer) => {
@@ -4061,6 +4170,11 @@ impl Project {
                     OpenBuffer::Weak(_) => {}
                 },
                 hash_map::Entry::Vacant(e) => {
+                    assert!(
+                        is_remote,
+                        "received buffer update from {:?}",
+                        envelope.original_sender_id
+                    );
                     e.insert(OpenBuffer::Loading(ops));
                 }
             }

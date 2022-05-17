@@ -48,6 +48,8 @@ pub struct Workspace {
     pub modal: ContainerStyle,
     pub notification: ContainerStyle,
     pub notifications: Notifications,
+    pub joining_project_avatar: ImageStyle,
+    pub joining_project_message: ContainedText,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -251,8 +253,7 @@ pub struct ContactsPanel {
     pub add_contact_button: IconButton,
     pub header_row: Interactive<ContainedText>,
     pub contact_row: Interactive<ContainerStyle>,
-    pub shared_project_row: Interactive<ProjectRow>,
-    pub unshared_project_row: Interactive<ProjectRow>,
+    pub project_row: Interactive<ProjectRow>,
     pub row_height: f32,
     pub contact_avatar: ImageStyle,
     pub contact_username: ContainedText,

@@ -1,7 +1,7 @@
 import chroma from "chroma-js";
 import { Scale, Color } from "chroma-js";
-import { color, ColorToken, fontWeights, NumberToken } from "../tokens";
-import { withOpacity } from "../utils/color";
+import { color, ColorToken, fontWeights, NumberToken } from "../../tokens";
+import { withOpacity } from "../../utils/color";
 import Theme, { buildPlayer, Syntax } from "./theme";
 
 export function colorRamp(color: Color): Scale {

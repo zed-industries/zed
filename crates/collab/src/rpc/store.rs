@@ -1,8 +1,8 @@
 use crate::db::{self, ChannelId, UserId};
 use anyhow::{anyhow, Result};
-use collections::{BTreeMap, HashMap, HashSet};
-use rpc::{proto, ConnectionId};
-use std::{collections::hash_map, path::PathBuf};
+use collections::{hash_map::Entry, BTreeMap, HashMap, HashSet};
+use rpc::{proto, ConnectionId, Receipt};
+use std::{collections::hash_map, mem, path::PathBuf};
 use tracing::instrument;
 
 #[derive(Default)]
@@ -17,31 +17,24 @@ pub struct Store {
 struct ConnectionState {
     user_id: UserId,
     projects: HashSet<u64>,
+    requested_projects: HashSet<u64>,
     channels: HashSet<ChannelId>,
 }
 
 pub struct Project {
     pub host_connection_id: ConnectionId,
     pub host_user_id: UserId,
-    pub share: Option<ProjectShare>,
+    pub guests: HashMap<ConnectionId, (ReplicaId, UserId)>,
+    pub join_requests: HashMap<UserId, Vec<Receipt<proto::JoinProject>>>,
+    pub active_replica_ids: HashSet<ReplicaId>,
     pub worktrees: HashMap<u64, Worktree>,
     pub language_servers: Vec<proto::LanguageServer>,
 }
 
+#[derive(Default)]
 pub struct Worktree {
     pub root_name: String,
     pub visible: bool,
-}
-
-#[derive(Default)]
-pub struct ProjectShare {
-    pub guests: HashMap<ConnectionId, (ReplicaId, UserId)>,
-    pub active_replica_ids: HashSet<ReplicaId>,
-    pub worktrees: HashMap<u64, WorktreeShare>,
-}
-
-#[derive(Default)]
-pub struct WorktreeShare {
     pub entries: HashMap<u64, proto::Entry>,
     pub diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
     pub scan_id: u64,
@@ -58,25 +51,17 @@ pub type ReplicaId = u16;
 pub struct RemovedConnectionState {
     pub user_id: UserId,
     pub hosted_projects: HashMap<u64, Project>,
-    pub guest_project_ids: HashMap<u64, Vec<ConnectionId>>,
+    pub guest_project_ids: HashSet<u64>,
     pub contact_ids: HashSet<UserId>,
 }
 
-pub struct JoinedProject<'a> {
-    pub replica_id: ReplicaId,
-    pub project: &'a Project,
-}
-
-pub struct SharedProject {}
-
-pub struct UnsharedProject {
-    pub connection_ids: Vec<ConnectionId>,
-    pub host_user_id: UserId,
-}
-
 pub struct LeftProject {
-    pub connection_ids: Vec<ConnectionId>,
     pub host_user_id: UserId,
+    pub host_connection_id: ConnectionId,
+    pub connection_ids: Vec<ConnectionId>,
+    pub remove_collaborator: bool,
+    pub cancel_request: Option<UserId>,
+    pub unshare: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -93,7 +78,7 @@ impl Store {
         let mut shared_projects = 0;
         for project in self.projects.values() {
             registered_projects += 1;
-            if project.share.is_some() {
+            if !project.guests.is_empty() {
                 shared_projects += 1;
             }
         }
@@ -112,6 +97,7 @@ impl Store {
             ConnectionState {
                 user_id,
                 projects: Default::default(),
+                requested_projects: Default::default(),
                 channels: Default::default(),
             },
         );
@@ -126,38 +112,39 @@ impl Store {
         &mut self,
         connection_id: ConnectionId,
     ) -> Result<RemovedConnectionState> {
-        let connection = if let Some(connection) = self.connections.remove(&connection_id) {
-            connection
-        } else {
-            return Err(anyhow!("no such connection"))?;
-        };
+        let connection = self
+            .connections
+            .get_mut(&connection_id)
+            .ok_or_else(|| anyhow!("no such connection"))?;
 
-        for channel_id in &connection.channels {
-            if let Some(channel) = self.channels.get_mut(&channel_id) {
-                channel.connection_ids.remove(&connection_id);
-            }
-        }
-
-        let user_connections = self
-            .connections_by_user_id
-            .get_mut(&connection.user_id)
-            .unwrap();
-        user_connections.remove(&connection_id);
-        if user_connections.is_empty() {
-            self.connections_by_user_id.remove(&connection.user_id);
-        }
+        let user_id = connection.user_id;
+        let connection_projects = mem::take(&mut connection.projects);
+        let connection_channels = mem::take(&mut connection.channels);
 
         let mut result = RemovedConnectionState::default();
-        result.user_id = connection.user_id;
-        for project_id in connection.projects.clone() {
+        result.user_id = user_id;
+
+        // Leave all channels.
+        for channel_id in connection_channels {
+            self.leave_channel(connection_id, channel_id);
+        }
+
+        // Unregister and leave all projects.
+        for project_id in connection_projects {
             if let Ok(project) = self.unregister_project(project_id, connection_id) {
                 result.hosted_projects.insert(project_id, project);
-            } else if let Ok(project) = self.leave_project(connection_id, project_id) {
-                result
-                    .guest_project_ids
-                    .insert(project_id, project.connection_ids);
+            } else if self.leave_project(connection_id, project_id).is_ok() {
+                result.guest_project_ids.insert(project_id);
             }
         }
+
+        let user_connections = self.connections_by_user_id.get_mut(&user_id).unwrap();
+        user_connections.remove(&connection_id);
+        if user_connections.is_empty() {
+            self.connections_by_user_id.remove(&user_id);
+        }
+
+        self.connections.remove(&connection_id).unwrap();
 
         Ok(result)
     }
@@ -275,18 +262,15 @@ impl Store {
                 if project.host_user_id == user_id {
                     metadata.push(proto::ProjectMetadata {
                         id: project_id,
-                        is_shared: project.share.is_some(),
                         worktree_root_names: project
                             .worktrees
                             .values()
                             .map(|worktree| worktree.root_name.clone())
                             .collect(),
                         guests: project
-                            .share
-                            .iter()
-                            .flat_map(|share| {
-                                share.guests.values().map(|(_, user_id)| user_id.to_proto())
-                            })
+                            .guests
+                            .values()
+                            .map(|(_, user_id)| user_id.to_proto())
                             .collect(),
                     });
                 }
@@ -307,7 +291,9 @@ impl Store {
             Project {
                 host_connection_id,
                 host_user_id,
-                share: None,
+                guests: Default::default(),
+                join_requests: Default::default(),
+                active_replica_ids: Default::default(),
                 worktrees: Default::default(),
                 language_servers: Default::default(),
             },
@@ -332,10 +318,6 @@ impl Store {
             .ok_or_else(|| anyhow!("no such project"))?;
         if project.host_connection_id == connection_id {
             project.worktrees.insert(worktree_id, worktree);
-            if let Ok(share) = project.share_mut() {
-                share.worktrees.insert(worktree_id, Default::default());
-            }
-
             Ok(())
         } else {
             Err(anyhow!("no such project"))?
@@ -356,10 +338,22 @@ impl Store {
                         host_connection.projects.remove(&project_id);
                     }
 
-                    if let Some(share) = &project.share {
-                        for guest_connection in share.guests.keys() {
-                            if let Some(connection) = self.connections.get_mut(&guest_connection) {
-                                connection.projects.remove(&project_id);
+                    for guest_connection in project.guests.keys() {
+                        if let Some(connection) = self.connections.get_mut(&guest_connection) {
+                            connection.projects.remove(&project_id);
+                        }
+                    }
+
+                    for requester_user_id in project.join_requests.keys() {
+                        if let Some(requester_connection_ids) =
+                            self.connections_by_user_id.get_mut(&requester_user_id)
+                        {
+                            for requester_connection_id in requester_connection_ids.iter() {
+                                if let Some(requester_connection) =
+                                    self.connections.get_mut(requester_connection_id)
+                                {
+                                    requester_connection.requested_projects.remove(&project_id);
+                                }
                             }
                         }
                     }
@@ -391,64 +385,7 @@ impl Store {
             .worktrees
             .remove(&worktree_id)
             .ok_or_else(|| anyhow!("no such worktree"))?;
-
-        let mut guest_connection_ids = Vec::new();
-        if let Ok(share) = project.share_mut() {
-            guest_connection_ids.extend(share.guests.keys());
-            share.worktrees.remove(&worktree_id);
-        }
-
-        Ok((worktree, guest_connection_ids))
-    }
-
-    pub fn share_project(
-        &mut self,
-        project_id: u64,
-        connection_id: ConnectionId,
-    ) -> Result<SharedProject> {
-        if let Some(project) = self.projects.get_mut(&project_id) {
-            if project.host_connection_id == connection_id {
-                let mut share = ProjectShare::default();
-                for worktree_id in project.worktrees.keys() {
-                    share.worktrees.insert(*worktree_id, Default::default());
-                }
-                project.share = Some(share);
-                return Ok(SharedProject {});
-            }
-        }
-        Err(anyhow!("no such project"))?
-    }
-
-    pub fn unshare_project(
-        &mut self,
-        project_id: u64,
-        acting_connection_id: ConnectionId,
-    ) -> Result<UnsharedProject> {
-        let project = if let Some(project) = self.projects.get_mut(&project_id) {
-            project
-        } else {
-            return Err(anyhow!("no such project"))?;
-        };
-
-        if project.host_connection_id != acting_connection_id {
-            return Err(anyhow!("not your project"))?;
-        }
-
-        let connection_ids = project.connection_ids();
-        if let Some(share) = project.share.take() {
-            for connection_id in share.guests.into_keys() {
-                if let Some(connection) = self.connections.get_mut(&connection_id) {
-                    connection.projects.remove(&project_id);
-                }
-            }
-
-            Ok(UnsharedProject {
-                connection_ids,
-                host_user_id: project.host_user_id,
-            })
-        } else {
-            Err(anyhow!("project is not shared"))?
-        }
+        Ok((worktree, project.guest_connection_ids()))
     }
 
     pub fn update_diagnostic_summary(
@@ -464,7 +401,6 @@ impl Store {
             .ok_or_else(|| anyhow!("no such project"))?;
         if project.host_connection_id == connection_id {
             let worktree = project
-                .share_mut()?
                 .worktrees
                 .get_mut(&worktree_id)
                 .ok_or_else(|| anyhow!("no such worktree"))?;
@@ -495,35 +431,77 @@ impl Store {
         Err(anyhow!("no such project"))?
     }
 
-    pub fn join_project(
+    pub fn request_join_project(
         &mut self,
-        connection_id: ConnectionId,
-        user_id: UserId,
+        requester_id: UserId,
         project_id: u64,
-    ) -> Result<JoinedProject> {
+        receipt: Receipt<proto::JoinProject>,
+    ) -> Result<()> {
         let connection = self
             .connections
-            .get_mut(&connection_id)
+            .get_mut(&receipt.sender_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
         let project = self
             .projects
             .get_mut(&project_id)
             .ok_or_else(|| anyhow!("no such project"))?;
+        connection.requested_projects.insert(project_id);
+        project
+            .join_requests
+            .entry(requester_id)
+            .or_default()
+            .push(receipt);
+        Ok(())
+    }
 
-        let share = project.share_mut()?;
-        connection.projects.insert(project_id);
-
-        let mut replica_id = 1;
-        while share.active_replica_ids.contains(&replica_id) {
-            replica_id += 1;
+    pub fn deny_join_project_request(
+        &mut self,
+        responder_connection_id: ConnectionId,
+        requester_id: UserId,
+        project_id: u64,
+    ) -> Option<Vec<Receipt<proto::JoinProject>>> {
+        let project = self.projects.get_mut(&project_id)?;
+        if responder_connection_id != project.host_connection_id {
+            return None;
         }
-        share.active_replica_ids.insert(replica_id);
-        share.guests.insert(connection_id, (replica_id, user_id));
 
-        Ok(JoinedProject {
-            replica_id,
-            project: &self.projects[&project_id],
-        })
+        let receipts = project.join_requests.remove(&requester_id)?;
+        for receipt in &receipts {
+            let requester_connection = self.connections.get_mut(&receipt.sender_id)?;
+            requester_connection.requested_projects.remove(&project_id);
+        }
+        Some(receipts)
+    }
+
+    pub fn accept_join_project_request(
+        &mut self,
+        responder_connection_id: ConnectionId,
+        requester_id: UserId,
+        project_id: u64,
+    ) -> Option<(Vec<(Receipt<proto::JoinProject>, ReplicaId)>, &Project)> {
+        let project = self.projects.get_mut(&project_id)?;
+        if responder_connection_id != project.host_connection_id {
+            return None;
+        }
+
+        let receipts = project.join_requests.remove(&requester_id)?;
+        let mut receipts_with_replica_ids = Vec::new();
+        for receipt in receipts {
+            let requester_connection = self.connections.get_mut(&receipt.sender_id)?;
+            requester_connection.requested_projects.remove(&project_id);
+            requester_connection.projects.insert(project_id);
+            let mut replica_id = 1;
+            while project.active_replica_ids.contains(&replica_id) {
+                replica_id += 1;
+            }
+            project.active_replica_ids.insert(replica_id);
+            project
+                .guests
+                .insert(receipt.sender_id, (replica_id, requester_id));
+            receipts_with_replica_ids.push((receipt, replica_id));
+        }
+
+        Some((receipts_with_replica_ids, project))
     }
 
     pub fn leave_project(
@@ -531,27 +509,48 @@ impl Store {
         connection_id: ConnectionId,
         project_id: u64,
     ) -> Result<LeftProject> {
+        let user_id = self.user_id_for_connection(connection_id)?;
         let project = self
             .projects
             .get_mut(&project_id)
             .ok_or_else(|| anyhow!("no such project"))?;
-        let share = project
-            .share
-            .as_mut()
-            .ok_or_else(|| anyhow!("project is not shared"))?;
-        let (replica_id, _) = share
-            .guests
-            .remove(&connection_id)
-            .ok_or_else(|| anyhow!("cannot leave a project before joining it"))?;
-        share.active_replica_ids.remove(&replica_id);
+
+        // If the connection leaving the project is a collaborator, remove it.
+        let remove_collaborator =
+            if let Some((replica_id, _)) = project.guests.remove(&connection_id) {
+                project.active_replica_ids.remove(&replica_id);
+                true
+            } else {
+                false
+            };
+
+        // If the connection leaving the project has a pending request, remove it.
+        // If that user has no other pending requests on other connections, indicate that the request should be cancelled.
+        let mut cancel_request = None;
+        if let Entry::Occupied(mut entry) = project.join_requests.entry(user_id) {
+            entry
+                .get_mut()
+                .retain(|receipt| receipt.sender_id != connection_id);
+            if entry.get().is_empty() {
+                entry.remove();
+                cancel_request = Some(user_id);
+            }
+        }
 
         if let Some(connection) = self.connections.get_mut(&connection_id) {
             connection.projects.remove(&project_id);
         }
 
+        let connection_ids = project.connection_ids();
+        let unshare = connection_ids.len() <= 1 && project.join_requests.is_empty();
+
         Ok(LeftProject {
-            connection_ids: project.connection_ids(),
+            host_connection_id: project.host_connection_id,
             host_user_id: project.host_user_id,
+            connection_ids,
+            cancel_request,
+            unshare,
+            remove_collaborator,
         })
     }
 
@@ -566,7 +565,6 @@ impl Store {
     ) -> Result<Vec<ConnectionId>> {
         let project = self.write_project(project_id, connection_id)?;
         let worktree = project
-            .share_mut()?
             .worktrees
             .get_mut(&worktree_id)
             .ok_or_else(|| anyhow!("no such worktree"))?;
@@ -611,12 +609,7 @@ impl Store {
             .get(&project_id)
             .ok_or_else(|| anyhow!("no such project"))?;
         if project.host_connection_id == connection_id
-            || project
-                .share
-                .as_ref()
-                .ok_or_else(|| anyhow!("project is not shared"))?
-                .guests
-                .contains_key(&connection_id)
+            || project.guests.contains_key(&connection_id)
         {
             Ok(project)
         } else {
@@ -634,12 +627,7 @@ impl Store {
             .get_mut(&project_id)
             .ok_or_else(|| anyhow!("no such project"))?;
         if project.host_connection_id == connection_id
-            || project
-                .share
-                .as_ref()
-                .ok_or_else(|| anyhow!("project is not shared"))?
-                .guests
-                .contains_key(&connection_id)
+            || project.guests.contains_key(&connection_id)
         {
             Ok(project)
         } else {
@@ -653,28 +641,21 @@ impl Store {
             for project_id in &connection.projects {
                 let project = &self.projects.get(&project_id).unwrap();
                 if project.host_connection_id != *connection_id {
-                    assert!(project
-                        .share
-                        .as_ref()
-                        .unwrap()
-                        .guests
-                        .contains_key(connection_id));
+                    assert!(project.guests.contains_key(connection_id));
                 }
 
-                if let Some(share) = project.share.as_ref() {
-                    for (worktree_id, worktree) in share.worktrees.iter() {
-                        let mut paths = HashMap::default();
-                        for entry in worktree.entries.values() {
-                            let prev_entry = paths.insert(&entry.path, entry);
-                            assert_eq!(
-                                prev_entry,
-                                None,
-                                "worktree {:?}, duplicate path for entries {:?} and {:?}",
-                                worktree_id,
-                                prev_entry.unwrap(),
-                                entry
-                            );
-                        }
+                for (worktree_id, worktree) in project.worktrees.iter() {
+                    let mut paths = HashMap::default();
+                    for entry in worktree.entries.values() {
+                        let prev_entry = paths.insert(&entry.path, entry);
+                        assert_eq!(
+                            prev_entry,
+                            None,
+                            "worktree {:?}, duplicate path for entries {:?} and {:?}",
+                            worktree_id,
+                            prev_entry.unwrap(),
+                            entry
+                        );
                     }
                 }
             }
@@ -702,21 +683,19 @@ impl Store {
             let host_connection = self.connections.get(&project.host_connection_id).unwrap();
             assert!(host_connection.projects.contains(project_id));
 
-            if let Some(share) = &project.share {
-                for guest_connection_id in share.guests.keys() {
-                    let guest_connection = self.connections.get(guest_connection_id).unwrap();
-                    assert!(guest_connection.projects.contains(project_id));
-                }
-                assert_eq!(share.active_replica_ids.len(), share.guests.len(),);
-                assert_eq!(
-                    share.active_replica_ids,
-                    share
-                        .guests
-                        .values()
-                        .map(|(replica_id, _)| *replica_id)
-                        .collect::<HashSet<_>>(),
-                );
+            for guest_connection_id in project.guests.keys() {
+                let guest_connection = self.connections.get(guest_connection_id).unwrap();
+                assert!(guest_connection.projects.contains(project_id));
             }
+            assert_eq!(project.active_replica_ids.len(), project.guests.len(),);
+            assert_eq!(
+                project.active_replica_ids,
+                project
+                    .guests
+                    .values()
+                    .map(|(replica_id, _)| *replica_id)
+                    .collect::<HashSet<_>>(),
+            );
         }
 
         for (channel_id, channel) in &self.channels {
@@ -730,38 +709,15 @@ impl Store {
 
 impl Project {
     pub fn guest_connection_ids(&self) -> Vec<ConnectionId> {
-        if let Some(share) = &self.share {
-            share.guests.keys().copied().collect()
-        } else {
-            Vec::new()
-        }
+        self.guests.keys().copied().collect()
     }
 
     pub fn connection_ids(&self) -> Vec<ConnectionId> {
-        if let Some(share) = &self.share {
-            share
-                .guests
-                .keys()
-                .copied()
-                .chain(Some(self.host_connection_id))
-                .collect()
-        } else {
-            vec![self.host_connection_id]
-        }
-    }
-
-    pub fn share(&self) -> Result<&ProjectShare> {
-        Ok(self
-            .share
-            .as_ref()
-            .ok_or_else(|| anyhow!("worktree is not shared"))?)
-    }
-
-    fn share_mut(&mut self) -> Result<&mut ProjectShare> {
-        Ok(self
-            .share
-            .as_mut()
-            .ok_or_else(|| anyhow!("worktree is not shared"))?)
+        self.guests
+            .keys()
+            .copied()
+            .chain(Some(self.host_connection_id))
+            .collect()
     }
 }
 

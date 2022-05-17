@@ -45,6 +45,7 @@ serde_json = { version = "1.0.64", features = ["preserve_order"] }
 sha2 = "0.10"
 similar = "1.3"
 smol = "1.2.5"
+thiserror = "1.0.29"
 toml = "0.5"
 
 [dev-dependencies]

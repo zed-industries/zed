@@ -1,4 +1,4 @@
-import Theme from "../themes/theme";
+import Theme from "../themes/common/theme";
 import { backgroundColor, border, iconColor, shadow, text } from "./components";
 import statusBar from "./statusBar";
 
@@ -41,6 +41,14 @@ export default function workspace(theme: Theme) {
 
   return {
     background: backgroundColor(theme, 300),
+    joiningProjectAvatar: {
+      cornerRadius: 40,
+      width: 80,
+    },
+    joiningProjectMessage: {
+      padding: 12,
+      ...text(theme, "sans", "primary", { size: "lg" })
+    },
     leaderBorderOpacity: 0.7,
     leaderBorderWidth: 2.0,
     tab,

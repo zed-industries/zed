@@ -1,5 +1,7 @@
 mod contact_finder;
 mod contact_notification;
+mod join_project_notification;
+mod notifications;
 
 use client::{Contact, ContactEventKind, User, UserStore};
 use contact_notification::ContactNotification;
@@ -13,6 +15,7 @@ use gpui::{
     AppContext, Element, ElementBox, Entity, LayoutContext, ModelHandle, MutableAppContext,
     RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
+use join_project_notification::JoinProjectNotification;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
@@ -76,6 +79,7 @@ pub struct RespondToContactRequest {
 pub fn init(cx: &mut MutableAppContext) {
     contact_finder::init(cx);
     contact_notification::init(cx);
+    join_project_notification::init(cx);
     cx.add_action(ContactsPanel::request_contact);
     cx.add_action(ContactsPanel::remove_contact);
     cx.add_action(ContactsPanel::respond_to_contact_request);
@@ -117,6 +121,37 @@ impl ContactsPanel {
             }
         })
         .detach();
+
+        cx.defer({
+            let workspace = workspace.clone();
+            move |_, cx| {
+                if let Some(workspace_handle) = workspace.upgrade(cx) {
+                    cx.subscribe(&workspace_handle.read(cx).project().clone(), {
+                        let workspace = workspace.clone();
+                        move |_, project, event, cx| match event {
+                            project::Event::ContactRequestedJoin(user) => {
+                                if let Some(workspace) = workspace.upgrade(cx) {
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace.show_notification(
+                                            cx.add_view(|cx| {
+                                                JoinProjectNotification::new(
+                                                    project,
+                                                    user.clone(),
+                                                    cx,
+                                                )
+                                            }),
+                                            cx,
+                                        )
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    })
+                    .detach();
+                }
+            }
+        });
 
         cx.subscribe(&app_state.user_store, {
             let user_store = app_state.user_store.downgrade();
@@ -305,22 +340,16 @@ impl ContactsPanel {
     fn render_contact_project(
         contact: Arc<Contact>,
         current_user_id: Option<u64>,
-        project_ix: usize,
+        project_index: usize,
         app_state: Arc<AppState>,
         theme: &theme::ContactsPanel,
         is_last_project: bool,
         is_selected: bool,
         cx: &mut LayoutContext,
     ) -> ElementBox {
-        let project = &contact.projects[project_ix];
+        let project = &contact.projects[project_index];
         let project_id = project.id;
         let is_host = Some(contact.user.id) == current_user_id;
-        let is_guest = !is_host
-            && project
-                .guests
-                .iter()
-                .any(|guest| Some(guest.id) == current_user_id);
-        let is_shared = project.is_shared;
 
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
@@ -328,7 +357,7 @@ impl ContactsPanel {
             .width
             .or(theme.contact_avatar.height)
             .unwrap_or(0.);
-        let row = &theme.unshared_project_row.default;
+        let row = &theme.project_row.default;
         let tree_branch = theme.tree_branch.clone();
         let line_height = row.name.text.line_height(font_cache);
         let cap_height = row.name.text.cap_height(font_cache);
@@ -337,12 +366,7 @@ impl ContactsPanel {
 
         MouseEventHandler::new::<JoinProject, _, _>(project_id as usize, cx, |mouse_state, _| {
             let tree_branch = *tree_branch.style_for(mouse_state, is_selected);
-            let row = if project.is_shared {
-                &theme.shared_project_row
-            } else {
-                &theme.unshared_project_row
-            }
-            .style_for(mouse_state, is_selected);
+            let row = theme.project_row.style_for(mouse_state, is_selected);
 
             Flex::row()
                 .with_child(
@@ -412,15 +436,16 @@ impl ContactsPanel {
                 .with_style(row.container)
                 .boxed()
         })
-        .with_cursor_style(if !is_host && is_shared {
+        .with_cursor_style(if !is_host {
             CursorStyle::PointingHand
         } else {
             CursorStyle::Arrow
         })
         .on_click(move |_, cx| {
-            if !is_host && !is_guest {
+            if !is_host {
                 cx.dispatch_global_action(JoinProject {
-                    project_id,
+                    contact: contact.clone(),
+                    project_index,
                     app_state: app_state.clone(),
                 });
             }
@@ -743,12 +768,12 @@ impl ContactsPanel {
                         let section = *section;
                         self.toggle_expanded(&ToggleExpanded(section), cx);
                     }
-                    ContactEntry::ContactProject(contact, project_ix) => {
-                        cx.dispatch_global_action(JoinProject {
-                            project_id: contact.projects[*project_ix].id,
+                    ContactEntry::ContactProject(contact, project_index) => cx
+                        .dispatch_global_action(JoinProject {
+                            contact: contact.clone(),
+                            project_index: *project_index,
                             app_state: self.app_state.clone(),
-                        })
-                    }
+                        }),
                     _ => {}
                 }
             }
@@ -947,7 +972,6 @@ mod tests {
                     projects: vec![proto::ProjectMetadata {
                         id: 101,
                         worktree_root_names: vec!["dir1".to_string()],
-                        is_shared: true,
                         guests: vec![2],
                     }],
                 },
@@ -958,7 +982,6 @@ mod tests {
                     projects: vec![proto::ProjectMetadata {
                         id: 102,
                         worktree_root_names: vec!["dir2".to_string()],
-                        is_shared: true,
                         guests: vec![2],
                     }],
                 },

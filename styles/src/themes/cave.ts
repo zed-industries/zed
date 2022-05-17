@@ -1,5 +1,5 @@
 import chroma from "chroma-js";
-import { colorRamp, createTheme } from "./base16";
+import { colorRamp, createTheme } from "./common/base16";
 
 const name = "cave";
 

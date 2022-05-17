@@ -1,4 +1,4 @@
-import Theme from "../themes/theme";
+import Theme from "../themes/common/theme";
 import { panel } from "./app";
 import { backgroundColor, iconColor, player, text } from "./components";
 

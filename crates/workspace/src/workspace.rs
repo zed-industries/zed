@@ -5,10 +5,12 @@ pub mod pane_group;
 pub mod sidebar;
 mod status_bar;
 mod toolbar;
+mod waiting_room;
 
 use anyhow::{anyhow, Context, Result};
 use client::{
-    proto, Authenticate, ChannelList, Client, PeerId, Subscription, TypedEnvelope, User, UserStore,
+    proto, Authenticate, ChannelList, Client, Contact, PeerId, Subscription, TypedEnvelope, User,
+    UserStore,
 };
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
@@ -49,6 +51,7 @@ use std::{
 use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
+use waiting_room::WaitingRoom;
 
 type ProjectItemBuilders = HashMap<
     TypeId,
@@ -72,7 +75,6 @@ type FollowableItemBuilders = HashMap<
 actions!(
     workspace,
     [
-        ToggleShare,
         Unfollow,
         Save,
         ActivatePreviousPane,
@@ -98,7 +100,8 @@ pub struct ToggleFollow(pub PeerId);
 
 #[derive(Clone)]
 pub struct JoinProject {
-    pub project_id: u64,
+    pub contact: Arc<Contact>,
+    pub project_index: usize,
     pub app_state: Arc<AppState>,
 }
 
@@ -118,10 +121,14 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
         open_new(&action.0, cx)
     });
     cx.add_global_action(move |action: &JoinProject, cx: &mut MutableAppContext| {
-        join_project(action.project_id, &action.app_state, cx).detach();
+        join_project(
+            action.contact.clone(),
+            action.project_index,
+            &action.app_state,
+            cx,
+        );
     });
 
-    cx.add_action(Workspace::toggle_share);
     cx.add_async_action(Workspace::toggle_follow);
     cx.add_async_action(Workspace::follow_next_collaborator);
     cx.add_action(
@@ -692,6 +699,7 @@ impl WorkspaceParams {
 
 pub enum Event {
     PaneAdded(ViewHandle<Pane>),
+    ContactRequestedJoin(u64),
 }
 
 pub struct Workspace {
@@ -1366,18 +1374,6 @@ impl Workspace {
         &self.active_pane
     }
 
-    fn toggle_share(&mut self, _: &ToggleShare, cx: &mut ViewContext<Self>) {
-        self.project.update(cx, |project, cx| {
-            if project.is_local() {
-                if project.is_shared() {
-                    project.unshare(cx);
-                } else if project.can_share(cx) {
-                    project.share(cx).detach();
-                }
-            }
-        });
-    }
-
     fn project_remote_id_changed(&mut self, remote_id: Option<u64>, cx: &mut ViewContext<Self>) {
         if let Some(remote_id) = remote_id {
             self.remote_entity_subscription =
@@ -1580,7 +1576,6 @@ impl Workspace {
                                     cx,
                                 ))
                                 .with_children(self.render_connection_status(cx))
-                                .with_children(self.render_share_icon(theme, cx))
                                 .boxed(),
                         )
                         .right()
@@ -1698,39 +1693,6 @@ impl Workspace {
                 .boxed()
         } else {
             content
-        }
-    }
-
-    fn render_share_icon(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
-        if self.project().read(cx).is_local()
-            && self.client.user_id().is_some()
-            && self.project().read(cx).can_share(cx)
-        {
-            Some(
-                MouseEventHandler::new::<ToggleShare, _, _>(0, cx, |state, cx| {
-                    let style = &theme
-                        .workspace
-                        .titlebar
-                        .share_icon
-                        .style_for(state, self.project().read(cx).is_shared());
-                    Svg::new("icons/share.svg")
-                        .with_color(style.color)
-                        .constrained()
-                        .with_height(14.)
-                        .aligned()
-                        .contained()
-                        .with_style(style.container)
-                        .constrained()
-                        .with_width(24.)
-                        .aligned()
-                        .boxed()
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(|_, cx| cx.dispatch_action(ToggleShare))
-                .boxed(),
-            )
-        } else {
-            None
         }
     }
 
@@ -2315,36 +2277,25 @@ pub fn open_paths(
 }
 
 pub fn join_project(
-    project_id: u64,
+    contact: Arc<Contact>,
+    project_index: usize,
     app_state: &Arc<AppState>,
     cx: &mut MutableAppContext,
-) -> Task<Result<ViewHandle<Workspace>>> {
+) {
+    let project_id = contact.projects[project_index].id;
+
     for window_id in cx.window_ids().collect::<Vec<_>>() {
         if let Some(workspace) = cx.root_view::<Workspace>(window_id) {
             if workspace.read(cx).project().read(cx).remote_id() == Some(project_id) {
-                return Task::ready(Ok(workspace));
+                cx.activate_window(window_id);
+                return;
             }
         }
     }
 
-    let app_state = app_state.clone();
-    cx.spawn(|mut cx| async move {
-        let project = Project::remote(
-            project_id,
-            app_state.client.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            &mut cx,
-        )
-        .await?;
-        Ok(cx.update(|cx| {
-            cx.add_window((app_state.build_window_options)(), |cx| {
-                (app_state.build_workspace)(project, &app_state, cx)
-            })
-            .1
-        }))
-    })
+    cx.add_window((app_state.build_window_options)(), |cx| {
+        WaitingRoom::new(contact, project_index, app_state.clone(), cx)
+    });
 }
 
 fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {

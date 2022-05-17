@@ -90,6 +90,16 @@
   },
   "workspace": {
     "background": "#293256",
+    "joining_project_avatar": {
+      "corner_radius": 40,
+      "width": 80
+    },
+    "joining_project_message": {
+      "padding": 12,
+      "family": "Zed Sans",
+      "color": "#dfe2f1",
+      "size": 18
+    },
     "leader_border_opacity": 0.7,
     "leader_border_width": 2,
     "tab": {
@@ -1359,41 +1369,7 @@
       "button_width": 16,
       "corner_radius": 8
     },
-    "shared_project_row": {
-      "guest_avatar_spacing": 4,
-      "height": 24,
-      "guest_avatar": {
-        "corner_radius": 8,
-        "width": 14
-      },
-      "name": {
-        "family": "Zed Mono",
-        "color": "#979db4",
-        "size": 14,
-        "margin": {
-          "left": 8,
-          "right": 6
-        }
-      },
-      "guests": {
-        "margin": {
-          "left": 8,
-          "right": 8
-        }
-      },
-      "padding": {
-        "left": 12,
-        "right": 12
-      },
-      "background": "#293256",
-      "hover": {
-        "background": "#363f62"
-      },
-      "active": {
-        "background": "#444c6f"
-      }
-    },
-    "unshared_project_row": {
+    "project_row": {
       "guest_avatar_spacing": 4,
       "height": 24,
       "guest_avatar": {

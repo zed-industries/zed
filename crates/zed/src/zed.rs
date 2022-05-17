@@ -123,17 +123,18 @@ pub fn build_workspace(
     cx.subscribe(&cx.handle(), {
         let project = project.clone();
         move |_, _, event, cx| {
-            let workspace::Event::PaneAdded(pane) = event;
-            pane.update(cx, |pane, cx| {
-                pane.toolbar().update(cx, |toolbar, cx| {
-                    let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(project.clone()));
-                    toolbar.add_item(breadcrumbs, cx);
-                    let buffer_search_bar = cx.add_view(|cx| BufferSearchBar::new(cx));
-                    toolbar.add_item(buffer_search_bar, cx);
-                    let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
-                    toolbar.add_item(project_search_bar, cx);
-                })
-            });
+            if let workspace::Event::PaneAdded(pane) = event {
+                pane.update(cx, |pane, cx| {
+                    pane.toolbar().update(cx, |toolbar, cx| {
+                        let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(project.clone()));
+                        toolbar.add_item(breadcrumbs, cx);
+                        let buffer_search_bar = cx.add_view(|cx| BufferSearchBar::new(cx));
+                        toolbar.add_item(buffer_search_bar, cx);
+                        let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
+                        toolbar.add_item(project_search_bar, cx);
+                    })
+                });
+            }
         }
     })
     .detach();

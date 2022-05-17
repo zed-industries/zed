@@ -1,13 +1,11 @@
 use super::{http::HttpClient, proto, Client, Status, TypedEnvelope};
 use anyhow::{anyhow, Context, Result};
+use collections::{hash_map::Entry, BTreeSet, HashMap, HashSet};
 use futures::{channel::mpsc, future, AsyncReadExt, Future, StreamExt};
 use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{prelude::Stream, sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
-use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
-    sync::{Arc, Weak},
-};
+use std::sync::{Arc, Weak};
 use util::TryFutureExt as _;
 
 #[derive(Debug)]
@@ -16,6 +14,26 @@ pub struct User {
     pub github_login: String,
     pub avatar: Option<Arc<ImageData>>,
 }
+
+impl PartialOrd for User {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(&other))
+    }
+}
+
+impl Ord for User {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.github_login.cmp(&other.github_login)
+    }
+}
+
+impl PartialEq for User {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && self.github_login == other.github_login
+    }
+}
+
+impl Eq for User {}
 
 #[derive(Debug)]
 pub struct Contact {
@@ -27,9 +45,8 @@ pub struct Contact {
 #[derive(Debug)]
 pub struct ProjectMetadata {
     pub id: u64,
-    pub is_shared: bool,
     pub worktree_root_names: Vec<String>,
-    pub guests: Vec<Arc<User>>,
+    pub guests: BTreeSet<Arc<User>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,7 +187,7 @@ impl UserStore {
                     self.client.upgrade().unwrap().id,
                     message
                 );
-                let mut user_ids = HashSet::new();
+                let mut user_ids = HashSet::default();
                 for contact in &message.contacts {
                     user_ids.insert(contact.user_id);
                     user_ids.extend(contact.projects.iter().flat_map(|w| &w.guests).copied());
@@ -547,9 +564,9 @@ impl Contact {
             .await?;
         let mut projects = Vec::new();
         for project in contact.projects {
-            let mut guests = Vec::new();
+            let mut guests = BTreeSet::new();
             for participant_id in project.guests {
-                guests.push(
+                guests.insert(
                     user_store
                         .update(cx, |user_store, cx| {
                             user_store.fetch_user(participant_id, cx)
@@ -560,7 +577,6 @@ impl Contact {
             projects.push(ProjectMetadata {
                 id: project.id,
                 worktree_root_names: project.worktree_root_names.clone(),
-                is_shared: project.is_shared,
                 guests,
             });
         }
