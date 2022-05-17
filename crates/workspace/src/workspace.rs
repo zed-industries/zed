@@ -716,7 +716,7 @@ pub struct Workspace {
     panes: Vec<ViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
     status_bar: ViewHandle<StatusBar>,
-    notifications: Vec<Box<dyn NotificationHandle>>,
+    notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: ModelHandle<Project>,
     leader_state: LeaderState,
     follower_states_by_leader: FollowerStatesByLeader,
@@ -1008,28 +1008,41 @@ impl Workspace {
 
     pub fn show_notification<V: Notification>(
         &mut self,
-        notification: ViewHandle<V>,
+        id: usize,
         cx: &mut ViewContext<Self>,
+        build_notification: impl FnOnce(&mut ViewContext<Self>) -> ViewHandle<V>,
     ) {
-        cx.subscribe(&notification, |this, handle, event, cx| {
-            if handle.read(cx).should_dismiss_notification_on_event(event) {
-                this.dismiss_notification(handle.id(), cx);
-            }
-        })
-        .detach();
-        self.notifications.push(Box::new(notification));
-        cx.notify();
+        let type_id = TypeId::of::<V>();
+        if self
+            .notifications
+            .iter()
+            .all(|(existing_type_id, existing_id, _)| {
+                (*existing_type_id, *existing_id) != (type_id, id)
+            })
+        {
+            let notification = build_notification(cx);
+            cx.subscribe(&notification, move |this, handle, event, cx| {
+                if handle.read(cx).should_dismiss_notification_on_event(event) {
+                    this.dismiss_notification(type_id, id, cx);
+                }
+            })
+            .detach();
+            self.notifications
+                .push((type_id, id, Box::new(notification)));
+            cx.notify();
+        }
     }
 
-    fn dismiss_notification(&mut self, id: usize, cx: &mut ViewContext<Self>) {
-        self.notifications.retain(|handle| {
-            if handle.id() == id {
-                cx.notify();
-                false
-            } else {
-                true
-            }
-        });
+    fn dismiss_notification(&mut self, type_id: TypeId, id: usize, cx: &mut ViewContext<Self>) {
+        self.notifications
+            .retain(|(existing_type_id, existing_id, _)| {
+                if (*existing_type_id, *existing_id) == (type_id, id) {
+                    cx.notify();
+                    false
+                } else {
+                    true
+                }
+            });
     }
 
     pub fn items<'a>(
@@ -1724,7 +1737,7 @@ impl Workspace {
         } else {
             Some(
                 Flex::column()
-                    .with_children(self.notifications.iter().map(|notification| {
+                    .with_children(self.notifications.iter().map(|(_, _, notification)| {
                         ChildView::new(notification.as_ref())
                             .contained()
                             .with_style(theme.notification)
