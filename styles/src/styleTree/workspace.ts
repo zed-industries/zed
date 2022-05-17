@@ -1,4 +1,4 @@
-import Theme from "../themes/theme";
+import Theme from "../themes/common/theme";
 import { backgroundColor, border, iconColor, shadow, text } from "./components";
 import statusBar from "./statusBar";
 

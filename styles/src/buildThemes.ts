@@ -1,16 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import app from "./styleTree/app";
-import { dark as caveDark, light as caveLight } from "./themes/cave";
-import { dark as solarizedDark, light as solarizedLight } from "./themes/solarized";
-import { dark as sulphurpoolDark, light as sulphurpoolLight } from "./themes/sulphurpool";
+import themes from "./themes";
 import snakeCase from "./utils/snakeCase";
-
-const themes = [
-  caveDark, caveLight,
-  solarizedDark, solarizedLight,
-  sulphurpoolDark, sulphurpoolLight
-];
 
 const themeDirectory = `${__dirname}/../../assets/themes/`;
 

@@ -1,5 +1,5 @@
-import { ColorToken, FontWeightToken, NumberToken } from "../tokens";
-import { withOpacity } from "../utils/color";
+import { ColorToken, FontWeightToken, NumberToken } from "../../tokens";
+import { withOpacity } from "../../utils/color";
 
 export interface SyntaxHighlightStyle {
   color: ColorToken;
