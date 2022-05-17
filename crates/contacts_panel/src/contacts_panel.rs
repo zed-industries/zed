@@ -132,16 +132,15 @@ impl ContactsPanel {
                             project::Event::ContactRequestedJoin(user) => {
                                 if let Some(workspace) = workspace.upgrade(cx) {
                                     workspace.update(cx, |workspace, cx| {
-                                        workspace.show_notification(
+                                        workspace.show_notification(user.id as usize, cx, |cx| {
                                             cx.add_view(|cx| {
                                                 JoinProjectNotification::new(
                                                     project,
                                                     user.clone(),
                                                     cx,
                                                 )
-                                            }),
-                                            cx,
-                                        )
+                                            })
+                                        })
                                     });
                                 }
                             }
@@ -161,12 +160,11 @@ impl ContactsPanel {
                 {
                     workspace.update(cx, |workspace, cx| match event.kind {
                         ContactEventKind::Requested | ContactEventKind::Accepted => workspace
-                            .show_notification(
+                            .show_notification(event.user.id as usize, cx, |cx| {
                                 cx.add_view(|cx| {
                                     ContactNotification::new(event.clone(), user_store, cx)
-                                }),
-                                cx,
-                            ),
+                                })
+                            }),
                         _ => {}
                     });
                 }
