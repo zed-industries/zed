@@ -40,10 +40,10 @@ impl GoToLine {
 
         let (scroll_position, cursor_point, max_point) = active_editor.update(cx, |editor, cx| {
             let scroll_position = editor.scroll_position(cx);
-            let buffer = editor.buffer().read(cx).read(cx);
+            let buffer = editor.buffer().read(cx).snapshot(cx);
             (
                 Some(scroll_position),
-                editor.newest_selection_with_snapshot(&buffer).head(),
+                editor.selections.newest(cx).head(),
                 buffer.max_point(),
             )
         });
@@ -80,7 +80,9 @@ impl GoToLine {
             if let Some(rows) = active_editor.highlighted_rows() {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
                 let position = DisplayPoint::new(rows.start, 0).to_point(&snapshot);
-                active_editor.select_ranges([position..position], Some(Autoscroll::Center), cx);
+                active_editor.change_selections(Some(Autoscroll::Center), cx, |s| {
+                    s.select_ranges([position..position])
+                });
             }
         });
         cx.emit(Event::Dismissed);
@@ -106,7 +108,7 @@ impl GoToLine {
         match event {
             editor::Event::Blurred => cx.emit(Event::Dismissed),
             editor::Event::BufferEdited { .. } => {
-                let line_editor = self.line_editor.read(cx).buffer().read(cx).read(cx).text();
+                let line_editor = self.line_editor.read(cx).text(cx);
                 let mut components = line_editor.trim().split(&[',', ':'][..]);
                 let row = components.next().and_then(|row| row.parse::<u32>().ok());
                 let column = components.next().and_then(|row| row.parse::<u32>().ok());

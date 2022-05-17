@@ -3,7 +3,7 @@ use std::ops::{Deref, Range};
 use collections::BTreeMap;
 use itertools::{Either, Itertools};
 
-use editor::display_map::ToDisplayPoint;
+use editor::{display_map::ToDisplayPoint, Autoscroll};
 use gpui::{json::json, keymap::Keystroke, ViewHandle};
 use indoc::indoc;
 use language::Selection;
@@ -128,7 +128,9 @@ impl<'a> VimTestContext<'a> {
             let (unmarked_text, markers) = marked_text(&text);
             editor.set_text(unmarked_text, cx);
             let cursor_offset = markers[0];
-            editor.replace_selections_with(cx, |map| cursor_offset.to_display_point(map));
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.replace_cursors_with(|map| vec![cursor_offset.to_display_point(map)])
+            });
         })
     }
 
@@ -197,7 +199,8 @@ impl<'a> VimTestContext<'a> {
         let (empty_selections, reverse_selections, forward_selections) =
             self.editor.read_with(self.cx, |editor, cx| {
                 let (empty_selections, non_empty_selections): (Vec<_>, Vec<_>) = editor
-                    .local_selections::<usize>(cx)
+                    .selections
+                    .all::<usize>(cx)
                     .into_iter()
                     .partition_map(|selection| {
                         if selection.is_empty() {

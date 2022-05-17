@@ -1005,6 +1005,13 @@ impl MutableAppContext {
             .and_then(|window| window.root_view.clone().downcast::<T>())
     }
 
+    pub fn window_is_active(&self, window_id: usize) -> bool {
+        self.cx
+            .windows
+            .get(&window_id)
+            .map_or(false, |window| window.is_active)
+    }
+
     pub fn render_view(
         &mut self,
         window_id: usize,

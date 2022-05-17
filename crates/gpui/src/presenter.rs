@@ -122,8 +122,10 @@ impl Presenter {
             self.text_layout_cache.finish_frame();
             self.cursor_styles = scene.cursor_styles();
 
-            if let Some(event) = self.last_mouse_moved_event.clone() {
-                self.dispatch_event(event, cx)
+            if cx.window_is_active(self.window_id) {
+                if let Some(event) = self.last_mouse_moved_event.clone() {
+                    self.dispatch_event(event, cx)
+                }
             }
         } else {
             log::error!("could not find root_view_id for window {}", self.window_id);

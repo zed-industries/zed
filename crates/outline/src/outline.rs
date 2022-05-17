@@ -84,7 +84,7 @@ impl OutlineView {
                 .read(cx)
                 .buffer()
                 .read(cx)
-                .read(cx)
+                .snapshot(cx)
                 .outline(Some(cx.global::<Settings>().theme.editor.syntax.as_ref()));
             if let Some(outline) = buffer {
                 workspace.toggle_modal(cx, |_, cx| {
@@ -171,10 +171,8 @@ impl PickerDelegate for OutlineView {
                 .collect();
 
             let editor = self.active_editor.read(cx);
-            let buffer = editor.buffer().read(cx).read(cx);
-            let cursor_offset = editor
-                .newest_selection_with_snapshot::<usize>(&buffer)
-                .head();
+            let cursor_offset = editor.selections.newest::<usize>(cx).head();
+            let buffer = editor.buffer().read(cx).snapshot(cx);
             selected_index = self
                 .outline
                 .items
@@ -217,7 +215,9 @@ impl PickerDelegate for OutlineView {
             if let Some(rows) = active_editor.highlighted_rows() {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
                 let position = DisplayPoint::new(rows.start, 0).to_point(&snapshot);
-                active_editor.select_ranges([position..position], Some(Autoscroll::Center), cx);
+                active_editor.change_selections(Some(Autoscroll::Center), cx, |s| {
+                    s.select_ranges([position..position])
+                });
             }
         });
         cx.emit(Event::Dismissed);

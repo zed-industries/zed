@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::db::{self, UserId};
 use crate::{AppState, Error};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use axum::{
     http::{self, Request, StatusCode},
     middleware::Next,
@@ -51,7 +51,12 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
     }
 
     if credentials_valid {
-        req.extensions_mut().insert(user_id);
+        let user = state
+            .db
+            .get_user_by_id(user_id)
+            .await?
+            .ok_or_else(|| anyhow!("user {} not found", user_id))?;
+        req.extensions_mut().insert(user);
         Ok::<_, Error>(next.run(req).await)
     } else {
         Err(Error::Http(

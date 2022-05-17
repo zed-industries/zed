@@ -12,7 +12,7 @@ use std::{collections::HashMap, sync::Arc};
 
 pub use theme_registry::*;
 
-pub const DEFAULT_THEME_NAME: &'static str = "dark";
+pub const DEFAULT_THEME_NAME: &'static str = "cave-dark";
 
 #[derive(Deserialize, Default)]
 pub struct Theme {

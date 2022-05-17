@@ -5,7 +5,7 @@ use collections::{BTreeSet, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, RenderBlock},
-    highlight_diagnostic_message, Editor, ExcerptId, MultiBuffer, ToOffset,
+    highlight_diagnostic_message, Autoscroll, Editor, ExcerptId, MultiBuffer, ToOffset,
 };
 use gpui::{
     actions, elements::*, fonts::TextStyle, serde_json, AnyViewHandle, AppContext, Entity,
@@ -417,8 +417,9 @@ impl ProjectDiagnosticsEditor {
                 }];
             } else {
                 groups = self.path_states.get(path_ix)?.diagnostic_groups.as_slice();
-                new_excerpt_ids_by_selection_id = editor.refresh_selections(cx);
-                selections = editor.local_selections::<usize>(cx);
+                new_excerpt_ids_by_selection_id =
+                    editor.change_selections(Some(Autoscroll::Fit), cx, |s| s.refresh());
+                selections = editor.selections.all::<usize>(cx);
             }
 
             // If any selection has lost its position, move it to start of the next primary diagnostic.
@@ -441,7 +442,9 @@ impl ProjectDiagnosticsEditor {
                     }
                 }
             }
-            editor.update_selections(selections, None, cx);
+            editor.change_selections(None, cx, |s| {
+                s.select(selections);
+            });
             Some(())
         });
 
@@ -486,11 +489,11 @@ impl workspace::Item for ProjectDiagnosticsEditor {
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.excerpts.read(cx).read(cx).is_dirty()
+        self.excerpts.read(cx).is_dirty(cx)
     }
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
-        self.excerpts.read(cx).read(cx).has_conflict()
+        self.excerpts.read(cx).has_conflict(cx)
     }
 
     fn can_save(&self, _: &AppContext) -> bool {
@@ -894,7 +897,7 @@ mod tests {
             // Cursor is at the first diagnostic
             view.editor.update(cx, |editor, cx| {
                 assert_eq!(
-                    editor.selected_display_ranges(cx),
+                    editor.selections.display_ranges(cx),
                     [DisplayPoint::new(12, 6)..DisplayPoint::new(12, 6)]
                 );
             });
@@ -995,7 +998,7 @@ mod tests {
             // Cursor keeps its position.
             view.editor.update(cx, |editor, cx| {
                 assert_eq!(
-                    editor.selected_display_ranges(cx),
+                    editor.selections.display_ranges(cx),
                     [DisplayPoint::new(19, 6)..DisplayPoint::new(19, 6)]
                 );
             });

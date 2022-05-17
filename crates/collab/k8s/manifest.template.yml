@@ -83,8 +83,6 @@ spec:
                   key: token
             - name: RUST_LOG
               value: ${RUST_LOG}
-            - name: TRACE_LEVEL
-              value: ${TRACE_LEVEL}
             - name: HONEYCOMB_DATASET
               value: "collab"
             - name: HONEYCOMB_API_KEY
