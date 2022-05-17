@@ -5,6 +5,7 @@ pub mod pane_group;
 pub mod sidebar;
 mod status_bar;
 mod toolbar;
+mod waiting_room;
 
 use anyhow::{anyhow, Context, Result};
 use client::{
@@ -50,6 +51,7 @@ use std::{
 use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
+use waiting_room::WaitingRoom;
 
 type ProjectItemBuilders = HashMap<
     TypeId,
@@ -124,8 +126,7 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
             action.project_index,
             &action.app_state,
             cx,
-        )
-        .detach();
+        );
     });
 
     cx.add_async_action(Workspace::toggle_follow);
@@ -2280,119 +2281,21 @@ pub fn join_project(
     project_index: usize,
     app_state: &Arc<AppState>,
     cx: &mut MutableAppContext,
-) -> Task<Result<ViewHandle<Workspace>>> {
+) {
     let project_id = contact.projects[project_index].id;
-
-    struct JoiningNotice {
-        avatar: Option<Arc<ImageData>>,
-        message: String,
-    }
-
-    impl Entity for JoiningNotice {
-        type Event = ();
-    }
-
-    impl View for JoiningNotice {
-        fn ui_name() -> &'static str {
-            "JoiningProjectWindow"
-        }
-
-        fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-            let theme = &cx.global::<Settings>().theme.workspace;
-
-            Flex::column()
-                .with_children(self.avatar.clone().map(|avatar| {
-                    Image::new(avatar)
-                        .with_style(theme.joining_project_avatar)
-                        .aligned()
-                        .boxed()
-                }))
-                .with_child(
-                    Text::new(
-                        self.message.clone(),
-                        theme.joining_project_message.text.clone(),
-                    )
-                    .contained()
-                    .with_style(theme.joining_project_message.container)
-                    .aligned()
-                    .boxed(),
-                )
-                .aligned()
-                .contained()
-                .with_background_color(theme.background)
-                .boxed()
-        }
-    }
 
     for window_id in cx.window_ids().collect::<Vec<_>>() {
         if let Some(workspace) = cx.root_view::<Workspace>(window_id) {
             if workspace.read(cx).project().read(cx).remote_id() == Some(project_id) {
-                return Task::ready(Ok(workspace));
+                cx.activate_window(window_id);
+                return;
             }
         }
     }
 
-    let app_state = app_state.clone();
-    cx.spawn(|mut cx| async move {
-        let (window, joining_notice) = cx.update(|cx| {
-            cx.add_window((app_state.build_window_options)(), |_| JoiningNotice {
-                avatar: contact.user.avatar.clone(),
-                message: format!(
-                    "Asking to join @{}'s copy of {}...",
-                    contact.user.github_login,
-                    humanize_list(&contact.projects[project_index].worktree_root_names)
-                ),
-            })
-        });
-        let project = Project::remote(
-            project_id,
-            app_state.client.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            &mut cx,
-        )
-        .await;
-
-        cx.update(|cx| match project {
-            Ok(project) => Ok(cx.replace_root_view(window, |cx| {
-                let mut workspace = (app_state.build_workspace)(project, &app_state, cx);
-                workspace.toggle_sidebar_item(
-                    &ToggleSidebarItem {
-                        side: Side::Left,
-                        item_index: 0,
-                    },
-                    cx,
-                );
-                workspace
-            })),
-            Err(error @ _) => {
-                let login = &contact.user.github_login;
-                let message = match error {
-                    project::JoinProjectError::HostDeclined => {
-                        format!("@{} declined your request.", login)
-                    }
-                    project::JoinProjectError::HostClosedProject => {
-                        format!(
-                            "@{} closed their copy of {}.",
-                            login,
-                            humanize_list(&contact.projects[project_index].worktree_root_names)
-                        )
-                    }
-                    project::JoinProjectError::HostWentOffline => {
-                        format!("@{} went offline.", login)
-                    }
-                    project::JoinProjectError::Other(_) => "An error occurred.".to_string(),
-                };
-                joining_notice.update(cx, |notice, cx| {
-                    notice.message = message;
-                    cx.notify();
-                });
-
-                Err(error)?
-            }
-        })
-    })
+    cx.add_window((app_state.build_window_options)(), |cx| {
+        WaitingRoom::new(contact, project_index, app_state.clone(), cx)
+    });
 }
 
 fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
@@ -2407,19 +2310,4 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
         (app_state.build_workspace)(project, &app_state, cx)
     });
     cx.dispatch_action(window_id, vec![workspace.id()], &OpenNew(app_state.clone()));
-}
-
-fn humanize_list<'a>(items: impl IntoIterator<Item = &'a String>) -> String {
-    let mut list = String::new();
-    let mut items = items.into_iter().enumerate().peekable();
-    while let Some((ix, item)) = items.next() {
-        if ix > 0 {
-            list.push_str(", ");
-        }
-        if items.peek().is_none() {
-            list.push_str("and ");
-        }
-        list.push_str(item);
-    }
-    list
 }

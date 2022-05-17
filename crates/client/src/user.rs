@@ -23,6 +23,8 @@ impl PartialEq for User {
     }
 }
 
+impl Eq for User {}
+
 #[derive(Debug)]
 pub struct Contact {
     pub user: Arc<User>,

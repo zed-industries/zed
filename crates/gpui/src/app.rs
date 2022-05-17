@@ -3231,6 +3231,21 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.app.add_option_view(self.window_id, build_view)
     }
 
+    pub fn replace_root_view<V, F>(&mut self, build_root_view: F) -> ViewHandle<V>
+    where
+        V: View,
+        F: FnOnce(&mut ViewContext<V>) -> V,
+    {
+        let window_id = self.window_id;
+        self.update(|this| {
+            let root_view = this.add_view(window_id, build_root_view);
+            let window = this.cx.windows.get_mut(&window_id).unwrap();
+            window.root_view = root_view.clone().into();
+            window.focused_view_id = Some(root_view.id());
+            root_view
+        })
+    }
+
     pub fn subscribe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
     where
         E: Entity,

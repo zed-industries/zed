@@ -650,19 +650,32 @@ impl Server {
         let project_id = request.payload.project_id;
         let project;
         {
-            let mut state = self.store_mut().await;
-            project = state.leave_project(sender_id, project_id)?;
-            let unshare = project.connection_ids.len() <= 1;
-            broadcast(sender_id, project.connection_ids, |conn_id| {
+            let mut store = self.store_mut().await;
+            project = store.leave_project(sender_id, project_id)?;
+
+            if project.remove_collaborator {
+                broadcast(sender_id, project.connection_ids, |conn_id| {
+                    self.peer.send(
+                        conn_id,
+                        proto::RemoveProjectCollaborator {
+                            project_id,
+                            peer_id: sender_id.0,
+                        },
+                    )
+                });
+            }
+
+            if let Some(requester_id) = project.cancel_request {
                 self.peer.send(
-                    conn_id,
-                    proto::RemoveProjectCollaborator {
+                    project.host_connection_id,
+                    proto::JoinProjectRequestCancelled {
                         project_id,
-                        peer_id: sender_id.0,
+                        requester_id: requester_id.to_proto(),
                     },
-                )
-            });
-            if unshare {
+                )?;
+            }
+
+            if project.unshare {
                 self.peer.send(
                     project.host_connection_id,
                     proto::ProjectUnshared { project_id },
@@ -1633,6 +1646,7 @@ mod tests {
     use settings::Settings;
     use sqlx::types::time::OffsetDateTime;
     use std::{
+        cell::RefCell,
         env,
         ops::Deref,
         path::{Path, PathBuf},
@@ -2047,6 +2061,105 @@ mod tests {
             project_b.await.unwrap_err(),
             project::JoinProjectError::HostClosedProject
         ));
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_cancel_join_request(
+        deterministic: Arc<Deterministic>,
+        cx_a: &mut TestAppContext,
+        cx_b: &mut TestAppContext,
+    ) {
+        let lang_registry = Arc::new(LanguageRegistry::test());
+        let fs = FakeFs::new(cx_a.background());
+        cx_a.foreground().forbid_parking();
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let client_a = server.create_client(cx_a, "user_a").await;
+        let client_b = server.create_client(cx_b, "user_b").await;
+        server
+            .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+            .await;
+
+        // Share a project as client A
+        fs.insert_tree("/a", json!({})).await;
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let project_id = project_a
+            .read_with(cx_a, |project, _| project.next_remote_id())
+            .await;
+
+        let project_a_events = Rc::new(RefCell::new(Vec::new()));
+        let user_b = client_a
+            .user_store
+            .update(cx_a, |store, cx| {
+                store.fetch_user(client_b.user_id().unwrap(), cx)
+            })
+            .await
+            .unwrap();
+        project_a.update(cx_a, {
+            let project_a_events = project_a_events.clone();
+            move |_, cx| {
+                cx.subscribe(&cx.handle(), move |_, _, event, _| {
+                    project_a_events.borrow_mut().push(event.clone());
+                })
+                .detach();
+            }
+        });
+
+        let (worktree_a, _) = project_a
+            .update(cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/a", true, cx)
+            })
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+
+        // Request to join that project as client B
+        let project_b = cx_b.spawn(|mut cx| {
+            let client = client_b.client.clone();
+            let user_store = client_b.user_store.clone();
+            let lang_registry = lang_registry.clone();
+            async move {
+                Project::remote(
+                    project_id,
+                    client,
+                    user_store,
+                    lang_registry.clone(),
+                    FakeFs::new(cx.background()),
+                    &mut cx,
+                )
+                .await
+            }
+        });
+        deterministic.run_until_parked();
+        assert_eq!(
+            &*project_a_events.borrow(),
+            &[project::Event::ContactRequestedJoin(user_b.clone())]
+        );
+        project_a_events.borrow_mut().clear();
+
+        // Cancel the join request by leaving the project
+        client_b
+            .client
+            .send(proto::LeaveProject { project_id })
+            .unwrap();
+        drop(project_b);
+
+        deterministic.run_until_parked();
+        assert_eq!(
+            &*project_a_events.borrow(),
+            &[project::Event::ContactCancelledJoinRequest(user_b.clone())]
+        );
     }
 
     #[gpui::test(iterations = 10)]

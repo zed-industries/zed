@@ -136,7 +136,7 @@ pub struct Collaborator {
     pub replica_id: ReplicaId,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     ActiveEntryChanged(Option<ProjectEntryId>),
     WorktreeRemoved(WorktreeId),
@@ -147,6 +147,7 @@ pub enum Event {
     RemoteIdChanged(Option<u64>),
     CollaboratorLeft(PeerId),
     ContactRequestedJoin(Arc<User>),
+    ContactCancelledJoinRequest(Arc<User>),
 }
 
 #[derive(Serialize)]
@@ -269,6 +270,7 @@ impl Project {
         client.add_model_message_handler(Self::handle_start_language_server);
         client.add_model_message_handler(Self::handle_update_language_server);
         client.add_model_message_handler(Self::handle_remove_collaborator);
+        client.add_model_message_handler(Self::handle_join_project_request_cancelled);
         client.add_model_message_handler(Self::handle_register_worktree);
         client.add_model_message_handler(Self::handle_unregister_worktree);
         client.add_model_message_handler(Self::handle_unregister_project);
@@ -3877,6 +3879,27 @@ impl Project {
             cx.notify();
             Ok(())
         })
+    }
+
+    async fn handle_join_project_request_cancelled(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::JoinProjectRequestCancelled>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let user = this
+            .update(&mut cx, |this, cx| {
+                this.user_store.update(cx, |user_store, cx| {
+                    user_store.fetch_user(envelope.payload.requester_id, cx)
+                })
+            })
+            .await?;
+
+        this.update(&mut cx, |_, cx| {
+            cx.emit(Event::ContactCancelledJoinRequest(user));
+        });
+
+        Ok(())
     }
 
     async fn handle_register_worktree(

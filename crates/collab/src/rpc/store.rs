@@ -1,6 +1,6 @@
 use crate::db::{self, ChannelId, UserId};
 use anyhow::{anyhow, Result};
-use collections::{BTreeMap, HashMap, HashSet};
+use collections::{hash_map::Entry, BTreeMap, HashMap, HashSet};
 use rpc::{proto, ConnectionId, Receipt};
 use std::{collections::hash_map, path::PathBuf};
 use tracing::instrument;
@@ -56,9 +56,12 @@ pub struct RemovedConnectionState {
 }
 
 pub struct LeftProject {
-    pub connection_ids: Vec<ConnectionId>,
     pub host_user_id: UserId,
     pub host_connection_id: ConnectionId,
+    pub connection_ids: Vec<ConnectionId>,
+    pub remove_collaborator: bool,
+    pub cancel_request: Option<UserId>,
+    pub unshare: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -503,24 +506,48 @@ impl Store {
         connection_id: ConnectionId,
         project_id: u64,
     ) -> Result<LeftProject> {
+        let user_id = self.user_id_for_connection(connection_id)?;
         let project = self
             .projects
             .get_mut(&project_id)
             .ok_or_else(|| anyhow!("no such project"))?;
-        let (replica_id, _) = project
-            .guests
-            .remove(&connection_id)
-            .ok_or_else(|| anyhow!("cannot leave a project before joining it"))?;
-        project.active_replica_ids.remove(&replica_id);
+
+        // If the connection leaving the project is a collaborator, remove it.
+        let remove_collaborator =
+            if let Some((replica_id, _)) = project.guests.remove(&connection_id) {
+                project.active_replica_ids.remove(&replica_id);
+                true
+            } else {
+                false
+            };
+
+        // If the connection leaving the project has a pending request, remove it.
+        // If that user has no other pending requests on other connections, indicate that the request should be cancelled.
+        let mut cancel_request = None;
+        if let Entry::Occupied(mut entry) = project.join_requests.entry(user_id) {
+            entry
+                .get_mut()
+                .retain(|receipt| receipt.sender_id != connection_id);
+            if entry.get().is_empty() {
+                entry.remove();
+                cancel_request = Some(user_id);
+            }
+        }
 
         if let Some(connection) = self.connections.get_mut(&connection_id) {
             connection.projects.remove(&project_id);
         }
 
+        let connection_ids = project.connection_ids();
+        let unshare = connection_ids.len() <= 1 && project.join_requests.is_empty();
+
         Ok(LeftProject {
-            connection_ids: project.connection_ids(),
             host_connection_id: project.host_connection_id,
             host_user_id: project.host_user_id,
+            connection_ids,
+            cancel_request,
+            unshare,
+            remove_collaborator,
         })
     }
 
