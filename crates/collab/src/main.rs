@@ -12,7 +12,7 @@ use std::{
     sync::Arc,
 };
 use tracing_log::LogTracer;
-use tracing_subscriber::filter::EnvFilter;
+use tracing_subscriber::{filter::EnvFilter, fmt::format::JsonFields, Layer};
 use util::ResultExt;
 
 #[derive(Default, Deserialize)]
@@ -23,6 +23,7 @@ pub struct Config {
     pub honeycomb_api_key: Option<String>,
     pub honeycomb_dataset: Option<String>,
     pub rust_log: Option<String>,
+    pub log_json: Option<bool>,
 }
 
 pub struct AppState {
@@ -152,10 +153,23 @@ pub fn init_tracing(config: &Config) -> Option<()> {
 
     let subscriber = tracing_subscriber::Registry::default()
         .with(open_telemetry_layer)
-        .with(
-            tracing_subscriber::fmt::layer()
-                .event_format(tracing_subscriber::fmt::format().pretty()),
-        )
+        .with(if config.log_json.unwrap_or(false) {
+            Box::new(
+                tracing_subscriber::fmt::layer()
+                    .fmt_fields(JsonFields::default())
+                    .event_format(
+                        tracing_subscriber::fmt::format()
+                            .json()
+                            .flatten_event(true)
+                            .with_span_list(true),
+                    ),
+            ) as Box<dyn Layer<_> + Send + Sync>
+        } else {
+            Box::new(
+                tracing_subscriber::fmt::layer()
+                    .event_format(tracing_subscriber::fmt::format().pretty()),
+            )
+        })
         .with(EnvFilter::from_str(rust_log.as_str()).log_err()?);
 
     tracing::subscriber::set_global_default(subscriber).unwrap();

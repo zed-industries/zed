@@ -45,7 +45,7 @@ toml = "0.5.8"
 tracing = "0.1.34"
 tracing-log = "0.1.3"
 tracing-opentelemetry = "0.17"
-tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json"] }
 
 [dependencies.sqlx]
 version = "0.5.2"
