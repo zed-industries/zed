@@ -31,6 +31,11 @@ jobs:
           target: x86_64-apple-darwin
           profile: minimal
 
+      - name: Install Node
+        uses: actions/setup-node@v2
+        with:
+          node-version: '16'
+
       - name: Checkout repo
         uses: actions/checkout@v2
         with:

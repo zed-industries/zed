@@ -162,6 +162,8 @@ fn main() {
             cx.font_cache().clone(),
         );
 
+        cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
+            .detach();
         cx.spawn(|cx| watch_keymap_file(keymap_file, cx)).detach();
 
         let settings = cx.background().block(settings_rx.next()).unwrap();
@@ -438,6 +440,43 @@ fn load_embedded_fonts(app: &App) {
         .fonts()
         .add_fonts(&embedded_fonts.into_inner())
         .unwrap();
+}
+
+#[cfg(debug_assertions)]
+async fn watch_themes(
+    fs: Arc<dyn Fs>,
+    themes: Arc<ThemeRegistry>,
+    mut cx: AsyncAppContext,
+) -> Option<()> {
+    let mut events = fs
+        .watch("styles/src".as_ref(), Duration::from_millis(100))
+        .await;
+    while let Some(_) = events.next().await {
+        let output = Command::new("npm")
+            .current_dir("styles")
+            .args(["run", "build-themes"])
+            .output()
+            .await
+            .log_err()?;
+        if output.status.success() {
+            cx.update(|cx| theme_selector::ThemeSelector::reload(themes.clone(), cx))
+        } else {
+            eprintln!(
+                "build-themes script failed {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+    Some(())
+}
+
+#[cfg(not(debug_assertions))]
+async fn watch_themes(
+    _fs: Arc<dyn Fs>,
+    _themes: Arc<ThemeRegistry>,
+    _cx: AsyncAppContext,
+) -> Option<()> {
+    None
 }
 
 fn load_config_files(

@@ -23,7 +23,6 @@ actions!(theme_selector, [Toggle, Reload]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ThemeSelector::toggle);
-    cx.add_action(ThemeSelector::reload);
     Picker::<ThemeSelector>::init(cx);
 }
 
@@ -73,9 +72,9 @@ impl ThemeSelector {
         });
     }
 
-    fn reload(workspace: &mut Workspace, _: &Reload, cx: &mut ViewContext<Workspace>) {
+    #[cfg(debug_assertions)]
+    pub fn reload(themes: Arc<ThemeRegistry>, cx: &mut MutableAppContext) {
         let current_theme_name = cx.global::<Settings>().theme.name.clone();
-        let themes = workspace.themes();
         themes.clear();
         match themes.get(&current_theme_name) {
             Ok(theme) => {

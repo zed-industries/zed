@@ -210,7 +210,6 @@
         "bindings": {
             "cmd-shift-F": "project_search::Deploy",
             "cmd-k cmd-t": "theme_selector::Toggle",
-            "cmd-k t": "theme_selector::Reload",
             "cmd-k cmd-s": "zed::OpenKeymap",
             "cmd-t": "project_symbols::Toggle",
             "cmd-p": "file_finder::Toggle",
