@@ -27,6 +27,7 @@ pub struct SelectionsCollection {
     display_map: ModelHandle<DisplayMap>,
     buffer: ModelHandle<MultiBuffer>,
     pub next_selection_id: usize,
+    pub line_mode: bool,
     disjoint: Arc<[Selection<Anchor>]>,
     pending: Option<PendingSelection>,
 }
@@ -37,6 +38,7 @@ impl SelectionsCollection {
             display_map,
             buffer,
             next_selection_id: 1,
+            line_mode: true,
             disjoint: Arc::from([]),
             pending: Some(PendingSelection {
                 selection: Selection {

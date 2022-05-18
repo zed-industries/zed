@@ -509,6 +509,7 @@ impl MultiBuffer {
     pub fn set_active_selections(
         &mut self,
         selections: &[Selection<Anchor>],
+        line_mode: bool,
         cx: &mut ModelContext<Self>,
     ) {
         let mut selections_by_buffer: HashMap<usize, Vec<Selection<text::Anchor>>> =
@@ -573,7 +574,7 @@ impl MultiBuffer {
                         }
                         Some(selection)
                     }));
-                    buffer.set_active_selections(merged_selections, cx);
+                    buffer.set_active_selections(merged_selections, line_mode, cx);
                 });
         }
     }
@@ -2397,7 +2398,7 @@ impl MultiBufferSnapshot {
     pub fn remote_selections_in_range<'a>(
         &'a self,
         range: &'a Range<Anchor>,
-    ) -> impl 'a + Iterator<Item = (ReplicaId, Selection<Anchor>)> {
+    ) -> impl 'a + Iterator<Item = (ReplicaId, bool, Selection<Anchor>)> {
         let mut cursor = self.excerpts.cursor::<Option<&ExcerptId>>();
         cursor.seek(&Some(&range.start.excerpt_id), Bias::Left, &());
         cursor
@@ -2414,7 +2415,7 @@ impl MultiBufferSnapshot {
                 excerpt
                     .buffer
                     .remote_selections_in_range(query_range)
-                    .flat_map(move |(replica_id, selections)| {
+                    .flat_map(move |(replica_id, line_mode, selections)| {
                         selections.map(move |selection| {
                             let mut start = Anchor {
                                 buffer_id: Some(excerpt.buffer_id),
@@ -2435,6 +2436,7 @@ impl MultiBufferSnapshot {
 
                             (
                                 replica_id,
+                                line_mode,
                                 Selection {
                                     id: selection.id,
                                     start,

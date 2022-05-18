@@ -345,12 +345,13 @@ impl EditorElement {
                 scroll_top,
                 scroll_left,
                 bounds,
+                false,
                 cx,
             );
         }
 
         let mut cursors = SmallVec::<[Cursor; 32]>::new();
-        for (replica_id, selections) in &layout.selections {
+        for ((replica_id, line_mode), selections) in &layout.selections {
             let selection_style = style.replica_selection_style(*replica_id);
             let corner_radius = 0.15 * layout.line_height;
 
@@ -367,6 +368,7 @@ impl EditorElement {
                     scroll_top,
                     scroll_left,
                     bounds,
+                    *line_mode,
                     cx,
                 );
 
@@ -483,6 +485,7 @@ impl EditorElement {
         scroll_top: f32,
         scroll_left: f32,
         bounds: RectF,
+        line_mode: bool,
         cx: &mut PaintContext,
     ) {
         if range.start != range.end {
@@ -503,14 +506,14 @@ impl EditorElement {
                     .map(|row| {
                         let line_layout = &layout.line_layouts[(row - start_row) as usize];
                         HighlightedRangeLine {
-                            start_x: if row == range.start.row() {
+                            start_x: if row == range.start.row() && !line_mode {
                                 content_origin.x()
                                     + line_layout.x_for_index(range.start.column() as usize)
                                     - scroll_left
                             } else {
                                 content_origin.x() - scroll_left
                             },
-                            end_x: if row == range.end.row() {
+                            end_x: if row == range.end.row() && !line_mode {
                                 content_origin.x()
                                     + line_layout.x_for_index(range.end.column() as usize)
                                     - scroll_left
@@ -934,7 +937,7 @@ impl Element for EditorElement {
             );
 
             let mut remote_selections = HashMap::default();
-            for (replica_id, selection) in display_map
+            for (replica_id, line_mode, selection) in display_map
                 .buffer_snapshot
                 .remote_selections_in_range(&(start_anchor.clone()..end_anchor.clone()))
             {
@@ -944,7 +947,7 @@ impl Element for EditorElement {
                 }
 
                 remote_selections
-                    .entry(replica_id)
+                    .entry((replica_id, line_mode))
                     .or_insert(Vec::new())
                     .push(crate::Selection {
                         id: selection.id,
@@ -978,7 +981,7 @@ impl Element for EditorElement {
                 let local_replica_id = view.leader_replica_id.unwrap_or(view.replica_id(cx));
 
                 selections.push((
-                    local_replica_id,
+                    (local_replica_id, view.selections.line_mode),
                     local_selections
                         .into_iter()
                         .map(|selection| crate::Selection {
@@ -1237,7 +1240,7 @@ pub struct LayoutState {
     em_width: f32,
     em_advance: f32,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
-    selections: Vec<(ReplicaId, Vec<text::Selection<DisplayPoint>>)>,
+    selections: Vec<((ReplicaId, bool), Vec<text::Selection<DisplayPoint>>)>,
     context_menu: Option<(DisplayPoint, ElementBox)>,
     code_actions_indicator: Option<(u32, ElementBox)>,
 }

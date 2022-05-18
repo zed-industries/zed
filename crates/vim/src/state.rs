@@ -7,6 +7,7 @@ pub enum Mode {
     Normal,
     Insert,
     Visual,
+    VisualLine,
 }
 
 impl Default for Mode {
@@ -36,8 +37,7 @@ pub struct VimState {
 impl VimState {
     pub fn cursor_shape(&self) -> CursorShape {
         match self.mode {
-            Mode::Normal => CursorShape::Block,
-            Mode::Visual => CursorShape::Block,
+            Mode::Normal | Mode::Visual | Mode::VisualLine => CursorShape::Block,
             Mode::Insert => CursorShape::Bar,
         }
     }
@@ -53,6 +53,7 @@ impl VimState {
             match self.mode {
                 Mode::Normal => "normal",
                 Mode::Visual => "visual",
+                Mode::VisualLine => "visual_line",
                 Mode::Insert => "insert",
             }
             .to_string(),

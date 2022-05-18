@@ -10,7 +10,7 @@ mod visual;
 
 use collections::HashMap;
 use editor::{CursorShape, Editor};
-use gpui::{impl_actions, MutableAppContext, ViewContext, WeakViewHandle};
+use gpui::{impl_actions, MutableAppContext, Subscription, ViewContext, WeakViewHandle};
 use serde::Deserialize;
 
 use settings::Settings;
@@ -51,6 +51,7 @@ pub fn init(cx: &mut MutableAppContext) {
 pub struct Vim {
     editors: HashMap<usize, WeakViewHandle<Editor>>,
     active_editor: Option<WeakViewHandle<Editor>>,
+    selection_subscription: Option<Subscription>,
 
     enabled: bool,
     state: VimState,

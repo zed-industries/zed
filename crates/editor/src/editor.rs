@@ -1319,7 +1319,11 @@ impl Editor {
     ) {
         if self.focused && self.leader_replica_id.is_none() {
             self.buffer.update(cx, |buffer, cx| {
-                buffer.set_active_selections(&self.selections.disjoint_anchors(), cx)
+                buffer.set_active_selections(
+                    &self.selections.disjoint_anchors(),
+                    self.selections.line_mode,
+                    cx,
+                )
             });
         }
 
@@ -5599,7 +5603,11 @@ impl View for Editor {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
                 if self.leader_replica_id.is_none() {
-                    buffer.set_active_selections(&self.selections.disjoint_anchors(), cx);
+                    buffer.set_active_selections(
+                        &self.selections.disjoint_anchors(),
+                        self.selections.line_mode,
+                        cx,
+                    );
                 }
             });
         }

@@ -72,6 +72,10 @@
             "v": [
                 "vim::SwitchMode",
                 "Visual"
+            ],
+            "V": [
+                "vim::SwitchMode",
+                "VisualLine"
             ]
         }
     },
@@ -110,6 +114,14 @@
             "c": "vim::VisualChange",
             "d": "vim::VisualDelete",
             "x": "vim::VisualDelete"
+        }
+    },
+    {
+        "context": "Editor && vim_mode == visual_line",
+        "bindings": {
+            "c": "vim::VisualLineChange",
+            "d": "vim::VisualLineDelete",
+            "x": "vim::VisualLineDelete"
         }
     },
     {

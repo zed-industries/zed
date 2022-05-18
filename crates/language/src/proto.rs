@@ -43,11 +43,13 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
             }),
             Operation::UpdateSelections {
                 selections,
+                line_mode,
                 lamport_timestamp,
             } => proto::operation::Variant::UpdateSelections(proto::operation::UpdateSelections {
                 replica_id: lamport_timestamp.replica_id as u32,
                 lamport_timestamp: lamport_timestamp.value,
                 selections: serialize_selections(selections),
+                line_mode: *line_mode,
             }),
             Operation::UpdateDiagnostics {
                 diagnostics,
@@ -217,6 +219,7 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                         value: message.lamport_timestamp,
                     },
                     selections: Arc::from(selections),
+                    line_mode: message.line_mode,
                 }
             }
             proto::operation::Variant::UpdateDiagnostics(message) => Operation::UpdateDiagnostics {

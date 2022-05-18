@@ -112,6 +112,7 @@ fn motion(motion: Motion, cx: &mut MutableAppContext) {
     match Vim::read(cx).state.mode {
         Mode::Normal => normal_motion(motion, cx),
         Mode::Visual => visual_motion(motion, cx),
+        Mode::VisualLine => visual_motion(motion, cx),
         Mode::Insert => {
             // Shouldn't execute a motion in insert mode. Ignoring
         }

@@ -4,11 +4,21 @@ use workspace::Workspace;
 
 use crate::{motion::Motion, state::Mode, Vim};
 
-actions!(vim, [VisualDelete, VisualChange]);
+actions!(
+    vim,
+    [
+        VisualDelete,
+        VisualChange,
+        VisualLineDelete,
+        VisualLineChange
+    ]
+);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(change);
+    cx.add_action(change_line);
     cx.add_action(delete);
+    cx.add_action(delete_line);
 }
 
 pub fn visual_motion(motion: Motion, cx: &mut MutableAppContext) {
@@ -58,6 +68,22 @@ pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspac
     });
 }
 
+pub fn change_line(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspace>) {
+    Vim::update(cx, |vim, cx| {
+        vim.update_active_editor(cx, |editor, cx| {
+            editor.set_clip_at_line_ends(false, cx);
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.move_with(|map, selection| {
+                    selection.start = map.prev_line_boundary(selection.start.to_point(map)).1;
+                    selection.end = map.next_line_boundary(selection.end.to_point(map)).1;
+                });
+            });
+            editor.insert("", cx);
+        });
+        vim.switch_mode(Mode::Insert, cx);
+    });
+}
+
 pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.switch_mode(Mode::Normal, cx);
@@ -71,6 +97,43 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
                         *selection.end.column_mut() = selection.end.column() + 1;
                         selection.end = map.clip_point(selection.end, Bias::Left);
                     }
+                });
+            });
+            editor.insert("", cx);
+
+            // Fixup cursor position after the deletion
+            editor.set_clip_at_line_ends(true, cx);
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.move_with(|map, selection| {
+                    let mut cursor = selection.head();
+                    cursor = map.clip_point(cursor, Bias::Left);
+                    selection.collapse_to(cursor, selection.goal)
+                });
+            });
+        });
+    });
+}
+
+pub fn delete_line(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspace>) {
+    Vim::update(cx, |vim, cx| {
+        vim.switch_mode(Mode::Normal, cx);
+        vim.update_active_editor(cx, |editor, cx| {
+            editor.set_clip_at_line_ends(false, cx);
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.move_with(|map, selection| {
+                    selection.start = map.prev_line_boundary(selection.start.to_point(map)).1;
+
+                    if selection.end.row() < map.max_point().row() {
+                        *selection.end.row_mut() += 1;
+                        *selection.end.column_mut() = 0;
+                        // Don't reset the end here
+                        return;
+                    } else if selection.start.row() > 0 {
+                        *selection.start.row_mut() -= 1;
+                        *selection.start.column_mut() = map.line_len(selection.start.row());
+                    }
+
+                    selection.end = map.next_line_boundary(selection.end.to_point(map)).1;
                 });
             });
             editor.insert("", cx);
