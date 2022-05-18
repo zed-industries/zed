@@ -23,7 +23,7 @@
         "size": 14
       },
       "active": {
-        "background": "#6767675c",
+        "background": "#3f3f3f",
         "text": {
           "family": "Zed Sans",
           "color": "#feffff",
@@ -31,7 +31,7 @@
         }
       },
       "hover": {
-        "background": "#6767673d"
+        "background": "#2a2a2a"
       }
     },
     "border": {
@@ -90,6 +90,16 @@
   },
   "workspace": {
     "background": "#161616",
+    "joining_project_avatar": {
+      "corner_radius": 40,
+      "width": 80
+    },
+    "joining_project_message": {
+      "padding": 12,
+      "family": "Zed Sans",
+      "color": "#feffff",
+      "size": 18
+    },
     "leader_border_opacity": 0.7,
     "leader_border_width": 2,
     "tab": {
@@ -215,7 +225,7 @@
             "size": 14
           },
           "icon_color": "#feffff",
-          "background": "#6767673d"
+          "background": "#2a2a2a"
         }
       },
       "diagnostic_message": {
@@ -288,7 +298,7 @@
               "left": 7,
               "right": 7
             },
-            "background": "#6767673d"
+            "background": "#2a2a2a"
           },
           "container_warning": {
             "corner_radius": 6,
@@ -335,11 +345,11 @@
           "icon_color": "#c7c7c7",
           "hover": {
             "icon_color": "#feffff",
-            "background": "#6767673d"
+            "background": "#2a2a2a"
           },
           "active": {
             "icon_color": "#feffff",
-            "background": "#6767675c"
+            "background": "#3f3f3f"
           }
         },
         "badge": {
@@ -361,7 +371,7 @@
       "avatar_width": 18,
       "avatar_margin": 8,
       "height": 33,
-      "background": "#161616",
+      "background": "#2a2a2a",
       "padding": {
         "left": 80,
         "right": 6
@@ -426,15 +436,15 @@
         },
         "color": "#c7c7c7",
         "hover": {
-          "background": "#6767673d",
+          "background": "#3f3f3f",
           "color": "#c7c7c7"
         },
         "active": {
-          "background": "#6767675c",
+          "background": "#535353",
           "color": "#feffff"
         },
         "active_hover": {
-          "background": "#6767673d",
+          "background": "#3f3f3f",
           "color": "#feffff"
         }
       },
@@ -515,16 +525,16 @@
   "editor": {
     "text_color": "#feffff",
     "background": "#161616",
-    "active_line_background": "#feffff12",
+    "active_line_background": "#161616",
     "code_actions_indicator": "#c7c7c7",
     "diff_background_deleted": "#fa7fac26",
     "diff_background_inserted": "#bde27126",
-    "document_highlight_read_background": "#feffff1f",
-    "document_highlight_write_background": "#feffff3d",
+    "document_highlight_read_background": "#6767673d",
+    "document_highlight_write_background": "#6767677a",
     "error_color": "#fa7fac",
     "gutter_background": "#161616",
     "gutter_padding_factor": 3.5,
-    "highlighted_line_background": "#feffff1f",
+    "highlighted_line_background": "#2a2a2a",
     "line_number": "#c7c7c7",
     "line_number_active": "#feffff",
     "rename_fade": 0.6,
@@ -588,7 +598,7 @@
           "right": 6,
           "top": 2
         },
-        "background": "#1616163d"
+        "background": "#161616"
       },
       "margin": {
         "left": -14
@@ -606,7 +616,7 @@
           "right": 6,
           "top": 2
         },
-        "background": "#1616165c"
+        "background": "#161616"
       }
     },
     "diagnostic_header": {
@@ -642,7 +652,7 @@
       }
     },
     "diagnostic_path_header": {
-      "background": "#feffff12",
+      "background": "#161616",
       "text_scale_factor": 0.857,
       "filename": {
         "family": "Zed Mono",
@@ -852,7 +862,7 @@
         "weight": "normal"
       },
       "punctuation": {
-        "color": "#c7c7c7",
+        "color": "#feffff",
         "weight": "normal"
       },
       "constant": {
@@ -989,7 +999,7 @@
         "size": 14
       },
       "hover": {
-        "background": "#6767673d",
+        "background": "#2a2a2a",
         "text": {
           "family": "Zed Mono",
           "color": "#feffff",
@@ -997,7 +1007,7 @@
         }
       },
       "active": {
-        "background": "#6767675c",
+        "background": "#3f3f3f",
         "text": {
           "family": "Zed Mono",
           "color": "#feffff",
@@ -1005,7 +1015,7 @@
         }
       },
       "active_hover": {
-        "background": "#6767673d",
+        "background": "#2a2a2a",
         "text": {
           "family": "Zed Mono",
           "color": "#feffff",
@@ -1014,7 +1024,7 @@
       }
     },
     "filename_editor": {
-      "background": "#1616165c",
+      "background": "#161616",
       "text": {
         "family": "Zed Mono",
         "color": "#feffff",
@@ -1098,7 +1108,7 @@
             "right": 8
           }
         },
-        "background": "#6767673d",
+        "background": "#2a2a2a",
         "corner_radius": 6
       },
       "active_item": {
@@ -1133,7 +1143,7 @@
             "right": 8
           }
         },
-        "background": "#6767673d",
+        "background": "#2a2a2a",
         "corner_radius": 6
       },
       "menu": {
@@ -1307,7 +1317,7 @@
         "family": "Zed Mono",
         "color": "#feffff",
         "size": 14,
-        "background": "#6767675c"
+        "background": "#535353"
       }
     },
     "contact_row": {
@@ -1316,7 +1326,7 @@
         "right": 12
       },
       "active": {
-        "background": "#6767675c"
+        "background": "#535353"
       }
     },
     "tree_branch": {
@@ -1343,23 +1353,23 @@
     },
     "contact_button_spacing": 8,
     "contact_button": {
-      "background": "#161616",
+      "background": "#2a2a2a",
       "color": "#feffff",
       "icon_width": 8,
       "button_width": 16,
       "corner_radius": 8,
       "hover": {
-        "background": "#6767673d"
+        "background": "#3f3f3f"
       }
     },
     "disabled_contact_button": {
-      "background": "#161616",
+      "background": "#2a2a2a",
       "color": "#c7c7c7",
       "icon_width": 8,
       "button_width": 16,
       "corner_radius": 8
     },
-    "shared_project_row": {
+    "project_row": {
       "guest_avatar_spacing": 4,
       "height": 24,
       "guest_avatar": {
@@ -1387,44 +1397,10 @@
       },
       "background": "#161616",
       "hover": {
-        "background": "#6767673d"
+        "background": "#2a2a2a"
       },
       "active": {
-        "background": "#6767675c"
-      }
-    },
-    "unshared_project_row": {
-      "guest_avatar_spacing": 4,
-      "height": 24,
-      "guest_avatar": {
-        "corner_radius": 8,
-        "width": 14
-      },
-      "name": {
-        "family": "Zed Mono",
-        "color": "#c7c7c7",
-        "size": 14,
-        "margin": {
-          "left": 8,
-          "right": 6
-        }
-      },
-      "guests": {
-        "margin": {
-          "left": 8,
-          "right": 8
-        }
-      },
-      "padding": {
-        "left": 12,
-        "right": 12
-      },
-      "background": "#161616",
-      "hover": {
-        "background": "#6767673d"
-      },
-      "active": {
-        "background": "#6767675c"
+        "background": "#3f3f3f"
       }
     }
   },
@@ -1452,7 +1428,7 @@
         "size": 14
       },
       "active": {
-        "background": "#6767675c",
+        "background": "#3f3f3f",
         "text": {
           "family": "Zed Sans",
           "color": "#feffff",
@@ -1460,7 +1436,7 @@
         }
       },
       "hover": {
-        "background": "#6767673d"
+        "background": "#2a2a2a"
       }
     },
     "border": {
@@ -1527,17 +1503,17 @@
       }
     },
     "contact_button": {
-      "background": "#161616",
+      "background": "#2a2a2a",
       "color": "#feffff",
       "icon_width": 8,
       "button_width": 16,
       "corner_radius": 8,
       "hover": {
-        "background": "#6767673d"
+        "background": "#3f3f3f"
       }
     },
     "disabled_contact_button": {
-      "background": "#161616",
+      "background": "#2a2a2a",
       "color": "#c7c7c7",
       "icon_width": 8,
       "button_width": 16,
@@ -1545,14 +1521,14 @@
     }
   },
   "search": {
-    "match_background": "#9a37ff7a",
+    "match_background": "#431078",
     "tab_icon_spacing": 8,
     "tab_icon_width": 14,
     "option_button": {
       "family": "Zed Mono",
       "color": "#c7c7c7",
       "size": 14,
-      "background": "#161616",
+      "background": "#2a2a2a",
       "corner_radius": 6,
       "border": {
         "color": "#161616",
@@ -1571,7 +1547,7 @@
         "family": "Zed Mono",
         "color": "#feffff",
         "size": 14,
-        "background": "#6767677a",
+        "background": "#535353",
         "border": {
           "color": "#676767",
           "width": 1
@@ -1581,7 +1557,7 @@
         "family": "Zed Mono",
         "color": "#feffff",
         "size": 14,
-        "background": "#6767673d",
+        "background": "#3f3f3f",
         "border": {
           "color": "#676767",
           "width": 1
@@ -1717,7 +1693,7 @@
         "left": 6
       },
       "hover": {
-        "background": "#1616163d"
+        "background": "#161616"
       }
     },
     "dismiss_button": {
