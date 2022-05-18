@@ -11,7 +11,10 @@ const tempDirectory = fs.mkdtempSync(path.join(tmpdir(), 'build-themes'));
 // Clear existing themes
 for (const file of fs.readdirSync(themeDirectory)) {
   if (file.endsWith('.json')) {
-    fs.unlinkSync(path.join(themeDirectory, file));
+    const name = file.replace(/\.json$/, '');
+    if (!themes.find(theme => theme.name === name)) {
+      fs.unlinkSync(path.join(themeDirectory, file));
+    }
   }
 }
 
