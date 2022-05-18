@@ -135,7 +135,7 @@ async fn get_user(
         .db
         .get_user_by_github_login(&login)
         .await?
-        .ok_or_else(|| anyhow!("user not found"))?;
+        .ok_or_else(|| Error::Http(StatusCode::NOT_FOUND, "User not found".to_string()))?;
     Ok(Json(user))
 }
 
