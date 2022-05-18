@@ -4,8 +4,8 @@ import { withOpacity } from "../../utils/color";
 export interface SyntaxHighlightStyle {
   color: ColorToken;
   weight?: FontWeightToken;
-  underline?: boolean,
-  italic?: boolean,
+  underline?: boolean;
+  italic?: boolean;
 }
 
 export interface Player {
@@ -25,7 +25,7 @@ export function buildPlayer(
     cursorColor: withOpacity(color, cursorOpacity || 1.0),
     selectionColor: withOpacity(color, selectionOpacity || 0.24),
     borderColor: withOpacity(color, borderOpacity || 0.8),
-  }
+  };
 }
 
 export interface BackgroundColorSet {
@@ -56,7 +56,7 @@ export interface Syntax {
   linkText: SyntaxHighlightStyle;
 
   [key: string]: SyntaxHighlightStyle;
-};
+}
 
 export default interface Theme {
   name: string;
@@ -86,8 +86,8 @@ export default interface Theme {
     muted: ColorToken;
     active: ColorToken;
     /**
-    * Used for rendering borders on top of media like avatars, images, video, etc.
-    */
+     * Used for rendering borders on top of media like avatars, images, video, etc.
+     */
     onMedia: ColorToken;
     ok: ColorToken;
     error: ColorToken;
@@ -141,7 +141,7 @@ export default interface Theme {
     };
   };
 
-  syntax: Syntax,
+  syntax: Syntax;
 
   player: {
     1: Player;
