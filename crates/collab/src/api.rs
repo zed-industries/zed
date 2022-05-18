@@ -82,23 +82,21 @@ async fn create_user(
     Json(params): Json<CreateUserParams>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<Json<User>> {
-    let user = if let Some(invite_code) = params.invite_code {
-        let user_id = app
-            .db
+    let user_id = if let Some(invite_code) = params.invite_code {
+        app.db
             .redeem_invite_code(&invite_code, &params.github_login)
             .await?
     } else {
-        let user_id = app
-            .db
+        app.db
             .create_user(&params.github_login, params.admin)
-            .await?;
-
-        let user = app
-            .db
-            .get_user_by_id(user_id)
             .await?
-            .ok_or_else(|| anyhow!("couldn't find the user we just created"))?
     };
+
+    let user = app
+        .db
+        .get_user_by_id(user_id)
+        .await?
+        .ok_or_else(|| anyhow!("couldn't find the user we just created"))?;
 
     Ok(Json(user))
 }
