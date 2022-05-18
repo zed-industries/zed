@@ -6,3 +6,4 @@
 /crates/collab/.env.toml
 /crates/collab/static/styles.css
 /vendor/bin
+/assets/themes
