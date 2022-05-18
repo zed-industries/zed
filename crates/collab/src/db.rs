@@ -796,11 +796,13 @@ macro_rules! id_type {
 }
 
 id_type!(UserId);
-#[derive(Clone, Debug, FromRow, Serialize, PartialEq)]
+#[derive(Clone, Debug, Default, FromRow, Serialize, PartialEq)]
 pub struct User {
     pub id: UserId,
     pub github_login: String,
     pub admin: bool,
+    pub invite_code: Option<String>,
+    pub invite_count: i32,
 }
 
 id_type!(OrgId);
@@ -912,21 +914,25 @@ pub mod tests {
                         id: user,
                         github_login: "user".to_string(),
                         admin: false,
+                        ..Default::default()
                     },
                     User {
                         id: friend1,
                         github_login: "friend-1".to_string(),
                         admin: false,
+                        ..Default::default()
                     },
                     User {
                         id: friend2,
                         github_login: "friend-2".to_string(),
                         admin: false,
+                        ..Default::default()
                     },
                     User {
                         id: friend3,
                         github_login: "friend-3".to_string(),
                         admin: false,
+                        ..Default::default()
                     }
                 ]
             );
@@ -1547,6 +1553,8 @@ pub mod tests {
                         id: user_id,
                         github_login: github_login.to_string(),
                         admin,
+                        invite_code: None,
+                        invite_count: 0,
                     },
                 );
                 Ok(user_id)

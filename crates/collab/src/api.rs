@@ -97,7 +97,8 @@ async fn create_user(
 
 #[derive(Deserialize)]
 struct UpdateUserParams {
-    admin: bool,
+    admin: Option<bool>,
+    invite_count: Option<u32>,
 }
 
 async fn update_user(
@@ -105,9 +106,16 @@ async fn update_user(
     Json(params): Json<UpdateUserParams>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<()> {
-    app.db
-        .set_user_is_admin(UserId(user_id), params.admin)
-        .await?;
+    if let Some(admin) = params.admin {
+        app.db.set_user_is_admin(UserId(user_id), admin).await?;
+    }
+
+    if let Some(invite_count) = params.invite_count {
+        app.db
+            .set_invite_count(UserId(user_id), invite_count)
+            .await?;
+    }
+
     Ok(())
 }
 
