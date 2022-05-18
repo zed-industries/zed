@@ -27,6 +27,7 @@ envy = "0.4.2"
 futures = "0.3"
 lazy_static = "1.4"
 lipsum = { version = "0.8", optional = true }
+nanoid = "0.4"
 opentelemetry = { version = "0.17", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.10", features = ["tls-roots"] }
 parking_lot = "0.11.1"
