@@ -93,6 +93,7 @@ pub struct MultiBufferSnapshot {
     parse_count: usize,
     diagnostics_update_count: usize,
     trailing_excerpt_update_count: usize,
+    edit_count: usize,
     is_dirty: bool,
     has_conflict: bool,
 }
@@ -1151,6 +1152,7 @@ impl MultiBuffer {
         let mut diagnostics_updated = false;
         let mut is_dirty = false;
         let mut has_conflict = false;
+        let mut edited = false;
         let mut buffers = self.buffers.borrow_mut();
         for buffer_state in buffers.values_mut() {
             let buffer = buffer_state.buffer.read(cx);
@@ -1186,10 +1188,14 @@ impl MultiBuffer {
                 );
             }
 
+            edited |= buffer_edited;
             reparsed |= buffer_reparsed;
             diagnostics_updated |= buffer_diagnostics_updated;
             is_dirty |= buffer.is_dirty();
             has_conflict |= buffer.has_conflict();
+        }
+        if edited {
+            snapshot.edit_count += 1;
         }
         if reparsed {
             snapshot.parse_count += 1;
@@ -2170,6 +2176,10 @@ impl MultiBufferSnapshot {
                 None
             }
         })
+    }
+
+    pub fn edit_count(&self) -> usize {
+        self.edit_count
     }
 
     pub fn parse_count(&self) -> usize {
