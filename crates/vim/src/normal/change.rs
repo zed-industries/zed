@@ -1,6 +1,6 @@
 use crate::{motion::Motion, state::Mode, Vim};
-use editor::{char_kind, movement, Autoscroll};
-use gpui::{impl_actions, MutableAppContext, ViewContext};
+use editor::{char_kind, movement, Autoscroll, ClipboardSelection};
+use gpui::{impl_actions, ClipboardItem, MutableAppContext, ViewContext};
 use serde::Deserialize;
 use workspace::Workspace;
 
@@ -22,12 +22,26 @@ pub fn change_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
         editor.transact(cx, |editor, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
             editor.set_clip_at_line_ends(false, cx);
+            let mut text = String::new();
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            let mut clipboard_selections = Vec::with_capacity(editor.selections.count());
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
                     motion.expand_selection(map, selection, false);
+                    let mut len = 0;
+                    let range = selection.start.to_point(map)..selection.end.to_point(map);
+                    for chunk in buffer.text_for_range(range) {
+                        text.push_str(chunk);
+                        len += chunk.len();
+                    }
+                    clipboard_selections.push(ClipboardSelection {
+                        len,
+                        is_entire_line: motion.linewise(),
+                    });
                 });
             });
             editor.insert(&"", cx);
+            cx.write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
         });
     });
     vim.switch_mode(Mode::Insert, cx)

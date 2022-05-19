@@ -837,9 +837,9 @@ struct ActiveDiagnosticGroup {
 }
 
 #[derive(Serialize, Deserialize)]
-struct ClipboardSelection {
-    len: usize,
-    is_entire_line: bool,
+pub struct ClipboardSelection {
+    pub len: usize,
+    pub is_entire_line: bool,
 }
 
 #[derive(Debug)]
