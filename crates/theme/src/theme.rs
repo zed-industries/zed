@@ -262,6 +262,16 @@ pub struct ContactsPanel {
     pub disabled_contact_button: IconButton,
     pub tree_branch: Interactive<TreeBranch>,
     pub section_icon_size: f32,
+    pub invite_row: Interactive<ContainedLabel>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct InviteLink {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    #[serde(flatten)]
+    pub label: LabelStyle,
+    pub icon: Icon,
 }
 
 #[derive(Deserialize, Default, Clone, Copy)]
@@ -277,6 +287,15 @@ pub struct ContactFinder {
     pub contact_username: ContainerStyle,
     pub contact_button: IconButton,
     pub disabled_contact_button: IconButton,
+}
+
+#[derive(Deserialize, Default)]
+pub struct Icon {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub color: Color,
+    pub width: f32,
+    pub path: String,
 }
 
 #[derive(Deserialize, Default)]

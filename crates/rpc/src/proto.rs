@@ -155,6 +155,7 @@ messages!(
     (UpdateContacts, Foreground),
     (UpdateDiagnosticSummary, Foreground),
     (UpdateFollowers, Foreground),
+    (UpdateInviteInfo, Foreground),
     (UpdateLanguageServer, Foreground),
     (UpdateWorktree, Foreground),
 );

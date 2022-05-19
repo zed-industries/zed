@@ -20,6 +20,7 @@ pub struct Config {
     pub http_port: u16,
     pub database_url: String,
     pub api_token: String,
+    pub invite_link_prefix: String,
     pub honeycomb_api_key: Option<String>,
     pub honeycomb_dataset: Option<String>,
     pub rust_log: Option<String>,
@@ -29,6 +30,7 @@ pub struct Config {
 pub struct AppState {
     db: Arc<dyn Db>,
     api_token: String,
+    invite_link_prefix: String,
 }
 
 impl AppState {
@@ -37,6 +39,7 @@ impl AppState {
         let this = Self {
             db: Arc::new(db),
             api_token: config.api_token.clone(),
+            invite_link_prefix: config.invite_link_prefix.clone(),
         };
         Ok(Arc::new(this))
     }

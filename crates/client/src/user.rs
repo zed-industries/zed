@@ -65,10 +65,17 @@ pub struct UserStore {
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
     pending_contact_requests: HashMap<u64, usize>,
+    invite_info: Option<InviteInfo>,
     client: Weak<Client>,
     http: Arc<dyn HttpClient>,
     _maintain_contacts: Task<()>,
     _maintain_current_user: Task<()>,
+}
+
+#[derive(Clone)]
+pub struct InviteInfo {
+    pub count: u32,
+    pub url: Arc<str>,
 }
 
 #[derive(Clone)]
@@ -101,19 +108,22 @@ impl UserStore {
     ) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
         let (update_contacts_tx, mut update_contacts_rx) = mpsc::unbounded();
-        let rpc_subscription =
-            client.add_message_handler(cx.handle(), Self::handle_update_contacts);
+        let rpc_subscriptions = vec![
+            client.add_message_handler(cx.handle(), Self::handle_update_contacts),
+            client.add_message_handler(cx.handle(), Self::handle_update_invite_info),
+        ];
         Self {
             users: Default::default(),
             current_user: current_user_rx,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
             outgoing_contact_requests: Default::default(),
+            invite_info: None,
             client: Arc::downgrade(&client),
             update_contacts_tx,
             http,
             _maintain_contacts: cx.spawn_weak(|this, mut cx| async move {
-                let _subscription = rpc_subscription;
+                let _subscriptions = rpc_subscriptions;
                 while let Some(message) = update_contacts_rx.next().await {
                     if let Some(this) = this.upgrade(&cx) {
                         this.update(&mut cx, |this, cx| this.update_contacts(message, cx))
@@ -154,15 +164,35 @@ impl UserStore {
         }
     }
 
+    async fn handle_update_invite_info(
+        this: ModelHandle<Self>,
+        message: TypedEnvelope<proto::UpdateInviteInfo>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            this.invite_info = Some(InviteInfo {
+                url: Arc::from(message.payload.url),
+                count: message.payload.count,
+            });
+            cx.notify();
+        });
+        Ok(())
+    }
+
+    pub fn invite_info(&self) -> Option<&InviteInfo> {
+        self.invite_info.as_ref()
+    }
+
     async fn handle_update_contacts(
         this: ModelHandle<Self>,
-        msg: TypedEnvelope<proto::UpdateContacts>,
+        message: TypedEnvelope<proto::UpdateContacts>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, _| {
             this.update_contacts_tx
-                .unbounded_send(UpdateContacts::Update(msg.payload))
+                .unbounded_send(UpdateContacts::Update(message.payload))
                 .unwrap();
         });
         Ok(())

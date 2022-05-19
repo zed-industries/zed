@@ -8,12 +8,13 @@ use contact_notification::ContactNotification;
 use editor::{Cancel, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
+    color::Color,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
-    AppContext, Element, ElementBox, Entity, LayoutContext, ModelHandle, MutableAppContext,
-    RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, ClipboardItem, Element, ElementBox, Entity, LayoutContext, ModelHandle,
+    MutableAppContext, RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use join_project_notification::JoinProjectNotification;
 use serde::Deserialize;
@@ -863,6 +864,59 @@ impl View for ContactsPanel {
                         .boxed(),
                 )
                 .with_child(List::new(self.list_state.clone()).flex(1., false).boxed())
+                .with_children(
+                    self.user_store
+                        .read(cx)
+                        .invite_info()
+                        .cloned()
+                        .and_then(|info| {
+                            enum InviteLink {}
+
+                            if info.count > 0 {
+                                Some(
+                                    MouseEventHandler::new::<InviteLink, _, _>(
+                                        0,
+                                        cx,
+                                        |state, cx| {
+                                            let style =
+                                                theme.invite_row.style_for(state, false).clone();
+
+                                            let copied =
+                                                cx.read_from_clipboard().map_or(false, |item| {
+                                                    item.text().as_str() == info.url.as_ref()
+                                                });
+
+                                            Label::new(
+                                                format!(
+                                                    "{} invite link ({} left)",
+                                                    if copied { "Copied" } else { "Copy" },
+                                                    info.count
+                                                ),
+                                                style.label.clone(),
+                                            )
+                                            .aligned()
+                                            .left()
+                                            .constrained()
+                                            .with_height(theme.row_height)
+                                            .contained()
+                                            .with_style(style.container)
+                                            .boxed()
+                                        },
+                                    )
+                                    .with_cursor_style(CursorStyle::PointingHand)
+                                    .on_click(move |_, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new(
+                                            info.url.to_string(),
+                                        ));
+                                        cx.notify();
+                                    })
+                                    .boxed(),
+                                )
+                            } else {
+                                None
+                            }
+                        }),
+                )
                 .boxed(),
         )
         .with_style(theme.container)

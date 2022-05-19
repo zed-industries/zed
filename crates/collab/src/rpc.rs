@@ -23,7 +23,11 @@ use axum::{
     Extension, Router, TypedHeader,
 };
 use collections::HashMap;
-use futures::{channel::mpsc, future::BoxFuture, FutureExt, SinkExt, StreamExt, TryStreamExt};
+use futures::{
+    channel::mpsc,
+    future::{self, BoxFuture},
+    FutureExt, SinkExt, StreamExt, TryStreamExt,
+};
 use lazy_static::lazy_static;
 use rpc::{
     proto::{self, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},
@@ -276,12 +280,22 @@ impl Server {
                 let _ = send_connection_id.send(connection_id).await;
             }
 
-            let contacts = this.app_state.db.get_contacts(user_id).await?;
+            let (contacts, invite_code) = future::try_join(
+                this.app_state.db.get_contacts(user_id),
+                this.app_state.db.get_invite_code_for_user(user_id)
+            ).await?;
 
             {
                 let mut store = this.store_mut().await;
                 store.add_connection(connection_id, user_id);
                 this.peer.send(connection_id, store.build_initial_contacts_update(contacts))?;
+                
+                if let Some((code, count)) = invite_code {
+                    this.peer.send(connection_id, proto::UpdateInviteInfo {
+                        url: format!("{}{}", this.app_state.invite_link_prefix, code),
+                        count,
+                    })?;
+                }
             }
             this.update_user_contacts(user_id).await?;
 
@@ -6670,6 +6684,7 @@ mod tests {
             Arc::new(AppState {
                 db: test_db.db().clone(),
                 api_token: Default::default(),
+                invite_link_prefix: Default::default(),
             })
         }
 

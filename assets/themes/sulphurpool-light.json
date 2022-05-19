@@ -1256,7 +1256,7 @@
   "contacts_panel": {
     "padding": {
       "top": 12,
-      "bottom": 12
+      "bottom": 0
     },
     "user_query_editor": {
       "background": "#f5f7ff",
@@ -1401,6 +1401,30 @@
       },
       "active": {
         "background": "#bbc0d3"
+      }
+    },
+    "invite_row": {
+      "padding": {
+        "left": 12,
+        "right": 12
+      },
+      "border": {
+        "top": true,
+        "width": 1,
+        "color": "#bbc0d3"
+      },
+      "text": {
+        "family": "Zed Sans",
+        "color": "#293256",
+        "size": 14
+      },
+      "hover": {
+        "text": {
+          "family": "Zed Sans",
+          "color": "#293256",
+          "size": 14,
+          "underline": true
+        }
       }
     }
   },
