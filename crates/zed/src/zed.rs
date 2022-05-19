@@ -15,7 +15,7 @@ use gpui::{
     actions,
     geometry::vector::vec2f,
     platform::{WindowBounds, WindowOptions},
-    AsyncAppContext, ModelHandle, ViewContext,
+    AsyncAppContext, ViewContext,
 };
 use lazy_static::lazy_static;
 pub use lsp;
@@ -115,13 +115,13 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     settings::KeymapFileContent::load_defaults(cx);
 }
 
-pub fn build_workspace(
-    project: ModelHandle<Project>,
+pub fn initialize_workspace(
+    workspace: &mut Workspace,
     app_state: &Arc<AppState>,
     cx: &mut ViewContext<Workspace>,
-) -> Workspace {
+) {
     cx.subscribe(&cx.handle(), {
-        let project = project.clone();
+        let project = workspace.project().clone();
         move |_, _, event, cx| {
             if let workspace::Event::PaneAdded(pane) = event {
                 pane.update(cx, |pane, cx| {
@@ -139,11 +139,12 @@ pub fn build_workspace(
     })
     .detach();
 
-    let workspace = Workspace::new(project.clone(), cx);
+    cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
+
     let theme_names = app_state.themes.list().collect();
     let language_names = app_state.languages.language_names();
 
-    project.update(cx, |project, cx| {
+    workspace.project().update(cx, |project, cx| {
         let action_names = cx.all_action_names().collect::<Vec<_>>();
         project.set_language_server_settings(serde_json::json!({
             "json": {
@@ -161,7 +162,7 @@ pub fn build_workspace(
         }));
     });
 
-    let project_panel = ProjectPanel::new(project, cx);
+    let project_panel = ProjectPanel::new(workspace.project().clone(), cx);
     let contact_panel = cx.add_view(|cx| {
         ContactsPanel::new(app_state.user_store.clone(), workspace.weak_handle(), cx)
     });
@@ -186,8 +187,6 @@ pub fn build_workspace(
         status_bar.add_right_item(cursor_position, cx);
         status_bar.add_right_item(auto_update, cx);
     });
-
-    workspace
 }
 
 pub fn build_window_options() -> WindowOptions<'static> {
@@ -277,14 +276,18 @@ fn open_config_file(
                     workspace.open_paths(vec![path.to_path_buf()], cx)
                 } else {
                     let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
-                        let project = Project::local(
-                            app_state.client.clone(),
-                            app_state.user_store.clone(),
-                            app_state.languages.clone(),
-                            app_state.fs.clone(),
+                        let mut workspace = Workspace::new(
+                            Project::local(
+                                app_state.client.clone(),
+                                app_state.user_store.clone(),
+                                app_state.languages.clone(),
+                                app_state.fs.clone(),
+                                cx,
+                            ),
                             cx,
                         );
-                        (app_state.build_workspace)(project, &app_state, cx)
+                        (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
+                        workspace
                     });
                     workspace.update(cx, |workspace, cx| {
                         workspace.open_paths(vec![path.to_path_buf()], cx)
@@ -1168,7 +1171,7 @@ mod tests {
         cx.update(|cx| {
             let mut app_state = AppState::test(cx);
             let state = Arc::get_mut(&mut app_state).unwrap();
-            state.build_workspace = build_workspace;
+            state.initialize_workspace = initialize_workspace;
             state.build_window_options = build_window_options;
             workspace::init(app_state.clone(), cx);
             editor::init(cx);

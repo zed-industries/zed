@@ -190,8 +190,7 @@ pub struct AppState {
     pub user_store: ModelHandle<client::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options: fn() -> WindowOptions<'static>,
-    pub build_workspace:
-        fn(ModelHandle<Project>, &Arc<AppState>, &mut ViewContext<Workspace>) -> Workspace,
+    pub initialize_workspace: fn(&mut Workspace, &Arc<AppState>, &mut ViewContext<Workspace>),
 }
 
 pub trait Item: View {
@@ -654,7 +653,7 @@ impl AppState {
             fs,
             languages,
             user_store,
-            build_workspace: |project, _, cx| Workspace::new(project, cx),
+            initialize_workspace: |_, _, _| {},
             build_window_options: || Default::default(),
         })
     }
@@ -2219,14 +2218,17 @@ pub fn open_paths(
                     .contains(&false);
 
             cx.add_window((app_state.build_window_options)(), |cx| {
-                let project = Project::local(
-                    app_state.client.clone(),
-                    app_state.user_store.clone(),
-                    app_state.languages.clone(),
-                    app_state.fs.clone(),
+                let mut workspace = Workspace::new(
+                    Project::local(
+                        app_state.client.clone(),
+                        app_state.user_store.clone(),
+                        app_state.languages.clone(),
+                        app_state.fs.clone(),
+                        cx,
+                    ),
                     cx,
                 );
-                let mut workspace = (app_state.build_workspace)(project, &app_state, cx);
+                (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
                 if contains_directory {
                     workspace.toggle_sidebar_item(
                         &ToggleSidebarItem {
@@ -2272,14 +2274,18 @@ pub fn join_project(
 
 fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
     let (window_id, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
-        let project = Project::local(
-            app_state.client.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
+        let mut workspace = Workspace::new(
+            Project::local(
+                app_state.client.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                cx,
+            ),
             cx,
         );
-        (app_state.build_workspace)(project, app_state, cx)
+        (app_state.initialize_workspace)(&mut workspace, app_state, cx);
+        workspace
     });
     cx.dispatch_action(window_id, vec![workspace.id()], &OpenNew);
 }

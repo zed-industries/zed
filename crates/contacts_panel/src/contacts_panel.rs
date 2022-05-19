@@ -1111,8 +1111,8 @@ mod tests {
                 client,
                 user_store: user_store.clone(),
                 fs,
-                build_window_options: || unimplemented!(),
-                build_workspace: |_, _, _| unimplemented!(),
+                build_window_options: || Default::default(),
+                initialize_workspace: |_, _, _| {},
             }),
             server,
         )

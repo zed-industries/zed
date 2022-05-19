@@ -6598,7 +6598,7 @@ mod tests {
                 themes: ThemeRegistry::new((), cx.font_cache()),
                 fs: FakeFs::new(cx.background()),
                 build_window_options: || Default::default(),
-                build_workspace: |_, _, _| unimplemented!(),
+                initialize_workspace: |_, _, _| unimplemented!(),
             });
 
             Channel::init(&client);

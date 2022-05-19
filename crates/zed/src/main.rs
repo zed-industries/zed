@@ -40,9 +40,9 @@ use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
 use util::{ResultExt, TryFutureExt};
 use workspace::{self, AppState, OpenNew, OpenPaths};
 use zed::{
-    self, build_window_options, build_workspace,
+    self, build_window_options,
     fs::RealFs,
-    languages, menus,
+    initialize_workspace, languages, menus,
     settings_file::{settings_from_files, watch_keymap_file, WatchedJsonFile},
 };
 
@@ -193,7 +193,7 @@ fn main() {
             user_store,
             fs,
             build_window_options,
-            build_workspace,
+            initialize_workspace,
         });
         workspace::init(app_state.clone(), cx);
         journal::init(app_state.clone(), cx);
