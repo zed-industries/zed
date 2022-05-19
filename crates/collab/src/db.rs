@@ -1,4 +1,5 @@
-use anyhow::{anyhow, Context, Result};
+use crate::Result;
+use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use futures::StreamExt;
 use nanoid::nanoid;
@@ -395,7 +396,7 @@ impl Db for PostgresDb {
         if result.rows_affected() == 1 {
             Ok(())
         } else {
-            Err(anyhow!("contact already requested"))
+            Err(anyhow!("contact already requested"))?
         }
     }
 
@@ -418,7 +419,7 @@ impl Db for PostgresDb {
         if result.rows_affected() == 1 {
             Ok(())
         } else {
-            Err(anyhow!("no such contact"))
+            Err(anyhow!("no such contact"))?
         }
     }
 
@@ -496,7 +497,7 @@ impl Db for PostgresDb {
         if result.rows_affected() == 1 {
             Ok(())
         } else {
-            Err(anyhow!("no such contact request"))
+            Err(anyhow!("no such contact request"))?
         }
     }
 
@@ -1721,7 +1722,7 @@ pub mod tests {
                     return Ok(());
                 }
             }
-            Err(anyhow!("no such notification"))
+            Err(anyhow!("no such notification"))?
         }
 
         async fn respond_to_contact_request(
@@ -1734,7 +1735,7 @@ pub mod tests {
             for (ix, contact) in contacts.iter_mut().enumerate() {
                 if contact.requester_id == requester_id && contact.responder_id == responder_id {
                     if contact.accepted {
-                        return Err(anyhow!("contact already confirmed"));
+                        Err(anyhow!("contact already confirmed"))?;
                     }
                     if accept {
                         contact.accepted = true;
@@ -1745,7 +1746,7 @@ pub mod tests {
                     return Ok(());
                 }
             }
-            Err(anyhow!("no such contact request"))
+            Err(anyhow!("no such contact request"))?
         }
 
         async fn create_access_token_hash(
@@ -1769,7 +1770,7 @@ pub mod tests {
             self.background.simulate_random_delay().await;
             let mut orgs = self.orgs.lock();
             if orgs.values().any(|org| org.slug == slug) {
-                Err(anyhow!("org already exists"))
+                Err(anyhow!("org already exists"))?
             } else {
                 let org_id = OrgId(post_inc(&mut *self.next_org_id.lock()));
                 orgs.insert(
@@ -1792,10 +1793,10 @@ pub mod tests {
         ) -> Result<()> {
             self.background.simulate_random_delay().await;
             if !self.orgs.lock().contains_key(&org_id) {
-                return Err(anyhow!("org does not exist"));
+                Err(anyhow!("org does not exist"))?;
             }
             if !self.users.lock().contains_key(&user_id) {
-                return Err(anyhow!("user does not exist"));
+                Err(anyhow!("user does not exist"))?;
             }
 
             self.org_memberships
@@ -1808,7 +1809,7 @@ pub mod tests {
         async fn create_org_channel(&self, org_id: OrgId, name: &str) -> Result<ChannelId> {
             self.background.simulate_random_delay().await;
             if !self.orgs.lock().contains_key(&org_id) {
-                return Err(anyhow!("org does not exist"));
+                Err(anyhow!("org does not exist"))?;
             }
 
             let mut channels = self.channels.lock();
@@ -1867,10 +1868,10 @@ pub mod tests {
         ) -> Result<()> {
             self.background.simulate_random_delay().await;
             if !self.channels.lock().contains_key(&channel_id) {
-                return Err(anyhow!("channel does not exist"));
+                Err(anyhow!("channel does not exist"))?;
             }
             if !self.users.lock().contains_key(&user_id) {
-                return Err(anyhow!("user does not exist"));
+                Err(anyhow!("user does not exist"))?;
             }
 
             self.channel_memberships
@@ -1890,10 +1891,10 @@ pub mod tests {
         ) -> Result<MessageId> {
             self.background.simulate_random_delay().await;
             if !self.channels.lock().contains_key(&channel_id) {
-                return Err(anyhow!("channel does not exist"));
+                Err(anyhow!("channel does not exist"))?;
             }
             if !self.users.lock().contains_key(&sender_id) {
-                return Err(anyhow!("user does not exist"));
+                Err(anyhow!("user does not exist"))?;
             }
 
             let mut messages = self.channel_messages.lock();

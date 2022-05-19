@@ -76,11 +76,14 @@ pub enum Error {
     Internal(anyhow::Error),
 }
 
-impl<E> From<E> for Error
-where
-    E: Into<anyhow::Error>,
-{
-    fn from(error: E) -> Self {
+impl From<anyhow::Error> for Error {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Internal(error)
+    }
+}
+
+impl From<sqlx::Error> for Error {
+    fn from(error: sqlx::Error) -> Self {
         Self::Internal(error.into())
     }
 }
@@ -113,6 +116,8 @@ impl std::fmt::Display for Error {
         }
     }
 }
+
+impl std::error::Error for Error {}
 
 pub fn init_tracing(config: &Config) -> Option<()> {
     use opentelemetry::KeyValue;

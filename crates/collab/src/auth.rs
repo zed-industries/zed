@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use super::db::{self, UserId};
-use crate::{AppState, Error};
-use anyhow::{anyhow, Context, Result};
+use crate::{AppState, Error, Result};
+use anyhow::{anyhow, Context};
 use axum::{
     http::{self, Request, StatusCode},
     middleware::Next,
