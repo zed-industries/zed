@@ -258,9 +258,10 @@ mod tests {
     use super::*;
     use editor::{Editor, Input};
     use serde_json::json;
-    use std::path::PathBuf;
-    use workspace::menu::{Confirm, SelectNext};
-    use workspace::{Workspace, WorkspaceParams};
+    use workspace::{
+        menu::{Confirm, SelectNext},
+        AppState, Workspace,
+    };
 
     #[ctor::ctor]
     fn init_logger() {
@@ -271,13 +272,13 @@ mod tests {
 
     #[gpui::test]
     async fn test_matching_paths(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| {
+        let app_state = cx.update(|cx| {
             super::init(cx);
             editor::init(cx);
+            AppState::test(cx)
         });
 
-        let params = cx.update(WorkspaceParams::test);
-        params
+        app_state
             .fs
             .as_fake()
             .insert_tree(
@@ -291,16 +292,8 @@ mod tests {
             )
             .await;
 
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        params
-            .project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root", true, cx)
-            })
-            .await
-            .unwrap();
-        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
-            .await;
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
         cx.dispatch_action(window_id, Toggle);
 
         let finder = cx.read(|cx| {
@@ -341,32 +334,26 @@ mod tests {
 
     #[gpui::test]
     async fn test_matching_cancellation(cx: &mut gpui::TestAppContext) {
-        let params = cx.update(WorkspaceParams::test);
-        let fs = params.fs.as_fake();
-        fs.insert_tree(
-            "/dir",
-            json!({
-                "hello": "",
-                "goodbye": "",
-                "halogen-light": "",
-                "happiness": "",
-                "height": "",
-                "hi": "",
-                "hiccup": "",
-            }),
-        )
-        .await;
-
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        params
-            .project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir", true, cx)
-            })
-            .await
-            .unwrap();
-        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
+        let app_state = cx.update(AppState::test);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/dir",
+                json!({
+                    "hello": "",
+                    "goodbye": "",
+                    "halogen-light": "",
+                    "happiness": "",
+                    "height": "",
+                    "hi": "",
+                    "hiccup": "",
+                }),
+            )
             .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/dir".as_ref()], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
         let (_, finder) =
             cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
 
@@ -406,23 +393,20 @@ mod tests {
 
     #[gpui::test]
     async fn test_single_file_worktrees(cx: &mut gpui::TestAppContext) {
-        let params = cx.update(WorkspaceParams::test);
-        params
+        let app_state = cx.update(AppState::test);
+        app_state
             .fs
             .as_fake()
             .insert_tree("/root", json!({ "the-parent-dir": { "the-file": "" } }))
             .await;
 
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        params
-            .project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root/the-parent-dir/the-file", true, cx)
-            })
-            .await
-            .unwrap();
-        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
-            .await;
+        let project = Project::test(
+            app_state.fs.clone(),
+            ["/root/the-parent-dir/the-file".as_ref()],
+            cx,
+        )
+        .await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
         let (_, finder) =
             cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
 
@@ -451,10 +435,12 @@ mod tests {
         finder.read_with(cx, |f, _| assert_eq!(f.matches.len(), 0));
     }
 
-    #[gpui::test(retries = 5)]
+    #[gpui::test]
     async fn test_multiple_matches_with_same_relative_path(cx: &mut gpui::TestAppContext) {
-        let params = cx.update(WorkspaceParams::test);
-        params
+        cx.foreground().forbid_parking();
+
+        let app_state = cx.update(AppState::test);
+        app_state
             .fs
             .as_fake()
             .insert_tree(
@@ -466,19 +452,13 @@ mod tests {
             )
             .await;
 
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-
-        workspace
-            .update(cx, |workspace, cx| {
-                workspace.open_paths(
-                    vec![PathBuf::from("/root/dir1"), PathBuf::from("/root/dir2")],
-                    cx,
-                )
-            })
-            .await;
-        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
-            .await;
-
+        let project = Project::test(
+            app_state.fs.clone(),
+            ["/root/dir1".as_ref(), "/root/dir2".as_ref()],
+            cx,
+        )
+        .await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
         let (_, finder) =
             cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
 

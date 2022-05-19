@@ -1,9 +1,7 @@
-use crate::AppState;
 use gpui::{Menu, MenuItem};
-use std::sync::Arc;
 
 #[cfg(target_os = "macos")]
-pub fn menus(state: &Arc<AppState>) -> Vec<Menu<'static>> {
+pub fn menus() -> Vec<Menu<'static>> {
     vec![
         Menu {
             name: "Zed",
@@ -33,12 +31,12 @@ pub fn menus(state: &Arc<AppState>) -> Vec<Menu<'static>> {
             items: vec![
                 MenuItem::Action {
                     name: "New",
-                    action: Box::new(workspace::OpenNew(state.clone())),
+                    action: Box::new(workspace::OpenNew),
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
                     name: "Open…",
-                    action: Box::new(workspace::Open(state.clone())),
+                    action: Box::new(workspace::Open),
                 },
             ],
         },

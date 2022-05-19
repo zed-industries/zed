@@ -60,7 +60,6 @@ pub struct ContactsPanel {
     filter_editor: ViewHandle<Editor>,
     collapsed_sections: Vec<Section>,
     selection: Option<usize>,
-    app_state: Arc<AppState>,
     _maintain_contacts: Subscription,
 }
 
@@ -175,7 +174,6 @@ impl ContactsPanel {
         let mut this = Self {
             list_state: ListState::new(0, Orientation::Top, 1000., {
                 let this = cx.weak_handle();
-                let app_state = app_state.clone();
                 move |ix, cx| {
                     let this = this.upgrade(cx).unwrap();
                     let this = this.read(cx);
@@ -222,7 +220,6 @@ impl ContactsPanel {
                                 contact.clone(),
                                 current_user_id,
                                 *project_ix,
-                                app_state.clone(),
                                 theme,
                                 is_last_project_for_contact,
                                 is_selected,
@@ -240,7 +237,6 @@ impl ContactsPanel {
             _maintain_contacts: cx
                 .observe(&app_state.user_store, |this, _, cx| this.update_entries(cx)),
             user_store: app_state.user_store.clone(),
-            app_state,
         };
         this.update_entries(cx);
         this
@@ -339,7 +335,6 @@ impl ContactsPanel {
         contact: Arc<Contact>,
         current_user_id: Option<u64>,
         project_index: usize,
-        app_state: Arc<AppState>,
         theme: &theme::ContactsPanel,
         is_last_project: bool,
         is_selected: bool,
@@ -444,7 +439,6 @@ impl ContactsPanel {
                 cx.dispatch_global_action(JoinProject {
                     contact: contact.clone(),
                     project_index,
-                    app_state: app_state.clone(),
                 });
             }
         })
@@ -770,7 +764,6 @@ impl ContactsPanel {
                         .dispatch_global_action(JoinProject {
                             contact: contact.clone(),
                             project_index: *project_index,
-                            app_state: self.app_state.clone(),
                         }),
                     _ => {}
                 }
@@ -916,17 +909,17 @@ impl PartialEq for ContactEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use client::{proto, test::FakeServer, ChannelList, Client};
+    use client::{proto, test::FakeServer, Client};
     use gpui::TestAppContext;
     use language::LanguageRegistry;
+    use project::Project;
     use theme::ThemeRegistry;
-    use workspace::WorkspaceParams;
 
     #[gpui::test]
     async fn test_contact_panel(cx: &mut TestAppContext) {
         let (app_state, server) = init(cx).await;
-        let workspace_params = cx.update(WorkspaceParams::test);
-        let workspace = cx.add_view(0, |cx| Workspace::new(&workspace_params, cx));
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let workspace = cx.add_view(0, |cx| Workspace::new(project, cx));
         let panel = cx.add_view(0, |cx| {
             ContactsPanel::new(app_state.clone(), workspace.downgrade(), cx)
         });
@@ -1110,13 +1103,6 @@ mod tests {
         let mut client = Client::new(http_client.clone());
         let server = FakeServer::for_client(100, &mut client, &cx).await;
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let channel_list =
-            cx.add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx));
-
-        let get_channels = server.receive::<proto::GetChannels>().await.unwrap();
-        server
-            .respond(get_channels.receipt(), Default::default())
-            .await;
 
         (
             Arc::new(AppState {
@@ -1125,7 +1111,6 @@ mod tests {
                 client,
                 user_store: user_store.clone(),
                 fs,
-                channel_list,
                 build_window_options: || unimplemented!(),
                 build_workspace: |_, _, _| unimplemented!(),
             }),

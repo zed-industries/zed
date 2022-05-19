@@ -31,7 +31,7 @@ use std::{
 };
 use util::ResultExt;
 pub use workspace;
-use workspace::{AppState, Workspace, WorkspaceParams};
+use workspace::{AppState, Workspace};
 
 actions!(
     zed,
@@ -139,18 +139,7 @@ pub fn build_workspace(
     })
     .detach();
 
-    let workspace_params = WorkspaceParams {
-        project,
-        client: app_state.client.clone(),
-        fs: app_state.fs.clone(),
-        languages: app_state.languages.clone(),
-        themes: app_state.themes.clone(),
-        user_store: app_state.user_store.clone(),
-        channel_list: app_state.channel_list.clone(),
-    };
-    let workspace = Workspace::new(&workspace_params, cx);
-    let project = workspace.project().clone();
-
+    let workspace = Workspace::new(project.clone(), cx);
     let theme_names = app_state.themes.list().collect();
     let language_names = app_state.languages.language_names();
 
@@ -313,43 +302,45 @@ mod tests {
     use assets::Assets;
     use editor::{Autoscroll, DisplayPoint, Editor};
     use gpui::{AssetSource, MutableAppContext, TestAppContext, ViewHandle};
-    use project::{Fs, ProjectPath};
+    use project::ProjectPath;
     use serde_json::json;
     use std::{
         collections::HashSet,
         path::{Path, PathBuf},
     };
-    use test::test_app_state;
     use theme::{Theme, ThemeRegistry, DEFAULT_THEME_NAME};
-    use util::test::temp_tree;
     use workspace::{
         open_paths, pane, Item, ItemHandle, OpenNew, Pane, SplitDirection, WorkspaceHandle,
     };
 
     #[gpui::test]
     async fn test_open_paths_action(cx: &mut TestAppContext) {
-        let app_state = cx.update(test_app_state);
-        let dir = temp_tree(json!({
-            "a": {
-                "aa": null,
-                "ab": null,
-            },
-            "b": {
-                "ba": null,
-                "bb": null,
-            },
-            "c": {
-                "ca": null,
-                "cb": null,
-            },
-        }));
+        let app_state = init(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "a": {
+                        "aa": null,
+                        "ab": null,
+                    },
+                    "b": {
+                        "ba": null,
+                        "bb": null,
+                    },
+                    "c": {
+                        "ca": null,
+                        "cb": null,
+                    },
+                }),
+            )
+            .await;
 
         cx.update(|cx| {
             open_paths(
-                &[
-                    dir.path().join("a").to_path_buf(),
-                    dir.path().join("b").to_path_buf(),
-                ],
+                &[PathBuf::from("/root/a"), PathBuf::from("/root/b")],
                 &app_state,
                 cx,
             )
@@ -357,7 +348,7 @@ mod tests {
         .await;
         assert_eq!(cx.window_ids().len(), 1);
 
-        cx.update(|cx| open_paths(&[dir.path().join("a").to_path_buf()], &app_state, cx))
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, cx))
             .await;
         assert_eq!(cx.window_ids().len(), 1);
         let workspace_1 = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
@@ -369,10 +360,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[
-                    dir.path().join("b").to_path_buf(),
-                    dir.path().join("c").to_path_buf(),
-                ],
+                &[PathBuf::from("/root/b"), PathBuf::from("/root/c")],
                 &app_state,
                 cx,
             )
@@ -383,11 +371,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
-        let app_state = cx.update(test_app_state);
-        cx.update(|cx| {
-            workspace::init(&app_state.client, cx);
-        });
-        cx.dispatch_global_action(workspace::OpenNew(app_state.clone()));
+        let app_state = init(cx);
+        cx.dispatch_global_action(workspace::OpenNew);
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();
         let editor = workspace.update(cx, |workspace, cx| {
@@ -414,7 +399,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_open_entry(cx: &mut TestAppContext) {
-        let app_state = cx.update(test_app_state);
+        let app_state = init(cx);
         app_state
             .fs
             .as_fake()
@@ -429,18 +414,10 @@ mod tests {
                 }),
             )
             .await;
-        let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        params
-            .project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root", true, cx)
-            })
-            .await
-            .unwrap();
 
-        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
-            .await;
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
         let file2 = entries[1].clone();
@@ -535,7 +512,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_open_paths(cx: &mut TestAppContext) {
-        let app_state = cx.update(test_app_state);
+        let app_state = init(cx);
+
         let fs = app_state.fs.as_fake();
         fs.insert_dir("/dir1").await;
         fs.insert_dir("/dir2").await;
@@ -544,17 +522,8 @@ mod tests {
         fs.insert_file("/dir2/b.txt", "".into()).await;
         fs.insert_file("/dir3/c.txt", "".into()).await;
 
-        let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        params
-            .project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/dir1", true, cx)
-            })
-            .await
-            .unwrap();
-        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
-            .await;
+        let project = Project::test(app_state.fs.clone(), ["/dir1".as_ref()], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
 
         // Open a file within an existing worktree.
         cx.update(|cx| {
@@ -655,19 +624,15 @@ mod tests {
 
     #[gpui::test]
     async fn test_save_conflicting_item(cx: &mut TestAppContext) {
-        let app_state = cx.update(test_app_state);
-        let fs = app_state.fs.as_fake();
-        fs.insert_tree("/root", json!({ "a.txt": "" })).await;
+        let app_state = init(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree("/root", json!({ "a.txt": "" }))
+            .await;
 
-        let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        params
-            .project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root", true, cx)
-            })
-            .await
-            .unwrap();
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
 
         // Open a file within an existing worktree.
         cx.update(|cx| {
@@ -687,7 +652,11 @@ mod tests {
                 editor.handle_input(&editor::Input("x".into()), cx)
             })
         });
-        fs.insert_file("/root/a.txt", "changed".to_string()).await;
+        app_state
+            .fs
+            .as_fake()
+            .insert_file("/root/a.txt", "changed".to_string())
+            .await;
         editor
             .condition(&cx, |editor, cx| editor.has_conflict(cx))
             .await;
@@ -704,21 +673,16 @@ mod tests {
 
     #[gpui::test]
     async fn test_open_and_save_new_file(cx: &mut TestAppContext) {
-        let app_state = cx.update(test_app_state);
+        let app_state = init(cx);
         app_state.fs.as_fake().insert_dir("/root").await;
-        let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        params
-            .project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root", true, cx)
-            })
-            .await
-            .unwrap();
+
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        project.update(cx, |project, _| project.languages().add(rust_lang()));
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, OpenNew(app_state.clone()));
+        cx.dispatch_action(window_id, OpenNew);
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -773,18 +737,11 @@ mod tests {
 
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
-        cx.dispatch_action(window_id, OpenNew(app_state.clone()));
+        cx.dispatch_action(window_id, OpenNew);
         workspace
             .update(cx, |workspace, cx| {
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
-                workspace.open_path(
-                    ProjectPath {
-                        worktree_id: worktree.read(cx).id(),
-                        path: Path::new("the-new-name.rs").into(),
-                    },
-                    true,
-                    cx,
-                )
+                workspace.open_path((worktree.read(cx).id(), "the-new-name.rs"), true, cx)
             })
             .await
             .unwrap();
@@ -805,13 +762,15 @@ mod tests {
 
     #[gpui::test]
     async fn test_setting_language_when_saving_as_single_file_worktree(cx: &mut TestAppContext) {
-        let app_state = cx.update(test_app_state);
+        let app_state = init(cx);
         app_state.fs.as_fake().insert_dir("/root").await;
-        let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
+
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        project.update(cx, |project, _| project.languages().add(rust_lang()));
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, OpenNew(app_state.clone()));
+        cx.dispatch_action(window_id, OpenNew);
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -842,10 +801,9 @@ mod tests {
 
     #[gpui::test]
     async fn test_pane_actions(cx: &mut TestAppContext) {
-        cx.foreground().forbid_parking();
+        init(cx);
 
-        cx.update(|cx| pane::init(cx));
-        let app_state = cx.update(test_app_state);
+        let app_state = cx.update(AppState::test);
         app_state
             .fs
             .as_fake()
@@ -861,17 +819,9 @@ mod tests {
             )
             .await;
 
-        let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        params
-            .project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root", true, cx)
-            })
-            .await
-            .unwrap();
-        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
-            .await;
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
 
@@ -926,7 +876,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_navigation(cx: &mut TestAppContext) {
-        let app_state = cx.update(test_app_state);
+        let app_state = init(cx);
         app_state
             .fs
             .as_fake()
@@ -941,17 +891,10 @@ mod tests {
                 }),
             )
             .await;
-        let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        params
-            .project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root", true, cx)
-            })
-            .await
-            .unwrap();
-        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
-            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
         let file2 = entries[1].clone();
@@ -990,7 +933,7 @@ mod tests {
                 editor.newline(&Default::default(), cx);
                 editor.move_down(&Default::default(), cx);
                 editor.move_down(&Default::default(), cx);
-                editor.save(params.project.clone(), cx)
+                editor.save(project.clone(), cx)
             })
             .await
             .unwrap();
@@ -1104,7 +1047,6 @@ mod tests {
             .unwrap();
         app_state
             .fs
-            .as_fake()
             .remove_file(Path::new("/root/a/file2"), Default::default())
             .await
             .unwrap();
@@ -1218,5 +1160,30 @@ mod tests {
             assert_eq!(theme.name, theme_name);
         }
         assert!(has_default_theme);
+    }
+
+    fn init(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            let mut app_state = AppState::test(cx);
+            let state = Arc::get_mut(&mut app_state).unwrap();
+            state.build_workspace = build_workspace;
+            state.build_window_options = build_window_options;
+            workspace::init(app_state.clone(), cx);
+            editor::init(cx);
+            pane::init(cx);
+            app_state
+        })
+    }
+
+    fn rust_lang() -> Arc<language::Language> {
+        Arc::new(language::Language::new(
+            language::LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        ))
     }
 }

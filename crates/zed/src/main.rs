@@ -12,7 +12,7 @@ use cli::{
 use client::{
     self,
     http::{self, HttpClient},
-    ChannelList, UserStore, ZED_SECRET_CLIENT_TOKEN,
+    UserStore, ZED_SECRET_CLIENT_TOKEN,
 };
 use fs::OpenOptions;
 use futures::{
@@ -133,15 +133,12 @@ fn main() {
         let client = client::Client::new(http.clone());
         let mut languages = languages::build_language_registry(login_shell_env_loaded);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
-        let channel_list =
-            cx.add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx));
 
         auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
         project::Project::init(&client);
         client::Channel::init(&client);
         client::init(client.clone(), cx);
         command_palette::init(cx);
-        workspace::init(&client, cx);
         editor::init(cx);
         go_to_line::init(cx);
         file_finder::init(cx);
@@ -192,33 +189,33 @@ fn main() {
         let app_state = Arc::new(AppState {
             languages,
             themes,
-            channel_list,
             client: client.clone(),
             user_store,
             fs,
             build_window_options,
             build_workspace,
         });
+        workspace::init(app_state.clone(), cx);
         journal::init(app_state.clone(), cx);
-        theme_selector::init(cx);
+        theme_selector::init(app_state.clone(), cx);
         zed::init(&app_state, cx);
 
-        cx.set_menus(menus::menus(&app_state.clone()));
+        cx.set_menus(menus::menus());
 
         if stdout_is_a_pty() {
             cx.platform().activate(true);
             let paths = collect_path_args();
             if paths.is_empty() {
-                cx.dispatch_global_action(OpenNew(app_state.clone()));
+                cx.dispatch_global_action(OpenNew);
             } else {
-                cx.dispatch_global_action(OpenPaths { paths, app_state });
+                cx.dispatch_global_action(OpenPaths { paths });
             }
         } else {
             if let Ok(Some(connection)) = cli_connections_rx.try_next() {
                 cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
                     .detach();
             } else {
-                cx.dispatch_global_action(OpenNew(app_state.clone()));
+                cx.dispatch_global_action(OpenNew);
             }
             cx.spawn(|cx| async move {
                 while let Some(connection) = cli_connections_rx.next().await {
