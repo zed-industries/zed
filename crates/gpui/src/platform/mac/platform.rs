@@ -1,7 +1,6 @@
 use super::{BoolExt as _, Dispatcher, FontSystem, Window};
 use crate::{
-    executor,
-    keymap::Keystroke,
+    executor, keymap,
     platform::{self, CursorStyle},
     Action, ClipboardItem, Event, Menu, MenuItem,
 };
@@ -114,7 +113,7 @@ pub struct MacForegroundPlatformState {
 }
 
 impl MacForegroundPlatform {
-    unsafe fn create_menu_bar(&self, menus: Vec<Menu>) -> id {
+    unsafe fn create_menu_bar(&self, menus: Vec<Menu>, keystroke_matcher: &keymap::Matcher) -> id {
         let menu_bar = NSMenu::new(nil).autorelease();
         let mut state = self.0.borrow_mut();
 
@@ -134,19 +133,18 @@ impl MacForegroundPlatform {
                     MenuItem::Separator => {
                         item = NSMenuItem::separatorItem(nil);
                     }
-                    MenuItem::Action {
-                        name,
-                        keystroke,
-                        action,
-                    } => {
-                        if let Some(keystroke) = keystroke {
-                            let keystroke = Keystroke::parse(keystroke).unwrap_or_else(|err| {
-                                panic!(
-                                    "Invalid keystroke for menu item {}:{} - {:?}",
-                                    menu_name, name, err
-                                )
-                            });
+                    MenuItem::Action { name, action } => {
+                        let mut keystroke = None;
+                        if let Some(binding) = keystroke_matcher
+                            .bindings_for_action_type(action.as_any().type_id())
+                            .next()
+                        {
+                            if binding.keystrokes().len() == 1 {
+                                keystroke = binding.keystrokes().first()
+                            }
+                        }
 
+                        if let Some(keystroke) = keystroke {
                             let mut mask = NSEventModifierFlags::empty();
                             for (modifier, flag) in &[
                                 (keystroke.cmd, NSEventModifierFlags::NSCommandKeyMask),
@@ -239,10 +237,10 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
         self.0.borrow_mut().menu_command = Some(callback);
     }
 
-    fn set_menus(&self, menus: Vec<Menu>) {
+    fn set_menus(&self, menus: Vec<Menu>, keystroke_matcher: &keymap::Matcher) {
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
-            app.setMainMenu_(self.create_menu_bar(menus));
+            app.setMainMenu_(self.create_menu_bar(menus, keystroke_matcher));
         }
     }
 

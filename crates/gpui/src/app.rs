@@ -154,7 +154,6 @@ pub struct Menu<'a> {
 pub enum MenuItem<'a> {
     Action {
         name: &'a str,
-        keystroke: Option<&'a str>,
         action: Box<dyn Action>,
     },
     Separator,
@@ -1070,7 +1069,8 @@ impl MutableAppContext {
     }
 
     pub fn set_menus(&mut self, menus: Vec<Menu>) {
-        self.foreground_platform.set_menus(menus);
+        self.foreground_platform
+            .set_menus(menus, &self.keystroke_matcher);
     }
 
     fn prompt(
