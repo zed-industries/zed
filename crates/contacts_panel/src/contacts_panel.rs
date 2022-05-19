@@ -23,7 +23,7 @@ use theme::IconButton;
 use workspace::{
     menu::{Confirm, SelectNext, SelectPrev},
     sidebar::SidebarItem,
-    AppState, JoinProject, Workspace,
+    JoinProject, Workspace,
 };
 
 impl_actions!(
@@ -91,7 +91,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
 impl ContactsPanel {
     pub fn new(
-        app_state: Arc<AppState>,
+        user_store: ModelHandle<UserStore>,
         workspace: WeakViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -151,8 +151,8 @@ impl ContactsPanel {
             }
         });
 
-        cx.subscribe(&app_state.user_store, {
-            let user_store = app_state.user_store.downgrade();
+        cx.subscribe(&user_store, {
+            let user_store = user_store.downgrade();
             move |_, _, event, cx| {
                 if let Some((workspace, user_store)) =
                     workspace.upgrade(cx).zip(user_store.upgrade(cx))
@@ -234,9 +234,8 @@ impl ContactsPanel {
             entries: Default::default(),
             match_candidates: Default::default(),
             filter_editor,
-            _maintain_contacts: cx
-                .observe(&app_state.user_store, |this, _, cx| this.update_entries(cx)),
-            user_store: app_state.user_store.clone(),
+            _maintain_contacts: cx.observe(&user_store, |this, _, cx| this.update_entries(cx)),
+            user_store,
         };
         this.update_entries(cx);
         this
@@ -914,6 +913,7 @@ mod tests {
     use language::LanguageRegistry;
     use project::Project;
     use theme::ThemeRegistry;
+    use workspace::AppState;
 
     #[gpui::test]
     async fn test_contact_panel(cx: &mut TestAppContext) {
@@ -921,7 +921,7 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let workspace = cx.add_view(0, |cx| Workspace::new(project, cx));
         let panel = cx.add_view(0, |cx| {
-            ContactsPanel::new(app_state.clone(), workspace.downgrade(), cx)
+            ContactsPanel::new(app_state.user_store.clone(), workspace.downgrade(), cx)
         });
 
         let get_users_request = server.receive::<proto::GetUsers>().await.unwrap();
