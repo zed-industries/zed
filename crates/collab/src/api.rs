@@ -26,6 +26,7 @@ pub fn routes(state: Arc<AppState>) -> Router<Body> {
             put(update_user).delete(destroy_user).get(get_user),
         )
         .route("/users/:id/access_tokens", post(create_access_token))
+        .route("/invite_codes/:code", get(get_user_for_invite_code))
         .route("/panic", post(trace_panic))
         .layer(
             ServiceBuilder::new()
@@ -209,4 +210,11 @@ async fn create_access_token(
         user_id,
         encrypted_access_token,
     }))
+}
+
+async fn get_user_for_invite_code(
+    Path(code): Path<String>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<User>> {
+    Ok(Json(app.db.get_user_for_invite_code(&code).await?))
 }
