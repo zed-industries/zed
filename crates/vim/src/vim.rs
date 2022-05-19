@@ -128,13 +128,23 @@ impl Vim {
                         editor.set_cursor_shape(cursor_shape, cx);
                         editor.set_clip_at_line_ends(cursor_shape == CursorShape::Block, cx);
                         editor.set_input_enabled(!state.vim_controlled());
+                        editor.selections.line_mode = state.mode == Mode::VisualLine;
                         let context_layer = state.keymap_context_layer();
                         editor.set_keymap_context_layer::<Self>(context_layer);
                     } else {
                         editor.set_cursor_shape(CursorShape::Bar, cx);
                         editor.set_clip_at_line_ends(false, cx);
                         editor.set_input_enabled(true);
+                        editor.selections.line_mode = false;
                         editor.remove_keymap_context_layer::<Self>();
+                    }
+
+                    if state.empty_selections_only() {
+                        editor.change_selections(None, cx, |s| {
+                            s.move_with(|_, selection| {
+                                selection.collapse_to(selection.head(), selection.goal)
+                            });
+                        })
                     }
                 });
             }

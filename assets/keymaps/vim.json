@@ -73,7 +73,7 @@
                 "vim::SwitchMode",
                 "Visual"
             ],
-            "V": [
+            "shift-V": [
                 "vim::SwitchMode",
                 "VisualLine"
             ]

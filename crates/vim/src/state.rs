@@ -46,6 +46,10 @@ impl VimState {
         !matches!(self.mode, Mode::Insert)
     }
 
+    pub fn empty_selections_only(&self) -> bool {
+        self.mode != Mode::Visual && self.mode != Mode::VisualLine
+    }
+
     pub fn keymap_context_layer(&self) -> Context {
         let mut context = Context::default();
         context.map.insert(

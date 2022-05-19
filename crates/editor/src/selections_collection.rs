@@ -38,7 +38,7 @@ impl SelectionsCollection {
             display_map,
             buffer,
             next_selection_id: 1,
-            line_mode: true,
+            line_mode: false,
             disjoint: Arc::from([]),
             pending: Some(PendingSelection {
                 selection: Selection {

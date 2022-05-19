@@ -1,3 +1,4 @@
+use collections::HashMap;
 use editor::{Autoscroll, Bias};
 use gpui::{actions, MutableAppContext, ViewContext};
 use workspace::Workspace;
@@ -68,7 +69,7 @@ pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspac
     });
 }
 
-pub fn change_line(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspace>) {
+pub fn change_line(_: &mut Workspace, _: &VisualLineChange, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
@@ -114,13 +115,14 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
     });
 }
 
-pub fn delete_line(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspace>) {
+pub fn delete_line(_: &mut Workspace, _: &VisualLineDelete, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        vim.switch_mode(Mode::Normal, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
+            let mut original_columns: HashMap<_, _> = Default::default();
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
+                    original_columns.insert(selection.id, selection.head().column());
                     selection.start = map.prev_line_boundary(selection.start.to_point(map)).1;
 
                     if selection.end.row() < map.max_point().row() {
@@ -143,11 +145,15 @@ pub fn delete_line(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Wor
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
                     let mut cursor = selection.head();
+                    if let Some(column) = original_columns.get(&selection.id) {
+                        *cursor.column_mut() = *column
+                    }
                     cursor = map.clip_point(cursor, Bias::Left);
                     selection.collapse_to(cursor, selection.goal)
                 });
             });
         });
+        vim.switch_mode(Mode::Normal, cx);
     });
 }
 

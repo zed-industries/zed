@@ -22,7 +22,7 @@ fn editor_focused(EditorFocused(editor): &EditorFocused, cx: &mut MutableAppCont
         vim.active_editor = Some(editor.downgrade());
         vim.selection_subscription = Some(cx.subscribe(editor, |editor, event, cx| {
             if let editor::Event::SelectionsChanged { local: true } = event {
-                let newest_empty = !editor.read(cx).selections.newest::<usize>(cx).is_empty();
+                let newest_empty = editor.read(cx).selections.newest::<usize>(cx).is_empty();
                 editor_local_selections_changed(newest_empty, cx);
             }
         }));
