@@ -88,6 +88,18 @@ impl From<sqlx::Error> for Error {
     }
 }
 
+impl From<axum::Error> for Error {
+    fn from(error: axum::Error) -> Self {
+        Self::Internal(error.into())
+    }
+}
+
+impl From<hyper::Error> for Error {
+    fn from(error: hyper::Error) -> Self {
+        Self::Internal(error.into())
+    }
+}
+
 impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
         match self {

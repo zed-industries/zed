@@ -91,7 +91,8 @@ fn hash_access_token(token: &str) -> Result<String> {
             None,
             params,
             &SaltString::generate(thread_rng()),
-        )?
+        )
+        .map_err(anyhow::Error::new)?
         .to_string())
 }
 
@@ -105,6 +106,6 @@ pub fn encrypt_access_token(access_token: &str, public_key: String) -> Result<St
 }
 
 pub fn verify_access_token(token: &str, hash: &str) -> Result<bool> {
-    let hash = PasswordHash::new(hash)?;
+    let hash = PasswordHash::new(hash).map_err(anyhow::Error::new)?;
     Ok(Scrypt.verify_password(token.as_bytes(), &hash).is_ok())
 }

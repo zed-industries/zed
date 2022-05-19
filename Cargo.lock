@@ -851,6 +851,7 @@ dependencies = [
  "envy",
  "futures",
  "gpui",
+ "hyper",
  "language",
  "lazy_static",
  "lipsum",

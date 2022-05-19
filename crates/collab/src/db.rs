@@ -1,6 +1,7 @@
-use crate::Result;
+use crate::{Error, Result};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
+use axum::http::StatusCode;
 use futures::StreamExt;
 use nanoid::nanoid;
 use serde::Serialize;
@@ -237,7 +238,7 @@ impl Db for PostgresDb {
         .fetch_optional(&self.pool)
         .await?;
         if let Some((code, count)) = result {
-            Ok(Some((code, count.try_into()?)))
+            Ok(Some((code, count.try_into().map_err(anyhow::Error::new)?)))
         } else {
             Ok(None)
         }
@@ -246,7 +247,7 @@ impl Db for PostgresDb {
     async fn redeem_invite_code(&self, code: &str, login: &str) -> Result<UserId> {
         let mut tx = self.pool.begin().await?;
 
-        let inviter_id: UserId = sqlx::query_scalar(
+        let inviter_id: Option<UserId> = sqlx::query_scalar(
             "
                 UPDATE users
                 SET invite_count = invite_count - 1
@@ -258,8 +259,30 @@ impl Db for PostgresDb {
         )
         .bind(code)
         .fetch_optional(&mut tx)
-        .await?
-        .ok_or_else(|| anyhow!("invite code not found"))?;
+        .await?;
+
+        let inviter_id = match inviter_id {
+            Some(inviter_id) => inviter_id,
+            None => {
+                if sqlx::query_scalar::<_, i32>("SELECT 1 FROM users WHERE invite_code = $1")
+                    .bind(code)
+                    .fetch_optional(&mut tx)
+                    .await?
+                    .is_some()
+                {
+                    Err(Error::Http(
+                        StatusCode::UNAUTHORIZED,
+                        "no invites remaining".to_string(),
+                    ))?
+                } else {
+                    Err(Error::Http(
+                        StatusCode::NOT_FOUND,
+                        "invite code not found".to_string(),
+                    ))?
+                }
+            }
+        };
+
         let invitee_id = sqlx::query_scalar(
             "
                 INSERT INTO users
