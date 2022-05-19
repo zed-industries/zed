@@ -90,6 +90,10 @@ unsafe fn build_classes() {
             handle_menu_item as extern "C" fn(&mut Object, Sel, id),
         );
         decl.add_method(
+            sel!(validateMenuItem:),
+            validate_menu_item as extern "C" fn(&mut Object, Sel, id) -> bool,
+        );
+        decl.add_method(
             sel!(application:openURLs:),
             open_urls as extern "C" fn(&mut Object, Sel, id, id),
         );
@@ -107,6 +111,7 @@ pub struct MacForegroundPlatformState {
     quit: Option<Box<dyn FnMut()>>,
     event: Option<Box<dyn FnMut(crate::Event) -> bool>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
+    validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce() -> ()>>,
     menu_actions: Vec<Box<dyn Action>>,
@@ -235,6 +240,10 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
 
     fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>) {
         self.0.borrow_mut().menu_command = Some(callback);
+    }
+
+    fn on_validate_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
+        self.0.borrow_mut().validate_menu_command = Some(callback);
     }
 
     fn set_menus(&self, menus: Vec<Menu>, keystroke_matcher: &keymap::Matcher) {
@@ -735,6 +744,23 @@ extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
             }
             platform.menu_command = Some(callback);
         }
+    }
+}
+
+extern "C" fn validate_menu_item(this: &mut Object, _: Sel, item: id) -> bool {
+    unsafe {
+        let mut result = false;
+        let platform = get_foreground_platform(this);
+        let mut platform = platform.0.borrow_mut();
+        if let Some(mut callback) = platform.validate_menu_command.take() {
+            let tag: NSInteger = msg_send![item, tag];
+            let index = tag as usize;
+            if let Some(action) = platform.menu_actions.get(index) {
+                result = callback(action.as_ref());
+            }
+            platform.validate_menu_command = Some(callback);
+        }
+        result
     }
 }
 

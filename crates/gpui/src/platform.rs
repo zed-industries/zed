@@ -73,6 +73,7 @@ pub(crate) trait ForegroundPlatform {
     fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>);
 
     fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>);
+    fn on_validate_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
     fn set_menus(&self, menus: Vec<Menu>, matcher: &keymap::Matcher);
     fn prompt_for_paths(
         &self,

@@ -192,6 +192,13 @@ impl App {
                 cx.borrow_mut().quit();
             }
         }));
+        foreground_platform.on_validate_menu_command(Box::new({
+            let cx = app.0.clone();
+            move |action| {
+                let cx = cx.borrow_mut();
+                cx.is_action_available(action)
+            }
+        }));
         foreground_platform.on_menu_command(Box::new({
             let cx = app.0.clone();
             move |action| {
@@ -1362,6 +1369,26 @@ impl MutableAppContext {
                     None
                 }
             })
+    }
+
+    pub fn is_action_available(&self, action: &dyn Action) -> bool {
+        let action_type = action.as_any().type_id();
+        if let Some(window_id) = self.cx.platform.key_window_id() {
+            if let Some((presenter, _)) = self.presenters_and_platform_windows.get(&window_id) {
+                let dispatch_path = presenter.borrow().dispatch_path(&self.cx);
+                for view_id in dispatch_path {
+                    if let Some(view) = self.views.get(&(window_id, view_id)) {
+                        let view_type = view.as_any().type_id();
+                        if let Some(actions) = self.actions.get(&view_type) {
+                            if actions.contains_key(&action_type) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.global_actions.contains_key(&action_type)
     }
 
     pub fn dispatch_action_at(&mut self, window_id: usize, view_id: usize, action: &dyn Action) {
