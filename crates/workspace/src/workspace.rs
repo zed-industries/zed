@@ -80,6 +80,7 @@ actions!(
         AddFolderToProject,
         Unfollow,
         Save,
+        SaveAs,
         ActivatePreviousPane,
         ActivateNextPane,
         FollowNextCollaborator,
@@ -150,7 +151,12 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     );
     cx.add_action(
         |workspace: &mut Workspace, _: &Save, cx: &mut ViewContext<Workspace>| {
-            workspace.save_active_item(cx).detach_and_log_err(cx);
+            workspace.save_active_item(false, cx).detach_and_log_err(cx);
+        },
+    );
+    cx.add_action(
+        |workspace: &mut Workspace, _: &SaveAs, cx: &mut ViewContext<Workspace>| {
+            workspace.save_active_item(true, cx).detach_and_log_err(cx);
         },
     );
     cx.add_action(Workspace::toggle_sidebar_item);
@@ -1064,10 +1070,14 @@ impl Workspace {
         self.active_item(cx).and_then(|item| item.project_path(cx))
     }
 
-    pub fn save_active_item(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+    pub fn save_active_item(
+        &mut self,
+        force_name_change: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
         let project = self.project.clone();
         if let Some(item) = self.active_item(cx) {
-            if item.can_save(cx) {
+            if !force_name_change && item.can_save(cx) {
                 if item.has_conflict(cx.as_ref()) {
                     const CONFLICT_MESSAGE: &'static str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 

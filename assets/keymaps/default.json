@@ -16,6 +16,7 @@
             "cmd-w": "pane::CloseActiveItem",
             "alt-cmd-w": "pane::CloseInactiveItems",
             "cmd-s": "workspace::Save",
+            "cmd-shift-S": "workspace::SaveAs",
             "cmd-=": "zed::IncreaseBufferFontSize",
             "cmd--": "zed::DecreaseBufferFontSize",
             "cmd-,": "zed::OpenSettings",

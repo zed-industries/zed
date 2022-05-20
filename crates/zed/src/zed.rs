@@ -391,7 +391,7 @@ mod tests {
             assert!(editor.text(cx).is_empty());
         });
 
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(cx));
+        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
         app_state.fs.as_fake().insert_dir("/root").await;
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
         save_task.await.unwrap();
@@ -666,7 +666,7 @@ mod tests {
             .await;
         cx.read(|cx| assert!(editor.is_dirty(cx)));
 
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(cx));
+        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
         cx.simulate_prompt_answer(window_id, 0);
         save_task.await.unwrap();
         editor.read_with(cx, |editor, cx| {
@@ -707,7 +707,7 @@ mod tests {
         });
 
         // Save the buffer. This prompts for a filename.
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(cx));
+        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
         cx.simulate_new_path_selection(|parent_dir| {
             assert_eq!(parent_dir, Path::new("/root"));
             Some(parent_dir.join("the-new-name.rs"))
@@ -731,7 +731,7 @@ mod tests {
             editor.handle_input(&editor::Input(" there".into()), cx);
             assert_eq!(editor.is_dirty(cx.as_ref()), true);
         });
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(cx));
+        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
         save_task.await.unwrap();
         assert!(!cx.did_prompt_for_new_path());
         editor.read_with(cx, |editor, cx| {
@@ -793,7 +793,7 @@ mod tests {
         });
 
         // Save the buffer. This prompts for a filename.
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(cx));
+        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name.rs")));
         save_task.await.unwrap();
         // The buffer is not dirty anymore and the language is assigned based on the path.
