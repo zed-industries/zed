@@ -77,6 +77,7 @@ actions!(
         Open,
         NewFile,
         NewWindow,
+        AddFolderToProject,
         Unfollow,
         Save,
         ActivatePreviousPane,
@@ -140,6 +141,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
 
     cx.add_async_action(Workspace::toggle_follow);
     cx.add_async_action(Workspace::follow_next_collaborator);
+    cx.add_action(Workspace::add_folder_to_project);
     cx.add_action(
         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
             let pane = workspace.active_pane().clone();
@@ -919,6 +921,27 @@ impl Workspace {
 
             futures::future::join_all(tasks).await
         })
+    }
+
+    fn add_folder_to_project(&mut self, _: &AddFolderToProject, cx: &mut ViewContext<Self>) {
+        let mut paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: true,
+        });
+        cx.spawn(|this, mut cx| async move {
+            if let Some(paths) = paths.recv().await.flatten() {
+                let results = this
+                    .update(&mut cx, |this, cx| this.open_paths(paths, cx))
+                    .await;
+                for result in results {
+                    if let Some(result) = result {
+                        result.log_err();
+                    }
+                }
+            }
+        })
+        .detach();
     }
 
     fn project_path_for_path(

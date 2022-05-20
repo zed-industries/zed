@@ -43,6 +43,10 @@ pub fn menus() -> Vec<Menu<'static>> {
                     action: Box::new(workspace::Open),
                 },
                 MenuItem::Action {
+                    name: "Add Folder to Project…",
+                    action: Box::new(workspace::AddFolderToProject),
+                },
+                MenuItem::Action {
                     name: "Save",
                     action: Box::new(workspace::Save),
                 },
