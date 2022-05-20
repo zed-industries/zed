@@ -1,4 +1,4 @@
-use std::ops::{Deref, Range};
+use std::ops::{Deref, DerefMut, Range};
 
 use collections::BTreeMap;
 use itertools::{Either, Itertools};
@@ -402,5 +402,11 @@ impl<'a, const COUNT: usize> Deref for VimBindingTestContext<'a, COUNT> {
 
     fn deref(&self) -> &Self::Target {
         &self.cx
+    }
+}
+
+impl<'a, const COUNT: usize> DerefMut for VimBindingTestContext<'a, COUNT> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.cx
     }
 }

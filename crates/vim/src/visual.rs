@@ -249,6 +249,13 @@ mod test {
                 The |ver
                 the lazy dog"},
         );
+        // Test pasting code copied on delete
+        cx.simulate_keystrokes(["j", "p"]);
+        cx.assert_editor_state(indoc! {"
+            The ver
+            the lazy d|quick brown
+            fox jumps oog"});
+
         cx.assert(
             indoc! {"
                 The quick brown
@@ -296,6 +303,77 @@ mod test {
             indoc! {"
                 The |ver
                 the lazy dog"},
+        );
+    }
+
+    #[gpui::test]
+    async fn test_visual_line_delete(cx: &mut gpui::TestAppContext) {
+        let cx = VimTestContext::new(cx, true).await;
+        let mut cx = cx.binding(["shift-V", "x"]);
+        cx.assert(
+            indoc! {"
+                The qu|ick brown
+                fox jumps over
+                the lazy dog"},
+            indoc! {"
+                fox ju|mps over
+                the lazy dog"},
+        );
+        // Test pasting code copied on delete
+        cx.simulate_keystroke("p");
+        cx.assert_editor_state(indoc! {"
+            fox jumps over
+            |The quick brown
+            the lazy dog"});
+
+        cx.assert(
+            indoc! {"
+                The quick brown
+                fox ju|mps over
+                the lazy dog"},
+            indoc! {"
+                The quick brown
+                the la|zy dog"},
+        );
+        cx.assert(
+            indoc! {"
+                The quick brown
+                fox jumps over
+                the la|zy dog"},
+            indoc! {"
+                The quick brown
+                fox ju|mps over"},
+        );
+        let mut cx = cx.binding(["shift-V", "j", "x"]);
+        cx.assert(
+            indoc! {"
+                The qu|ick brown
+                fox jumps over
+                the lazy dog"},
+            "the la|zy dog",
+        );
+        // Test pasting code copied on delete
+        cx.simulate_keystroke("p");
+        cx.assert_editor_state(indoc! {"
+            the lazy dog
+            |The quick brown
+            fox jumps over"});
+
+        cx.assert(
+            indoc! {"
+                The quick brown
+                fox ju|mps over
+                the lazy dog"},
+            "The qu|ick brown",
+        );
+        cx.assert(
+            indoc! {"
+                The quick brown
+                fox jumps over
+                the la|zy dog"},
+            indoc! {"
+                The quick brown
+                fox ju|mps over"},
         );
     }
 
@@ -361,6 +439,86 @@ mod test {
             indoc! {"
                 The |ver
                 the lazy dog"},
+        );
+    }
+
+    #[gpui::test]
+    async fn test_visual_line_change(cx: &mut gpui::TestAppContext) {
+        let cx = VimTestContext::new(cx, true).await;
+        let mut cx = cx.binding(["shift-V", "c"]).mode_after(Mode::Insert);
+        cx.assert(
+            indoc! {"
+                The qu|ick brown
+                fox jumps over
+                the lazy dog"},
+            indoc! {"
+                |
+                fox jumps over
+                the lazy dog"},
+        );
+        // Test pasting code copied on change
+        cx.simulate_keystrokes(["escape", "j", "p"]);
+        cx.assert_editor_state(indoc! {"
+            
+            fox jumps over
+            |The quick brown
+            the lazy dog"});
+
+        cx.assert(
+            indoc! {"
+                The quick brown
+                fox ju|mps over
+                the lazy dog"},
+            indoc! {"
+                The quick brown
+                |
+                the lazy dog"},
+        );
+        cx.assert(
+            indoc! {"
+                The quick brown
+                fox jumps over
+                the la|zy dog"},
+            indoc! {"
+                The quick brown
+                fox jumps over
+                |"},
+        );
+        let mut cx = cx.binding(["shift-V", "j", "c"]).mode_after(Mode::Insert);
+        cx.assert(
+            indoc! {"
+                The qu|ick brown
+                fox jumps over
+                the lazy dog"},
+            indoc! {"
+                |
+                the lazy dog"},
+        );
+        // Test pasting code copied on delete
+        cx.simulate_keystrokes(["escape", "j", "p"]);
+        cx.assert_editor_state(indoc! {"
+            
+            the lazy dog
+            |The quick brown
+            fox jumps over"});
+        cx.assert(
+            indoc! {"
+                The quick brown
+                fox ju|mps over
+                the lazy dog"},
+            indoc! {"
+                The quick brown
+                |"},
+        );
+        cx.assert(
+            indoc! {"
+                The quick brown
+                fox jumps over
+                the la|zy dog"},
+            indoc! {"
+                The quick brown
+                fox jumps over
+                |"},
         );
     }
 }
