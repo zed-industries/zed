@@ -18,7 +18,7 @@ pub trait Db: Send + Sync {
     async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>>;
     async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>>;
     async fn set_user_is_admin(&self, id: UserId, is_admin: bool) -> Result<()>;
-    async fn set_user_first_connection(&self, id: UserId, first_connection: bool) -> Result<()>;
+    async fn set_user_connected_once(&self, id: UserId, connected_once: bool) -> Result<()>;
     async fn destroy_user(&self, id: UserId) -> Result<()>;
 
     async fn set_invite_count(&self, id: UserId, count: u32) -> Result<()>;
@@ -183,10 +183,10 @@ impl Db for PostgresDb {
             .map(drop)?)
     }
 
-    async fn set_user_first_connection(&self, id: UserId, first_connection: bool) -> Result<()> {
-        let query = "UPDATE users SET first_connection = $1 WHERE id = $2";
+    async fn set_user_connected_once(&self, id: UserId, connected_once: bool) -> Result<()> {
+        let query = "UPDATE users SET connected_once = $1 WHERE id = $2";
         Ok(sqlx::query(query)
-            .bind(first_connection)
+            .bind(connected_once)
             .bind(id.0)
             .execute(&self.pool)
             .await
@@ -858,7 +858,7 @@ pub struct User {
     pub admin: bool,
     pub invite_code: Option<String>,
     pub invite_count: i32,
-    pub first_connection: bool,
+    pub connected_once: bool,
 }
 
 id_type!(OrgId);
@@ -1613,7 +1613,7 @@ pub mod tests {
                         admin,
                         invite_code: None,
                         invite_count: 0,
-                        first_connection: true,
+                        connected_once: false,
                     },
                 );
                 Ok(user_id)
@@ -1651,17 +1651,13 @@ pub mod tests {
             unimplemented!()
         }
 
-        async fn set_user_first_connection(
-            &self,
-            id: UserId,
-            first_connection: bool,
-        ) -> Result<()> {
+        async fn set_user_connected_once(&self, id: UserId, connected_once: bool) -> Result<()> {
             self.background.simulate_random_delay().await;
             let mut users = self.users.lock();
             let mut user = users
                 .get_mut(&id)
                 .ok_or_else(|| anyhow!("user not found"))?;
-            user.first_connection = first_connection;
+            user.connected_once = connected_once;
             Ok(())
         }
 
