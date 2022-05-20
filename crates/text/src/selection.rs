@@ -1,6 +1,7 @@
 use crate::Anchor;
 use crate::{rope::TextDimension, BufferSnapshot};
 use std::cmp::Ordering;
+use std::ops::Range;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum SelectionGoal {
@@ -82,6 +83,10 @@ impl<T: Copy + Ord> Selection<T> {
         self.end = point;
         self.goal = new_goal;
         self.reversed = false;
+    }
+
+    pub fn range(&self) -> Range<T> {
+        self.start..self.end
     }
 }
 

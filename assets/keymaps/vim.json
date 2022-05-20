@@ -76,7 +76,8 @@
             "shift-V": [
                 "vim::SwitchMode",
                 "VisualLine"
-            ]
+            ],
+            "p": "vim::Paste"
         }
     },
     {

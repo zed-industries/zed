@@ -6,6 +6,7 @@ mod insert;
 mod motion;
 mod normal;
 mod state;
+mod utils;
 mod visual;
 
 use collections::HashMap;
@@ -140,11 +141,14 @@ impl Vim {
                     }
 
                     if state.empty_selections_only() {
-                        editor.change_selections(None, cx, |s| {
-                            s.move_with(|_, selection| {
-                                selection.collapse_to(selection.head(), selection.goal)
-                            });
-                        })
+                        // Defer so that access to global settings object doesn't panic
+                        cx.defer(|editor, cx| {
+                            editor.change_selections(None, cx, |s| {
+                                s.move_with(|_, selection| {
+                                    selection.collapse_to(selection.head(), selection.goal)
+                                });
+                            })
+                        });
                     }
                 });
             }

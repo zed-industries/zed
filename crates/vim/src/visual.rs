@@ -3,7 +3,7 @@ use editor::{Autoscroll, Bias};
 use gpui::{actions, MutableAppContext, ViewContext};
 use workspace::Workspace;
 
-use crate::{motion::Motion, state::Mode, Vim};
+use crate::{motion::Motion, state::Mode, utils::copy_selections_content, Vim};
 
 actions!(
     vim,
@@ -41,7 +41,7 @@ pub fn visual_motion(motion: Motion, cx: &mut MutableAppContext) {
                         // Head was at the end of the selection, and now is at the start. We need to move the end
                         // forward by one if possible in order to compensate for this change.
                         *selection.end.column_mut() = selection.end.column() + 1;
-                        selection.end = map.clip_point(selection.end, Bias::Left);
+                        selection.end = map.clip_point(selection.end, Bias::Right);
                     }
                 });
             });
@@ -63,6 +63,7 @@ pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspac
                     }
                 });
             });
+            copy_selections_content(editor, false, cx);
             editor.insert("", cx);
         });
         vim.switch_mode(Mode::Insert, cx);
@@ -79,6 +80,7 @@ pub fn change_line(_: &mut Workspace, _: &VisualLineChange, cx: &mut ViewContext
                     selection.end = map.next_line_boundary(selection.end.to_point(map)).1;
                 });
             });
+            copy_selections_content(editor, true, cx);
             editor.insert("", cx);
         });
         vim.switch_mode(Mode::Insert, cx);
@@ -87,19 +89,19 @@ pub fn change_line(_: &mut Workspace, _: &VisualLineChange, cx: &mut ViewContext
 
 pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        vim.switch_mode(Mode::Normal, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
                     if !selection.reversed {
-                        // Head was at the end of the selection, and now is at the start. We need to move the end
-                        // forward by one if possible in order to compensate for this change.
+                        // Head is at the end of the selection. Adjust the end position to
+                        // to include the character under the cursor.
                         *selection.end.column_mut() = selection.end.column() + 1;
-                        selection.end = map.clip_point(selection.end, Bias::Left);
+                        selection.end = map.clip_point(selection.end, Bias::Right);
                     }
                 });
             });
+            copy_selections_content(editor, false, cx);
             editor.insert("", cx);
 
             // Fixup cursor position after the deletion
@@ -112,6 +114,7 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
                 });
             });
         });
+        vim.switch_mode(Mode::Normal, cx);
     });
 }
 
@@ -138,6 +141,7 @@ pub fn delete_line(_: &mut Workspace, _: &VisualLineDelete, cx: &mut ViewContext
                     selection.end = map.next_line_boundary(selection.end.to_point(map)).1;
                 });
             });
+            copy_selections_content(editor, true, cx);
             editor.insert("", cx);
 
             // Fixup cursor position after the deletion

@@ -3,7 +3,7 @@ mod element;
 pub mod items;
 pub mod movement;
 mod multi_buffer;
-mod selections_collection;
+pub mod selections_collection;
 
 #[cfg(test)]
 mod test;

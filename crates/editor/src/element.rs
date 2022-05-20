@@ -489,7 +489,7 @@ impl EditorElement {
         cx: &mut PaintContext,
     ) {
         if range.start != range.end || line_mode {
-            let row_range = if range.end.column() == 0 {
+            let row_range = if range.end.column() == 0 && !line_mode {
                 cmp::max(range.start.row(), start_row)..cmp::min(range.end.row(), end_row)
             } else {
                 cmp::max(range.start.row(), start_row)..cmp::min(range.end.row() + 1, end_row)

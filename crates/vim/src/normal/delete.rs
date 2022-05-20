@@ -1,4 +1,4 @@
-use crate::{motion::Motion, Vim};
+use crate::{motion::Motion, utils::copy_selections_content, Vim};
 use collections::HashMap;
 use editor::{Autoscroll, Bias};
 use gpui::MutableAppContext;
@@ -15,6 +15,7 @@ pub fn delete_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
                     original_columns.insert(selection.id, original_head.column());
                 });
             });
+            copy_selections_content(editor, motion.linewise(), cx);
             editor.insert(&"", cx);
 
             // Fixup cursor position after the deletion
