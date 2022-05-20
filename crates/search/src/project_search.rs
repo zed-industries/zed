@@ -848,7 +848,7 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), ["/dir"], cx).await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let search = cx.add_model(|cx| ProjectSearch::new(project, cx));
         let search_view = cx.add_view(Default::default(), |cx| {
             ProjectSearchView::new(search.clone(), cx)

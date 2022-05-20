@@ -497,7 +497,7 @@ impl Project {
     #[cfg(any(test, feature = "test-support"))]
     pub async fn test(
         fs: Arc<dyn Fs>,
-        root_paths: impl IntoIterator<Item = impl AsRef<Path>>,
+        root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut gpui::TestAppContext,
     ) -> ModelHandle<Project> {
         let languages = Arc::new(LanguageRegistry::test());
@@ -526,6 +526,14 @@ impl Project {
 
     pub fn languages(&self) -> &Arc<LanguageRegistry> {
         &self.languages
+    }
+
+    pub fn client(&self) -> Arc<Client> {
+        self.client.clone()
+    }
+
+    pub fn user_store(&self) -> ModelHandle<UserStore> {
+        self.user_store.clone()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -5294,7 +5302,7 @@ mod tests {
         )
         .unwrap();
 
-        let project = Project::test(Arc::new(RealFs), [root_link_path], cx).await;
+        let project = Project::test(Arc::new(RealFs), [root_link_path.as_ref()], cx).await;
 
         project.read_with(cx, |project, cx| {
             let tree = project.worktrees(cx).next().unwrap().read(cx);
@@ -5378,7 +5386,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/the-root"], cx).await;
+        let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
         project.update(cx, |project, _| {
             project.languages.add(Arc::new(rust_language));
             project.languages.add(Arc::new(json_language));
@@ -5714,7 +5722,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/dir/a.rs", "/dir/b.rs"], cx).await;
+        let project = Project::test(fs, ["/dir/a.rs".as_ref(), "/dir/b.rs".as_ref()], cx).await;
 
         let buffer_a = project
             .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
@@ -5825,7 +5833,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/dir"], cx).await;
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages.add(Arc::new(language)));
         let worktree_id =
             project.read_with(cx, |p, cx| p.worktrees(cx).next().unwrap().read(cx).id());
@@ -5947,7 +5955,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree("/dir", json!({ "a.rs": "" })).await;
 
-        let project = Project::test(fs, ["/dir"], cx).await;
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages.add(Arc::new(language)));
 
         let buffer = project
@@ -6016,7 +6024,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree("/dir", json!({ "a.rs": text })).await;
 
-        let project = Project::test(fs, ["/dir"], cx).await;
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages.add(Arc::new(language)));
 
         let buffer = project
@@ -6285,7 +6293,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree("/dir", json!({ "a.rs": text })).await;
 
-        let project = Project::test(fs, ["/dir"], cx).await;
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         let buffer = project
             .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
             .await
@@ -6376,7 +6384,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/dir"], cx).await;
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages.add(Arc::new(language)));
         let buffer = project
             .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
@@ -6530,7 +6538,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/dir"], cx).await;
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         let buffer = project
             .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
             .await
@@ -6686,7 +6694,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/dir/b.rs"], cx).await;
+        let project = Project::test(fs, ["/dir/b.rs".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages.add(Arc::new(language)));
 
         let buffer = project
@@ -6780,7 +6788,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/dir"], cx).await;
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages.add(Arc::new(language)));
         let buffer = project
             .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
@@ -6838,7 +6846,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/dir"], cx).await;
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages.add(Arc::new(language)));
         let buffer = project
             .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
@@ -6944,7 +6952,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/dir"], cx).await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let buffer = project
             .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
             .await
@@ -6973,7 +6981,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/dir/file1"], cx).await;
+        let project = Project::test(fs.clone(), ["/dir/file1".as_ref()], cx).await;
         let buffer = project
             .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
             .await
@@ -6995,7 +7003,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree("/dir", json!({})).await;
 
-        let project = Project::test(fs.clone(), ["/dir"], cx).await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let buffer = project.update(cx, |project, cx| {
             project.create_buffer("", None, cx).unwrap()
         });
@@ -7182,7 +7190,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/dir"], cx).await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
 
         // Spawn multiple tasks to open paths, repeating some paths.
         let (buffer_a_1, buffer_b, buffer_a_2) = project.update(cx, |p, cx| {
@@ -7227,7 +7235,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/dir"], cx).await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
 
         let buffer1 = project
             .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
@@ -7359,7 +7367,7 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), ["/dir"], cx).await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let buffer = project
             .update(cx, |p, cx| p.open_local_buffer("/dir/the-file", cx))
             .await
@@ -7444,7 +7452,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/the-dir"], cx).await;
+        let project = Project::test(fs.clone(), ["/the-dir".as_ref()], cx).await;
         let buffer = project
             .update(cx, |p, cx| p.open_local_buffer("/the-dir/a.rs", cx))
             .await
@@ -7708,7 +7716,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/dir"], cx).await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages.add(Arc::new(language)));
         let buffer = project
             .update(cx, |project, cx| {
@@ -7827,7 +7835,7 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), ["/dir"], cx).await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         assert_eq!(
             search(&project, SearchQuery::text("TWO", false, true), cx)
                 .await

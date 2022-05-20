@@ -9,8 +9,7 @@ mod waiting_room;
 
 use anyhow::{anyhow, Context, Result};
 use client::{
-    proto, Authenticate, ChannelList, Client, Contact, PeerId, Subscription, TypedEnvelope, User,
-    UserStore,
+    proto, Authenticate, Client, Contact, PeerId, Subscription, TypedEnvelope, User, UserStore,
 };
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
@@ -75,6 +74,8 @@ type FollowableItemBuilders = HashMap<
 actions!(
     workspace,
     [
+        Open,
+        OpenNew,
         Unfollow,
         Save,
         ActivatePreviousPane,
@@ -84,15 +85,8 @@ actions!(
 );
 
 #[derive(Clone)]
-pub struct Open(pub Arc<AppState>);
-
-#[derive(Clone)]
-pub struct OpenNew(pub Arc<AppState>);
-
-#[derive(Clone)]
 pub struct OpenPaths {
     pub paths: Vec<PathBuf>,
-    pub app_state: Arc<AppState>,
 }
 
 #[derive(Clone)]
@@ -102,31 +96,37 @@ pub struct ToggleFollow(pub PeerId);
 pub struct JoinProject {
     pub contact: Arc<Contact>,
     pub project_index: usize,
-    pub app_state: Arc<AppState>,
 }
 
-impl_internal_actions!(
-    workspace,
-    [Open, OpenNew, OpenPaths, ToggleFollow, JoinProject]
-);
+impl_internal_actions!(workspace, [OpenPaths, ToggleFollow, JoinProject]);
 
-pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
+pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     pane::init(cx);
 
     cx.add_global_action(open);
-    cx.add_global_action(move |action: &OpenPaths, cx: &mut MutableAppContext| {
-        open_paths(&action.paths, &action.app_state, cx).detach();
+    cx.add_global_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |action: &OpenPaths, cx: &mut MutableAppContext| {
+            if let Some(app_state) = app_state.upgrade() {
+                open_paths(&action.paths, &app_state, cx).detach();
+            }
+        }
     });
-    cx.add_global_action(move |action: &OpenNew, cx: &mut MutableAppContext| {
-        open_new(&action.0, cx)
+    cx.add_global_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |_: &OpenNew, cx: &mut MutableAppContext| {
+            if let Some(app_state) = app_state.upgrade() {
+                open_new(&app_state, cx)
+            }
+        }
     });
-    cx.add_global_action(move |action: &JoinProject, cx: &mut MutableAppContext| {
-        join_project(
-            action.contact.clone(),
-            action.project_index,
-            &action.app_state,
-            cx,
-        );
+    cx.add_global_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |action: &JoinProject, cx: &mut MutableAppContext| {
+            if let Some(app_state) = app_state.upgrade() {
+                join_project(action.contact.clone(), action.project_index, &app_state, cx);
+            }
+        }
     });
 
     cx.add_async_action(Workspace::toggle_follow);
@@ -151,6 +151,7 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
         workspace.activate_next_pane(cx)
     });
 
+    let client = &app_state.client;
     client.add_view_request_handler(Workspace::handle_follow);
     client.add_view_message_handler(Workspace::handle_unfollow);
     client.add_view_message_handler(Workspace::handle_update_followers);
@@ -188,10 +189,8 @@ pub struct AppState {
     pub client: Arc<client::Client>,
     pub user_store: ModelHandle<client::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
-    pub channel_list: ModelHandle<client::ChannelList>,
     pub build_window_options: fn() -> WindowOptions<'static>,
-    pub build_workspace:
-        fn(ModelHandle<Project>, &Arc<AppState>, &mut ViewContext<Workspace>) -> Workspace,
+    pub initialize_workspace: fn(&mut Workspace, &Arc<AppState>, &mut ViewContext<Workspace>),
 }
 
 pub trait Item: View {
@@ -636,20 +635,9 @@ impl Into<AnyViewHandle> for &dyn NotificationHandle {
     }
 }
 
-#[derive(Clone)]
-pub struct WorkspaceParams {
-    pub project: ModelHandle<Project>,
-    pub client: Arc<Client>,
-    pub fs: Arc<dyn Fs>,
-    pub languages: Arc<LanguageRegistry>,
-    pub themes: Arc<ThemeRegistry>,
-    pub user_store: ModelHandle<UserStore>,
-    pub channel_list: ModelHandle<ChannelList>,
-}
-
-impl WorkspaceParams {
+impl AppState {
     #[cfg(any(test, feature = "test-support"))]
-    pub fn test(cx: &mut MutableAppContext) -> Self {
+    pub fn test(cx: &mut MutableAppContext) -> Arc<Self> {
         let settings = Settings::test(cx);
         cx.set_global(settings);
 
@@ -658,42 +646,16 @@ impl WorkspaceParams {
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let project = Project::local(
-            client.clone(),
-            user_store.clone(),
-            languages.clone(),
-            fs.clone(),
-            cx,
-        );
-        Self {
-            project,
-            channel_list: cx
-                .add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx)),
+        let themes = ThemeRegistry::new((), cx.font_cache().clone());
+        Arc::new(Self {
             client,
-            themes: ThemeRegistry::new((), cx.font_cache().clone()),
+            themes,
             fs,
             languages,
             user_store,
-        }
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn local(app_state: &Arc<AppState>, cx: &mut MutableAppContext) -> Self {
-        Self {
-            project: Project::local(
-                app_state.client.clone(),
-                app_state.user_store.clone(),
-                app_state.languages.clone(),
-                app_state.fs.clone(),
-                cx,
-            ),
-            client: app_state.client.clone(),
-            fs: app_state.fs.clone(),
-            themes: app_state.themes.clone(),
-            languages: app_state.languages.clone(),
-            user_store: app_state.user_store.clone(),
-            channel_list: app_state.channel_list.clone(),
-        }
+            initialize_workspace: |_, _, _| {},
+            build_window_options: || Default::default(),
+        })
     }
 }
 
@@ -708,7 +670,6 @@ pub struct Workspace {
     user_store: ModelHandle<client::UserStore>,
     remote_entity_subscription: Option<Subscription>,
     fs: Arc<dyn Fs>,
-    themes: Arc<ThemeRegistry>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
     left_sidebar: ViewHandle<Sidebar>,
@@ -744,8 +705,8 @@ enum FollowerItem {
 }
 
 impl Workspace {
-    pub fn new(params: &WorkspaceParams, cx: &mut ViewContext<Self>) -> Self {
-        cx.observe(&params.project, |_, project, cx| {
+    pub fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
+        cx.observe(&project, |_, project, cx| {
             if project.read(cx).is_read_only() {
                 cx.blur();
             }
@@ -753,7 +714,7 @@ impl Workspace {
         })
         .detach();
 
-        cx.subscribe(&params.project, move |this, project, event, cx| {
+        cx.subscribe(&project, move |this, project, event, cx| {
             match event {
                 project::Event::RemoteIdChanged(remote_id) => {
                     this.project_remote_id_changed(*remote_id, cx);
@@ -785,8 +746,11 @@ impl Workspace {
         cx.focus(&pane);
         cx.emit(Event::PaneAdded(pane.clone()));
 
-        let mut current_user = params.user_store.read(cx).watch_current_user().clone();
-        let mut connection_status = params.client.status().clone();
+        let fs = project.read(cx).fs().clone();
+        let user_store = project.read(cx).user_store();
+        let client = project.read(cx).client();
+        let mut current_user = user_store.read(cx).watch_current_user().clone();
+        let mut connection_status = client.status().clone();
         let _observe_current_user = cx.spawn_weak(|this, mut cx| async move {
             current_user.recv().await;
             connection_status.recv().await;
@@ -826,14 +790,13 @@ impl Workspace {
             active_pane: pane.clone(),
             status_bar,
             notifications: Default::default(),
-            client: params.client.clone(),
+            client,
             remote_entity_subscription: None,
-            user_store: params.user_store.clone(),
-            fs: params.fs.clone(),
-            themes: params.themes.clone(),
+            user_store,
+            fs,
             left_sidebar,
             right_sidebar,
-            project: params.project.clone(),
+            project,
             leader_state: Default::default(),
             follower_states_by_leader: Default::default(),
             last_leaders_by_pane: Default::default(),
@@ -865,10 +828,6 @@ impl Workspace {
 
     pub fn project(&self) -> &ModelHandle<Project> {
         &self.project
-    }
-
-    pub fn themes(&self) -> Arc<ThemeRegistry> {
-        self.themes.clone()
     }
 
     pub fn worktrees<'a>(
@@ -2203,8 +2162,7 @@ impl std::fmt::Debug for OpenPaths {
     }
 }
 
-fn open(action: &Open, cx: &mut MutableAppContext) {
-    let app_state = action.0.clone();
+fn open(_: &Open, cx: &mut MutableAppContext) {
     let mut paths = cx.prompt_for_paths(PathPromptOptions {
         files: true,
         directories: true,
@@ -2212,7 +2170,7 @@ fn open(action: &Open, cx: &mut MutableAppContext) {
     });
     cx.spawn(|mut cx| async move {
         if let Some(paths) = paths.recv().await.flatten() {
-            cx.update(|cx| cx.dispatch_global_action(OpenPaths { paths, app_state }));
+            cx.update(|cx| cx.dispatch_global_action(OpenPaths { paths }));
         }
     })
     .detach();
@@ -2260,14 +2218,17 @@ pub fn open_paths(
                     .contains(&false);
 
             cx.add_window((app_state.build_window_options)(), |cx| {
-                let project = Project::local(
-                    app_state.client.clone(),
-                    app_state.user_store.clone(),
-                    app_state.languages.clone(),
-                    app_state.fs.clone(),
+                let mut workspace = Workspace::new(
+                    Project::local(
+                        app_state.client.clone(),
+                        app_state.user_store.clone(),
+                        app_state.languages.clone(),
+                        app_state.fs.clone(),
+                        cx,
+                    ),
                     cx,
                 );
-                let mut workspace = (app_state.build_workspace)(project, &app_state, cx);
+                (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
                 if contains_directory {
                     workspace.toggle_sidebar_item(
                         &ToggleSidebarItem {
@@ -2313,14 +2274,18 @@ pub fn join_project(
 
 fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
     let (window_id, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
-        let project = Project::local(
-            app_state.client.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
+        let mut workspace = Workspace::new(
+            Project::local(
+                app_state.client.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                cx,
+            ),
             cx,
         );
-        (app_state.build_workspace)(project, &app_state, cx)
+        (app_state.initialize_workspace)(&mut workspace, app_state, cx);
+        workspace
     });
-    cx.dispatch_action(window_id, vec![workspace.id()], &OpenNew(app_state.clone()));
+    cx.dispatch_action(window_id, vec![workspace.id()], &OpenNew);
 }

@@ -18,7 +18,10 @@
             "cmd-s": "workspace::Save",
             "cmd-=": "zed::IncreaseBufferFontSize",
             "cmd--": "zed::DecreaseBufferFontSize",
-            "cmd-,": "zed::OpenSettings"
+            "cmd-,": "zed::OpenSettings",
+            "cmd-q": "zed::Quit",
+            "cmd-n": "workspace::OpenNew",
+            "cmd-o": "workspace::Open"
         }
     },
     {

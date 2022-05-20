@@ -920,7 +920,7 @@ impl NavHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::WorkspaceParams;
+    use crate::AppState;
     use gpui::{ModelHandle, TestAppContext, ViewContext};
     use project::Project;
     use std::sync::atomic::AtomicUsize;
@@ -929,8 +929,9 @@ mod tests {
     async fn test_close_items(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
 
-        let params = cx.update(WorkspaceParams::test);
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
+        let app_state = cx.update(AppState::test);
+        let project = Project::test(app_state.fs.clone(), None, cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
         let item1 = cx.add_view(window_id, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
@@ -1019,8 +1020,9 @@ mod tests {
     async fn test_prompting_only_on_last_item_for_entry(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
 
-        let params = cx.update(WorkspaceParams::test);
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
+        let app_state = cx.update(AppState::test);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
         let item = cx.add_view(window_id, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;

@@ -8849,7 +8849,7 @@ mod tests {
         let fs = FakeFs::new(cx.background().clone());
         fs.insert_file("/file.rs", Default::default()).await;
 
-        let project = Project::test(fs, ["/file.rs"], cx).await;
+        let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));
         let buffer = project
             .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
@@ -8971,7 +8971,7 @@ mod tests {
         let fs = FakeFs::new(cx.background().clone());
         fs.insert_file("/file.rs", text).await;
 
-        let project = Project::test(fs, ["/file.rs"], cx).await;
+        let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));
         let buffer = project
             .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
