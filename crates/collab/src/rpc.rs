@@ -412,6 +412,23 @@ impl Server {
         Ok(())
     }
 
+    pub async fn invite_code_redeemed(self: &Arc<Self>, code: &str, invitee_id: UserId) -> Result<()> {
+        let user = self.app_state.db.get_user_for_invite_code(code).await?;
+        let store = self.store().await;
+        let invitee_contact = store.contact_for_user(invitee_id, true);
+        for connection_id in store.connection_ids_for_user(user.id) {
+            self.peer.send(connection_id, proto::UpdateContacts {
+                contacts: vec![invitee_contact.clone()],
+                ..Default::default()
+            })?;
+            self.peer.send(connection_id, proto::UpdateInviteInfo {
+                url: format!("{}{}", self.app_state.invite_link_prefix, code),
+                count: user.invite_count as u32,
+            })?;
+        }
+        Ok(())
+    }
+
     async fn ping(
         self: Arc<Server>,
         _: TypedEnvelope<proto::Ping>,
@@ -1530,13 +1547,12 @@ impl Header for ProtocolVersion {
     }
 }
 
-pub fn routes(app_state: Arc<AppState>) -> Router<Body> {
-    let server = Server::new(app_state.clone(), None);
+pub fn routes(server: Arc<Server>) -> Router<Body> {
     Router::new()
         .route("/rpc", get(handle_websocket_request))
         .layer(
             ServiceBuilder::new()
-                .layer(Extension(app_state))
+                .layer(Extension(server.app_state.clone()))
                 .layer(middleware::from_fn(auth::validate_header))
                 .layer(Extension(server)),
         )

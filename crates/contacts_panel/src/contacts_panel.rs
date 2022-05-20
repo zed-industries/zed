@@ -8,7 +8,6 @@ use contact_notification::ContactNotification;
 use editor::{Cancel, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    color::Color,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     impl_actions, impl_internal_actions,

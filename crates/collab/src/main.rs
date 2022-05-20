@@ -60,10 +60,11 @@ async fn main() -> Result<()> {
 
     let listener = TcpListener::bind(&format!("0.0.0.0:{}", config.http_port))
         .expect("failed to bind TCP listener");
+    let rpc_server = rpc::Server::new(state.clone(), None);
 
     let app = Router::<Body>::new()
-        .merge(api::routes(state.clone()))
-        .merge(rpc::routes(state));
+        .merge(api::routes(&rpc_server, state.clone()))
+        .merge(rpc::routes(rpc_server));
 
     axum::Server::from_tcp(listener)?
         .serve(app.into_make_service_with_connect_info::<SocketAddr>())

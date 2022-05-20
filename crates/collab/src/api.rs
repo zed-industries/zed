@@ -1,6 +1,7 @@
 use crate::{
     auth,
     db::{User, UserId},
+    rpc::ResultExt,
     AppState, Error, Result,
 };
 use anyhow::anyhow;
@@ -18,7 +19,7 @@ use std::sync::Arc;
 use tower::ServiceBuilder;
 use tracing::instrument;
 
-pub fn routes(state: Arc<AppState>) -> Router<Body> {
+pub fn routes(rpc_server: &Arc<crate::rpc::Server>, state: Arc<AppState>) -> Router<Body> {
     Router::new()
         .route("/users", get(get_users).post(create_user))
         .route(
@@ -31,6 +32,7 @@ pub fn routes(state: Arc<AppState>) -> Router<Body> {
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(state))
+                .layer(Extension(rpc_server.clone()))
                 .layer(middleware::from_fn(validate_api_token)),
         )
     // TODO: Compression on API routes?
@@ -82,11 +84,18 @@ struct CreateUserParams {
 async fn create_user(
     Json(params): Json<CreateUserParams>,
     Extension(app): Extension<Arc<AppState>>,
+    Extension(rpc_server): Extension<Arc<crate::rpc::Server>>,
 ) -> Result<Json<User>> {
     let user_id = if let Some(invite_code) = params.invite_code {
-        app.db
+        let invitee_id = app
+            .db
             .redeem_invite_code(&invite_code, &params.github_login)
-            .await?
+            .await?;
+        rpc_server
+            .invite_code_redeemed(&invite_code, invitee_id)
+            .await
+            .trace_err();
+        invitee_id
     } else {
         app.db
             .create_user(&params.github_login, params.admin)
