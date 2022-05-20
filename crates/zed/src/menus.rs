@@ -31,7 +31,11 @@ pub fn menus() -> Vec<Menu<'static>> {
             items: vec![
                 MenuItem::Action {
                     name: "New",
-                    action: Box::new(workspace::OpenNew),
+                    action: Box::new(workspace::NewFile),
+                },
+                MenuItem::Action {
+                    name: "New Window",
+                    action: Box::new(workspace::NewWindow),
                 },
                 MenuItem::Separator,
                 MenuItem::Action {

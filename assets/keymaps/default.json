@@ -20,7 +20,8 @@
             "cmd--": "zed::DecreaseBufferFontSize",
             "cmd-,": "zed::OpenSettings",
             "cmd-q": "zed::Quit",
-            "cmd-n": "workspace::OpenNew",
+            "cmd-n": "workspace::NewFile",
+            "cmd-shift-N": "workspace::NewWindow",
             "cmd-o": "workspace::Open"
         }
     },

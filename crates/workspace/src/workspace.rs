@@ -75,7 +75,8 @@ actions!(
     workspace,
     [
         Open,
-        OpenNew,
+        NewFile,
+        NewWindow,
         Unfollow,
         Save,
         ActivatePreviousPane,
@@ -114,7 +115,15 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     });
     cx.add_global_action({
         let app_state = Arc::downgrade(&app_state);
-        move |_: &OpenNew, cx: &mut MutableAppContext| {
+        move |_: &NewFile, cx: &mut MutableAppContext| {
+            if let Some(app_state) = app_state.upgrade() {
+                open_new(&app_state, cx)
+            }
+        }
+    });
+    cx.add_global_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |_: &NewWindow, cx: &mut MutableAppContext| {
             if let Some(app_state) = app_state.upgrade() {
                 open_new(&app_state, cx)
             }
@@ -2287,5 +2296,5 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
         (app_state.initialize_workspace)(&mut workspace, app_state, cx);
         workspace
     });
-    cx.dispatch_action(window_id, vec![workspace.id()], &OpenNew);
+    cx.dispatch_action(window_id, vec![workspace.id()], &NewFile);
 }

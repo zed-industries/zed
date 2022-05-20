@@ -38,7 +38,7 @@ use std::{
 };
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
 use util::{ResultExt, TryFutureExt};
-use workspace::{self, AppState, OpenNew, OpenPaths};
+use workspace::{self, AppState, NewFile, OpenPaths};
 use zed::{
     self, build_window_options,
     fs::RealFs,
@@ -206,7 +206,7 @@ fn main() {
             cx.platform().activate(true);
             let paths = collect_path_args();
             if paths.is_empty() {
-                cx.dispatch_global_action(OpenNew);
+                cx.dispatch_global_action(NewFile);
             } else {
                 cx.dispatch_global_action(OpenPaths { paths });
             }
@@ -215,7 +215,7 @@ fn main() {
                 cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
                     .detach();
             } else {
-                cx.dispatch_global_action(OpenNew);
+                cx.dispatch_global_action(NewFile);
             }
             cx.spawn(|cx| async move {
                 while let Some(connection) = cli_connections_rx.next().await {

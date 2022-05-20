@@ -314,7 +314,7 @@ mod tests {
     };
     use theme::{Theme, ThemeRegistry, DEFAULT_THEME_NAME};
     use workspace::{
-        open_paths, pane, Item, ItemHandle, OpenNew, Pane, SplitDirection, WorkspaceHandle,
+        open_paths, pane, Item, ItemHandle, NewFile, Pane, SplitDirection, WorkspaceHandle,
     };
 
     #[gpui::test]
@@ -376,7 +376,7 @@ mod tests {
     #[gpui::test]
     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
         let app_state = init(cx);
-        cx.dispatch_global_action(workspace::OpenNew);
+        cx.dispatch_global_action(workspace::NewFile);
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();
         let editor = workspace.update(cx, |workspace, cx| {
@@ -686,7 +686,7 @@ mod tests {
         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, OpenNew);
+        cx.dispatch_action(window_id, NewFile);
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -741,7 +741,7 @@ mod tests {
 
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
-        cx.dispatch_action(window_id, OpenNew);
+        cx.dispatch_action(window_id, NewFile);
         workspace
             .update(cx, |workspace, cx| {
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
@@ -774,7 +774,7 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, OpenNew);
+        cx.dispatch_action(window_id, NewFile);
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
