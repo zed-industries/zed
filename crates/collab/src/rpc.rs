@@ -280,6 +280,11 @@ impl Server {
                 let _ = send_connection_id.send(connection_id).await;
             }
 
+            if user.first_connection {
+                this.peer.send(connection_id, proto::ShowContacts {})?;
+                this.app_state.db.set_user_first_connection(user_id, false).await?;
+            }
+
             let (contacts, invite_code) = future::try_join(
                 this.app_state.db.get_contacts(user_id),
                 this.app_state.db.get_invite_code_for_user(user_id)

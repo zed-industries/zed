@@ -145,6 +145,7 @@ messages!(
     (SearchProjectResponse, Background),
     (SendChannelMessage, Foreground),
     (SendChannelMessageResponse, Foreground),
+    (ShowContacts, Foreground),
     (StartLanguageServer, Foreground),
     (Test, Foreground),
     (Unfollow, Foreground),
