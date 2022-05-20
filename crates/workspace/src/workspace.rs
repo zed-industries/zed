@@ -77,6 +77,7 @@ actions!(
         Open,
         NewFile,
         NewWindow,
+        CloseWindow,
         AddFolderToProject,
         Unfollow,
         Save,
@@ -142,6 +143,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
 
     cx.add_async_action(Workspace::toggle_follow);
     cx.add_async_action(Workspace::follow_next_collaborator);
+    cx.add_async_action(Workspace::close);
     cx.add_action(Workspace::add_folder_to_project);
     cx.add_action(
         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
@@ -879,6 +881,29 @@ impl Workspace {
                 future.await;
             }
         }
+    }
+
+    fn close(&mut self, _: &CloseWindow, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        let mut tasks = Vec::new();
+        for pane in self.panes.clone() {
+            tasks.push(Pane::close_all_items(self, pane, cx));
+        }
+        Some(cx.spawn(|this, mut cx| async move {
+            for task in tasks {
+                task.await?;
+            }
+            this.update(&mut cx, |this, cx| {
+                if this
+                    .panes
+                    .iter()
+                    .all(|pane| pane.read(cx).items().next().is_none())
+                {
+                    let window_id = cx.window_id();
+                    cx.remove_window(window_id);
+                }
+            });
+            Ok(())
+        }))
     }
 
     pub fn open_paths(

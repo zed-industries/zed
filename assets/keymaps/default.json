@@ -14,6 +14,7 @@
             "shift-cmd-{": "pane::ActivatePrevItem",
             "shift-cmd-}": "pane::ActivateNextItem",
             "cmd-w": "pane::CloseActiveItem",
+            "cmd-shift-W": "workspace::CloseWindow",
             "alt-cmd-w": "pane::CloseInactiveItems",
             "cmd-s": "workspace::Save",
             "cmd-shift-S": "workspace::SaveAs",

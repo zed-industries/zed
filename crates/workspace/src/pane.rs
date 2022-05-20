@@ -482,6 +482,14 @@ impl Pane {
         })
     }
 
+    pub fn close_all_items(
+        workspace: &mut Workspace,
+        pane: ViewHandle<Pane>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<()>> {
+        Self::close_items(workspace, pane, cx, |_| true)
+    }
+
     pub fn close_items(
         workspace: &mut Workspace,
         pane: ViewHandle<Pane>,
