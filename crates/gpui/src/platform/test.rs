@@ -73,9 +73,8 @@ impl super::ForegroundPlatform for ForegroundPlatform {
     }
 
     fn on_menu_command(&self, _: Box<dyn FnMut(&dyn Action)>) {}
-
     fn on_validate_menu_command(&self, _: Box<dyn FnMut(&dyn Action) -> bool>) {}
-
+    fn on_will_open_menu(&self, _: Box<dyn FnMut()>) {}
     fn set_menus(&self, _: Vec<crate::Menu>, _: &keymap::Matcher) {}
 
     fn prompt_for_paths(

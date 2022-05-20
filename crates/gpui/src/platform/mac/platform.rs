@@ -94,6 +94,10 @@ unsafe fn build_classes() {
             validate_menu_item as extern "C" fn(&mut Object, Sel, id) -> bool,
         );
         decl.add_method(
+            sel!(menuWillOpen:),
+            menu_will_open as extern "C" fn(&mut Object, Sel, id),
+        );
+        decl.add_method(
             sel!(application:openURLs:),
             open_urls as extern "C" fn(&mut Object, Sel, id, id),
         );
@@ -112,14 +116,21 @@ pub struct MacForegroundPlatformState {
     event: Option<Box<dyn FnMut(crate::Event) -> bool>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
+    will_open_menu: Option<Box<dyn FnMut()>>,
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce() -> ()>>,
     menu_actions: Vec<Box<dyn Action>>,
 }
 
 impl MacForegroundPlatform {
-    unsafe fn create_menu_bar(&self, menus: Vec<Menu>, keystroke_matcher: &keymap::Matcher) -> id {
+    unsafe fn create_menu_bar(
+        &self,
+        menus: Vec<Menu>,
+        delegate: id,
+        keystroke_matcher: &keymap::Matcher,
+    ) -> id {
         let menu_bar = NSMenu::new(nil).autorelease();
+        menu_bar.setDelegate_(delegate);
         let mut state = self.0.borrow_mut();
 
         state.menu_actions.clear();
@@ -130,6 +141,7 @@ impl MacForegroundPlatform {
             let menu_name = menu_config.name;
 
             menu.setTitle_(ns_string(menu_name));
+            menu.setDelegate_(delegate);
 
             for item_config in menu_config.items {
                 let item;
@@ -242,6 +254,10 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
         self.0.borrow_mut().menu_command = Some(callback);
     }
 
+    fn on_will_open_menu(&self, callback: Box<dyn FnMut()>) {
+        self.0.borrow_mut().will_open_menu = Some(callback);
+    }
+
     fn on_validate_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
         self.0.borrow_mut().validate_menu_command = Some(callback);
     }
@@ -249,7 +265,7 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
     fn set_menus(&self, menus: Vec<Menu>, keystroke_matcher: &keymap::Matcher) {
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
-            app.setMainMenu_(self.create_menu_bar(menus, keystroke_matcher));
+            app.setMainMenu_(self.create_menu_bar(menus, app.delegate(), keystroke_matcher));
         }
     }
 
@@ -761,6 +777,17 @@ extern "C" fn validate_menu_item(this: &mut Object, _: Sel, item: id) -> bool {
             platform.validate_menu_command = Some(callback);
         }
         result
+    }
+}
+
+extern "C" fn menu_will_open(this: &mut Object, _: Sel, _: id) {
+    unsafe {
+        let platform = get_foreground_platform(this);
+        let mut platform = platform.0.borrow_mut();
+        if let Some(mut callback) = platform.will_open_menu.take() {
+            callback();
+            platform.will_open_menu = Some(callback);
+        }
     }
 }
 

@@ -192,11 +192,18 @@ impl App {
                 cx.borrow_mut().quit();
             }
         }));
+        foreground_platform.on_will_open_menu(Box::new({
+            let cx = app.0.clone();
+            move || {
+                let mut cx = cx.borrow_mut();
+                cx.keystroke_matcher.clear_pending();
+            }
+        }));
         foreground_platform.on_validate_menu_command(Box::new({
             let cx = app.0.clone();
             move |action| {
                 let cx = cx.borrow_mut();
-                cx.is_action_available(action)
+                !cx.keystroke_matcher.has_pending_keystrokes() && cx.is_action_available(action)
             }
         }));
         foreground_platform.on_menu_command(Box::new({
