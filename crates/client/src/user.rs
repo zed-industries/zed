@@ -78,10 +78,12 @@ pub struct InviteInfo {
     pub url: Arc<str>,
 }
 
-#[derive(Clone)]
-pub struct ContactEvent {
-    pub user: Arc<User>,
-    pub kind: ContactEventKind,
+pub enum Event {
+    Contact {
+        user: Arc<User>,
+        kind: ContactEventKind,
+    },
+    ShowContacts,
 }
 
 #[derive(Clone, Copy)]
@@ -92,7 +94,7 @@ pub enum ContactEventKind {
 }
 
 impl Entity for UserStore {
-    type Event = ContactEvent;
+    type Event = Event;
 }
 
 enum UpdateContacts {
@@ -111,6 +113,7 @@ impl UserStore {
         let rpc_subscriptions = vec![
             client.add_message_handler(cx.handle(), Self::handle_update_contacts),
             client.add_message_handler(cx.handle(), Self::handle_update_invite_info),
+            client.add_message_handler(cx.handle(), Self::handle_show_contacts),
         ];
         Self {
             users: Default::default(),
@@ -177,6 +180,16 @@ impl UserStore {
             });
             cx.notify();
         });
+        Ok(())
+    }
+
+    async fn handle_show_contacts(
+        this: ModelHandle<Self>,
+        _: TypedEnvelope<proto::ShowContacts>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |_, cx| cx.emit(Event::ShowContacts));
         Ok(())
     }
 
@@ -274,7 +287,7 @@ impl UserStore {
                         // Update existing contacts and insert new ones
                         for (updated_contact, should_notify) in updated_contacts {
                             if should_notify {
-                                cx.emit(ContactEvent {
+                                cx.emit(Event::Contact {
                                     user: updated_contact.user.clone(),
                                     kind: ContactEventKind::Accepted,
                                 });
@@ -291,7 +304,7 @@ impl UserStore {
                         // Remove incoming contact requests
                         this.incoming_contact_requests.retain(|user| {
                             if removed_incoming_requests.contains(&user.id) {
-                                cx.emit(ContactEvent {
+                                cx.emit(Event::Contact {
                                     user: user.clone(),
                                     kind: ContactEventKind::Cancelled,
                                 });
@@ -303,7 +316,7 @@ impl UserStore {
                         // Update existing incoming requests and insert new ones
                         for (user, should_notify) in incoming_requests {
                             if should_notify {
-                                cx.emit(ContactEvent {
+                                cx.emit(Event::Contact {
                                     user: user.clone(),
                                     kind: ContactEventKind::Requested,
                                 });

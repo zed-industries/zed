@@ -158,15 +158,27 @@ impl ContactsPanel {
                 if let Some((workspace, user_store)) =
                     workspace.upgrade(cx).zip(user_store.upgrade(cx))
                 {
-                    workspace.update(cx, |workspace, cx| match event.kind {
-                        ContactEventKind::Requested | ContactEventKind::Accepted => workspace
-                            .show_notification(event.user.id as usize, cx, |cx| {
-                                cx.add_view(|cx| {
-                                    ContactNotification::new(event.clone(), user_store, cx)
-                                })
-                            }),
+                    workspace.update(cx, |workspace, cx| match event {
+                        client::Event::Contact { user, kind } => match kind {
+                            ContactEventKind::Requested | ContactEventKind::Accepted => workspace
+                                .show_notification(user.id as usize, cx, |cx| {
+                                    cx.add_view(|cx| {
+                                        ContactNotification::new(
+                                            user.clone(),
+                                            *kind,
+                                            user_store,
+                                            cx,
+                                        )
+                                    })
+                                }),
+                            _ => {}
+                        },
                         _ => {}
                     });
+                }
+
+                if let client::Event::ShowContacts = event {
+                    cx.emit(Event::Activate);
                 }
             }
         })
@@ -801,6 +813,10 @@ impl SidebarItem for ContactsPanel {
     fn contains_focused_view(&self, cx: &AppContext) -> bool {
         self.filter_editor.is_focused(cx)
     }
+
+    fn should_activate_item_on_event(&self, event: &Event, _: &AppContext) -> bool {
+        matches!(event, Event::Activate)
+    }
 }
 
 fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Element {
@@ -816,7 +832,9 @@ fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Elemen
         .with_height(style.button_width)
 }
 
-pub enum Event {}
+pub enum Event {
+    Activate,
+}
 
 impl Entity for ContactsPanel {
     type Event = Event;

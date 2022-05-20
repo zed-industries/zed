@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use crate::notifications::render_user_notification;
-use client::{ContactEvent, ContactEventKind, UserStore};
+use client::{ContactEventKind, User, UserStore};
 use gpui::{
     elements::*, impl_internal_actions, Entity, ModelHandle, MutableAppContext, RenderContext,
     View, ViewContext,
@@ -15,7 +17,8 @@ pub fn init(cx: &mut MutableAppContext) {
 
 pub struct ContactNotification {
     user_store: ModelHandle<UserStore>,
-    event: ContactEvent,
+    user: Arc<User>,
+    kind: client::ContactEventKind,
 }
 
 #[derive(Clone)]
@@ -41,27 +44,27 @@ impl View for ContactNotification {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        match self.event.kind {
+        match self.kind {
             ContactEventKind::Requested => render_user_notification(
-                self.event.user.clone(),
+                self.user.clone(),
                 "wants to add you as a contact",
                 Some("They won't know if you decline."),
                 RespondToContactRequest {
-                    user_id: self.event.user.id,
+                    user_id: self.user.id,
                     accept: false,
                 },
                 vec![
                     (
                         "Decline",
                         Box::new(RespondToContactRequest {
-                            user_id: self.event.user.id,
+                            user_id: self.user.id,
                             accept: false,
                         }),
                     ),
                     (
                         "Accept",
                         Box::new(RespondToContactRequest {
-                            user_id: self.event.user.id,
+                            user_id: self.user.id,
                             accept: true,
                         }),
                     ),
@@ -69,10 +72,10 @@ impl View for ContactNotification {
                 cx,
             ),
             ContactEventKind::Accepted => render_user_notification(
-                self.event.user.clone(),
+                self.user.clone(),
                 "accepted your contact request",
                 None,
-                Dismiss(self.event.user.id),
+                Dismiss(self.user.id),
                 vec![],
                 cx,
             ),
@@ -89,30 +92,35 @@ impl Notification for ContactNotification {
 
 impl ContactNotification {
     pub fn new(
-        event: ContactEvent,
+        user: Arc<User>,
+        kind: client::ContactEventKind,
         user_store: ModelHandle<UserStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         cx.subscribe(&user_store, move |this, _, event, cx| {
-            if let client::ContactEvent {
+            if let client::Event::Contact {
                 kind: ContactEventKind::Cancelled,
                 user,
             } = event
             {
-                if user.id == this.event.user.id {
+                if user.id == this.user.id {
                     cx.emit(Event::Dismiss);
                 }
             }
         })
         .detach();
 
-        Self { event, user_store }
+        Self {
+            user,
+            kind,
+            user_store,
+        }
     }
 
     fn dismiss(&mut self, _: &Dismiss, cx: &mut ViewContext<Self>) {
         self.user_store.update(cx, |store, cx| {
             store
-                .dismiss_contact_request(self.event.user.id, cx)
+                .dismiss_contact_request(self.user.id, cx)
                 .detach_and_log_err(cx);
         });
         cx.emit(Event::Dismiss);

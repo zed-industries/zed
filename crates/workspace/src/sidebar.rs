@@ -9,6 +9,9 @@ use std::{cell::RefCell, rc::Rc};
 use theme::Theme;
 
 pub trait SidebarItem: View {
+    fn should_activate_item_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
+        false
+    }
     fn should_show_badge(&self, cx: &AppContext) -> bool;
     fn contains_focused_view(&self, _: &AppContext) -> bool {
         false
@@ -16,6 +19,7 @@ pub trait SidebarItem: View {
 }
 
 pub trait SidebarItemHandle {
+    fn id(&self) -> usize;
     fn should_show_badge(&self, cx: &AppContext) -> bool;
     fn is_focused(&self, cx: &AppContext) -> bool;
     fn to_any(&self) -> AnyViewHandle;
@@ -25,6 +29,10 @@ impl<T> SidebarItemHandle for ViewHandle<T>
 where
     T: SidebarItem,
 {
+    fn id(&self) -> usize {
+        self.id()
+    }
+
     fn should_show_badge(&self, cx: &AppContext) -> bool {
         self.read(cx).should_show_badge(cx)
     }
@@ -61,7 +69,7 @@ pub enum Side {
 struct Item {
     icon_path: &'static str,
     view: Rc<dyn SidebarItemHandle>,
-    _observation: Subscription,
+    _subscriptions: [Subscription; 2],
 }
 
 pub struct SidebarButtons {
@@ -99,11 +107,24 @@ impl Sidebar {
         view: ViewHandle<T>,
         cx: &mut ViewContext<Self>,
     ) {
-        let subscription = cx.observe(&view, |_, _, cx| cx.notify());
+        let subscriptions = [
+            cx.observe(&view, |_, _, cx| cx.notify()),
+            cx.subscribe(&view, |this, view, event, cx| {
+                if view.read(cx).should_activate_item_on_event(event, cx) {
+                    if let Some(ix) = this
+                        .items
+                        .iter()
+                        .position(|item| item.view.id() == view.id())
+                    {
+                        this.activate_item(ix, cx);
+                    }
+                }
+            }),
+        ];
         self.items.push(Item {
             icon_path,
             view: Rc::new(view),
-            _observation: subscription,
+            _subscriptions: subscriptions,
         });
         cx.notify()
     }

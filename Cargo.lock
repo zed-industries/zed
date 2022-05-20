@@ -935,6 +935,7 @@ checksum = "f92cfa0fd5690b3cf8c1ef2cabbd9b7ef22fa53cf5e1f92b05103f6d5d1cf6e7"
 name = "contacts_panel"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "client",
  "editor",
  "futures",
