@@ -1,4 +1,4 @@
-use super::{BoolExt as _, Dispatcher, FontSystem, Window};
+use super::{event::key_to_native, BoolExt as _, Dispatcher, FontSystem, Window};
 use crate::{
     executor, keymap,
     platform::{self, CursorStyle},
@@ -165,7 +165,7 @@ impl MacForegroundPlatform {
                                 .initWithTitle_action_keyEquivalent_(
                                     ns_string(name),
                                     selector("handleGPUIMenuItem:"),
-                                    ns_string(&keystroke.key),
+                                    ns_string(key_to_native(&keystroke.key).as_ref()),
                                 )
                                 .autorelease();
                             item.setKeyEquivalentModifierMask_(mask);

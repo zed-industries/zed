@@ -8,7 +8,35 @@ use cocoa::{
     base::{id, nil, YES},
     foundation::NSString as _,
 };
-use std::{ffi::CStr, os::raw::c_char};
+use std::{borrow::Cow, ffi::CStr, os::raw::c_char};
+
+pub fn key_to_native(key: &str) -> Cow<str> {
+    use cocoa::appkit::*;
+    let code = match key {
+        "backspace" => 0x7F,
+        "up" => NSUpArrowFunctionKey,
+        "down" => NSDownArrowFunctionKey,
+        "left" => NSLeftArrowFunctionKey,
+        "right" => NSRightArrowFunctionKey,
+        "pageup" => NSPageUpFunctionKey,
+        "pagedown" => NSPageDownFunctionKey,
+        "delete" => NSDeleteFunctionKey,
+        "f1" => NSF1FunctionKey,
+        "f2" => NSF2FunctionKey,
+        "f3" => NSF3FunctionKey,
+        "f4" => NSF4FunctionKey,
+        "f5" => NSF5FunctionKey,
+        "f6" => NSF6FunctionKey,
+        "f7" => NSF7FunctionKey,
+        "f8" => NSF8FunctionKey,
+        "f9" => NSF9FunctionKey,
+        "f10" => NSF10FunctionKey,
+        "f11" => NSF11FunctionKey,
+        "f12" => NSF12FunctionKey,
+        _ => return Cow::Borrowed(key),
+    };
+    Cow::Owned(String::from_utf16(&[code]).unwrap())
+}
 
 impl Event {
     pub unsafe fn from_native(native_event: id, window_height: Option<f32>) -> Option<Self> {
