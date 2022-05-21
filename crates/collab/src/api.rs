@@ -35,7 +35,6 @@ pub fn routes(rpc_server: &Arc<crate::rpc::Server>, state: Arc<AppState>) -> Rou
                 .layer(Extension(rpc_server.clone()))
                 .layer(middleware::from_fn(validate_api_token)),
         )
-    // TODO: Compression on API routes?
 }
 
 pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoResponse {
@@ -74,10 +73,11 @@ async fn get_users(Extension(app): Extension<Arc<AppState>>) -> Result<Json<Vec<
     Ok(Json(users))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct CreateUserParams {
     github_login: String,
     invite_code: Option<String>,
+    email_address: Option<String>,
     admin: bool,
 }
 
@@ -86,10 +86,16 @@ async fn create_user(
     Extension(app): Extension<Arc<AppState>>,
     Extension(rpc_server): Extension<Arc<crate::rpc::Server>>,
 ) -> Result<Json<User>> {
+    println!("{:?}", params);
+
     let user_id = if let Some(invite_code) = params.invite_code {
         let invitee_id = app
             .db
-            .redeem_invite_code(&invite_code, &params.github_login)
+            .redeem_invite_code(
+                &invite_code,
+                &params.github_login,
+                params.email_address.as_deref(),
+            )
             .await?;
         rpc_server
             .invite_code_redeemed(&invite_code, invitee_id)
@@ -98,7 +104,11 @@ async fn create_user(
         invitee_id
     } else {
         app.db
-            .create_user(&params.github_login, params.admin)
+            .create_user(
+                &params.github_login,
+                params.email_address.as_deref(),
+                params.admin,
+            )
             .await?
     };
 

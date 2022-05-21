@@ -6065,9 +6065,9 @@ mod tests {
 
         let mut server = TestServer::start(cx.foreground(), cx.background()).await;
         let db = server.app_state.db.clone();
-        let host_user_id = db.create_user("host", false).await.unwrap();
+        let host_user_id = db.create_user("host", None, false).await.unwrap();
         for username in ["guest-1", "guest-2", "guest-3", "guest-4"] {
-            let guest_user_id = db.create_user(username, false).await.unwrap();
+            let guest_user_id = db.create_user(username, None, false).await.unwrap();
             server
                 .app_state
                 .db
@@ -6582,7 +6582,7 @@ mod tests {
                 if let Ok(Some(user)) = self.app_state.db.get_user_by_github_login(name).await {
                     user.id
                 } else {
-                    self.app_state.db.create_user(name, false).await.unwrap()
+                    self.app_state.db.create_user(name, None, false).await.unwrap()
                 };
             let client_name = name.to_string();
             let mut client = Client::new(http.clone());

@@ -1,4 +1,5 @@
 ALTER TABLE users
+ADD email_address VARCHAR(255) DEFAULT NULL,
 ADD invite_code VARCHAR(64),
 ADD invite_count INTEGER NOT NULL DEFAULT 0,
 ADD inviter_id INTEGER REFERENCES users (id),

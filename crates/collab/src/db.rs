@@ -11,7 +11,12 @@ use time::OffsetDateTime;
 
 #[async_trait]
 pub trait Db: Send + Sync {
-    async fn create_user(&self, github_login: &str, admin: bool) -> Result<UserId>;
+    async fn create_user(
+        &self,
+        github_login: &str,
+        email_address: Option<&str>,
+        admin: bool,
+    ) -> Result<UserId>;
     async fn get_all_users(&self) -> Result<Vec<User>>;
     async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>>;
     async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>>;
@@ -24,7 +29,12 @@ pub trait Db: Send + Sync {
     async fn set_invite_count(&self, id: UserId, count: u32) -> Result<()>;
     async fn get_invite_code_for_user(&self, id: UserId) -> Result<Option<(String, u32)>>;
     async fn get_user_for_invite_code(&self, code: &str) -> Result<User>;
-    async fn redeem_invite_code(&self, code: &str, login: &str) -> Result<UserId>;
+    async fn redeem_invite_code(
+        &self,
+        code: &str,
+        login: &str,
+        email_address: Option<&str>,
+    ) -> Result<UserId>;
 
     async fn get_contacts(&self, id: UserId) -> Result<Vec<Contact>>;
     async fn has_contact(&self, user_id_a: UserId, user_id_b: UserId) -> Result<bool>;
@@ -110,15 +120,21 @@ impl PostgresDb {
 impl Db for PostgresDb {
     // users
 
-    async fn create_user(&self, github_login: &str, admin: bool) -> Result<UserId> {
+    async fn create_user(
+        &self,
+        github_login: &str,
+        email_address: Option<&str>,
+        admin: bool,
+    ) -> Result<UserId> {
         let query = "
-            INSERT INTO users (github_login, admin)
-            VALUES ($1, $2)
+            INSERT INTO users (github_login, email_address, admin)
+            VALUES ($1, $2, $3)
             ON CONFLICT (github_login) DO UPDATE SET github_login = excluded.github_login
             RETURNING id
         ";
         Ok(sqlx::query_scalar(query)
             .bind(github_login)
+            .bind(email_address)
             .bind(admin)
             .fetch_one(&self.pool)
             .await
@@ -275,7 +291,12 @@ impl Db for PostgresDb {
         })
     }
 
-    async fn redeem_invite_code(&self, code: &str, login: &str) -> Result<UserId> {
+    async fn redeem_invite_code(
+        &self,
+        code: &str,
+        login: &str,
+        email_address: Option<&str>,
+    ) -> Result<UserId> {
         let mut tx = self.pool.begin().await?;
 
         let inviter_id: Option<UserId> = sqlx::query_scalar(
@@ -317,13 +338,14 @@ impl Db for PostgresDb {
         let invitee_id = sqlx::query_scalar(
             "
                 INSERT INTO users
-                    (github_login, admin, inviter_id)
+                    (github_login, email_address, admin, inviter_id)
                 VALUES
-                    ($1, 'f', $2)
+                    ($1, $2, 'f', $3)
                 RETURNING id
             ",
         )
         .bind(login)
+        .bind(email_address)
         .bind(inviter_id)
         .fetch_one(&mut tx)
         .await
@@ -855,6 +877,7 @@ id_type!(UserId);
 pub struct User {
     pub id: UserId,
     pub github_login: String,
+    pub email_address: Option<String>,
     pub admin: bool,
     pub invite_code: Option<String>,
     pub invite_count: i32,
@@ -956,10 +979,10 @@ pub mod tests {
         ] {
             let db = test_db.db();
 
-            let user = db.create_user("user", false).await.unwrap();
-            let friend1 = db.create_user("friend-1", false).await.unwrap();
-            let friend2 = db.create_user("friend-2", false).await.unwrap();
-            let friend3 = db.create_user("friend-3", false).await.unwrap();
+            let user = db.create_user("user", None, false).await.unwrap();
+            let friend1 = db.create_user("friend-1", None, false).await.unwrap();
+            let friend2 = db.create_user("friend-2", None, false).await.unwrap();
+            let friend3 = db.create_user("friend-3", None, false).await.unwrap();
 
             assert_eq!(
                 db.get_users_by_ids(vec![user, friend1, friend2, friend3])
@@ -1002,7 +1025,7 @@ pub mod tests {
             TestDb::fake(Arc::new(gpui::executor::Background::new())),
         ] {
             let db = test_db.db();
-            let user = db.create_user("user", false).await.unwrap();
+            let user = db.create_user("user", None, false).await.unwrap();
             let org = db.create_org("org", "org").await.unwrap();
             let channel = db.create_org_channel(org, "channel").await.unwrap();
             for i in 0..10 {
@@ -1041,7 +1064,7 @@ pub mod tests {
             TestDb::fake(Arc::new(gpui::executor::Background::new())),
         ] {
             let db = test_db.db();
-            let user = db.create_user("user", false).await.unwrap();
+            let user = db.create_user("user", None, false).await.unwrap();
             let org = db.create_org("org", "org").await.unwrap();
             let channel = db.create_org_channel(org, "channel").await.unwrap();
 
@@ -1072,7 +1095,7 @@ pub mod tests {
     async fn test_create_access_tokens() {
         let test_db = TestDb::postgres().await;
         let db = test_db.db();
-        let user = db.create_user("the-user", false).await.unwrap();
+        let user = db.create_user("the-user", None, false).await.unwrap();
 
         db.create_access_token_hash(user, "h1", 3).await.unwrap();
         db.create_access_token_hash(user, "h2", 3).await.unwrap();
@@ -1120,7 +1143,7 @@ pub mod tests {
             "delaware",
             "rhode-island",
         ] {
-            db.create_user(github_login, false).await.unwrap();
+            db.create_user(github_login, None, false).await.unwrap();
         }
 
         assert_eq!(
@@ -1150,9 +1173,9 @@ pub mod tests {
         ] {
             let db = test_db.db();
 
-            let user_1 = db.create_user("user1", false).await.unwrap();
-            let user_2 = db.create_user("user2", false).await.unwrap();
-            let user_3 = db.create_user("user3", false).await.unwrap();
+            let user_1 = db.create_user("user1", None, false).await.unwrap();
+            let user_2 = db.create_user("user2", None, false).await.unwrap();
+            let user_3 = db.create_user("user3", None, false).await.unwrap();
 
             // User starts with no contacts
             assert_eq!(
@@ -1366,7 +1389,7 @@ pub mod tests {
     async fn test_invite_codes() {
         let postgres = TestDb::postgres().await;
         let db = postgres.db();
-        let user1 = db.create_user("user-1", false).await.unwrap();
+        let user1 = db.create_user("user-1", None, false).await.unwrap();
 
         // Initially, user 1 has no invite code
         assert_eq!(db.get_invite_code_for_user(user1).await.unwrap(), None);
@@ -1378,7 +1401,10 @@ pub mod tests {
         assert_eq!(invite_count, 2);
 
         // User 2 redeems the invite code and becomes a contact of user 1.
-        let user2 = db.redeem_invite_code(&invite_code, "user-2").await.unwrap();
+        let user2 = db
+            .redeem_invite_code(&invite_code, "user-2", None)
+            .await
+            .unwrap();
         let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
         assert_eq!(invite_count, 1);
         assert_eq!(
@@ -1409,7 +1435,10 @@ pub mod tests {
         );
 
         // User 3 redeems the invite code and becomes a contact of user 1.
-        let user3 = db.redeem_invite_code(&invite_code, "user-3").await.unwrap();
+        let user3 = db
+            .redeem_invite_code(&invite_code, "user-3", None)
+            .await
+            .unwrap();
         let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
         assert_eq!(invite_count, 0);
         assert_eq!(
@@ -1444,7 +1473,7 @@ pub mod tests {
         );
 
         // Trying to reedem the code for the third time results in an error.
-        db.redeem_invite_code(&invite_code, "user-4")
+        db.redeem_invite_code(&invite_code, "user-4", None)
             .await
             .unwrap_err();
 
@@ -1456,7 +1485,10 @@ pub mod tests {
         assert_eq!(invite_count, 2);
 
         // User 4 can now redeem the invite code and becomes a contact of user 1.
-        let user4 = db.redeem_invite_code(&invite_code, "user-4").await.unwrap();
+        let user4 = db
+            .redeem_invite_code(&invite_code, "user-4", None)
+            .await
+            .unwrap();
         let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
         assert_eq!(invite_count, 1);
         assert_eq!(
@@ -1495,7 +1527,7 @@ pub mod tests {
         );
 
         // An existing user cannot redeem invite codes.
-        db.redeem_invite_code(&invite_code, "user-2")
+        db.redeem_invite_code(&invite_code, "user-2", None)
             .await
             .unwrap_err();
         let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
@@ -1594,7 +1626,12 @@ pub mod tests {
 
     #[async_trait]
     impl Db for FakeDb {
-        async fn create_user(&self, github_login: &str, admin: bool) -> Result<UserId> {
+        async fn create_user(
+            &self,
+            github_login: &str,
+            email_address: Option<&str>,
+            admin: bool,
+        ) -> Result<UserId> {
             self.background.simulate_random_delay().await;
 
             let mut users = self.users.lock();
@@ -1610,6 +1647,7 @@ pub mod tests {
                     User {
                         id: user_id,
                         github_login: github_login.to_string(),
+                        email_address: email_address.map(str::to_string),
                         admin,
                         invite_code: None,
                         invite_count: 0,
@@ -1679,7 +1717,12 @@ pub mod tests {
             unimplemented!()
         }
 
-        async fn redeem_invite_code(&self, _code: &str, _login: &str) -> Result<UserId> {
+        async fn redeem_invite_code(
+            &self,
+            _code: &str,
+            _login: &str,
+            _email_address: Option<&str>,
+        ) -> Result<UserId> {
             unimplemented!()
         }
 
