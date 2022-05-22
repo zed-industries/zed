@@ -2479,6 +2479,7 @@ impl History {
                 self.undo_stack.pop();
                 false
             } else {
+                self.redo_stack.clear();
                 let transaction = self.undo_stack.last_mut().unwrap();
                 transaction.last_edit_at = now;
                 for (buffer_id, transaction_id) in buffer_transactions {
@@ -2511,6 +2512,7 @@ impl History {
         };
         if !transaction.buffer_transactions.is_empty() {
             self.undo_stack.push(transaction);
+            self.redo_stack.clear();
         }
     }
 
@@ -3935,6 +3937,16 @@ mod tests {
             buffer_1.update(cx, |buffer_1, cx| buffer_1.redo(cx));
             assert_eq!(multibuffer.read(cx).text(), "ABCD1234\nAB5678");
 
+            // Redo stack gets cleared after an edit.
+            now += 2 * group_interval;
+            multibuffer.start_transaction_at(now, cx);
+            multibuffer.edit([(0..0, "X")], cx);
+            multibuffer.end_transaction_at(now, cx);
+            assert_eq!(multibuffer.read(cx).text(), "XABCD1234\nAB5678");
+            multibuffer.redo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "XABCD1234\nAB5678");
+            multibuffer.undo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "ABCD1234\nAB5678");
             multibuffer.undo(cx);
             assert_eq!(multibuffer.read(cx).text(), "1234\n5678");
         });
