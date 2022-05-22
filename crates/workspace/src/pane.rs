@@ -9,10 +9,10 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     impl_actions, impl_internal_actions,
     platform::{CursorStyle, NavigationDirection},
-    AppContext, Entity, MutableAppContext, PromptLevel, Quad, RenderContext, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, AsyncAppContext, Entity, ModelHandle, MutableAppContext, PromptLevel, Quad,
+    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use project::{ProjectEntryId, ProjectPath};
+use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
 use settings::Settings;
 use std::{any::Any, cell::RefCell, cmp, mem, path::Path, rc::Rc};
@@ -71,7 +71,11 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(Pane::close_inactive_items);
     cx.add_async_action(|workspace: &mut Workspace, action: &CloseItem, cx| {
         let pane = action.pane.upgrade(cx)?;
-        Some(Pane::close_item(workspace, pane, action.item_id, cx))
+        let task = Pane::close_item(workspace, pane, action.item_id, cx);
+        Some(cx.foreground().spawn(async move {
+            task.await?;
+            Ok(())
+        }))
     });
     cx.add_action(|pane: &mut Pane, action: &Split, cx| {
         pane.split(action.0, cx);
@@ -294,7 +298,7 @@ impl Pane {
     ) -> Box<dyn ItemHandle> {
         let existing_item = pane.update(cx, |pane, cx| {
             for (ix, item) in pane.items.iter().enumerate() {
-                if item.project_entry_id(cx) == Some(project_entry_id) {
+                if item.project_entry_ids(cx).as_slice() == &[project_entry_id] {
                     let item = item.boxed_clone();
                     pane.activate_item(ix, true, focus_item, cx);
                     return Some(item);
@@ -351,27 +355,13 @@ impl Pane {
         self.items.get(self.active_item_index).cloned()
     }
 
-    pub fn project_entry_id_for_item(
-        &self,
-        item: &dyn ItemHandle,
-        cx: &AppContext,
-    ) -> Option<ProjectEntryId> {
-        self.items.iter().find_map(|existing| {
-            if existing.id() == item.id() {
-                existing.project_entry_id(cx)
-            } else {
-                None
-            }
-        })
-    }
-
     pub fn item_for_entry(
         &self,
         entry_id: ProjectEntryId,
         cx: &AppContext,
     ) -> Option<Box<dyn ItemHandle>> {
         self.items.iter().find_map(|item| {
-            if item.project_entry_id(cx) == Some(entry_id) {
+            if item.project_entry_ids(cx).as_slice() == &[entry_id] {
                 Some(item.boxed_clone())
             } else {
                 None
@@ -445,12 +435,13 @@ impl Pane {
             None
         } else {
             let item_id_to_close = pane.items[pane.active_item_index].id();
-            Some(Self::close_items(
-                workspace,
-                pane_handle,
-                cx,
-                move |item_id| item_id == item_id_to_close,
-            ))
+            let task = Self::close_items(workspace, pane_handle, cx, move |item_id| {
+                item_id == item_id_to_close
+            });
+            Some(cx.foreground().spawn(async move {
+                task.await?;
+                Ok(())
+            }))
         }
     }
 
@@ -465,8 +456,11 @@ impl Pane {
             None
         } else {
             let active_item_id = pane.items[pane.active_item_index].id();
-            Some(Self::close_items(workspace, pane_handle, cx, move |id| {
-                id != active_item_id
+            let task =
+                Self::close_items(workspace, pane_handle, cx, move |id| id != active_item_id);
+            Some(cx.foreground().spawn(async move {
+                task.await?;
+                Ok(())
             }))
         }
     }
@@ -476,18 +470,10 @@ impl Pane {
         pane: ViewHandle<Pane>,
         item_id_to_close: usize,
         cx: &mut ViewContext<Workspace>,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<bool>> {
         Self::close_items(workspace, pane, cx, move |view_id| {
             view_id == item_id_to_close
         })
-    }
-
-    pub fn close_all_items(
-        workspace: &mut Workspace,
-        pane: ViewHandle<Pane>,
-        cx: &mut ViewContext<Workspace>,
-    ) -> Task<Result<()>> {
-        Self::close_items(workspace, pane, cx, |_| true)
     }
 
     pub fn close_items(
@@ -495,106 +481,56 @@ impl Pane {
         pane: ViewHandle<Pane>,
         cx: &mut ViewContext<Workspace>,
         should_close: impl 'static + Fn(usize) -> bool,
-    ) -> Task<Result<()>> {
-        const CONFLICT_MESSAGE: &'static str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
-        const DIRTY_MESSAGE: &'static str =
-            "This file contains unsaved edits. Do you want to save it?";
-
+    ) -> Task<Result<bool>> {
         let project = workspace.project().clone();
-        cx.spawn(|workspace, mut cx| async move {
-            while let Some(item_to_close_ix) = pane.read_with(&cx, |pane, _| {
-                pane.items.iter().position(|item| should_close(item.id()))
-            }) {
-                let item =
-                    pane.read_with(&cx, |pane, _| pane.items[item_to_close_ix].boxed_clone());
 
-                let is_last_item_for_entry = workspace.read_with(&cx, |workspace, cx| {
-                    let project_entry_id = item.project_entry_id(cx);
-                    project_entry_id.is_none()
-                        || workspace
-                            .items(cx)
-                            .filter(|item| item.project_entry_id(cx) == project_entry_id)
-                            .count()
-                            == 1
+        // Find which items to close.
+        let mut items_to_close = Vec::new();
+        for item in &pane.read(cx).items {
+            if should_close(item.id()) {
+                items_to_close.push(item.boxed_clone());
+            }
+        }
+
+        cx.spawn(|workspace, mut cx| async move {
+            for item in items_to_close.clone() {
+                let (item_ix, project_entry_ids) = pane.read_with(&cx, |pane, cx| {
+                    (
+                        pane.index_for_item(item.as_ref()),
+                        item.project_entry_ids(cx),
+                    )
                 });
 
-                if is_last_item_for_entry {
-                    if cx.read(|cx| item.has_conflict(cx) && item.can_save(cx)) {
-                        let mut answer = pane.update(&mut cx, |pane, cx| {
-                            pane.activate_item(item_to_close_ix, true, true, cx);
-                            cx.prompt(
-                                PromptLevel::Warning,
-                                CONFLICT_MESSAGE,
-                                &["Overwrite", "Discard", "Cancel"],
-                            )
-                        });
+                let item_ix = if let Some(ix) = item_ix {
+                    ix
+                } else {
+                    continue;
+                };
 
-                        match answer.next().await {
-                            Some(0) => {
-                                cx.update(|cx| item.save(project.clone(), cx)).await?;
-                            }
-                            Some(1) => {
-                                cx.update(|cx| item.reload(project.clone(), cx)).await?;
-                            }
-                            _ => break,
-                        }
-                    } else if cx.read(|cx| item.is_dirty(cx)) {
-                        if cx.read(|cx| item.can_save(cx)) {
-                            let mut answer = pane.update(&mut cx, |pane, cx| {
-                                pane.activate_item(item_to_close_ix, true, true, cx);
-                                cx.prompt(
-                                    PromptLevel::Warning,
-                                    DIRTY_MESSAGE,
-                                    &["Save", "Don't Save", "Cancel"],
-                                )
-                            });
-
-                            match answer.next().await {
-                                Some(0) => {
-                                    cx.update(|cx| item.save(project.clone(), cx)).await?;
-                                }
-                                Some(1) => {}
-                                _ => break,
-                            }
-                        } else if cx.read(|cx| item.can_save_as(cx)) {
-                            let mut answer = pane.update(&mut cx, |pane, cx| {
-                                pane.activate_item(item_to_close_ix, true, true, cx);
-                                cx.prompt(
-                                    PromptLevel::Warning,
-                                    DIRTY_MESSAGE,
-                                    &["Save", "Don't Save", "Cancel"],
-                                )
-                            });
-
-                            match answer.next().await {
-                                Some(0) => {
-                                    let start_abs_path = project
-                                        .read_with(&cx, |project, cx| {
-                                            let worktree = project.visible_worktrees(cx).next()?;
-                                            Some(
-                                                worktree
-                                                    .read(cx)
-                                                    .as_local()?
-                                                    .abs_path()
-                                                    .to_path_buf(),
-                                            )
-                                        })
-                                        .unwrap_or(Path::new("").into());
-
-                                    let mut abs_path =
-                                        cx.update(|cx| cx.prompt_for_new_path(&start_abs_path));
-                                    if let Some(abs_path) = abs_path.next().await.flatten() {
-                                        cx.update(|cx| item.save_as(project.clone(), abs_path, cx))
-                                            .await?;
-                                    } else {
-                                        break;
-                                    }
-                                }
-                                Some(1) => {}
-                                _ => break,
-                            }
+                // An item should be saved if either it has *no* project entries, or if it
+                // has project entries that don't exist anywhere else in the workspace.
+                let mut should_save = project_entry_ids.is_empty();
+                let mut project_entry_ids_to_save = project_entry_ids;
+                workspace.read_with(&cx, |workspace, cx| {
+                    for item in workspace.items(cx) {
+                        if !items_to_close
+                            .iter()
+                            .any(|item_to_close| item_to_close.id() == item.id())
+                        {
+                            let project_entry_ids = item.project_entry_ids(cx);
+                            project_entry_ids_to_save.retain(|id| !project_entry_ids.contains(&id));
                         }
                     }
+                });
+                if !project_entry_ids_to_save.is_empty() {
+                    should_save = true;
+                }
+
+                if should_save
+                    && !Self::save_item(project.clone(), &pane, item_ix, &item, true, &mut cx)
+                        .await?
+                {
+                    break;
                 }
 
                 pane.update(&mut cx, |pane, cx| {
@@ -629,8 +565,86 @@ impl Pane {
             }
 
             pane.update(&mut cx, |_, cx| cx.notify());
-            Ok(())
+            Ok(true)
         })
+    }
+
+    pub async fn save_item(
+        project: ModelHandle<Project>,
+        pane: &ViewHandle<Pane>,
+        item_ix: usize,
+        item: &Box<dyn ItemHandle>,
+        should_prompt_for_save: bool,
+        cx: &mut AsyncAppContext,
+    ) -> Result<bool> {
+        const CONFLICT_MESSAGE: &'static str =
+            "This file has changed on disk since you started editing it. Do you want to overwrite it?";
+        const DIRTY_MESSAGE: &'static str =
+            "This file contains unsaved edits. Do you want to save it?";
+
+        let (has_conflict, is_dirty, can_save, can_save_as) = cx.read(|cx| {
+            (
+                item.has_conflict(cx),
+                item.is_dirty(cx),
+                item.can_save(cx),
+                item.can_save_as(cx),
+            )
+        });
+
+        if has_conflict && can_save {
+            let mut answer = pane.update(cx, |pane, cx| {
+                pane.activate_item(item_ix, true, true, cx);
+                cx.prompt(
+                    PromptLevel::Warning,
+                    CONFLICT_MESSAGE,
+                    &["Overwrite", "Discard", "Cancel"],
+                )
+            });
+            match answer.next().await {
+                Some(0) => cx.update(|cx| item.save(project, cx)).await?,
+                Some(1) => cx.update(|cx| item.reload(project, cx)).await?,
+                _ => return Ok(false),
+            }
+        } else if is_dirty && (can_save || can_save_as) {
+            let should_save = if should_prompt_for_save {
+                let mut answer = pane.update(cx, |pane, cx| {
+                    pane.activate_item(item_ix, true, true, cx);
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        DIRTY_MESSAGE,
+                        &["Save", "Don't Save", "Cancel"],
+                    )
+                });
+                match answer.next().await {
+                    Some(0) => true,
+                    Some(1) => false,
+                    _ => return Ok(false),
+                }
+            } else {
+                true
+            };
+
+            if should_save {
+                if can_save {
+                    cx.update(|cx| item.save(project, cx)).await?;
+                } else if can_save_as {
+                    let start_abs_path = project
+                        .read_with(cx, |project, cx| {
+                            let worktree = project.visible_worktrees(cx).next()?;
+                            Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
+                        })
+                        .unwrap_or(Path::new("").into());
+
+                    let mut abs_path = cx.update(|cx| cx.prompt_for_new_path(&start_abs_path));
+                    if let Some(abs_path) = abs_path.next().await.flatten() {
+                        cx.update(|cx| item.save_as(project, abs_path, cx)).await?;
+                    } else {
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+        Ok(true)
     }
 
     pub fn focus_active_item(&mut self, cx: &mut ViewContext<Self>) {
@@ -921,256 +935,6 @@ impl NavHistory {
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
                 });
             }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::AppState;
-    use gpui::{ModelHandle, TestAppContext, ViewContext};
-    use project::Project;
-    use std::sync::atomic::AtomicUsize;
-
-    #[gpui::test]
-    async fn test_close_items(cx: &mut TestAppContext) {
-        cx.foreground().forbid_parking();
-
-        let app_state = cx.update(AppState::test);
-        let project = Project::test(app_state.fs.clone(), None, cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
-        let item1 = cx.add_view(window_id, |_| {
-            let mut item = TestItem::new();
-            item.is_dirty = true;
-            item
-        });
-        let item2 = cx.add_view(window_id, |_| {
-            let mut item = TestItem::new();
-            item.is_dirty = true;
-            item.has_conflict = true;
-            item
-        });
-        let item3 = cx.add_view(window_id, |_| {
-            let mut item = TestItem::new();
-            item.is_dirty = true;
-            item.has_conflict = true;
-            item
-        });
-        let item4 = cx.add_view(window_id, |_| {
-            let mut item = TestItem::new();
-            item.is_dirty = true;
-            item.can_save = false;
-            item
-        });
-        let pane = workspace.update(cx, |workspace, cx| {
-            workspace.add_item(Box::new(item1.clone()), cx);
-            workspace.add_item(Box::new(item2.clone()), cx);
-            workspace.add_item(Box::new(item3.clone()), cx);
-            workspace.add_item(Box::new(item4.clone()), cx);
-            workspace.active_pane().clone()
-        });
-
-        let close_items = workspace.update(cx, |workspace, cx| {
-            pane.update(cx, |pane, cx| {
-                pane.activate_item(1, true, true, cx);
-                assert_eq!(pane.active_item().unwrap().id(), item2.id());
-            });
-
-            let item1_id = item1.id();
-            let item3_id = item3.id();
-            let item4_id = item4.id();
-            Pane::close_items(workspace, pane.clone(), cx, move |id| {
-                [item1_id, item3_id, item4_id].contains(&id)
-            })
-        });
-
-        cx.foreground().run_until_parked();
-        pane.read_with(cx, |pane, _| {
-            assert_eq!(pane.items.len(), 4);
-            assert_eq!(pane.active_item().unwrap().id(), item1.id());
-        });
-
-        cx.simulate_prompt_answer(window_id, 0);
-        cx.foreground().run_until_parked();
-        pane.read_with(cx, |pane, cx| {
-            assert_eq!(item1.read(cx).save_count, 1);
-            assert_eq!(item1.read(cx).save_as_count, 0);
-            assert_eq!(item1.read(cx).reload_count, 0);
-            assert_eq!(pane.items.len(), 3);
-            assert_eq!(pane.active_item().unwrap().id(), item3.id());
-        });
-
-        cx.simulate_prompt_answer(window_id, 1);
-        cx.foreground().run_until_parked();
-        pane.read_with(cx, |pane, cx| {
-            assert_eq!(item3.read(cx).save_count, 0);
-            assert_eq!(item3.read(cx).save_as_count, 0);
-            assert_eq!(item3.read(cx).reload_count, 1);
-            assert_eq!(pane.items.len(), 2);
-            assert_eq!(pane.active_item().unwrap().id(), item4.id());
-        });
-
-        cx.simulate_prompt_answer(window_id, 0);
-        cx.foreground().run_until_parked();
-        cx.simulate_new_path_selection(|_| Some(Default::default()));
-        close_items.await.unwrap();
-        pane.read_with(cx, |pane, cx| {
-            assert_eq!(item4.read(cx).save_count, 0);
-            assert_eq!(item4.read(cx).save_as_count, 1);
-            assert_eq!(item4.read(cx).reload_count, 0);
-            assert_eq!(pane.items.len(), 1);
-            assert_eq!(pane.active_item().unwrap().id(), item2.id());
-        });
-    }
-
-    #[gpui::test]
-    async fn test_prompting_only_on_last_item_for_entry(cx: &mut TestAppContext) {
-        cx.foreground().forbid_parking();
-
-        let app_state = cx.update(AppState::test);
-        let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
-        let item = cx.add_view(window_id, |_| {
-            let mut item = TestItem::new();
-            item.is_dirty = true;
-            item.project_entry_id = Some(ProjectEntryId::new(&AtomicUsize::new(1)));
-            item
-        });
-
-        let (left_pane, right_pane) = workspace.update(cx, |workspace, cx| {
-            workspace.add_item(Box::new(item.clone()), cx);
-            let left_pane = workspace.active_pane().clone();
-            let right_pane = workspace.split_pane(left_pane.clone(), SplitDirection::Right, cx);
-            (left_pane, right_pane)
-        });
-
-        workspace
-            .update(cx, |workspace, cx| {
-                let item = right_pane.read(cx).active_item().unwrap();
-                Pane::close_item(workspace, right_pane.clone(), item.id(), cx)
-            })
-            .await
-            .unwrap();
-        workspace.read_with(cx, |workspace, _| {
-            assert_eq!(workspace.panes(), [left_pane.clone()]);
-        });
-
-        let close_item = workspace.update(cx, |workspace, cx| {
-            let item = left_pane.read(cx).active_item().unwrap();
-            Pane::close_item(workspace, left_pane.clone(), item.id(), cx)
-        });
-        cx.foreground().run_until_parked();
-        cx.simulate_prompt_answer(window_id, 0);
-        close_item.await.unwrap();
-        left_pane.read_with(cx, |pane, _| {
-            assert_eq!(pane.items.len(), 0);
-        });
-    }
-
-    #[derive(Clone)]
-    struct TestItem {
-        save_count: usize,
-        save_as_count: usize,
-        reload_count: usize,
-        is_dirty: bool,
-        has_conflict: bool,
-        can_save: bool,
-        project_entry_id: Option<ProjectEntryId>,
-    }
-
-    impl TestItem {
-        fn new() -> Self {
-            Self {
-                save_count: 0,
-                save_as_count: 0,
-                reload_count: 0,
-                is_dirty: false,
-                has_conflict: false,
-                can_save: true,
-                project_entry_id: None,
-            }
-        }
-    }
-
-    impl Entity for TestItem {
-        type Event = ();
-    }
-
-    impl View for TestItem {
-        fn ui_name() -> &'static str {
-            "TestItem"
-        }
-
-        fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-            Empty::new().boxed()
-        }
-    }
-
-    impl Item for TestItem {
-        fn tab_content(&self, _: &theme::Tab, _: &AppContext) -> ElementBox {
-            Empty::new().boxed()
-        }
-
-        fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
-            None
-        }
-
-        fn project_entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
-            self.project_entry_id
-        }
-
-        fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
-
-        fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
-        where
-            Self: Sized,
-        {
-            Some(self.clone())
-        }
-
-        fn is_dirty(&self, _: &AppContext) -> bool {
-            self.is_dirty
-        }
-
-        fn has_conflict(&self, _: &AppContext) -> bool {
-            self.has_conflict
-        }
-
-        fn can_save(&self, _: &AppContext) -> bool {
-            self.can_save
-        }
-
-        fn save(
-            &mut self,
-            _: ModelHandle<Project>,
-            _: &mut ViewContext<Self>,
-        ) -> Task<anyhow::Result<()>> {
-            self.save_count += 1;
-            Task::ready(Ok(()))
-        }
-
-        fn can_save_as(&self, _: &AppContext) -> bool {
-            true
-        }
-
-        fn save_as(
-            &mut self,
-            _: ModelHandle<Project>,
-            _: std::path::PathBuf,
-            _: &mut ViewContext<Self>,
-        ) -> Task<anyhow::Result<()>> {
-            self.save_as_count += 1;
-            Task::ready(Ok(()))
-        }
-
-        fn reload(
-            &mut self,
-            _: ModelHandle<Project>,
-            _: &mut ViewContext<Self>,
-        ) -> Task<anyhow::Result<()>> {
-            self.reload_count += 1;
-            Task::ready(Ok(()))
         }
     }
 }

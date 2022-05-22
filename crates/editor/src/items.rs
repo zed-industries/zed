@@ -9,6 +9,7 @@ use language::{Bias, Buffer, File as _, SelectionGoal};
 use project::{File, Project, ProjectEntryId, ProjectPath};
 use rpc::proto::{self, update_view};
 use settings::Settings;
+use smallvec::SmallVec;
 use std::{fmt::Write, path::PathBuf, time::Duration};
 use text::{Point, Selection};
 use util::TryFutureExt;
@@ -293,14 +294,21 @@ impl Item for Editor {
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
-        File::from_dyn(self.buffer().read(cx).file(cx)).map(|file| ProjectPath {
+        let buffer = self.buffer.read(cx).as_singleton()?;
+        let file = buffer.read(cx).file();
+        File::from_dyn(file).map(|file| ProjectPath {
             worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
         })
     }
 
-    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId> {
-        File::from_dyn(self.buffer().read(cx).file(cx)).and_then(|file| file.project_entry_id(cx))
+    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
+        self.buffer
+            .read(cx)
+            .files(cx)
+            .into_iter()
+            .filter_map(|file| File::from_dyn(Some(file))?.project_entry_id(cx))
+            .collect()
     }
 
     fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>

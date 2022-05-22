@@ -225,5 +225,12 @@ pub fn menus() -> Vec<Menu<'static>> {
                 },
             ],
         },
+        Menu {
+            name: "Help",
+            items: vec![MenuItem::Action {
+                name: "Command Palette",
+                action: Box::new(command_palette::Toggle),
+            }],
+        },
     ]
 }

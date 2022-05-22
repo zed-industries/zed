@@ -18,6 +18,7 @@ use language::{
 use project::{DiagnosticSummary, Project, ProjectPath};
 use serde_json::json;
 use settings::Settings;
+use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cmp::Ordering,
@@ -479,8 +480,8 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         None
     }
 
-    fn project_entry_id(&self, _: &AppContext) -> Option<project::ProjectEntryId> {
-        None
+    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[project::ProjectEntryId; 3]> {
+        self.editor.project_entry_ids(cx)
     }
 
     fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) -> bool {

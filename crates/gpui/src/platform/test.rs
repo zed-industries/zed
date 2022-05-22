@@ -4,11 +4,12 @@ use crate::{
     keymap, Action, ClipboardItem,
 };
 use anyhow::{anyhow, Result};
+use collections::VecDeque;
 use parking_lot::Mutex;
 use postage::oneshot;
 use std::{
     any::Any,
-    cell::{Cell, RefCell},
+    cell::RefCell,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -36,7 +37,7 @@ pub struct Window {
     event_handlers: Vec<Box<dyn FnMut(super::Event)>>,
     resize_handlers: Vec<Box<dyn FnMut()>>,
     close_handlers: Vec<Box<dyn FnOnce()>>,
-    pub(crate) last_prompt: Cell<Option<oneshot::Sender<usize>>>,
+    pub(crate) pending_prompts: RefCell<VecDeque<oneshot::Sender<usize>>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -188,7 +189,7 @@ impl Window {
             close_handlers: Vec::new(),
             scale_factor: 1.0,
             current_scene: None,
-            last_prompt: Default::default(),
+            pending_prompts: Default::default(),
         }
     }
 }
@@ -242,7 +243,7 @@ impl super::Window for Window {
 
     fn prompt(&self, _: crate::PromptLevel, _: &str, _: &[&str]) -> oneshot::Receiver<usize> {
         let (done_tx, done_rx) = oneshot::channel();
-        self.last_prompt.replace(Some(done_tx));
+        self.pending_prompts.borrow_mut().push_back(done_tx);
         done_rx
     }
 

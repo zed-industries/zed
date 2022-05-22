@@ -33,6 +33,7 @@ use postage::prelude::Stream;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, Worktree};
 use settings::Settings;
 use sidebar::{Side, Sidebar, SidebarButtons, ToggleSidebarItem, ToggleSidebarItemFocus};
+use smallvec::SmallVec;
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
@@ -82,6 +83,7 @@ actions!(
         Unfollow,
         Save,
         SaveAs,
+        SaveAll,
         ActivatePreviousPane,
         ActivateNextPane,
         FollowNextCollaborator,
@@ -144,6 +146,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_async_action(Workspace::toggle_follow);
     cx.add_async_action(Workspace::follow_next_collaborator);
     cx.add_async_action(Workspace::close);
+    cx.add_async_action(Workspace::save_all);
     cx.add_action(Workspace::add_folder_to_project);
     cx.add_action(
         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
@@ -219,7 +222,7 @@ pub trait Item: View {
     }
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
-    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
+    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
     fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>);
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
     where
@@ -369,7 +372,7 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
 pub trait ItemHandle: 'static + fmt::Debug {
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
-    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
+    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn set_nav_history(&self, nav_history: Rc<RefCell<NavHistory>>, cx: &mut MutableAppContext);
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemHandle>>;
@@ -430,8 +433,8 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.read(cx).project_path(cx)
     }
 
-    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId> {
-        self.read(cx).project_entry_id(cx)
+    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
+        self.read(cx).project_entry_ids(cx)
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemHandle> {
@@ -884,26 +887,74 @@ impl Workspace {
     }
 
     fn close(&mut self, _: &CloseWindow, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
-        let mut tasks = Vec::new();
-        for pane in self.panes.clone() {
-            tasks.push(Pane::close_all_items(self, pane, cx));
-        }
+        let save_all = self.save_all_internal(true, cx);
         Some(cx.spawn(|this, mut cx| async move {
-            for task in tasks {
-                task.await?;
-            }
-            this.update(&mut cx, |this, cx| {
-                if this
-                    .panes
-                    .iter()
-                    .all(|pane| pane.read(cx).items().next().is_none())
-                {
+            if save_all.await? {
+                this.update(&mut cx, |_, cx| {
                     let window_id = cx.window_id();
                     cx.remove_window(window_id);
-                }
-            });
+                });
+            }
             Ok(())
         }))
+    }
+
+    fn save_all(&mut self, _: &SaveAll, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        let save_all = self.save_all_internal(false, cx);
+        Some(cx.foreground().spawn(async move {
+            save_all.await?;
+            Ok(())
+        }))
+    }
+
+    fn save_all_internal(
+        &mut self,
+        should_prompt_to_save: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<bool>> {
+        let dirty_items = self
+            .panes
+            .iter()
+            .flat_map(|pane| {
+                pane.read(cx).items().filter_map(|item| {
+                    if item.is_dirty(cx) {
+                        Some((pane.clone(), item.boxed_clone()))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let project = self.project.clone();
+        cx.spawn_weak(|_, mut cx| async move {
+            let mut saved_project_entry_ids = HashSet::default();
+            for (pane, item) in dirty_items {
+                let project_entry_ids = cx.read(|cx| item.project_entry_ids(cx));
+                if project_entry_ids
+                    .into_iter()
+                    .any(|entry_id| saved_project_entry_ids.insert(entry_id))
+                {
+                    if let Some(ix) =
+                        pane.read_with(&cx, |pane, _| pane.index_for_item(item.as_ref()))
+                    {
+                        if !Pane::save_item(
+                            project.clone(),
+                            &pane,
+                            ix,
+                            &item,
+                            should_prompt_to_save,
+                            &mut cx,
+                        )
+                        .await?
+                        {
+                            return Ok(false);
+                        }
+                    }
+                }
+            }
+            Ok(true)
+        })
     }
 
     pub fn open_paths(
@@ -2355,4 +2406,302 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
         workspace
     });
     cx.dispatch_action(window_id, vec![workspace.id()], &NewFile);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::AppState;
+    use gpui::{ModelHandle, TestAppContext, ViewContext};
+    use project::{FakeFs, Project, ProjectEntryId};
+    use serde_json::json;
+    use std::sync::atomic::AtomicUsize;
+
+    #[gpui::test]
+    async fn test_save_all(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            let settings = Settings::test(cx);
+            cx.set_global(settings);
+        });
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree("/root", json!({ "one": ""})).await;
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+
+        // When there are no dirty items, there's nothing to do.
+        let item1 = cx.add_view(window_id, |_| TestItem::new());
+        workspace.update(cx, |w, cx| w.add_item(Box::new(item1.clone()), cx));
+        let save_all = workspace.update(cx, |w, cx| w.save_all_internal(true, cx));
+        assert_eq!(save_all.await.unwrap(), true);
+
+        // When there are dirty untitled items, prompt to save each one. If the user
+        // cancels any prompt, then abort.
+        let item2 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item
+        });
+        let item3 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item
+        });
+        workspace.update(cx, |w, cx| {
+            w.add_item(Box::new(item1.clone()), cx);
+            w.add_item(Box::new(item2.clone()), cx);
+            w.split_pane(w.active_pane().clone(), SplitDirection::Right, cx);
+            w.add_item(Box::new(item3.clone()), cx);
+        });
+
+        eprintln!("save_all 2");
+        let save_all = workspace.update(cx, |w, cx| w.save_all_internal(true, cx));
+        cx.foreground().run_until_parked();
+        cx.simulate_prompt_answer(window_id, 2);
+        cx.foreground().run_until_parked();
+        assert!(!cx.has_pending_prompt(window_id));
+        assert_eq!(save_all.await.unwrap(), false);
+    }
+
+    #[gpui::test]
+    async fn test_close_pane_items(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let app_state = cx.update(AppState::test);
+        let project = Project::test(app_state.fs.clone(), None, cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let item1 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item
+        });
+        let item2 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item.has_conflict = true;
+            item
+        });
+        let item3 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item.has_conflict = true;
+            item
+        });
+        let item4 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item.can_save = false;
+            item
+        });
+        let pane = workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(item1.clone()), cx);
+            workspace.add_item(Box::new(item2.clone()), cx);
+            workspace.add_item(Box::new(item3.clone()), cx);
+            workspace.add_item(Box::new(item4.clone()), cx);
+            workspace.active_pane().clone()
+        });
+
+        let close_items = workspace.update(cx, |workspace, cx| {
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(1, true, true, cx);
+                assert_eq!(pane.active_item().unwrap().id(), item2.id());
+            });
+
+            let item1_id = item1.id();
+            let item3_id = item3.id();
+            let item4_id = item4.id();
+            Pane::close_items(workspace, pane.clone(), cx, move |id| {
+                [item1_id, item3_id, item4_id].contains(&id)
+            })
+        });
+
+        cx.foreground().run_until_parked();
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items().count(), 4);
+            assert_eq!(pane.active_item().unwrap().id(), item1.id());
+        });
+
+        cx.simulate_prompt_answer(window_id, 0);
+        cx.foreground().run_until_parked();
+        pane.read_with(cx, |pane, cx| {
+            assert_eq!(item1.read(cx).save_count, 1);
+            assert_eq!(item1.read(cx).save_as_count, 0);
+            assert_eq!(item1.read(cx).reload_count, 0);
+            assert_eq!(pane.items().count(), 3);
+            assert_eq!(pane.active_item().unwrap().id(), item3.id());
+        });
+
+        cx.simulate_prompt_answer(window_id, 1);
+        cx.foreground().run_until_parked();
+        pane.read_with(cx, |pane, cx| {
+            assert_eq!(item3.read(cx).save_count, 0);
+            assert_eq!(item3.read(cx).save_as_count, 0);
+            assert_eq!(item3.read(cx).reload_count, 1);
+            assert_eq!(pane.items().count(), 2);
+            assert_eq!(pane.active_item().unwrap().id(), item4.id());
+        });
+
+        cx.simulate_prompt_answer(window_id, 0);
+        cx.foreground().run_until_parked();
+        cx.simulate_new_path_selection(|_| Some(Default::default()));
+        close_items.await.unwrap();
+        pane.read_with(cx, |pane, cx| {
+            assert_eq!(item4.read(cx).save_count, 0);
+            assert_eq!(item4.read(cx).save_as_count, 1);
+            assert_eq!(item4.read(cx).reload_count, 0);
+            assert_eq!(pane.items().count(), 1);
+            assert_eq!(pane.active_item().unwrap().id(), item2.id());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_prompting_only_on_last_item_for_entry(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let app_state = cx.update(AppState::test);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let item = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item.project_entry_id = Some(ProjectEntryId::new(&AtomicUsize::new(1)));
+            item
+        });
+
+        let (left_pane, right_pane) = workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(item.clone()), cx);
+            let left_pane = workspace.active_pane().clone();
+            let right_pane = workspace.split_pane(left_pane.clone(), SplitDirection::Right, cx);
+            (left_pane, right_pane)
+        });
+
+        workspace
+            .update(cx, |workspace, cx| {
+                let item = right_pane.read(cx).active_item().unwrap();
+                Pane::close_item(workspace, right_pane.clone(), item.id(), cx)
+            })
+            .await
+            .unwrap();
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(workspace.panes(), [left_pane.clone()]);
+        });
+
+        let close_item = workspace.update(cx, |workspace, cx| {
+            let item = left_pane.read(cx).active_item().unwrap();
+            Pane::close_item(workspace, left_pane.clone(), item.id(), cx)
+        });
+        cx.foreground().run_until_parked();
+        cx.simulate_prompt_answer(window_id, 0);
+        close_item.await.unwrap();
+        left_pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items().count(), 0);
+        });
+    }
+
+    #[derive(Clone)]
+    struct TestItem {
+        save_count: usize,
+        save_as_count: usize,
+        reload_count: usize,
+        is_dirty: bool,
+        has_conflict: bool,
+        can_save: bool,
+        project_entry_id: Option<ProjectEntryId>,
+    }
+
+    impl TestItem {
+        fn new() -> Self {
+            Self {
+                save_count: 0,
+                save_as_count: 0,
+                reload_count: 0,
+                is_dirty: false,
+                has_conflict: false,
+                can_save: true,
+                project_entry_id: None,
+            }
+        }
+    }
+
+    impl Entity for TestItem {
+        type Event = ();
+    }
+
+    impl View for TestItem {
+        fn ui_name() -> &'static str {
+            "TestItem"
+        }
+
+        fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+            Empty::new().boxed()
+        }
+    }
+
+    impl Item for TestItem {
+        fn tab_content(&self, _: &theme::Tab, _: &AppContext) -> ElementBox {
+            Empty::new().boxed()
+        }
+
+        fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
+            None
+        }
+
+        fn project_entry_ids(&self, _: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
+            self.project_entry_id.into_iter().collect()
+        }
+
+        fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
+
+        fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
+        where
+            Self: Sized,
+        {
+            Some(self.clone())
+        }
+
+        fn is_dirty(&self, _: &AppContext) -> bool {
+            self.is_dirty
+        }
+
+        fn has_conflict(&self, _: &AppContext) -> bool {
+            self.has_conflict
+        }
+
+        fn can_save(&self, _: &AppContext) -> bool {
+            self.can_save
+        }
+
+        fn save(
+            &mut self,
+            _: ModelHandle<Project>,
+            _: &mut ViewContext<Self>,
+        ) -> Task<anyhow::Result<()>> {
+            self.save_count += 1;
+            Task::ready(Ok(()))
+        }
+
+        fn can_save_as(&self, _: &AppContext) -> bool {
+            true
+        }
+
+        fn save_as(
+            &mut self,
+            _: ModelHandle<Project>,
+            _: std::path::PathBuf,
+            _: &mut ViewContext<Self>,
+        ) -> Task<anyhow::Result<()>> {
+            self.save_as_count += 1;
+            Task::ready(Ok(()))
+        }
+
+        fn reload(
+            &mut self,
+            _: ModelHandle<Project>,
+            _: &mut ViewContext<Self>,
+        ) -> Task<anyhow::Result<()>> {
+            self.reload_count += 1;
+            Task::ready(Ok(()))
+        }
+    }
 }
