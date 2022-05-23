@@ -755,7 +755,7 @@ type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> b
 type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type FocusObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
-type GlobalObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
+type GlobalObservationCallback = Box<dyn FnMut(&mut MutableAppContext)>;
 type ReleaseObservationCallback = Box<dyn FnOnce(&dyn Any, &mut MutableAppContext)>;
 type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
 
@@ -1263,7 +1263,7 @@ impl MutableAppContext {
     pub fn observe_global<G, F>(&mut self, mut observe: F) -> Subscription
     where
         G: Any,
-        F: 'static + FnMut(&G, &mut MutableAppContext),
+        F: 'static + FnMut(&mut MutableAppContext),
     {
         let type_id = TypeId::of::<G>();
         let id = post_inc(&mut self.next_subscription_id);
@@ -1274,11 +1274,8 @@ impl MutableAppContext {
             .or_default()
             .insert(
                 id,
-                Some(
-                    Box::new(move |global: &dyn Any, cx: &mut MutableAppContext| {
-                        observe(global.downcast_ref().unwrap(), cx)
-                    }) as GlobalObservationCallback,
-                ),
+                Some(Box::new(move |cx: &mut MutableAppContext| observe(cx))
+                    as GlobalObservationCallback),
             );
 
         Subscription::GlobalObservation {
@@ -2261,27 +2258,24 @@ impl MutableAppContext {
     fn handle_global_notification_effect(&mut self, observed_type_id: TypeId) {
         let callbacks = self.global_observations.lock().remove(&observed_type_id);
         if let Some(callbacks) = callbacks {
-            if let Some(global) = self.cx.globals.remove(&observed_type_id) {
-                for (id, callback) in callbacks {
-                    if let Some(mut callback) = callback {
-                        callback(global.as_ref(), self);
-                        match self
-                            .global_observations
-                            .lock()
-                            .entry(observed_type_id)
-                            .or_default()
-                            .entry(id)
-                        {
-                            collections::btree_map::Entry::Vacant(entry) => {
-                                entry.insert(Some(callback));
-                            }
-                            collections::btree_map::Entry::Occupied(entry) => {
-                                entry.remove();
-                            }
+            for (id, callback) in callbacks {
+                if let Some(mut callback) = callback {
+                    callback(self);
+                    match self
+                        .global_observations
+                        .lock()
+                        .entry(observed_type_id)
+                        .or_default()
+                        .entry(id)
+                    {
+                        collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(Some(callback));
+                        }
+                        collections::btree_map::Entry::Occupied(entry) => {
+                            entry.remove();
                         }
                     }
                 }
-                self.cx.globals.insert(observed_type_id, global);
             }
         }
     }
@@ -5599,7 +5593,7 @@ mod tests {
         let observation_count = Rc::new(RefCell::new(0));
         let subscription = cx.observe_global::<Global, _>({
             let observation_count = observation_count.clone();
-            move |_, _| {
+            move |_| {
                 *observation_count.borrow_mut() += 1;
             }
         });
@@ -5629,7 +5623,7 @@ mod tests {
         let observation_count = Rc::new(RefCell::new(0));
         cx.observe_global::<OtherGlobal, _>({
             let observation_count = observation_count.clone();
-            move |_, _| {
+            move |_| {
                 *observation_count.borrow_mut() += 1;
             }
         })
@@ -6003,7 +5997,7 @@ mod tests {
         *subscription.borrow_mut() = Some(cx.observe_global::<(), _>({
             let observation_count = observation_count.clone();
             let subscription = subscription.clone();
-            move |_, _| {
+            move |_| {
                 subscription.borrow_mut().take();
                 *observation_count.borrow_mut() += 1;
             }

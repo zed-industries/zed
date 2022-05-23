@@ -1,5 +1,6 @@
 mod change;
 mod delete;
+mod yank;
 
 use std::borrow::Cow;
 
@@ -15,7 +16,7 @@ use gpui::{actions, MutableAppContext, ViewContext};
 use language::{Point, SelectionGoal};
 use workspace::Workspace;
 
-use self::{change::change_over, delete::delete_over};
+use self::{change::change_over, delete::delete_over, yank::yank_over};
 
 actions!(
     vim,
@@ -69,11 +70,12 @@ pub fn normal_motion(motion: Motion, cx: &mut MutableAppContext) {
     Vim::update(cx, |vim, cx| {
         match vim.state.operator_stack.pop() {
             None => move_cursor(vim, motion, cx),
-            Some(Operator::Change) => change_over(vim, motion, cx),
-            Some(Operator::Delete) => delete_over(vim, motion, cx),
             Some(Operator::Namespace(_)) => {
                 // Can't do anything for a namespace operator. Ignoring
             }
+            Some(Operator::Change) => change_over(vim, motion, cx),
+            Some(Operator::Delete) => delete_over(vim, motion, cx),
+            Some(Operator::Yank) => yank_over(vim, motion, cx),
         }
         vim.clear_operator(cx);
     });

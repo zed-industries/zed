@@ -3,7 +3,10 @@ use super::{
     Anchor, DisplayPoint, Editor, EditorMode, EditorSnapshot, Input, Scroll, Select, SelectPhase,
     SoftWrap, ToPoint, MAX_LINE_LEN,
 };
-use crate::{display_map::TransformBlock, EditorStyle};
+use crate::{
+    display_map::{DisplaySnapshot, TransformBlock},
+    EditorStyle,
+};
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
 use gpui::{
@@ -22,7 +25,7 @@ use gpui::{
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
-use language::{Bias, DiagnosticSeverity};
+use language::{Bias, DiagnosticSeverity, Selection};
 use settings::Settings;
 use smallvec::SmallVec;
 use std::{
@@ -31,6 +34,35 @@ use std::{
     iter,
     ops::Range,
 };
+
+struct SelectionLayout {
+    head: DisplayPoint,
+    range: Range<DisplayPoint>,
+}
+
+impl SelectionLayout {
+    fn from<T: ToPoint + ToDisplayPoint + Clone>(
+        selection: Selection<T>,
+        line_mode: bool,
+        map: &DisplaySnapshot,
+    ) -> Self {
+        if line_mode {
+            let selection = selection.map(|p| p.to_point(&map.buffer_snapshot));
+            let point_range = map.expand_to_line(selection.range());
+            Self {
+                head: selection.head().to_display_point(map),
+                range: point_range.start.to_display_point(map)
+                    ..point_range.end.to_display_point(map),
+            }
+        } else {
+            let selection = selection.map(|p| p.to_display_point(map));
+            Self {
+                head: selection.head(),
+                range: selection.range(),
+            }
+        }
+    }
+}
 
 pub struct EditorElement {
     view: WeakViewHandle<Editor>,
@@ -345,19 +377,18 @@ impl EditorElement {
                 scroll_top,
                 scroll_left,
                 bounds,
-                false,
                 cx,
             );
         }
 
         let mut cursors = SmallVec::<[Cursor; 32]>::new();
-        for ((replica_id, line_mode), selections) in &layout.selections {
+        for (replica_id, selections) in &layout.selections {
             let selection_style = style.replica_selection_style(*replica_id);
             let corner_radius = 0.15 * layout.line_height;
 
             for selection in selections {
                 self.paint_highlighted_range(
-                    selection.start..selection.end,
+                    selection.range.clone(),
                     start_row,
                     end_row,
                     selection_style.selection,
@@ -368,12 +399,11 @@ impl EditorElement {
                     scroll_top,
                     scroll_left,
                     bounds,
-                    *line_mode,
                     cx,
                 );
 
                 if view.show_local_cursors() || *replica_id != local_replica_id {
-                    let cursor_position = selection.head();
+                    let cursor_position = selection.head;
                     if (start_row..end_row).contains(&cursor_position.row()) {
                         let cursor_row_layout =
                             &layout.line_layouts[(cursor_position.row() - start_row) as usize];
@@ -485,11 +515,10 @@ impl EditorElement {
         scroll_top: f32,
         scroll_left: f32,
         bounds: RectF,
-        line_mode: bool,
         cx: &mut PaintContext,
     ) {
-        if range.start != range.end || line_mode {
-            let row_range = if range.end.column() == 0 && !line_mode {
+        if range.start != range.end {
+            let row_range = if range.end.column() == 0 {
                 cmp::max(range.start.row(), start_row)..cmp::min(range.end.row(), end_row)
             } else {
                 cmp::max(range.start.row(), start_row)..cmp::min(range.end.row() + 1, end_row)
@@ -506,14 +535,14 @@ impl EditorElement {
                     .map(|row| {
                         let line_layout = &layout.line_layouts[(row - start_row) as usize];
                         HighlightedRangeLine {
-                            start_x: if row == range.start.row() && !line_mode {
+                            start_x: if row == range.start.row() {
                                 content_origin.x()
                                     + line_layout.x_for_index(range.start.column() as usize)
                                     - scroll_left
                             } else {
                                 content_origin.x() - scroll_left
                             },
-                            end_x: if row == range.end.row() && !line_mode {
+                            end_x: if row == range.end.row() {
                                 content_origin.x()
                                     + line_layout.x_for_index(range.end.column() as usize)
                                     - scroll_left
@@ -921,7 +950,7 @@ impl Element for EditorElement {
                 .anchor_before(DisplayPoint::new(end_row, 0).to_offset(&snapshot, Bias::Right))
         };
 
-        let mut selections = Vec::new();
+        let mut selections: Vec<(ReplicaId, Vec<SelectionLayout>)> = Vec::new();
         let mut active_rows = BTreeMap::new();
         let mut highlighted_rows = None;
         let mut highlighted_ranges = Vec::new();
@@ -945,17 +974,10 @@ impl Element for EditorElement {
                 if Some(replica_id) == view.leader_replica_id {
                     continue;
                 }
-
                 remote_selections
-                    .entry((replica_id, line_mode))
+                    .entry(replica_id)
                     .or_insert(Vec::new())
-                    .push(crate::Selection {
-                        id: selection.id,
-                        goal: selection.goal,
-                        reversed: selection.reversed,
-                        start: selection.start.to_display_point(&display_map),
-                        end: selection.end.to_display_point(&display_map),
-                    });
+                    .push(SelectionLayout::from(selection, line_mode, &display_map));
             }
             selections.extend(remote_selections);
 
@@ -981,15 +1003,15 @@ impl Element for EditorElement {
                 let local_replica_id = view.leader_replica_id.unwrap_or(view.replica_id(cx));
 
                 selections.push((
-                    (local_replica_id, view.selections.line_mode),
+                    local_replica_id,
                     local_selections
                         .into_iter()
-                        .map(|selection| crate::Selection {
-                            id: selection.id,
-                            goal: selection.goal,
-                            reversed: selection.reversed,
-                            start: selection.start.to_display_point(&display_map),
-                            end: selection.end.to_display_point(&display_map),
+                        .map(|selection| {
+                            SelectionLayout::from(
+                                selection,
+                                view.selections.line_mode,
+                                &display_map,
+                            )
                         })
                         .collect(),
                 ));
@@ -1240,7 +1262,7 @@ pub struct LayoutState {
     em_width: f32,
     em_advance: f32,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
-    selections: Vec<((ReplicaId, bool), Vec<text::Selection<DisplayPoint>>)>,
+    selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
     context_menu: Option<(DisplayPoint, ElementBox)>,
     code_actions_indicator: Option<(u32, ElementBox)>,
 }

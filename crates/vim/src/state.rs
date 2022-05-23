@@ -26,6 +26,7 @@ pub enum Operator {
     Namespace(Namespace),
     Change,
     Delete,
+    Yank,
 }
 
 #[derive(Default)]
@@ -80,6 +81,7 @@ impl Operator {
             Operator::Namespace(Namespace::G) => "g",
             Operator::Change => "c",
             Operator::Delete => "d",
+            Operator::Yank => "y",
         }
         .to_owned();
 

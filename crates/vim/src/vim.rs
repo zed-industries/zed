@@ -42,8 +42,10 @@ pub fn init(cx: &mut MutableAppContext) {
         },
     );
 
-    cx.observe_global::<Settings, _>(|settings, cx| {
-        Vim::update(cx, |state, cx| state.set_enabled(settings.vim_mode, cx))
+    cx.observe_global::<Settings, _>(|cx| {
+        Vim::update(cx, |state, cx| {
+            state.set_enabled(cx.global::<Settings>().vim_mode, cx)
+        })
     })
     .detach();
 }
@@ -141,14 +143,11 @@ impl Vim {
                     }
 
                     if state.empty_selections_only() {
-                        // Defer so that access to global settings object doesn't panic
-                        cx.defer(|editor, cx| {
-                            editor.change_selections(None, cx, |s| {
-                                s.move_with(|_, selection| {
-                                    selection.collapse_to(selection.head(), selection.goal)
-                                });
-                            })
-                        });
+                        editor.change_selections(None, cx, |s| {
+                            s.move_with(|_, selection| {
+                                selection.collapse_to(selection.head(), selection.goal)
+                            });
+                        })
                     }
                 });
             }

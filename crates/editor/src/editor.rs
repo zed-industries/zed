@@ -1860,7 +1860,7 @@ impl Editor {
     pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         let text: Arc<str> = text.into();
         self.transact(cx, |this, cx| {
-            let old_selections = this.selections.all::<usize>(cx);
+            let old_selections = this.selections.all_adjusted(cx);
             let selection_anchors = this.buffer.update(cx, |buffer, cx| {
                 let anchors = {
                     let snapshot = buffer.read(cx);
@@ -2750,7 +2750,7 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections.all::<Point>(cx);
         for selection in &mut selections {
-            if selection.is_empty() {
+            if selection.is_empty() && !self.selections.line_mode {
                 let old_head = selection.head();
                 let mut new_head =
                     movement::left(&display_map, old_head.to_display_point(&display_map))
@@ -2783,8 +2783,9 @@ impl Editor {
     pub fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
-                    if selection.is_empty() {
+                    if selection.is_empty() && !line_mode {
                         let cursor = movement::right(map, selection.head());
                         selection.set_head(cursor, SelectionGoal::None);
                     }
@@ -2807,7 +2808,7 @@ impl Editor {
             return;
         }
 
-        let mut selections = self.selections.all::<Point>(cx);
+        let mut selections = self.selections.all_adjusted(cx);
         if selections.iter().all(|s| s.is_empty()) {
             self.transact(cx, |this, cx| {
                 this.buffer.update(cx, |buffer, cx| {
@@ -3347,7 +3348,7 @@ impl Editor {
         {
             let max_point = buffer.max_point();
             for selection in &mut selections {
-                let is_entire_line = selection.is_empty();
+                let is_entire_line = selection.is_empty() || self.selections.line_mode;
                 if is_entire_line {
                     selection.start = Point::new(selection.start.row, 0);
                     selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
@@ -3378,16 +3379,17 @@ impl Editor {
         let selections = self.selections.all::<Point>(cx);
         let buffer = self.buffer.read(cx).read(cx);
         let mut text = String::new();
+
         let mut clipboard_selections = Vec::with_capacity(selections.len());
         {
             let max_point = buffer.max_point();
             for selection in selections.iter() {
                 let mut start = selection.start;
                 let mut end = selection.end;
-                let is_entire_line = selection.is_empty();
+                let is_entire_line = selection.is_empty() || self.selections.line_mode;
                 if is_entire_line {
                     start = Point::new(start.row, 0);
-                    end = cmp::min(max_point, Point::new(start.row + 1, 0));
+                    end = cmp::min(max_point, Point::new(end.row + 1, 0));
                 }
                 let mut len = 0;
                 for chunk in buffer.text_for_range(start..end) {
@@ -3453,7 +3455,7 @@ impl Editor {
                                 let line_start = selection.start - column;
                                 line_start..line_start
                             } else {
-                                selection.start..selection.end
+                                selection.range()
                             };
 
                             edits.push((range, to_insert));
@@ -3670,8 +3672,9 @@ impl Editor {
     ) {
         self.transact(cx, |this, cx| {
             this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
-                    if selection.is_empty() {
+                    if selection.is_empty() && !line_mode {
                         let cursor = movement::previous_word_start(map, selection.head());
                         selection.set_head(cursor, SelectionGoal::None);
                     }

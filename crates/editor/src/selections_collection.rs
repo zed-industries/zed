@@ -128,6 +128,20 @@ impl SelectionsCollection {
         .collect()
     }
 
+    // Returns all of the selections, adjusted to take into account the selection line_mode
+    pub fn all_adjusted(&self, cx: &mut MutableAppContext) -> Vec<Selection<Point>> {
+        let mut selections = self.all::<Point>(cx);
+        if self.line_mode {
+            let map = self.display_map(cx);
+            for selection in &mut selections {
+                let new_range = map.expand_to_line(selection.range());
+                selection.start = new_range.start;
+                selection.end = new_range.end;
+            }
+        }
+        selections
+    }
+
     pub fn disjoint_in_range<'a, D>(
         &self,
         range: Range<Anchor>,
