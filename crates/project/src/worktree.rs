@@ -828,8 +828,8 @@ impl LocalWorktree {
             next_entry_id = snapshot.next_entry_id.clone();
         }
         cx.spawn_weak(|this, mut cx| async move {
-            let entry = Entry::new(
-                path,
+            let mut entry = Entry::new(
+                path.clone(),
                 &fs.metadata(&abs_path)
                     .await?
                     .ok_or_else(|| anyhow!("could not read saved file metadata"))?,
@@ -843,6 +843,9 @@ impl LocalWorktree {
             let (entry, snapshot, snapshots_tx) = this.read_with(&cx, |this, _| {
                 let this = this.as_local().unwrap();
                 let mut snapshot = this.background_snapshot.lock();
+                entry.is_ignored = snapshot
+                    .ignore_stack_for_path(&path, entry.is_dir())
+                    .is_path_ignored(&path, entry.is_dir());
                 if let Some(old_path) = old_path {
                     snapshot.remove_path(&old_path);
                 }
@@ -2707,6 +2710,7 @@ mod tests {
     use anyhow::Result;
     use client::test::FakeHttpClient;
     use fs::RealFs;
+    use gpui::TestAppContext;
     use rand::prelude::*;
     use serde_json::json;
     use std::{
@@ -2717,7 +2721,7 @@ mod tests {
     use util::test::temp_tree;
 
     #[gpui::test]
-    async fn test_traversal(cx: &mut gpui::TestAppContext) {
+    async fn test_traversal(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/root",
@@ -2775,7 +2779,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
+    async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
         let dir = temp_tree(json!({
             ".git": {},
             ".gitignore": "ignored-dir\n",
@@ -2822,6 +2826,59 @@ mod tests {
             assert_eq!(tracked.is_ignored, false);
             assert_eq!(ignored.is_ignored, true);
             assert_eq!(dot_git.is_ignored, true);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_write_file(cx: &mut TestAppContext) {
+        let dir = temp_tree(json!({
+            ".git": {},
+            ".gitignore": "ignored-dir\n",
+            "tracked-dir": {},
+            "ignored-dir": {}
+        }));
+
+        let http_client = FakeHttpClient::with_404_response();
+        let client = Client::new(http_client.clone());
+
+        let tree = Worktree::local(
+            client,
+            dir.path(),
+            true,
+            Arc::new(RealFs),
+            Default::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+        tree.flush_fs_events(&cx).await;
+
+        tree.update(cx, |tree, cx| {
+            tree.as_local().unwrap().write_file(
+                Path::new("tracked-dir/file.txt"),
+                "hello".into(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        tree.update(cx, |tree, cx| {
+            tree.as_local().unwrap().write_file(
+                Path::new("ignored-dir/file.txt"),
+                "world".into(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        tree.read_with(cx, |tree, _| {
+            let tracked = tree.entry_for_path("tracked-dir/file.txt").unwrap();
+            let ignored = tree.entry_for_path("ignored-dir/file.txt").unwrap();
+            assert_eq!(tracked.is_ignored, false);
+            assert_eq!(ignored.is_ignored, true);
         });
     }
 
