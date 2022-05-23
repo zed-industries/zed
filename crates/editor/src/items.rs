@@ -311,6 +311,10 @@ impl Item for Editor {
             .collect()
     }
 
+    fn is_singleton(&self, cx: &AppContext) -> bool {
+        self.buffer.read(cx).is_singleton()
+    }
+
     fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
@@ -378,10 +382,6 @@ impl Item for Editor {
                 .await?;
             Ok(())
         })
-    }
-
-    fn can_save_as(&self, cx: &AppContext) -> bool {
-        self.buffer().read(cx).is_singleton()
     }
 
     fn save_as(

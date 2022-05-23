@@ -223,6 +223,7 @@ pub trait Item: View {
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
+    fn is_singleton(&self, cx: &AppContext) -> bool;
     fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>);
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
     where
@@ -242,7 +243,6 @@ pub trait Item: View {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>>;
-    fn can_save_as(&self, cx: &AppContext) -> bool;
     fn save_as(
         &mut self,
         project: ModelHandle<Project>,
@@ -373,6 +373,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
+    fn is_singleton(&self, cx: &AppContext) -> bool;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn set_nav_history(&self, nav_history: Rc<RefCell<NavHistory>>, cx: &mut MutableAppContext);
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemHandle>>;
@@ -389,7 +390,6 @@ pub trait ItemHandle: 'static + fmt::Debug {
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
     fn can_save(&self, cx: &AppContext) -> bool;
-    fn can_save_as(&self, cx: &AppContext) -> bool;
     fn save(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext) -> Task<Result<()>>;
     fn save_as(
         &self,
@@ -435,6 +435,10 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
         self.read(cx).project_entry_ids(cx)
+    }
+
+    fn is_singleton(&self, cx: &AppContext) -> bool {
+        self.read(cx).is_singleton(cx)
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemHandle> {
@@ -560,10 +564,6 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
     fn can_save(&self, cx: &AppContext) -> bool {
         self.read(cx).can_save(cx)
-    }
-
-    fn can_save_as(&self, cx: &AppContext) -> bool {
-        self.read(cx).can_save_as(cx)
     }
 
     fn save(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext) -> Task<Result<()>> {
@@ -887,9 +887,9 @@ impl Workspace {
     }
 
     fn close(&mut self, _: &CloseWindow, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
-        let save_all = self.save_all_internal(true, cx);
+        let prepare = self.prepare_to_close(cx);
         Some(cx.spawn(|this, mut cx| async move {
-            if save_all.await? {
+            if prepare.await? {
                 this.update(&mut cx, |_, cx| {
                     let window_id = cx.window_id();
                     cx.remove_window(window_id);
@@ -897,6 +897,10 @@ impl Workspace {
             }
             Ok(())
         }))
+    }
+
+    fn prepare_to_close(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<bool>> {
+        self.save_all_internal(true, cx)
     }
 
     fn save_all(&mut self, _: &SaveAll, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
@@ -928,13 +932,11 @@ impl Workspace {
 
         let project = self.project.clone();
         cx.spawn_weak(|_, mut cx| async move {
-            let mut saved_project_entry_ids = HashSet::default();
+            // let mut saved_project_entry_ids = HashSet::default();
             for (pane, item) in dirty_items {
-                let project_entry_ids = cx.read(|cx| item.project_entry_ids(cx));
-                if project_entry_ids
-                    .into_iter()
-                    .any(|entry_id| saved_project_entry_ids.insert(entry_id))
-                {
+                let (is_singl, project_entry_ids) =
+                    cx.read(|cx| (item.is_singleton(cx), item.project_entry_ids(cx)));
+                if is_singl || !project_entry_ids.is_empty() {
                     if let Some(ix) =
                         pane.read_with(&cx, |pane, _| pane.index_for_item(item.as_ref()))
                     {
@@ -1172,7 +1174,7 @@ impl Workspace {
                 } else {
                     item.save(project, cx)
                 }
-            } else if item.can_save_as(cx) {
+            } else if item.is_singleton(cx) {
                 let worktree = self.worktrees(cx).next();
                 let start_abs_path = worktree
                     .and_then(|w| w.read(cx).as_local())
@@ -2411,30 +2413,25 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AppState;
     use gpui::{ModelHandle, TestAppContext, ViewContext};
     use project::{FakeFs, Project, ProjectEntryId};
     use serde_json::json;
-    use std::sync::atomic::AtomicUsize;
 
     #[gpui::test]
-    async fn test_save_all(cx: &mut TestAppContext) {
+    async fn test_close_window(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
-        cx.update(|cx| {
-            let settings = Settings::test(cx);
-            cx.set_global(settings);
-        });
-
+        Settings::test_async(cx);
         let fs = FakeFs::new(cx.background());
-        fs.insert_tree("/root", json!({ "one": ""})).await;
+        fs.insert_tree("/root", json!({ "one": "" })).await;
+
         let project = Project::test(fs, ["root".as_ref()], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
 
         // When there are no dirty items, there's nothing to do.
         let item1 = cx.add_view(window_id, |_| TestItem::new());
         workspace.update(cx, |w, cx| w.add_item(Box::new(item1.clone()), cx));
-        let save_all = workspace.update(cx, |w, cx| w.save_all_internal(true, cx));
-        assert_eq!(save_all.await.unwrap(), true);
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(cx));
+        assert_eq!(task.await.unwrap(), true);
 
         // When there are dirty untitled items, prompt to save each one. If the user
         // cancels any prompt, then abort.
@@ -2446,52 +2443,65 @@ mod tests {
         let item3 = cx.add_view(window_id, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
+            item.project_entry_ids = vec![ProjectEntryId::from_proto(1)];
             item
         });
         workspace.update(cx, |w, cx| {
-            w.add_item(Box::new(item1.clone()), cx);
             w.add_item(Box::new(item2.clone()), cx);
-            w.split_pane(w.active_pane().clone(), SplitDirection::Right, cx);
             w.add_item(Box::new(item3.clone()), cx);
         });
-
-        eprintln!("save_all 2");
-        let save_all = workspace.update(cx, |w, cx| w.save_all_internal(true, cx));
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(cx));
         cx.foreground().run_until_parked();
-        cx.simulate_prompt_answer(window_id, 2);
+        cx.simulate_prompt_answer(window_id, 2 /* cancel */);
         cx.foreground().run_until_parked();
         assert!(!cx.has_pending_prompt(window_id));
-        assert_eq!(save_all.await.unwrap(), false);
+        assert_eq!(task.await.unwrap(), false);
+
+        // If there are multiple dirty items representing the same project entry.
+        workspace.update(cx, |w, cx| {
+            w.add_item(Box::new(item2.clone()), cx);
+            w.add_item(Box::new(item3.clone()), cx);
+        });
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(cx));
+        cx.foreground().run_until_parked();
+        cx.simulate_prompt_answer(window_id, 2 /* cancel */);
+        cx.foreground().run_until_parked();
+        assert!(!cx.has_pending_prompt(window_id));
+        assert_eq!(task.await.unwrap(), false);
     }
 
     #[gpui::test]
     async fn test_close_pane_items(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
 
-        let app_state = cx.update(AppState::test);
-        let project = Project::test(app_state.fs.clone(), None, cx).await;
+        let project = Project::test(fs, None, cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+
         let item1 = cx.add_view(window_id, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
+            item.project_entry_ids = vec![ProjectEntryId::from_proto(1)];
             item
         });
         let item2 = cx.add_view(window_id, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
             item.has_conflict = true;
+            item.project_entry_ids = vec![ProjectEntryId::from_proto(2)];
             item
         });
         let item3 = cx.add_view(window_id, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
             item.has_conflict = true;
+            item.project_entry_ids = vec![ProjectEntryId::from_proto(3)];
             item
         });
         let item4 = cx.add_view(window_id, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
-            item.can_save = false;
             item
         });
         let pane = workspace.update(cx, |workspace, cx| {
@@ -2556,44 +2566,94 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_prompting_only_on_last_item_for_entry(cx: &mut TestAppContext) {
+    async fn test_prompting_to_save_only_on_last_item_for_entry(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
 
-        let app_state = cx.update(AppState::test);
-        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let project = Project::test(fs, [], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
-        let item = cx.add_view(window_id, |_| {
+
+        // Create several workspace items with single project entries, and two
+        // workspace items with multiple project entries.
+        let single_entry_items = (0..=4)
+            .map(|project_entry_id| {
+                let mut item = TestItem::new();
+                item.is_dirty = true;
+                item.project_entry_ids = vec![ProjectEntryId::from_proto(project_entry_id)];
+                item.is_singleton = true;
+                item
+            })
+            .collect::<Vec<_>>();
+        let item_2_3 = {
             let mut item = TestItem::new();
             item.is_dirty = true;
-            item.project_entry_id = Some(ProjectEntryId::new(&AtomicUsize::new(1)));
+            item.is_singleton = false;
+            item.project_entry_ids =
+                vec![ProjectEntryId::from_proto(2), ProjectEntryId::from_proto(3)];
             item
-        });
+        };
+        let item_3_4 = {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item.is_singleton = false;
+            item.project_entry_ids =
+                vec![ProjectEntryId::from_proto(3), ProjectEntryId::from_proto(4)];
+            item
+        };
 
-        let (left_pane, right_pane) = workspace.update(cx, |workspace, cx| {
-            workspace.add_item(Box::new(item.clone()), cx);
+        // Create two panes that contain the following project entries:
+        //   left pane:
+        //     multi-entry items:   (2, 3)
+        //     single-entry items:  0, 1, 2, 3, 4
+        //   right pane:
+        //     single-entry items:  1
+        //     multi-entry items:   (3, 4)
+        let left_pane = workspace.update(cx, |workspace, cx| {
             let left_pane = workspace.active_pane().clone();
             let right_pane = workspace.split_pane(left_pane.clone(), SplitDirection::Right, cx);
-            (left_pane, right_pane)
+
+            workspace.activate_pane(left_pane.clone(), cx);
+            workspace.add_item(Box::new(cx.add_view(|_| item_2_3.clone())), cx);
+            for item in &single_entry_items {
+                workspace.add_item(Box::new(cx.add_view(|_| item.clone())), cx);
+            }
+
+            workspace.activate_pane(right_pane.clone(), cx);
+            workspace.add_item(Box::new(cx.add_view(|_| single_entry_items[1].clone())), cx);
+            workspace.add_item(Box::new(cx.add_view(|_| item_3_4.clone())), cx);
+
+            left_pane
         });
 
-        workspace
-            .update(cx, |workspace, cx| {
-                let item = right_pane.read(cx).active_item().unwrap();
-                Pane::close_item(workspace, right_pane.clone(), item.id(), cx)
-            })
-            .await
-            .unwrap();
-        workspace.read_with(cx, |workspace, _| {
-            assert_eq!(workspace.panes(), [left_pane.clone()]);
+        // When closing all of the items in the left pane, we should be prompted twice:
+        // once for project entry 0, and once for project entry 2. After those two
+        // prompts, the task should complete.
+        let close = workspace.update(cx, |workspace, cx| {
+            workspace.activate_pane(left_pane.clone(), cx);
+            Pane::close_items(workspace, left_pane.clone(), cx, |_| true)
         });
 
-        let close_item = workspace.update(cx, |workspace, cx| {
-            let item = left_pane.read(cx).active_item().unwrap();
-            Pane::close_item(workspace, left_pane.clone(), item.id(), cx)
-        });
         cx.foreground().run_until_parked();
+        left_pane.read_with(cx, |pane, cx| {
+            assert_eq!(
+                pane.active_item().unwrap().project_entry_ids(cx).as_slice(),
+                &[ProjectEntryId::from_proto(0)]
+            );
+        });
         cx.simulate_prompt_answer(window_id, 0);
-        close_item.await.unwrap();
+
+        cx.foreground().run_until_parked();
+        left_pane.read_with(cx, |pane, cx| {
+            assert_eq!(
+                pane.active_item().unwrap().project_entry_ids(cx).as_slice(),
+                &[ProjectEntryId::from_proto(2)]
+            );
+        });
+        cx.simulate_prompt_answer(window_id, 0);
+
+        cx.foreground().run_until_parked();
+        close.await.unwrap();
         left_pane.read_with(cx, |pane, _| {
             assert_eq!(pane.items().count(), 0);
         });
@@ -2606,8 +2666,8 @@ mod tests {
         reload_count: usize,
         is_dirty: bool,
         has_conflict: bool,
-        can_save: bool,
-        project_entry_id: Option<ProjectEntryId>,
+        project_entry_ids: Vec<ProjectEntryId>,
+        is_singleton: bool,
     }
 
     impl TestItem {
@@ -2618,8 +2678,8 @@ mod tests {
                 reload_count: 0,
                 is_dirty: false,
                 has_conflict: false,
-                can_save: true,
-                project_entry_id: None,
+                project_entry_ids: Vec::new(),
+                is_singleton: true,
             }
         }
     }
@@ -2648,7 +2708,11 @@ mod tests {
         }
 
         fn project_entry_ids(&self, _: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
-            self.project_entry_id.into_iter().collect()
+            self.project_entry_ids.iter().copied().collect()
+        }
+
+        fn is_singleton(&self, _: &AppContext) -> bool {
+            self.is_singleton
         }
 
         fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
@@ -2669,7 +2733,7 @@ mod tests {
         }
 
         fn can_save(&self, _: &AppContext) -> bool {
-            self.can_save
+            self.project_entry_ids.len() > 0
         }
 
         fn save(
@@ -2679,10 +2743,6 @@ mod tests {
         ) -> Task<anyhow::Result<()>> {
             self.save_count += 1;
             Task::ready(Ok(()))
-        }
-
-        fn can_save_as(&self, _: &AppContext) -> bool {
-            true
         }
 
         fn save_as(

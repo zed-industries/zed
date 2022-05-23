@@ -484,6 +484,10 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         self.editor.project_entry_ids(cx)
     }
 
+    fn is_singleton(&self, _: &AppContext) -> bool {
+        false
+    }
+
     fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, cx))
@@ -515,10 +519,6 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         self.editor.reload(project, cx)
-    }
-
-    fn can_save_as(&self, _: &AppContext) -> bool {
-        false
     }
 
     fn save_as(

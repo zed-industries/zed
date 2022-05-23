@@ -1,7 +1,7 @@
 use super::{ItemHandle, SplitDirection};
 use crate::{toolbar::Toolbar, Item, WeakItemHandle, Workspace};
 use anyhow::Result;
-use collections::{HashMap, VecDeque};
+use collections::{HashMap, HashSet, VecDeque};
 use futures::StreamExt;
 use gpui::{
     actions,
@@ -361,7 +361,7 @@ impl Pane {
         cx: &AppContext,
     ) -> Option<Box<dyn ItemHandle>> {
         self.items.iter().find_map(|item| {
-            if item.project_entry_ids(cx).as_slice() == &[entry_id] {
+            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == &[entry_id] {
                 Some(item.boxed_clone())
             } else {
                 None
@@ -484,55 +484,62 @@ impl Pane {
     ) -> Task<Result<bool>> {
         let project = workspace.project().clone();
 
-        // Find which items to close.
+        // Find the items to close.
         let mut items_to_close = Vec::new();
         for item in &pane.read(cx).items {
             if should_close(item.id()) {
                 items_to_close.push(item.boxed_clone());
             }
         }
+        items_to_close.sort_by_key(|item| !item.is_singleton(cx));
 
         cx.spawn(|workspace, mut cx| async move {
+            let mut saved_project_entry_ids = HashSet::default();
             for item in items_to_close.clone() {
-                let (item_ix, project_entry_ids) = pane.read_with(&cx, |pane, cx| {
-                    (
-                        pane.index_for_item(item.as_ref()),
-                        item.project_entry_ids(cx),
-                    )
+                // Find the item's current index and its set of project entries. Avoid
+                // storing these in advance, in case they have changed since this task
+                // was started.
+                let (item_ix, mut project_entry_ids) = pane.read_with(&cx, |pane, cx| {
+                    (pane.index_for_item(&*item), item.project_entry_ids(cx))
                 });
-
                 let item_ix = if let Some(ix) = item_ix {
                     ix
                 } else {
                     continue;
                 };
 
-                // An item should be saved if either it has *no* project entries, or if it
-                // has project entries that don't exist anywhere else in the workspace.
-                let mut should_save = project_entry_ids.is_empty();
-                let mut project_entry_ids_to_save = project_entry_ids;
-                workspace.read_with(&cx, |workspace, cx| {
-                    for item in workspace.items(cx) {
-                        if !items_to_close
-                            .iter()
-                            .any(|item_to_close| item_to_close.id() == item.id())
-                        {
-                            let project_entry_ids = item.project_entry_ids(cx);
-                            project_entry_ids_to_save.retain(|id| !project_entry_ids.contains(&id));
+                let should_save = if project_entry_ids.is_empty() {
+                    true
+                } else {
+                    // Find the project entries that aren't open anywhere else in the workspace.
+                    workspace.read_with(&cx, |workspace, cx| {
+                        for item in workspace.items(cx) {
+                            if !items_to_close
+                                .iter()
+                                .any(|item_to_close| item_to_close.id() == item.id())
+                            {
+                                let other_project_entry_ids = item.project_entry_ids(cx);
+                                project_entry_ids
+                                    .retain(|id| !other_project_entry_ids.contains(&id));
+                            }
                         }
-                    }
-                });
-                if !project_entry_ids_to_save.is_empty() {
-                    should_save = true;
-                }
+                    });
+                    project_entry_ids
+                        .iter()
+                        .any(|id| saved_project_entry_ids.insert(*id))
+                };
 
-                if should_save
-                    && !Self::save_item(project.clone(), &pane, item_ix, &item, true, &mut cx)
+                // If any of these project entries have not already been saved by an earlier item,
+                // then this item must be saved.
+                if should_save {
+                    if !Self::save_item(project.clone(), &pane, item_ix, &item, true, &mut cx)
                         .await?
-                {
-                    break;
+                    {
+                        break;
+                    }
                 }
 
+                // Remove the item from the pane.
                 pane.update(&mut cx, |pane, cx| {
                     if let Some(item_ix) = pane.items.iter().position(|i| i.id() == item.id()) {
                         if item_ix == pane.active_item_index {
@@ -582,12 +589,12 @@ impl Pane {
         const DIRTY_MESSAGE: &'static str =
             "This file contains unsaved edits. Do you want to save it?";
 
-        let (has_conflict, is_dirty, can_save, can_save_as) = cx.read(|cx| {
+        let (has_conflict, is_dirty, can_save, is_singleton) = cx.read(|cx| {
             (
                 item.has_conflict(cx),
                 item.is_dirty(cx),
                 item.can_save(cx),
-                item.can_save_as(cx),
+                item.is_singleton(cx),
             )
         });
 
@@ -605,7 +612,7 @@ impl Pane {
                 Some(1) => cx.update(|cx| item.reload(project, cx)).await?,
                 _ => return Ok(false),
             }
-        } else if is_dirty && (can_save || can_save_as) {
+        } else if is_dirty && (can_save || is_singleton) {
             let should_save = if should_prompt_for_save {
                 let mut answer = pane.update(cx, |pane, cx| {
                     pane.activate_item(item_ix, true, true, cx);
@@ -627,7 +634,7 @@ impl Pane {
             if should_save {
                 if can_save {
                     cx.update(|cx| item.save(project, cx)).await?;
-                } else if can_save_as {
+                } else if is_singleton {
                     let start_abs_path = project
                         .read_with(cx, |project, cx| {
                             let worktree = project.visible_worktrees(cx).next()?;

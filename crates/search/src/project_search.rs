@@ -240,6 +240,10 @@ impl Item for ProjectSearchView {
         self.results_editor.project_entry_ids(cx)
     }
 
+    fn is_singleton(&self, _: &AppContext) -> bool {
+        false
+    }
+
     fn can_save(&self, _: &gpui::AppContext) -> bool {
         true
     }
@@ -259,10 +263,6 @@ impl Item for ProjectSearchView {
     ) -> Task<anyhow::Result<()>> {
         self.results_editor
             .update(cx, |editor, cx| editor.save(project, cx))
-    }
-
-    fn can_save_as(&self, _: &gpui::AppContext) -> bool {
-        false
     }
 
     fn save_as(
