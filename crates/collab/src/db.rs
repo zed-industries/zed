@@ -228,17 +228,20 @@ impl Db for PostgresDb {
 
     async fn set_invite_count(&self, id: UserId, count: u32) -> Result<()> {
         let mut tx = self.pool.begin().await?;
-        sqlx::query(
-            "
+        if count > 0 {
+            sqlx::query(
+                "
                 UPDATE users
                 SET invite_code = $1
                 WHERE id = $2 AND invite_code IS NULL
             ",
-        )
-        .bind(nanoid!(16))
-        .bind(id)
-        .execute(&mut tx)
-        .await?;
+            )
+            .bind(nanoid!(16))
+            .bind(id)
+            .execute(&mut tx)
+            .await?;
+        }
+
         sqlx::query(
             "
             UPDATE users
@@ -1393,6 +1396,10 @@ pub mod tests {
 
         // Initially, user 1 has no invite code
         assert_eq!(db.get_invite_code_for_user(user1).await.unwrap(), None);
+
+        // Setting invite count to 0 when no code is assigned does not assign a new code
+        db.set_invite_count(user1, 0).await.unwrap();
+        assert!(db.get_invite_code_for_user(user1).await.unwrap().is_none());
 
         // User 1 creates an invite code that can be used twice.
         db.set_invite_count(user1, 2).await.unwrap();
