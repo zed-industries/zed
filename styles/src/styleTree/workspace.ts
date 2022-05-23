@@ -155,7 +155,7 @@ export default function workspace(theme: Theme) {
       padding: { left: 6 },
     },
     disconnectedOverlay: {
-      ...text(theme, "sans", "active"),
+      ...text(theme, "sans", "onMedia"),
       background: "#000000aa",
     },
     notification: {
