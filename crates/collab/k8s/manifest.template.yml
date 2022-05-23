@@ -81,6 +81,8 @@ spec:
                 secretKeyRef:
                   name: api
                   key: token
+            - name: INVITE_LINK_PREFIX
+              value: ${INVITE_LINK_PREFIX}
             - name: RUST_LOG
               value: ${RUST_LOG}
             - name: LOG_JSON
