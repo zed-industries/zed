@@ -434,6 +434,19 @@ impl Server {
                 state.unregister_project(request.payload.project_id, request.sender_id)?;
             (state.user_id_for_connection(request.sender_id)?, project)
         };
+
+        broadcast(
+            request.sender_id,
+            project.guests.keys().copied(),
+            |conn_id| {
+                self.peer.send(
+                    conn_id,
+                    proto::UnregisterProject {
+                        project_id: request.payload.project_id,
+                    },
+                )
+            },
+        );
         for (_, receipts) in project.join_requests {
             for receipt in receipts {
                 self.peer.respond(
@@ -1895,6 +1908,14 @@ mod tests {
             .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
+
+        // When client A (the host) leaves, the project gets unshared and guests are notified.
+        cx_a.update(|_| drop(project_a));
+        deterministic.run_until_parked();
+        project_b2.read_with(cx_b, |project, _| {
+            assert!(project.is_read_only());
+            assert!(project.collaborators().is_empty());
+        });
     }
 
     #[gpui::test(iterations = 10)]
