@@ -1131,9 +1131,9 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.set_state(
             indoc! {"
-            The quick brown
-            fox ju|mps over
-            the lazy dog"},
+                The quick brown
+                fox ju|mps over
+                the lazy dog"},
             Mode::Normal,
         );
 

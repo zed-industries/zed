@@ -47,6 +47,13 @@ impl VimState {
         !matches!(self.mode, Mode::Insert)
     }
 
+    pub fn clip_at_line_end(&self) -> bool {
+        match self.mode {
+            Mode::Insert | Mode::Visual | Mode::VisualLine => false,
+            _ => true,
+        }
+    }
+
     pub fn empty_selections_only(&self) -> bool {
         self.mode != Mode::Visual && self.mode != Mode::VisualLine
     }

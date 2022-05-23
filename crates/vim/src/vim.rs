@@ -10,7 +10,7 @@ mod utils;
 mod visual;
 
 use collections::HashMap;
-use editor::{CursorShape, Editor};
+use editor::{CursorShape, Editor, Input};
 use gpui::{impl_actions, MutableAppContext, Subscription, ViewContext, WeakViewHandle};
 use serde::Deserialize;
 
@@ -41,6 +41,13 @@ pub fn init(cx: &mut MutableAppContext) {
             Vim::update(cx, |vim, cx| vim.push_operator(operator, cx))
         },
     );
+    cx.add_action(|_: &mut Editor, _: &Input, cx| {
+        if Vim::read(cx).active_operator().is_some() {
+            cx.defer(|_, cx| Vim::update(cx, |vim, cx| vim.clear_operator(cx)))
+        } else {
+            cx.propagate_action()
+        }
+    });
 
     cx.observe_global::<Settings, _>(|cx| {
         Vim::update(cx, |state, cx| {
@@ -105,7 +112,7 @@ impl Vim {
         self.sync_editor_options(cx);
     }
 
-    fn active_operator(&mut self) -> Option<Operator> {
+    fn active_operator(&self) -> Option<Operator> {
         self.state.operator_stack.last().copied()
     }
 
@@ -122,14 +129,14 @@ impl Vim {
 
     fn sync_editor_options(&self, cx: &mut MutableAppContext) {
         let state = &self.state;
-
         let cursor_shape = state.cursor_shape();
+
         for editor in self.editors.values() {
             if let Some(editor) = editor.upgrade(cx) {
                 editor.update(cx, |editor, cx| {
                     if self.enabled {
                         editor.set_cursor_shape(cursor_shape, cx);
-                        editor.set_clip_at_line_ends(cursor_shape == CursorShape::Block, cx);
+                        editor.set_clip_at_line_ends(state.clip_at_line_end(), cx);
                         editor.set_input_enabled(!state.vim_controlled());
                         editor.selections.line_mode = state.mode == Mode::VisualLine;
                         let context_layer = state.keymap_context_layer();
