@@ -40,6 +40,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     future::Future,
+    mem,
     ops::{Deref, DerefMut},
     os::unix::prelude::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
@@ -951,9 +952,39 @@ impl LocalWorktree {
                         })?;
                     }
 
+                    // Stream ignored entries in chunks.
+                    {
+                        let mut ignored_entries = prev_snapshot
+                            .entries_by_path
+                            .iter()
+                            .filter(|e| e.is_ignored);
+                        let mut ignored_entries_to_send = Vec::new();
+                        loop {
+                            const CHUNK_SIZE: usize = 256;
+                            let entry = ignored_entries.next();
+                            if ignored_entries_to_send.len() >= CHUNK_SIZE || entry.is_none() {
+                                rpc.request(proto::UpdateWorktree {
+                                    project_id,
+                                    worktree_id,
+                                    root_name: prev_snapshot.root_name().to_string(),
+                                    updated_entries: mem::take(&mut ignored_entries_to_send),
+                                    removed_entries: Default::default(),
+                                    scan_id: prev_snapshot.scan_id as u64,
+                                })
+                                .await?;
+                            }
+
+                            if let Some(entry) = ignored_entries.next() {
+                                ignored_entries_to_send.push(entry.into());
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+
                     while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
                         let message =
-                            snapshot.build_update(&prev_snapshot, project_id, worktree_id, false);
+                            snapshot.build_update(&prev_snapshot, project_id, worktree_id, true);
                         rpc.request(message).await?;
                         prev_snapshot = snapshot;
                     }
