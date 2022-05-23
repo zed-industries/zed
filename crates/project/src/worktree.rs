@@ -1179,6 +1179,7 @@ impl Snapshot {
 
         for entry in update.updated_entries {
             let entry = Entry::try_from((&self.root_char_bag, entry))?;
+            println!("{:?} = {}", &entry.path, entry.is_ignored);
             if let Some(PathEntry { path, .. }) = self.entries_by_id.get(&entry.id, &()) {
                 entries_by_path_edits.push(Edit::Remove(PathKey(path.clone())));
             }
