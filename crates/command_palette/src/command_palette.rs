@@ -299,7 +299,8 @@ mod tests {
     use super::*;
     use editor::Editor;
     use gpui::TestAppContext;
-    use workspace::{Workspace, WorkspaceParams};
+    use project::Project;
+    use workspace::{AppState, Workspace};
 
     #[test]
     fn test_humanize_action_name() {
@@ -319,15 +320,16 @@ mod tests {
 
     #[gpui::test]
     async fn test_command_palette(cx: &mut TestAppContext) {
-        let params = cx.update(WorkspaceParams::test);
+        let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
             editor::init(cx);
-            workspace::init(&params.client, cx);
+            workspace::init(app_state.clone(), cx);
             init(cx);
         });
 
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
         let editor = cx.add_view(window_id, |cx| {
             let mut editor = Editor::single_line(None, cx);
             editor.set_text("abc", cx);

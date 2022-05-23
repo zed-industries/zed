@@ -22,6 +22,7 @@ pub struct PendingSelection {
     pub mode: SelectMode,
 }
 
+#[derive(Clone)]
 pub struct SelectionsCollection {
     display_map: ModelHandle<DisplayMap>,
     buffer: ModelHandle<MultiBuffer>,

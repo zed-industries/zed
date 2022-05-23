@@ -1,5 +1,4 @@
-import chroma from "chroma-js";
-import { Scale, Color } from "chroma-js";
+import chroma, { Color, Scale } from "chroma-js";
 import { color, ColorToken, fontWeights, NumberToken } from "../../tokens";
 import { withOpacity } from "../../utils/color";
 import Theme, { buildPlayer, Syntax } from "./theme";
@@ -8,12 +7,15 @@ export function colorRamp(color: Color): Scale {
   let hue = color.hsl()[0];
   let endColor = chroma.hsl(hue, 0.88, 0.96);
   let startColor = chroma.hsl(hue, 0.68, 0.12);
-  return chroma
-    .scale([startColor, color, endColor])
-    .mode("hsl");
+  return chroma.scale([startColor, color, endColor]).mode("hsl");
 }
 
-export function createTheme(name: string, isLight: boolean, ramps: { [rampName: string]: Scale }, blend?: number): Theme {
+export function createTheme(
+  name: string,
+  isLight: boolean,
+  ramps: { [rampName: string]: Scale },
+  blend?: number
+): Theme {
   if (isLight) {
     for (var rampName in ramps) {
       ramps[rampName] = ramps[rampName].domain([1, 0]);
@@ -62,22 +64,22 @@ export function createTheme(name: string, isLight: boolean, ramps: { [rampName: 
     },
     ok: {
       base: withOpacity(rampColor(ramps.green, 0.5), 0.15),
-      hovered: withOpacity(rampColor(ramps.green, 0.5), 0.20),
+      hovered: withOpacity(rampColor(ramps.green, 0.5), 0.2),
       active: withOpacity(rampColor(ramps.green, 0.5), 0.25),
     },
     error: {
       base: withOpacity(rampColor(ramps.red, 0.5), 0.15),
-      hovered: withOpacity(rampColor(ramps.red, 0.5), 0.20),
+      hovered: withOpacity(rampColor(ramps.red, 0.5), 0.2),
       active: withOpacity(rampColor(ramps.red, 0.5), 0.25),
     },
     warning: {
       base: withOpacity(rampColor(ramps.yellow, 0.5), 0.15),
-      hovered: withOpacity(rampColor(ramps.yellow, 0.5), 0.20),
+      hovered: withOpacity(rampColor(ramps.yellow, 0.5), 0.2),
       active: withOpacity(rampColor(ramps.yellow, 0.5), 0.25),
     },
     info: {
       base: withOpacity(rampColor(ramps.blue, 0.5), 0.15),
-      hovered: withOpacity(rampColor(ramps.blue, 0.5), 0.20),
+      hovered: withOpacity(rampColor(ramps.blue, 0.5), 0.2),
       active: withOpacity(rampColor(ramps.blue, 0.5), 0.25),
     },
   };

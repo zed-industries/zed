@@ -1517,7 +1517,7 @@ mod tests {
         cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
         let (window_id, editor) = cx.add_window(Default::default(), |cx| {
-            Editor::new(EditorMode::Full, buffer, None, None, cx)
+            Editor::new(EditorMode::Full, buffer, None, None, None, cx)
         });
         let element = EditorElement::new(
             editor.downgrade(),
@@ -1539,7 +1539,7 @@ mod tests {
         cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("", cx);
         let (window_id, editor) = cx.add_window(Default::default(), |cx| {
-            Editor::new(EditorMode::Full, buffer, None, None, cx)
+            Editor::new(EditorMode::Full, buffer, None, None, None, cx)
         });
 
         editor.update(cx, |editor, cx| {

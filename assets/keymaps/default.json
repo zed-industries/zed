@@ -18,7 +18,10 @@
             "cmd-s": "workspace::Save",
             "cmd-=": "zed::IncreaseBufferFontSize",
             "cmd--": "zed::DecreaseBufferFontSize",
-            "cmd-,": "zed::OpenSettings"
+            "cmd-,": "zed::OpenSettings",
+            "cmd-q": "zed::Quit",
+            "cmd-n": "workspace::OpenNew",
+            "cmd-o": "workspace::Open"
         }
     },
     {
@@ -210,7 +213,6 @@
         "bindings": {
             "cmd-shift-F": "project_search::Deploy",
             "cmd-k cmd-t": "theme_selector::Toggle",
-            "cmd-k t": "theme_selector::Reload",
             "cmd-k cmd-s": "zed::OpenKeymap",
             "cmd-t": "project_symbols::Toggle",
             "cmd-p": "file_finder::Toggle",

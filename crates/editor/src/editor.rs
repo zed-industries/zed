@@ -862,7 +862,14 @@ impl Editor {
     ) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::SingleLine, buffer, None, field_editor_style, cx)
+        Self::new(
+            EditorMode::SingleLine,
+            buffer,
+            None,
+            field_editor_style,
+            None,
+            cx,
+        )
     }
 
     pub fn auto_height(
@@ -877,6 +884,7 @@ impl Editor {
             buffer,
             None,
             field_editor_style,
+            None,
             cx,
         )
     }
@@ -887,7 +895,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::Full, buffer, project, None, cx)
+        Self::new(EditorMode::Full, buffer, project, None, None, cx)
     }
 
     pub fn for_multibuffer(
@@ -895,7 +903,7 @@ impl Editor {
         project: Option<ModelHandle<Project>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        Self::new(EditorMode::Full, buffer, project, None, cx)
+        Self::new(EditorMode::Full, buffer, project, None, None, cx)
     }
 
     pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
@@ -904,6 +912,7 @@ impl Editor {
             self.buffer.clone(),
             self.project.clone(),
             self.get_field_editor_theme,
+            Some(self.selections.clone()),
             cx,
         );
         clone.scroll_position = self.scroll_position;
@@ -917,6 +926,7 @@ impl Editor {
         buffer: ModelHandle<MultiBuffer>,
         project: Option<ModelHandle<Project>>,
         get_field_editor_theme: Option<GetFieldEditorTheme>,
+        selections: Option<SelectionsCollection>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let display_map = cx.add_model(|cx| {
@@ -937,7 +947,8 @@ impl Editor {
         cx.observe(&display_map, Self::on_display_map_changed)
             .detach();
 
-        let selections = SelectionsCollection::new(display_map.clone(), buffer.clone());
+        let selections = selections
+            .unwrap_or_else(|| SelectionsCollection::new(display_map.clone(), buffer.clone()));
 
         let mut this = Self {
             handle: cx.weak_handle(),
@@ -6025,7 +6036,10 @@ mod tests {
     use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
-    use util::test::{marked_text_by, marked_text_ranges, marked_text_ranges_by, sample_text};
+    use util::{
+        assert_set_eq,
+        test::{marked_text_by, marked_text_ranges, marked_text_ranges_by, sample_text},
+    };
     use workspace::{FollowableItem, ItemHandle};
 
     #[gpui::test]
@@ -6302,6 +6316,26 @@ mod tests {
                 [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
             );
         });
+    }
+
+    #[gpui::test]
+    fn test_clone_with_selections(cx: &mut gpui::MutableAppContext) {
+        let (text, selection_ranges) = marked_text_ranges(indoc! {"
+            The qu[ick brown
+            fox jum]ps over
+            the lazy dog
+        "});
+        cx.set_global(Settings::test(cx));
+        let buffer = MultiBuffer::build_simple(&text, cx);
+
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
+
+        let cloned_editor = view.update(cx, |view, cx| {
+            view.change_selections(None, cx, |s| s.select_ranges(selection_ranges.clone()));
+            view.clone(cx)
+        });
+
+        assert_set_eq!(cloned_editor.selections.ranges(cx), selection_ranges);
     }
 
     #[gpui::test]
@@ -8815,7 +8849,7 @@ mod tests {
         let fs = FakeFs::new(cx.background().clone());
         fs.insert_file("/file.rs", Default::default()).await;
 
-        let project = Project::test(fs, ["/file.rs"], cx).await;
+        let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));
         let buffer = project
             .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
@@ -8937,7 +8971,7 @@ mod tests {
         let fs = FakeFs::new(cx.background().clone());
         fs.insert_file("/file.rs", text).await;
 
-        let project = Project::test(fs, ["/file.rs"], cx).await;
+        let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));
         let buffer = project
             .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
@@ -9765,7 +9799,7 @@ mod tests {
     }
 
     fn build_editor(buffer: ModelHandle<MultiBuffer>, cx: &mut ViewContext<Editor>) -> Editor {
-        Editor::new(EditorMode::Full, buffer, None, None, cx)
+        Editor::new(EditorMode::Full, buffer, None, None, None, cx)
     }
 
     fn assert_selection_ranges(

@@ -1,7 +1,7 @@
 use super::{AppVersion, CursorStyle, WindowBounds};
 use crate::{
     geometry::vector::{vec2f, Vector2F},
-    Action, ClipboardItem,
+    keymap, Action, ClipboardItem,
 };
 use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
@@ -73,8 +73,9 @@ impl super::ForegroundPlatform for ForegroundPlatform {
     }
 
     fn on_menu_command(&self, _: Box<dyn FnMut(&dyn Action)>) {}
-
-    fn set_menus(&self, _: Vec<crate::Menu>) {}
+    fn on_validate_menu_command(&self, _: Box<dyn FnMut(&dyn Action) -> bool>) {}
+    fn on_will_open_menu(&self, _: Box<dyn FnMut()>) {}
+    fn set_menus(&self, _: Vec<crate::Menu>, _: &keymap::Matcher) {}
 
     fn prompt_for_paths(
         &self,

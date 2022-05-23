@@ -529,6 +529,16 @@ fn test_history() {
     assert!(buffer.end_transaction_at(now).is_none());
     buffer.undo();
     assert_eq!(buffer.text(), "12cde6");
+
+    // Redo stack gets cleared after performing an edit.
+    buffer.edit([(0..0, "X")]);
+    assert_eq!(buffer.text(), "X12cde6");
+    buffer.redo();
+    assert_eq!(buffer.text(), "X12cde6");
+    buffer.undo();
+    assert_eq!(buffer.text(), "12cde6");
+    buffer.undo();
+    assert_eq!(buffer.text(), "123456");
 }
 
 #[test]

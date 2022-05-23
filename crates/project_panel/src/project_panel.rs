@@ -913,11 +913,14 @@ mod tests {
     use project::FakeFs;
     use serde_json::json;
     use std::{collections::HashSet, path::Path};
-    use workspace::WorkspaceParams;
 
     #[gpui::test]
     async fn test_visible_list(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            let settings = Settings::test(cx);
+            cx.set_global(settings);
+        });
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -956,9 +959,8 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/root1", "/root2"], cx).await;
-        let params = cx.update(WorkspaceParams::test);
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
         let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
@@ -1005,6 +1007,10 @@ mod tests {
     #[gpui::test(iterations = 30)]
     async fn test_editing_files(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            let settings = Settings::test(cx);
+            cx.set_global(settings);
+        });
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -1043,9 +1049,8 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/root1", "/root2"], cx).await;
-        let params = cx.update(WorkspaceParams::test);
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
         let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
 
         select_path(&panel, "root1", cx);

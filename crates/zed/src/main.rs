@@ -12,7 +12,7 @@ use cli::{
 use client::{
     self,
     http::{self, HttpClient},
-    ChannelList, UserStore, ZED_SECRET_CLIENT_TOKEN,
+    UserStore, ZED_SECRET_CLIENT_TOKEN,
 };
 use fs::OpenOptions;
 use futures::{
@@ -40,9 +40,9 @@ use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
 use util::{ResultExt, TryFutureExt};
 use workspace::{self, AppState, OpenNew, OpenPaths};
 use zed::{
-    self, build_window_options, build_workspace,
+    self, build_window_options,
     fs::RealFs,
-    languages, menus,
+    initialize_workspace, languages, menus,
     settings_file::{settings_from_files, watch_keymap_file, WatchedJsonFile},
 };
 
@@ -133,15 +133,12 @@ fn main() {
         let client = client::Client::new(http.clone());
         let mut languages = languages::build_language_registry(login_shell_env_loaded);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
-        let channel_list =
-            cx.add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx));
 
         auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
         project::Project::init(&client);
         client::Channel::init(&client);
         client::init(client.clone(), cx);
         command_palette::init(cx);
-        workspace::init(&client, cx);
         editor::init(cx);
         go_to_line::init(cx);
         file_finder::init(cx);
@@ -162,6 +159,8 @@ fn main() {
             cx.font_cache().clone(),
         );
 
+        cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
+            .detach();
         cx.spawn(|cx| watch_keymap_file(keymap_file, cx)).detach();
 
         let settings = cx.background().block(settings_rx.next()).unwrap();
@@ -190,33 +189,33 @@ fn main() {
         let app_state = Arc::new(AppState {
             languages,
             themes,
-            channel_list,
             client: client.clone(),
             user_store,
             fs,
             build_window_options,
-            build_workspace,
+            initialize_workspace,
         });
+        workspace::init(app_state.clone(), cx);
         journal::init(app_state.clone(), cx);
-        theme_selector::init(cx);
+        theme_selector::init(app_state.clone(), cx);
         zed::init(&app_state, cx);
 
-        cx.set_menus(menus::menus(&app_state.clone()));
+        cx.set_menus(menus::menus());
 
         if stdout_is_a_pty() {
             cx.platform().activate(true);
             let paths = collect_path_args();
             if paths.is_empty() {
-                cx.dispatch_global_action(OpenNew(app_state.clone()));
+                cx.dispatch_global_action(OpenNew);
             } else {
-                cx.dispatch_global_action(OpenPaths { paths, app_state });
+                cx.dispatch_global_action(OpenPaths { paths });
             }
         } else {
             if let Ok(Some(connection)) = cli_connections_rx.try_next() {
                 cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
                     .detach();
             } else {
-                cx.dispatch_global_action(OpenNew(app_state.clone()));
+                cx.dispatch_global_action(OpenNew);
             }
             cx.spawn(|cx| async move {
                 while let Some(connection) = cli_connections_rx.next().await {
@@ -438,6 +437,43 @@ fn load_embedded_fonts(app: &App) {
         .fonts()
         .add_fonts(&embedded_fonts.into_inner())
         .unwrap();
+}
+
+#[cfg(debug_assertions)]
+async fn watch_themes(
+    fs: Arc<dyn Fs>,
+    themes: Arc<ThemeRegistry>,
+    mut cx: AsyncAppContext,
+) -> Option<()> {
+    let mut events = fs
+        .watch("styles/src".as_ref(), Duration::from_millis(100))
+        .await;
+    while let Some(_) = events.next().await {
+        let output = Command::new("npm")
+            .current_dir("styles")
+            .args(["run", "build-themes"])
+            .output()
+            .await
+            .log_err()?;
+        if output.status.success() {
+            cx.update(|cx| theme_selector::ThemeSelector::reload(themes.clone(), cx))
+        } else {
+            eprintln!(
+                "build-themes script failed {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+    Some(())
+}
+
+#[cfg(not(debug_assertions))]
+async fn watch_themes(
+    _fs: Arc<dyn Fs>,
+    _themes: Arc<ThemeRegistry>,
+    _cx: AsyncAppContext,
+) -> Option<()> {
+    None
 }
 
 fn load_config_files(

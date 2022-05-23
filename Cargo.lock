@@ -909,6 +909,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "picker",
+ "project",
  "serde_json",
  "settings",
  "theme",
