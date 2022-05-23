@@ -1905,6 +1905,7 @@ impl sum_tree::Summary for EntrySummary {
 
     fn add_summary(&mut self, rhs: &Self, _: &()) {
         self.max_path = rhs.max_path.clone();
+        self.count += rhs.count;
         self.visible_count += rhs.visible_count;
         self.file_count += rhs.file_count;
         self.visible_file_count += rhs.visible_file_count;
@@ -2727,6 +2728,18 @@ mod tests {
                     Path::new("a/c"),
                 ]
             );
+            assert_eq!(
+                tree.entries(true)
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                vec![
+                    Path::new(""),
+                    Path::new(".gitignore"),
+                    Path::new("a"),
+                    Path::new("a/b"),
+                    Path::new("a/c"),
+                ]
+            );
         })
     }
 
@@ -3072,12 +3085,18 @@ mod tests {
                 }
             }
 
-            let dfs_paths = self
+            let dfs_paths_via_iter = self
                 .entries_by_path
                 .cursor::<()>()
                 .map(|e| e.path.as_ref())
                 .collect::<Vec<_>>();
-            assert_eq!(bfs_paths, dfs_paths);
+            assert_eq!(bfs_paths, dfs_paths_via_iter);
+
+            let dfs_paths_via_traversal = self
+                .entries(true)
+                .map(|e| e.path.as_ref())
+                .collect::<Vec<_>>();
+            assert_eq!(dfs_paths_via_traversal, dfs_paths_via_iter);
 
             for (ignore_parent_path, _) in &self.ignores {
                 assert!(self.entry_for_path(ignore_parent_path).is_some());
