@@ -55,6 +55,10 @@ pub fn menus() -> Vec<Menu<'static>> {
                     action: Box::new(workspace::SaveAs),
                 },
                 MenuItem::Action {
+                    name: "Save All",
+                    action: Box::new(workspace::SaveAll),
+                },
+                MenuItem::Action {
                     name: "Close Editor",
                     action: Box::new(workspace::CloseActiveItem),
                 },
