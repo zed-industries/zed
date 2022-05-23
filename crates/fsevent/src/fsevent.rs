@@ -37,6 +37,9 @@ impl Drop for State {
     fn drop(&mut self) {
         unsafe {
             cf::CFRelease(self.paths);
+            fs::FSEventStreamStop(self.stream);
+            fs::FSEventStreamInvalidate(self.stream);
+            fs::FSEventStreamRelease(self.stream);
         }
     }
 }
@@ -133,9 +136,6 @@ impl EventStream {
             );
             fs::FSEventStreamStart(self.state.stream);
             cf::CFRunLoopRun();
-            fs::FSEventStreamStop(self.state.stream);
-            fs::FSEventStreamInvalidate(self.state.stream);
-            fs::FSEventStreamRelease(self.state.stream);
         }
     }
 
