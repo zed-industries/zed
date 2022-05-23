@@ -227,7 +227,7 @@ pub struct ProjectPanel {
     pub indent_width: f32,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default)]
 pub struct ProjectPanelEntry {
     pub height: f32,
     #[serde(flatten)]

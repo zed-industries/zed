@@ -59,6 +59,7 @@ struct EntryDetails {
     filename: String,
     depth: usize,
     kind: EntryKind,
+    is_ignored: bool,
     is_expanded: bool,
     is_selected: bool,
     is_editing: bool,
@@ -613,7 +614,7 @@ impl ProjectPanel {
             }
 
             let mut visible_worktree_entries = Vec::new();
-            let mut entry_iter = snapshot.entries(false);
+            let mut entry_iter = snapshot.entries(true);
             while let Some(entry) = entry_iter.entry() {
                 visible_worktree_entries.push(entry.clone());
                 if Some(entry.id) == new_entry_parent_id {
@@ -739,6 +740,7 @@ impl ProjectPanel {
                             .to_string(),
                         depth: entry.path.components().count(),
                         kind: entry.kind,
+                        is_ignored: entry.is_ignored,
                         is_expanded: expanded_entry_ids.binary_search(&entry.id).is_ok(),
                         is_selected: self.selection.map_or(false, |e| {
                             e.worktree_id == snapshot.id() && e.entry_id == entry.id
@@ -784,7 +786,12 @@ impl ProjectPanel {
         let show_editor = details.is_editing && !details.is_processing;
         MouseEventHandler::new::<Self, _, _>(entry_id.to_usize(), cx, |state, _| {
             let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
-            let style = theme.entry.style_for(state, details.is_selected);
+            let mut style = theme.entry.style_for(state, details.is_selected).clone();
+            // TODO: get style from theme.
+            if details.is_ignored {
+                style.text.color.fade_out(0.6);
+                style.icon_color.fade_out(0.6);
+            }
             let row_container_style = if show_editor {
                 theme.filename_editor.container
             } else {
