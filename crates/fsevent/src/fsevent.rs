@@ -22,11 +22,24 @@ pub struct Event {
 
 pub struct EventStream {
     stream: fs::FSEventStreamRef,
-    state: Arc<Mutex<Lifecycle>>,
-    callback: Box<Option<RunCallback>>,
+    lifecycle: Arc<Mutex<Lifecycle>>,
+    state: Box<State>,
 }
 
-type RunCallback = Box<dyn FnMut(Vec<Event>) -> bool>;
+struct State {
+    latency: Duration,
+    paths: cf::CFMutableArrayRef,
+    callback: Option<Box<dyn FnMut(Vec<Event>) -> bool>>,
+    last_valid_event_id: Option<fs::FSEventStreamEventId>,
+}
+
+impl Drop for State {
+    fn drop(&mut self) {
+        unsafe {
+            cf::CFRelease(self.paths);
+        }
+    }
+}
 
 enum Lifecycle {
     New,
@@ -42,15 +55,6 @@ unsafe impl Send for Lifecycle {}
 impl EventStream {
     pub fn new(paths: &[&Path], latency: Duration) -> (Self, Handle) {
         unsafe {
-            let callback = Box::new(None);
-            let stream_context = fs::FSEventStreamContext {
-                version: 0,
-                info: callback.as_ref() as *const _ as *mut c_void,
-                retain: None,
-                release: None,
-                copy_description: None,
-            };
-
             let cf_paths =
                 cf::CFArrayCreateMutable(cf::kCFAllocatorDefault, 0, &cf::kCFTypeArrayCallBacks);
             assert!(!cf_paths.is_null());
@@ -69,6 +73,19 @@ impl EventStream {
                 cf::CFRelease(cf_url);
             }
 
+            let state = Box::new(State {
+                latency,
+                paths: cf_paths,
+                callback: None,
+                last_valid_event_id: None,
+            });
+            let stream_context = fs::FSEventStreamContext {
+                version: 0,
+                info: state.as_ref() as *const _ as *mut c_void,
+                retain: None,
+                release: None,
+                copy_description: None,
+            };
             let stream = fs::FSEventStreamCreate(
                 cf::kCFAllocatorDefault,
                 Self::trampoline,
@@ -80,17 +97,15 @@ impl EventStream {
                     | fs::kFSEventStreamCreateFlagNoDefer
                     | fs::kFSEventStreamCreateFlagWatchRoot,
             );
-            cf::CFRelease(cf_paths);
 
-            let state = Arc::new(Mutex::new(Lifecycle::New));
-
+            let lifecycle = Arc::new(Mutex::new(Lifecycle::New));
             (
                 EventStream {
                     stream,
-                    state: state.clone(),
-                    callback,
+                    lifecycle: lifecycle.clone(),
+                    state,
                 },
-                Handle(state),
+                Handle(lifecycle),
             )
         }
     }
@@ -99,11 +114,11 @@ impl EventStream {
     where
         F: FnMut(Vec<Event>) -> bool + 'static,
     {
-        *self.callback = Some(Box::new(f));
+        self.state.callback = Some(Box::new(f));
         unsafe {
             let run_loop = cf::CFRunLoopGetCurrent();
             {
-                let mut state = self.state.lock();
+                let mut state = self.lifecycle.lock();
                 match *state {
                     Lifecycle::New => *state = Lifecycle::Running(run_loop),
                     Lifecycle::Running(_) => unreachable!(),
@@ -129,8 +144,8 @@ impl EventStream {
             let event_paths = event_paths as *const *const ::std::os::raw::c_char;
             let e_ptr = event_flags as *mut u32;
             let i_ptr = event_ids as *mut u64;
-            let callback_ptr = (info as *mut Option<RunCallback>).as_mut().unwrap();
-            let callback = if let Some(callback) = callback_ptr.as_mut() {
+            let state = (info as *mut State).as_mut().unwrap();
+            let callback = if let Some(callback) = state.callback.as_mut() {
                 callback
             } else {
                 return;
