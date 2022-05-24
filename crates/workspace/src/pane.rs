@@ -491,6 +491,11 @@ impl Pane {
                 items_to_close.push(item.boxed_clone());
             }
         }
+
+        // If a buffer is open both in a singleton editor and in a multibuffer, make sure
+        // to focus the singleton buffer when prompting to save that buffer, as opposed
+        // to focusing the multibuffer, because this gives the user a more clear idea
+        // of what content they would be saving.
         items_to_close.sort_by_key(|item| !item.is_singleton(cx));
 
         cx.spawn(|workspace, mut cx| async move {
@@ -508,10 +513,14 @@ impl Pane {
                     continue;
                 };
 
+                // If an item hasn't yet been associated with a project entry, then always
+                // prompt to save it before closing it. Otherwise, check if the item has
+                // any project entries that are not open anywhere else in the workspace,
+                // AND that the user has not already been prompted to save. If there are
+                // any such project entries, prompt the user to save this item.
                 let should_save = if project_entry_ids.is_empty() {
                     true
                 } else {
-                    // Find the project entries that aren't open anywhere else in the workspace.
                     workspace.read_with(&cx, |workspace, cx| {
                         for item in workspace.items(cx) {
                             if !items_to_close
@@ -529,8 +538,6 @@ impl Pane {
                         .any(|id| saved_project_entry_ids.insert(*id))
                 };
 
-                // If any of these project entries have not already been saved by an earlier item,
-                // then this item must be saved.
                 if should_save {
                     if !Self::save_item(project.clone(), &pane, item_ix, &item, true, &mut cx)
                         .await?
