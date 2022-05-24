@@ -12,8 +12,8 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
-    AppContext, Element, ElementBox, Entity, LayoutContext, ModelHandle, MutableAppContext,
-    RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, ClipboardItem, Element, ElementBox, Entity, LayoutContext, ModelHandle,
+    MutableAppContext, RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use join_project_notification::JoinProjectNotification;
 use serde::Deserialize;
@@ -157,15 +157,27 @@ impl ContactsPanel {
                 if let Some((workspace, user_store)) =
                     workspace.upgrade(cx).zip(user_store.upgrade(cx))
                 {
-                    workspace.update(cx, |workspace, cx| match event.kind {
-                        ContactEventKind::Requested | ContactEventKind::Accepted => workspace
-                            .show_notification(event.user.id as usize, cx, |cx| {
-                                cx.add_view(|cx| {
-                                    ContactNotification::new(event.clone(), user_store, cx)
-                                })
-                            }),
+                    workspace.update(cx, |workspace, cx| match event {
+                        client::Event::Contact { user, kind } => match kind {
+                            ContactEventKind::Requested | ContactEventKind::Accepted => workspace
+                                .show_notification(user.id as usize, cx, |cx| {
+                                    cx.add_view(|cx| {
+                                        ContactNotification::new(
+                                            user.clone(),
+                                            *kind,
+                                            user_store,
+                                            cx,
+                                        )
+                                    })
+                                }),
+                            _ => {}
+                        },
                         _ => {}
                     });
+                }
+
+                if let client::Event::ShowContacts = event {
+                    cx.emit(Event::Activate);
                 }
             }
         })
@@ -793,6 +805,10 @@ impl SidebarItem for ContactsPanel {
     fn contains_focused_view(&self, cx: &AppContext) -> bool {
         self.filter_editor.is_focused(cx)
     }
+
+    fn should_activate_item_on_event(&self, event: &Event, _: &AppContext) -> bool {
+        matches!(event, Event::Activate)
+    }
 }
 
 fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Element {
@@ -808,7 +824,9 @@ fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Elemen
         .with_height(style.button_width)
 }
 
-pub enum Event {}
+pub enum Event {
+    Activate,
+}
 
 impl Entity for ContactsPanel {
     type Event = Event;
@@ -855,6 +873,59 @@ impl View for ContactsPanel {
                         .boxed(),
                 )
                 .with_child(List::new(self.list_state.clone()).flex(1., false).boxed())
+                .with_children(
+                    self.user_store
+                        .read(cx)
+                        .invite_info()
+                        .cloned()
+                        .and_then(|info| {
+                            enum InviteLink {}
+
+                            if info.count > 0 {
+                                Some(
+                                    MouseEventHandler::new::<InviteLink, _, _>(
+                                        0,
+                                        cx,
+                                        |state, cx| {
+                                            let style =
+                                                theme.invite_row.style_for(state, false).clone();
+
+                                            let copied =
+                                                cx.read_from_clipboard().map_or(false, |item| {
+                                                    item.text().as_str() == info.url.as_ref()
+                                                });
+
+                                            Label::new(
+                                                format!(
+                                                    "{} invite link ({} left)",
+                                                    if copied { "Copied" } else { "Copy" },
+                                                    info.count
+                                                ),
+                                                style.label.clone(),
+                                            )
+                                            .aligned()
+                                            .left()
+                                            .constrained()
+                                            .with_height(theme.row_height)
+                                            .contained()
+                                            .with_style(style.container)
+                                            .boxed()
+                                        },
+                                    )
+                                    .with_cursor_style(CursorStyle::PointingHand)
+                                    .on_click(move |_, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new(
+                                            info.url.to_string(),
+                                        ));
+                                        cx.notify();
+                                    })
+                                    .boxed(),
+                                )
+                            } else {
+                                None
+                            }
+                        }),
+                )
                 .boxed(),
         )
         .with_style(theme.container)

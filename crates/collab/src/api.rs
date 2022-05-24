@@ -1,6 +1,7 @@
 use crate::{
     auth,
     db::{User, UserId},
+    rpc::ResultExt,
     AppState, Error, Result,
 };
 use anyhow::anyhow;
@@ -18,7 +19,7 @@ use std::sync::Arc;
 use tower::ServiceBuilder;
 use tracing::instrument;
 
-pub fn routes(state: Arc<AppState>) -> Router<Body> {
+pub fn routes(rpc_server: &Arc<crate::rpc::Server>, state: Arc<AppState>) -> Router<Body> {
     Router::new()
         .route("/users", get(get_users).post(create_user))
         .route(
@@ -26,13 +27,14 @@ pub fn routes(state: Arc<AppState>) -> Router<Body> {
             put(update_user).delete(destroy_user).get(get_user),
         )
         .route("/users/:id/access_tokens", post(create_access_token))
+        .route("/invite_codes/:code", get(get_user_for_invite_code))
         .route("/panic", post(trace_panic))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(state))
+                .layer(Extension(rpc_server.clone()))
                 .layer(middleware::from_fn(validate_api_token)),
         )
-    // TODO: Compression on API routes?
 }
 
 pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoResponse {
@@ -71,20 +73,44 @@ async fn get_users(Extension(app): Extension<Arc<AppState>>) -> Result<Json<Vec<
     Ok(Json(users))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct CreateUserParams {
     github_login: String,
+    invite_code: Option<String>,
+    email_address: Option<String>,
     admin: bool,
 }
 
 async fn create_user(
     Json(params): Json<CreateUserParams>,
     Extension(app): Extension<Arc<AppState>>,
+    Extension(rpc_server): Extension<Arc<crate::rpc::Server>>,
 ) -> Result<Json<User>> {
-    let user_id = app
-        .db
-        .create_user(&params.github_login, params.admin)
-        .await?;
+    println!("{:?}", params);
+
+    let user_id = if let Some(invite_code) = params.invite_code {
+        let invitee_id = app
+            .db
+            .redeem_invite_code(
+                &invite_code,
+                &params.github_login,
+                params.email_address.as_deref(),
+            )
+            .await?;
+        rpc_server
+            .invite_code_redeemed(&invite_code, invitee_id)
+            .await
+            .trace_err();
+        invitee_id
+    } else {
+        app.db
+            .create_user(
+                &params.github_login,
+                params.email_address.as_deref(),
+                params.admin,
+            )
+            .await?
+    };
 
     let user = app
         .db
@@ -97,7 +123,8 @@ async fn create_user(
 
 #[derive(Deserialize)]
 struct UpdateUserParams {
-    admin: bool,
+    admin: Option<bool>,
+    invite_count: Option<u32>,
 }
 
 async fn update_user(
@@ -105,9 +132,16 @@ async fn update_user(
     Json(params): Json<UpdateUserParams>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<()> {
-    app.db
-        .set_user_is_admin(UserId(user_id), params.admin)
-        .await?;
+    if let Some(admin) = params.admin {
+        app.db.set_user_is_admin(UserId(user_id), admin).await?;
+    }
+
+    if let Some(invite_count) = params.invite_count {
+        app.db
+            .set_invite_count(UserId(user_id), invite_count)
+            .await?;
+    }
+
     Ok(())
 }
 
@@ -127,7 +161,7 @@ async fn get_user(
         .db
         .get_user_by_github_login(&login)
         .await?
-        .ok_or_else(|| anyhow!("user not found"))?;
+        .ok_or_else(|| Error::Http(StatusCode::NOT_FOUND, "User not found".to_string()))?;
     Ok(Json(user))
 }
 
@@ -195,4 +229,11 @@ async fn create_access_token(
         user_id,
         encrypted_access_token,
     }))
+}
+
+async fn get_user_for_invite_code(
+    Path(code): Path<String>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<User>> {
+    Ok(Json(app.db.get_user_for_invite_code(&code).await?))
 }
