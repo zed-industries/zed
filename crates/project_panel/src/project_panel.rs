@@ -972,6 +972,7 @@ mod tests {
             visible_entries_as_strings(&panel, 0..50, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    > b",
                 "    > C",
@@ -987,6 +988,7 @@ mod tests {
             visible_entries_as_strings(&panel, 0..50, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b  <== selected",
                 "        > 3",
@@ -1000,7 +1002,7 @@ mod tests {
         );
 
         assert_eq!(
-            visible_entries_as_strings(&panel, 5..8, cx),
+            visible_entries_as_strings(&panel, 6..9, cx),
             &[
                 //
                 "    > C",
@@ -1064,6 +1066,7 @@ mod tests {
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1  <== selected",
+                "    > .git",
                 "    > a",
                 "    > b",
                 "    > C",
@@ -1082,6 +1085,7 @@ mod tests {
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    > b",
                 "    > C",
@@ -1103,6 +1107,7 @@ mod tests {
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    > b",
                 "    > C",
@@ -1119,6 +1124,7 @@ mod tests {
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    > b",
                 "    > C",
@@ -1133,9 +1139,10 @@ mod tests {
         select_path(&panel, "root1/b", cx);
         panel.update(cx, |panel, cx| panel.add_file(&AddFile, cx));
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..9, cx),
+            visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b",
                 "        > 3",
@@ -1157,9 +1164,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..9, cx),
+            visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b",
                 "        > 3",
@@ -1174,9 +1182,10 @@ mod tests {
         select_path(&panel, "root1/b/another-filename", cx);
         panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..9, cx),
+            visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b",
                 "        > 3",
@@ -1195,9 +1204,10 @@ mod tests {
             panel.confirm(&Confirm, cx).unwrap()
         });
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..9, cx),
+            visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b",
                 "        > 3",
@@ -1211,9 +1221,10 @@ mod tests {
 
         confirm.await.unwrap();
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..9, cx),
+            visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b",
                 "        > 3",
@@ -1227,9 +1238,10 @@ mod tests {
 
         panel.update(cx, |panel, cx| panel.add_directory(&AddDirectory, cx));
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..9, cx),
+            visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b",
                 "        > [EDITOR: '']  <== selected",
@@ -1249,9 +1261,10 @@ mod tests {
         });
         panel.update(cx, |panel, cx| panel.select_next(&Default::default(), cx));
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..9, cx),
+            visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b",
                 "        > [PROCESSING: 'new-dir']",
@@ -1265,9 +1278,10 @@ mod tests {
 
         confirm.await.unwrap();
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..9, cx),
+            visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b",
                 "        > 3  <== selected",
