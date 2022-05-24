@@ -40,6 +40,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     future::Future,
+    mem,
     ops::{Deref, DerefMut},
     os::unix::prelude::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
@@ -827,8 +828,8 @@ impl LocalWorktree {
             next_entry_id = snapshot.next_entry_id.clone();
         }
         cx.spawn_weak(|this, mut cx| async move {
-            let entry = Entry::new(
-                path,
+            let mut entry = Entry::new(
+                path.clone(),
                 &fs.metadata(&abs_path)
                     .await?
                     .ok_or_else(|| anyhow!("could not read saved file metadata"))?,
@@ -842,6 +843,9 @@ impl LocalWorktree {
             let (entry, snapshot, snapshots_tx) = this.read_with(&cx, |this, _| {
                 let this = this.as_local().unwrap();
                 let mut snapshot = this.background_snapshot.lock();
+                entry.is_ignored = snapshot
+                    .ignore_stack_for_path(&path, entry.is_dir())
+                    .is_path_ignored(&path, entry.is_dir());
                 if let Some(old_path) = old_path {
                     snapshot.remove_path(&old_path);
                 }
@@ -951,9 +955,43 @@ impl LocalWorktree {
                         })?;
                     }
 
+                    // Stream ignored entries in chunks.
+                    {
+                        let mut ignored_entries = prev_snapshot
+                            .entries_by_path
+                            .iter()
+                            .filter(|e| e.is_ignored);
+                        let mut ignored_entries_to_send = Vec::new();
+                        loop {
+                            #[cfg(any(test, feature = "test-support"))]
+                            const CHUNK_SIZE: usize = 2;
+                            #[cfg(not(any(test, feature = "test-support")))]
+                            const CHUNK_SIZE: usize = 256;
+
+                            let entry = ignored_entries.next();
+                            if ignored_entries_to_send.len() >= CHUNK_SIZE || entry.is_none() {
+                                rpc.request(proto::UpdateWorktree {
+                                    project_id,
+                                    worktree_id,
+                                    root_name: prev_snapshot.root_name().to_string(),
+                                    updated_entries: mem::take(&mut ignored_entries_to_send),
+                                    removed_entries: Default::default(),
+                                    scan_id: prev_snapshot.scan_id as u64,
+                                })
+                                .await?;
+                            }
+
+                            if let Some(entry) = entry {
+                                ignored_entries_to_send.push(entry.into());
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+
                     while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
                         let message =
-                            snapshot.build_update(&prev_snapshot, project_id, worktree_id, false);
+                            snapshot.build_update(&prev_snapshot, project_id, worktree_id, true);
                         rpc.request(message).await?;
                         prev_snapshot = snapshot;
                     }
@@ -1905,6 +1943,7 @@ impl sum_tree::Summary for EntrySummary {
 
     fn add_summary(&mut self, rhs: &Self, _: &()) {
         self.max_path = rhs.max_path.clone();
+        self.count += rhs.count;
         self.visible_count += rhs.visible_count;
         self.file_count += rhs.file_count;
         self.visible_file_count += rhs.visible_file_count;
@@ -2675,6 +2714,7 @@ mod tests {
     use anyhow::Result;
     use client::test::FakeHttpClient;
     use fs::RealFs;
+    use gpui::TestAppContext;
     use rand::prelude::*;
     use serde_json::json;
     use std::{
@@ -2685,7 +2725,7 @@ mod tests {
     use util::test::temp_tree;
 
     #[gpui::test]
-    async fn test_traversal(cx: &mut gpui::TestAppContext) {
+    async fn test_traversal(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/root",
@@ -2727,11 +2767,23 @@ mod tests {
                     Path::new("a/c"),
                 ]
             );
+            assert_eq!(
+                tree.entries(true)
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                vec![
+                    Path::new(""),
+                    Path::new(".gitignore"),
+                    Path::new("a"),
+                    Path::new("a/b"),
+                    Path::new("a/c"),
+                ]
+            );
         })
     }
 
     #[gpui::test]
-    async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
+    async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
         let dir = temp_tree(json!({
             ".git": {},
             ".gitignore": "ignored-dir\n",
@@ -2778,6 +2830,59 @@ mod tests {
             assert_eq!(tracked.is_ignored, false);
             assert_eq!(ignored.is_ignored, true);
             assert_eq!(dot_git.is_ignored, true);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_write_file(cx: &mut TestAppContext) {
+        let dir = temp_tree(json!({
+            ".git": {},
+            ".gitignore": "ignored-dir\n",
+            "tracked-dir": {},
+            "ignored-dir": {}
+        }));
+
+        let http_client = FakeHttpClient::with_404_response();
+        let client = Client::new(http_client.clone());
+
+        let tree = Worktree::local(
+            client,
+            dir.path(),
+            true,
+            Arc::new(RealFs),
+            Default::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+        tree.flush_fs_events(&cx).await;
+
+        tree.update(cx, |tree, cx| {
+            tree.as_local().unwrap().write_file(
+                Path::new("tracked-dir/file.txt"),
+                "hello".into(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        tree.update(cx, |tree, cx| {
+            tree.as_local().unwrap().write_file(
+                Path::new("ignored-dir/file.txt"),
+                "world".into(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        tree.read_with(cx, |tree, _| {
+            let tracked = tree.entry_for_path("tracked-dir/file.txt").unwrap();
+            let ignored = tree.entry_for_path("ignored-dir/file.txt").unwrap();
+            assert_eq!(tracked.is_ignored, false);
+            assert_eq!(ignored.is_ignored, true);
         });
     }
 
@@ -3072,12 +3177,18 @@ mod tests {
                 }
             }
 
-            let dfs_paths = self
+            let dfs_paths_via_iter = self
                 .entries_by_path
                 .cursor::<()>()
                 .map(|e| e.path.as_ref())
                 .collect::<Vec<_>>();
-            assert_eq!(bfs_paths, dfs_paths);
+            assert_eq!(bfs_paths, dfs_paths_via_iter);
+
+            let dfs_paths_via_traversal = self
+                .entries(true)
+                .map(|e| e.path.as_ref())
+                .collect::<Vec<_>>();
+            assert_eq!(dfs_paths_via_traversal, dfs_paths_via_iter);
 
             for (ignore_parent_path, _) in &self.ignores {
                 assert!(self.entry_for_path(ignore_parent_path).is_some());
