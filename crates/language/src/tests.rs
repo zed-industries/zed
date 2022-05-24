@@ -649,6 +649,23 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
         );
         buffer
     });
+
+    cx.add_model(|cx| {
+        let text = "fn a() {\n    {\n        b()?\n    }\n\n    Ok(())\n}";
+        let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
+        buffer.edit_with_autoindent([(Point::new(3, 4)..Point::new(3, 5), "")], 4, cx);
+        assert_eq!(
+            buffer.text(),
+            "fn a() {\n    {\n        b()?\n            \n\n    Ok(())\n}"
+        );
+
+        buffer.edit_with_autoindent([(Point::new(3, 0)..Point::new(3, 12), "")], 4, cx);
+        assert_eq!(
+            buffer.text(),
+            "fn a() {\n    {\n        b()?\n\n\n    Ok(())\n}"
+        );
+        buffer
+    });
 }
 
 #[gpui::test]
