@@ -31,7 +31,11 @@ pub fn menus() -> Vec<Menu<'static>> {
             items: vec![
                 MenuItem::Action {
                     name: "New",
-                    action: Box::new(workspace::OpenNew),
+                    action: Box::new(workspace::NewFile),
+                },
+                MenuItem::Action {
+                    name: "New Window",
+                    action: Box::new(workspace::NewWindow),
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
@@ -39,12 +43,28 @@ pub fn menus() -> Vec<Menu<'static>> {
                     action: Box::new(workspace::Open),
                 },
                 MenuItem::Action {
+                    name: "Add Folder to Project…",
+                    action: Box::new(workspace::AddFolderToProject),
+                },
+                MenuItem::Action {
                     name: "Save",
                     action: Box::new(workspace::Save),
                 },
                 MenuItem::Action {
+                    name: "Save As…",
+                    action: Box::new(workspace::SaveAs),
+                },
+                MenuItem::Action {
+                    name: "Save All",
+                    action: Box::new(workspace::SaveAll),
+                },
+                MenuItem::Action {
                     name: "Close Editor",
                     action: Box::new(workspace::CloseActiveItem),
+                },
+                MenuItem::Action {
+                    name: "Close Window",
+                    action: Box::new(workspace::CloseWindow),
                 },
             ],
         },
@@ -208,6 +228,13 @@ pub fn menus() -> Vec<Menu<'static>> {
                     action: Box::new(editor::GoToPrevDiagnostic),
                 },
             ],
+        },
+        Menu {
+            name: "Help",
+            items: vec![MenuItem::Action {
+                name: "Command Palette",
+                action: Box::new(command_palette::Toggle),
+            }],
         },
     ]
 }

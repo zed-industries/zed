@@ -314,7 +314,7 @@ mod tests {
     };
     use theme::{Theme, ThemeRegistry, DEFAULT_THEME_NAME};
     use workspace::{
-        open_paths, pane, Item, ItemHandle, OpenNew, Pane, SplitDirection, WorkspaceHandle,
+        open_paths, pane, Item, ItemHandle, NewFile, Pane, SplitDirection, WorkspaceHandle,
     };
 
     #[gpui::test]
@@ -376,7 +376,7 @@ mod tests {
     #[gpui::test]
     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
         let app_state = init(cx);
-        cx.dispatch_global_action(workspace::OpenNew);
+        cx.dispatch_global_action(workspace::NewFile);
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();
         let editor = workspace.update(cx, |workspace, cx| {
@@ -391,7 +391,7 @@ mod tests {
             assert!(editor.text(cx).is_empty());
         });
 
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(cx));
+        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
         app_state.fs.as_fake().insert_dir("/root").await;
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
         save_task.await.unwrap();
@@ -666,7 +666,7 @@ mod tests {
             .await;
         cx.read(|cx| assert!(editor.is_dirty(cx)));
 
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(cx));
+        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
         cx.simulate_prompt_answer(window_id, 0);
         save_task.await.unwrap();
         editor.read_with(cx, |editor, cx| {
@@ -686,7 +686,7 @@ mod tests {
         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, OpenNew);
+        cx.dispatch_action(window_id, NewFile);
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -707,7 +707,7 @@ mod tests {
         });
 
         // Save the buffer. This prompts for a filename.
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(cx));
+        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
         cx.simulate_new_path_selection(|parent_dir| {
             assert_eq!(parent_dir, Path::new("/root"));
             Some(parent_dir.join("the-new-name.rs"))
@@ -731,7 +731,7 @@ mod tests {
             editor.handle_input(&editor::Input(" there".into()), cx);
             assert_eq!(editor.is_dirty(cx.as_ref()), true);
         });
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(cx));
+        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
         save_task.await.unwrap();
         assert!(!cx.did_prompt_for_new_path());
         editor.read_with(cx, |editor, cx| {
@@ -741,7 +741,7 @@ mod tests {
 
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
-        cx.dispatch_action(window_id, OpenNew);
+        cx.dispatch_action(window_id, NewFile);
         workspace
             .update(cx, |workspace, cx| {
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
@@ -774,7 +774,7 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, OpenNew);
+        cx.dispatch_action(window_id, NewFile);
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -793,7 +793,7 @@ mod tests {
         });
 
         // Save the buffer. This prompts for a filename.
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(cx));
+        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name.rs")));
         save_task.await.unwrap();
         // The buffer is not dirty anymore and the language is assigned based on the path.

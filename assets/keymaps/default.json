@@ -14,13 +14,16 @@
             "shift-cmd-{": "pane::ActivatePrevItem",
             "shift-cmd-}": "pane::ActivateNextItem",
             "cmd-w": "pane::CloseActiveItem",
+            "cmd-shift-W": "workspace::CloseWindow",
             "alt-cmd-w": "pane::CloseInactiveItems",
             "cmd-s": "workspace::Save",
+            "cmd-shift-S": "workspace::SaveAs",
             "cmd-=": "zed::IncreaseBufferFontSize",
             "cmd--": "zed::DecreaseBufferFontSize",
             "cmd-,": "zed::OpenSettings",
             "cmd-q": "zed::Quit",
-            "cmd-n": "workspace::OpenNew",
+            "cmd-n": "workspace::NewFile",
+            "cmd-shift-N": "workspace::NewWindow",
             "cmd-o": "workspace::Open"
         }
     },
@@ -217,7 +220,8 @@
             "cmd-t": "project_symbols::Toggle",
             "cmd-p": "file_finder::Toggle",
             "cmd-shift-P": "command_palette::Toggle",
-            "cmd-shift-M": "diagnostics::Deploy"
+            "cmd-shift-M": "diagnostics::Deploy",
+            "cmd-alt-s": "workspace::SaveAll"
         }
     },
     // Bindings from Sublime Text

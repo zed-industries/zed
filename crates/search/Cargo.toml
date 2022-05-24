@@ -21,6 +21,7 @@ anyhow = "1.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 postage = { version = "0.4.1", features = ["futures-traits"] }
 serde = { version = "1", features = ["derive"] }
+smallvec = { version = "1.6", features = ["union"] }
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }

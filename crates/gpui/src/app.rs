@@ -521,10 +521,25 @@ impl TestAppContext {
             .downcast_mut::<platform::test::Window>()
             .unwrap();
         let mut done_tx = test_window
-            .last_prompt
-            .take()
+            .pending_prompts
+            .borrow_mut()
+            .pop_front()
             .expect("prompt was not called");
         let _ = done_tx.try_send(answer);
+    }
+
+    pub fn has_pending_prompt(&self, window_id: usize) -> bool {
+        let mut state = self.cx.borrow_mut();
+        let (_, window) = state
+            .presenters_and_platform_windows
+            .get_mut(&window_id)
+            .unwrap();
+        let test_window = window
+            .as_any_mut()
+            .downcast_mut::<platform::test::Window>()
+            .unwrap();
+        let prompts = test_window.pending_prompts.borrow_mut();
+        !prompts.is_empty()
     }
 
     #[cfg(any(test, feature = "test-support"))]

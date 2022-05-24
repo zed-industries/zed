@@ -11,6 +11,7 @@ use gpui::{
 };
 use project::{search::SearchQuery, Project};
 use settings::Settings;
+use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     ops::Range,
@@ -18,7 +19,8 @@ use std::{
 };
 use util::ResultExt as _;
 use workspace::{
-    menu::Confirm, Item, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace,
+    menu::Confirm, Item, ItemHandle, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView,
+    Workspace,
 };
 
 actions!(project_search, [Deploy, SearchInNew, ToggleFocus]);
@@ -234,8 +236,12 @@ impl Item for ProjectSearchView {
         None
     }
 
-    fn project_entry_id(&self, _: &AppContext) -> Option<project::ProjectEntryId> {
-        None
+    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[project::ProjectEntryId; 3]> {
+        self.results_editor.project_entry_ids(cx)
+    }
+
+    fn is_singleton(&self, _: &AppContext) -> bool {
+        false
     }
 
     fn can_save(&self, _: &gpui::AppContext) -> bool {
@@ -257,10 +263,6 @@ impl Item for ProjectSearchView {
     ) -> Task<anyhow::Result<()>> {
         self.results_editor
             .update(cx, |editor, cx| editor.save(project, cx))
-    }
-
-    fn can_save_as(&self, _: &gpui::AppContext) -> bool {
-        false
     }
 
     fn save_as(

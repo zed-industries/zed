@@ -216,7 +216,7 @@ pub enum Direction {
 }
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(Editor::open_new);
+    cx.add_action(Editor::new_file);
     cx.add_action(|this: &mut Editor, action: &Scroll, cx| this.set_scroll_position(action.0, cx));
     cx.add_action(Editor::select);
     cx.add_action(Editor::cancel);
@@ -1002,9 +1002,9 @@ impl Editor {
         this
     }
 
-    pub fn open_new(
+    pub fn new_file(
         workspace: &mut Workspace,
-        _: &workspace::OpenNew,
+        _: &workspace::NewFile,
         cx: &mut ViewContext<Workspace>,
     ) {
         let project = workspace.project().clone();

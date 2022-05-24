@@ -12,6 +12,7 @@ use language::{
     ToPointUtf16 as _, TransactionId,
 };
 use settings::Settings;
+use smallvec::SmallVec;
 use std::{
     cell::{Ref, RefCell},
     cmp, fmt, io,
@@ -1126,18 +1127,26 @@ impl MultiBuffer {
             .and_then(|(buffer, _)| buffer.read(cx).language())
     }
 
-    pub fn file<'a>(&self, cx: &'a AppContext) -> Option<&'a dyn File> {
-        self.as_singleton()?.read(cx).file()
+    pub fn files<'a>(&'a self, cx: &'a AppContext) -> SmallVec<[&'a dyn File; 2]> {
+        let buffers = self.buffers.borrow();
+        buffers
+            .values()
+            .filter_map(|buffer| buffer.buffer.read(cx).file())
+            .collect()
     }
 
     pub fn title(&self, cx: &AppContext) -> String {
         if let Some(title) = self.title.clone() {
-            title
-        } else if let Some(file) = self.file(cx) {
-            file.file_name(cx).to_string_lossy().into()
-        } else {
-            "untitled".into()
+            return title;
         }
+
+        if let Some(buffer) = self.as_singleton() {
+            if let Some(file) = buffer.read(cx).file() {
+                return file.file_name(cx).to_string_lossy().into();
+            }
+        }
+
+        "untitled".into()
     }
 
     #[cfg(test)]
