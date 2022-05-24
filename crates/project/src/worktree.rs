@@ -966,7 +966,7 @@ impl LocalWorktree {
                             #[cfg(any(test, feature = "test-support"))]
                             const CHUNK_SIZE: usize = 2;
                             #[cfg(not(any(test, feature = "test-support")))]
-                            const CHUNK_SIZE: usize = 128;
+                            const CHUNK_SIZE: usize = 256;
 
                             let entry = ignored_entries.next();
                             if ignored_entries_to_send.len() >= CHUNK_SIZE || entry.is_none() {
