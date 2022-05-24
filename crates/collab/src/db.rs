@@ -1717,7 +1717,7 @@ pub mod tests {
         }
 
         async fn get_invite_code_for_user(&self, _id: UserId) -> Result<Option<(String, u32)>> {
-            unimplemented!()
+            Ok(None)
         }
 
         async fn get_user_for_invite_code(&self, _code: &str) -> Result<User> {
