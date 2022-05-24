@@ -12,7 +12,7 @@ use util::{
     set_eq,
     test::{marked_text, marked_text_ranges_by, SetEqError},
 };
-use workspace::{AppState, WorkspaceHandle};
+use workspace::{pane, AppState, WorkspaceHandle};
 
 use crate::{state::Operator, *};
 
@@ -26,6 +26,7 @@ impl<'a> VimTestContext<'a> {
     pub async fn new(cx: &'a mut gpui::TestAppContext, enabled: bool) -> VimTestContext<'a> {
         cx.update(|cx| {
             editor::init(cx);
+            pane::init(cx);
             crate::init(cx);
 
             settings::KeymapFileContent::load("keymaps/vim.json", cx).unwrap();
@@ -269,9 +270,12 @@ impl<'a> VimTestContext<'a> {
                 panic!(
                     indoc! {"
                         Editor has extra selection
-                        Extra Selection Location: {}
-                        Asserted selections: {}
-                        Actual selections: {}"},
+                        Extra Selection Location:
+                        {}
+                        Asserted selections:
+                        {}
+                        Actual selections:
+                        {}"},
                     location_text, asserted_selections, actual_selections,
                 );
             }
@@ -279,9 +283,12 @@ impl<'a> VimTestContext<'a> {
                 panic!(
                     indoc! {"
                         Editor is missing empty selection
-                        Missing Selection Location: {}
-                        Asserted selections: {}
-                        Actual selections: {}"},
+                        Missing Selection Location:
+                        {}
+                        Asserted selections:
+                        {}
+                        Actual selections:
+                        {}"},
                     location_text, asserted_selections, actual_selections,
                 );
             }

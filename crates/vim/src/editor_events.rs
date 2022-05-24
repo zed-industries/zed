@@ -58,7 +58,7 @@ fn editor_released(EditorReleased(editor): &EditorReleased, cx: &mut MutableAppC
 fn editor_local_selections_changed(newest_empty: bool, cx: &mut MutableAppContext) {
     Vim::update(cx, |vim, cx| {
         if vim.state.mode == Mode::Normal && !newest_empty {
-            vim.switch_mode(Mode::Visual, cx)
+            vim.switch_mode(Mode::Visual { line: false }, cx)
         }
     })
 }

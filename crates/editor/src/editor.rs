@@ -1866,7 +1866,10 @@ impl Editor {
                     let snapshot = buffer.read(cx);
                     old_selections
                         .iter()
-                        .map(|s| (s.id, s.goal, snapshot.anchor_after(s.end)))
+                        .map(|s| {
+                            let anchor = snapshot.anchor_after(s.end);
+                            s.map(|_| anchor.clone())
+                        })
                         .collect::<Vec<_>>()
                 };
                 buffer.edit_with_autoindent(
@@ -1878,25 +1881,8 @@ impl Editor {
                 anchors
             });
 
-            let selections = {
-                let snapshot = this.buffer.read(cx).read(cx);
-                selection_anchors
-                    .into_iter()
-                    .map(|(id, goal, position)| {
-                        let position = position.to_offset(&snapshot);
-                        Selection {
-                            id,
-                            start: position,
-                            end: position,
-                            goal,
-                            reversed: false,
-                        }
-                    })
-                    .collect()
-            };
-
             this.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                s.select(selections);
+                s.select_anchors(selection_anchors);
             })
         });
     }

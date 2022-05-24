@@ -777,14 +777,8 @@ mod test {
                 |
                 The quick"},
         );
-        cx.assert(
-            indoc! {"
-                    |
-                The quick"},
-            indoc! {"
-                    |
-                The quick"},
-        );
+        // Indoc disallows trailing whitspace.
+        cx.assert("   | \nThe quick", "   | \nThe quick");
     }
 
     #[gpui::test]

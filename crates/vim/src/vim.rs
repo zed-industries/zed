@@ -10,7 +10,7 @@ mod utils;
 mod visual;
 
 use collections::HashMap;
-use editor::{CursorShape, Editor, Input};
+use editor::{Bias, CursorShape, Editor, Input};
 use gpui::{impl_actions, MutableAppContext, Subscription, ViewContext, WeakViewHandle};
 use serde::Deserialize;
 
@@ -43,7 +43,8 @@ pub fn init(cx: &mut MutableAppContext) {
     );
     cx.add_action(|_: &mut Editor, _: &Input, cx| {
         if Vim::read(cx).active_operator().is_some() {
-            cx.defer(|_, cx| Vim::update(cx, |vim, cx| vim.clear_operator(cx)))
+            // Defer without updating editor
+            MutableAppContext::defer(cx, |cx| Vim::update(cx, |vim, cx| vim.clear_operator(cx)))
         } else {
             cx.propagate_action()
         }
@@ -138,7 +139,8 @@ impl Vim {
                         editor.set_cursor_shape(cursor_shape, cx);
                         editor.set_clip_at_line_ends(state.clip_at_line_end(), cx);
                         editor.set_input_enabled(!state.vim_controlled());
-                        editor.selections.line_mode = state.mode == Mode::VisualLine;
+                        editor.selections.line_mode =
+                            matches!(state.mode, Mode::Visual { line: true });
                         let context_layer = state.keymap_context_layer();
                         editor.set_keymap_context_layer::<Self>(context_layer);
                     } else {
@@ -149,13 +151,17 @@ impl Vim {
                         editor.remove_keymap_context_layer::<Self>();
                     }
 
-                    if state.empty_selections_only() {
-                        editor.change_selections(None, cx, |s| {
-                            s.move_with(|_, selection| {
+                    editor.change_selections(None, cx, |s| {
+                        s.move_with(|map, selection| {
+                            selection.set_head(
+                                map.clip_point(selection.head(), Bias::Left),
+                                selection.goal,
+                            );
+                            if state.empty_selections_only() {
                                 selection.collapse_to(selection.head(), selection.goal)
-                            });
-                        })
-                    }
+                            }
+                        });
+                    })
                 });
             }
         }
@@ -190,9 +196,9 @@ mod test {
         assert_eq!(cx.mode(), Mode::Normal);
         cx.simulate_keystrokes(["h", "h", "h", "l"]);
         assert_eq!(cx.editor_text(), "hjkl".to_owned());
-        cx.assert_editor_state("hj|kl");
+        cx.assert_editor_state("h|jkl");
         cx.simulate_keystrokes(["i", "T", "e", "s", "t"]);
-        cx.assert_editor_state("hjTest|kl");
+        cx.assert_editor_state("hTest|jkl");
 
         // Disabling and enabling resets to normal mode
         assert_eq!(cx.mode(), Mode::Insert);

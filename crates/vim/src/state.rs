@@ -6,8 +6,7 @@ use serde::Deserialize;
 pub enum Mode {
     Normal,
     Insert,
-    Visual,
-    VisualLine,
+    Visual { line: bool },
 }
 
 impl Default for Mode {
@@ -38,7 +37,7 @@ pub struct VimState {
 impl VimState {
     pub fn cursor_shape(&self) -> CursorShape {
         match self.mode {
-            Mode::Normal | Mode::Visual | Mode::VisualLine => CursorShape::Block,
+            Mode::Normal | Mode::Visual { .. } => CursorShape::Block,
             Mode::Insert => CursorShape::Bar,
         }
     }
@@ -49,13 +48,13 @@ impl VimState {
 
     pub fn clip_at_line_end(&self) -> bool {
         match self.mode {
-            Mode::Insert | Mode::Visual | Mode::VisualLine => false,
+            Mode::Insert | Mode::Visual { .. } => false,
             _ => true,
         }
     }
 
     pub fn empty_selections_only(&self) -> bool {
-        self.mode != Mode::Visual && self.mode != Mode::VisualLine
+        !matches!(self.mode, Mode::Visual { .. })
     }
 
     pub fn keymap_context_layer(&self) -> Context {
@@ -64,8 +63,7 @@ impl VimState {
             "vim_mode".to_string(),
             match self.mode {
                 Mode::Normal => "normal",
-                Mode::Visual => "visual",
-                Mode::VisualLine => "visual_line",
+                Mode::Visual { .. } => "visual",
                 Mode::Insert => "insert",
             }
             .to_string(),

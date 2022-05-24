@@ -9,7 +9,7 @@
                 }
             ],
             "h": "vim::Left",
-            "backspace": "editor::Backspace", // "vim::Left",
+            "backspace": "vim::Left",
             "j": "vim::Down",
             "k": "vim::Up",
             "l": "vim::Right",
@@ -75,11 +75,19 @@
             "shift-O": "vim::InsertLineAbove",
             "v": [
                 "vim::SwitchMode",
-                "Visual"
+                {
+                    "Visual": {
+                        "line": false
+                    }
+                }
             ],
             "shift-V": [
                 "vim::SwitchMode",
-                "VisualLine"
+                {
+                    "Visual": {
+                        "line": true
+                    }
+                }
             ],
             "p": "vim::Paste",
             "u": "editor::Undo",
@@ -129,15 +137,6 @@
             "d": "vim::VisualDelete",
             "x": "vim::VisualDelete",
             "y": "vim::VisualYank"
-        }
-    },
-    {
-        "context": "Editor && vim_mode == visual_line",
-        "bindings": {
-            "c": "vim::VisualLineChange",
-            "d": "vim::VisualLineDelete",
-            "x": "vim::VisualLineDelete",
-            "y": "vim::VisualLineYank"
         }
     },
     {

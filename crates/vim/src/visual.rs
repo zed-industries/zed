@@ -1,29 +1,17 @@
 use collections::HashMap;
-use editor::{Autoscroll, Bias};
+use editor::{display_map::ToDisplayPoint, Autoscroll, Bias};
 use gpui::{actions, MutableAppContext, ViewContext};
+use language::SelectionGoal;
 use workspace::Workspace;
 
 use crate::{motion::Motion, state::Mode, utils::copy_selections_content, Vim};
 
-actions!(
-    vim,
-    [
-        VisualDelete,
-        VisualLineDelete,
-        VisualChange,
-        VisualLineChange,
-        VisualYank,
-        VisualLineYank,
-    ]
-);
+actions!(vim, [VisualDelete, VisualChange, VisualYank,]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(change);
-    cx.add_action(change_line);
     cx.add_action(delete);
-    cx.add_action(delete_line);
     cx.add_action(yank);
-    cx.add_action(yank_line);
 }
 
 pub fn visual_motion(motion: Motion, cx: &mut MutableAppContext) {
@@ -32,7 +20,6 @@ pub fn visual_motion(motion: Motion, cx: &mut MutableAppContext) {
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
                     let (new_head, goal) = motion.move_point(map, selection.head(), selection.goal);
-                    let new_head = map.clip_at_line_end(new_head);
                     let was_reversed = selection.reversed;
                     selection.set_head(new_head, goal);
 
@@ -57,7 +44,12 @@ pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspac
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            // Compute edits and resulting anchor selections. If in line mode, adjust
+            // the anchor location and additional newline
+            let mut edits = Vec::new();
+            let mut new_selections = Vec::new();
+            let line_mode = editor.selections.line_mode;
+            editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
                     if !selection.reversed {
                         // Head is at the end of the selection. Adjust the end position to
@@ -65,24 +57,33 @@ pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspac
                         *selection.end.column_mut() = selection.end.column() + 1;
                         selection.end = map.clip_point(selection.end, Bias::Left);
                     }
+
+                    if line_mode {
+                        let range = selection.map(|p| p.to_point(map)).range();
+                        let expanded_range = map.expand_to_line(range);
+                        // If we are at the last line, the anchor needs to be after the newline so that
+                        // it is on a line of its own. Otherwise, the anchor may be after the newline
+                        let anchor = if expanded_range.end == map.buffer_snapshot.max_point() {
+                            map.buffer_snapshot.anchor_after(expanded_range.end)
+                        } else {
+                            map.buffer_snapshot.anchor_before(expanded_range.start)
+                        };
+
+                        edits.push((expanded_range, "\n"));
+                        new_selections.push(selection.map(|_| anchor.clone()));
+                    } else {
+                        let range = selection.map(|p| p.to_point(map)).range();
+                        let anchor = map.buffer_snapshot.anchor_after(range.end);
+                        edits.push((range, ""));
+                        new_selections.push(selection.map(|_| anchor.clone()));
+                    }
                 });
             });
-            copy_selections_content(editor, false, cx);
-            editor.insert("", cx);
-        });
-        vim.switch_mode(Mode::Insert, cx);
-    });
-}
-
-pub fn change_line(_: &mut Workspace, _: &VisualLineChange, cx: &mut ViewContext<Workspace>) {
-    Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |editor, cx| {
-            editor.set_clip_at_line_ends(false, cx);
-
-            let adjusted = editor.selections.all_adjusted(cx);
-            editor.change_selections(None, cx, |s| s.select(adjusted));
-            copy_selections_content(editor, true, cx);
-            editor.insert("", cx);
+            copy_selections_content(editor, editor.selections.line_mode, cx);
+            editor.edit_with_autoindent(edits, cx);
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.select_anchors(new_selections);
+            });
         });
         vim.switch_mode(Mode::Insert, cx);
     });
@@ -92,9 +93,14 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
+            let mut original_columns: HashMap<_, _> = Default::default();
+            let line_mode = editor.selections.line_mode;
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
-                    if !selection.reversed {
+                    if line_mode {
+                        original_columns
+                            .insert(selection.id, selection.head().to_point(&map).column);
+                    } else if !selection.reversed {
                         // Head is at the end of the selection. Adjust the end position to
                         // to include the character under the cursor.
                         *selection.end.column_mut() = selection.end.column() + 1;
@@ -102,60 +108,19 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
                     }
                 });
             });
-            copy_selections_content(editor, false, cx);
+            copy_selections_content(editor, line_mode, cx);
             editor.insert("", cx);
 
             // Fixup cursor position after the deletion
             editor.set_clip_at_line_ends(true, cx);
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
-                    let mut cursor = selection.head();
-                    cursor = map.clip_point(cursor, Bias::Left);
-                    selection.collapse_to(cursor, selection.goal)
-                });
-            });
-        });
-        vim.switch_mode(Mode::Normal, cx);
-    });
-}
+                    let mut cursor = selection.head().to_point(map);
 
-pub fn delete_line(_: &mut Workspace, _: &VisualLineDelete, cx: &mut ViewContext<Workspace>) {
-    Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |editor, cx| {
-            editor.set_clip_at_line_ends(false, cx);
-            let mut original_columns: HashMap<_, _> = Default::default();
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                s.move_with(|map, selection| {
-                    original_columns.insert(selection.id, selection.head().column());
-                    selection.start = map.prev_line_boundary(selection.start.to_point(map)).1;
-
-                    if selection.end.row() < map.max_point().row() {
-                        *selection.end.row_mut() += 1;
-                        *selection.end.column_mut() = 0;
-                        selection.end = map.clip_point(selection.end, Bias::Right);
-                        // Don't reset the end here
-                        return;
-                    } else if selection.start.row() > 0 {
-                        *selection.start.row_mut() -= 1;
-                        *selection.start.column_mut() = map.line_len(selection.start.row());
-                        selection.start = map.clip_point(selection.start, Bias::Left);
-                    }
-
-                    selection.end = map.next_line_boundary(selection.end.to_point(map)).1;
-                });
-            });
-            copy_selections_content(editor, true, cx);
-            editor.insert("", cx);
-
-            // Fixup cursor position after the deletion
-            editor.set_clip_at_line_ends(true, cx);
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                s.move_with(|map, selection| {
-                    let mut cursor = selection.head();
                     if let Some(column) = original_columns.get(&selection.id) {
-                        *cursor.column_mut() = *column
+                        cursor.column = *column
                     }
-                    cursor = map.clip_point(cursor, Bias::Left);
+                    let cursor = map.clip_point(cursor.to_display_point(map), Bias::Left);
                     selection.collapse_to(cursor, selection.goal)
                 });
             });
@@ -168,9 +133,10 @@ pub fn yank(_: &mut Workspace, _: &VisualYank, cx: &mut ViewContext<Workspace>) 
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            let line_mode = editor.selections.line_mode;
+            editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
-                    if !selection.reversed {
+                    if !line_mode && !selection.reversed {
                         // Head is at the end of the selection. Adjust the end position to
                         // to include the character under the cursor.
                         *selection.end.column_mut() = selection.end.column() + 1;
@@ -178,19 +144,12 @@ pub fn yank(_: &mut Workspace, _: &VisualYank, cx: &mut ViewContext<Workspace>) 
                     }
                 });
             });
-            copy_selections_content(editor, false, cx);
-        });
-        vim.switch_mode(Mode::Normal, cx);
-    });
-}
-
-pub fn yank_line(_: &mut Workspace, _: &VisualLineYank, cx: &mut ViewContext<Workspace>) {
-    Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |editor, cx| {
-            editor.set_clip_at_line_ends(false, cx);
-            let adjusted = editor.selections.all_adjusted(cx);
-            editor.change_selections(None, cx, |s| s.select(adjusted));
-            copy_selections_content(editor, true, cx);
+            copy_selections_content(editor, line_mode, cx);
+            editor.change_selections(None, cx, |s| {
+                s.move_with(|_, selection| {
+                    selection.collapse_to(selection.start, SelectionGoal::None)
+                });
+            });
         });
         vim.switch_mode(Mode::Normal, cx);
     });
@@ -205,7 +164,9 @@ mod test {
     #[gpui::test]
     async fn test_enter_visual_mode(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["v", "w", "j"]).mode_after(Mode::Visual);
+        let mut cx = cx
+            .binding(["v", "w", "j"])
+            .mode_after(Mode::Visual { line: false });
         cx.assert(
             indoc! {"
                 The |quick brown
@@ -236,7 +197,9 @@ mod test {
                 fox jumps [over
                 }the lazy dog"},
         );
-        let mut cx = cx.binding(["v", "b", "k"]).mode_after(Mode::Visual);
+        let mut cx = cx
+            .binding(["v", "b", "k"])
+            .mode_after(Mode::Visual { line: false });
         cx.assert(
             indoc! {"
                 The |quick brown
@@ -576,7 +539,7 @@ mod test {
         );
         cx.assert_clipboard_content(Some(indoc! {"
             quick brown
-            fox jumps ov"}));
+            fox jumps o"}));
         cx.assert(
             indoc! {"
                 The quick brown
@@ -608,7 +571,7 @@ mod test {
                 fox jumps over
                 the lazy dog"},
             indoc! {"
-                The |quick brown
+                |The quick brown
                 fox jumps over
                 the lazy dog"},
         );
@@ -620,8 +583,8 @@ mod test {
                 the |lazy dog"},
             indoc! {"
                 The quick brown
-                fox jumps over
-                the |lazy dog"},
+                |fox jumps over
+                the lazy dog"},
         );
         cx.assert_clipboard_content(Some(indoc! {"
             fox jumps over
@@ -632,8 +595,8 @@ mod test {
                 fox jumps |over
                 the lazy dog"},
             indoc! {"
-                The quick brown
-                fox jumps |over
+                The |quick brown
+                fox jumps over
                 the lazy dog"},
         );
         cx.assert_clipboard_content(Some(indoc! {"
