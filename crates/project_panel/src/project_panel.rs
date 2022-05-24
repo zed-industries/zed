@@ -787,10 +787,9 @@ impl ProjectPanel {
         MouseEventHandler::new::<Self, _, _>(entry_id.to_usize(), cx, |state, _| {
             let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
             let mut style = theme.entry.style_for(state, details.is_selected).clone();
-            // TODO: get style from theme.
             if details.is_ignored {
-                style.text.color.fade_out(0.6);
-                style.icon_color.fade_out(0.6);
+                style.text.color.fade_out(theme.ignored_entry_fade);
+                style.icon_color.fade_out(theme.ignored_entry_fade);
             }
             let row_container_style = if show_editor {
                 theme.filename_editor.container

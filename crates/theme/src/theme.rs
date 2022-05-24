@@ -223,6 +223,7 @@ pub struct ProjectPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub entry: Interactive<ProjectPanelEntry>,
+    pub ignored_entry_fade: f32,
     pub filename_editor: FieldEditor,
     pub indent_width: f32,
 }
