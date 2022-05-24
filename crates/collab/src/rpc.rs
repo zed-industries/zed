@@ -1696,8 +1696,13 @@ mod tests {
         fs.insert_tree(
             "/a",
             json!({
+                ".gitignore": "ignored-dir",
                 "a.txt": "a-contents",
                 "b.txt": "b-contents",
+                "ignored-dir": {
+                    "c.txt": "",
+                    "d.txt": "",
+                }
             }),
         )
         .await;
@@ -1727,7 +1732,6 @@ mod tests {
         // Join that project as client B
         let client_b_peer_id = client_b.peer_id;
         let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
-
         let replica_id_b = project_b.read_with(cx_b, |project, _| {
             assert_eq!(
                 project
@@ -1740,16 +1744,27 @@ mod tests {
             );
             project.replica_id()
         });
-        project_a
-            .condition(&cx_a, |tree, _| {
-                tree.collaborators()
-                    .get(&client_b_peer_id)
-                    .map_or(false, |collaborator| {
-                        collaborator.replica_id == replica_id_b
-                            && collaborator.user.github_login == "user_b"
-                    })
-            })
-            .await;
+
+        deterministic.run_until_parked();
+        project_a.read_with(cx_a, |project, _| {
+            let client_b_collaborator = project.collaborators().get(&client_b_peer_id).unwrap();
+            assert_eq!(client_b_collaborator.replica_id, replica_id_b);
+            assert_eq!(client_b_collaborator.user.github_login, "user_b");
+        });
+        project_b.read_with(cx_b, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap().read(cx);
+            assert_eq!(
+                worktree.paths().map(AsRef::as_ref).collect::<Vec<_>>(),
+                [
+                    Path::new(".gitignore"),
+                    Path::new("a.txt"),
+                    Path::new("b.txt"),
+                    Path::new("ignored-dir"),
+                    Path::new("ignored-dir/c.txt"),
+                    Path::new("ignored-dir/d.txt"),
+                ]
+            );
+        });
 
         // Open the same file as client B and client A.
         let buffer_b = project_b
