@@ -12,10 +12,22 @@ pub enum ContextMenuItem {
     Separator,
 }
 
+impl ContextMenuItem {
+    pub fn item(label: String, action: impl 'static + Action) -> Self {
+        Self::Item {
+            label,
+            action: Box::new(action),
+        }
+    }
+
+    pub fn separator() -> Self {
+        Self::Separator
+    }
+}
+
 pub struct ContextMenu {
     position: Vector2F,
     items: Vec<ContextMenuItem>,
-    widest_item_index: usize,
     selected_index: Option<usize>,
     visible: bool,
 }
@@ -36,28 +48,22 @@ impl View for ContextMenu {
             return Empty::new().boxed();
         }
 
-        let style = cx.global::<Settings>().theme.context_menu.clone();
-
-        let mut widest_item = self.render_menu_item::<()>(self.widest_item_index, cx, &style);
-
-        Overlay::new(
-            Flex::column()
-                .with_children(
-                    (0..self.items.len()).map(|ix| self.render_menu_item::<Tag>(ix, cx, &style)),
+        // Render the menu once at minimum width.
+        let mut collapsed_menu = self.render_menu::<()>(false, cx).boxed();
+        let expanded_menu = self
+            .render_menu::<Tag>(true, cx)
+            .constrained()
+            .dynamically(move |constraint, cx| {
+                SizeConstraint::strict_along(
+                    Axis::Horizontal,
+                    collapsed_menu.layout(constraint, cx).x(),
                 )
-                .constrained()
-                .dynamically(move |constraint, cx| {
-                    SizeConstraint::strict_along(
-                        Axis::Horizontal,
-                        widest_item.layout(constraint, cx).x(),
-                    )
-                })
-                .contained()
-                .with_style(style.container)
-                .boxed(),
-        )
-        .with_abs_position(self.position)
-        .boxed()
+            })
+            .boxed();
+
+        Overlay::new(expanded_menu)
+            .with_abs_position(self.position)
+            .boxed()
     }
 
     fn on_blur(&mut self, cx: &mut ViewContext<Self>) {
@@ -72,7 +78,6 @@ impl ContextMenu {
             position: Default::default(),
             items: Default::default(),
             selected_index: Default::default(),
-            widest_item_index: Default::default(),
             visible: false,
         }
     }
@@ -86,25 +91,31 @@ impl ContextMenu {
         let mut items = items.into_iter().peekable();
         assert!(items.peek().is_some(), "must have at least one item");
         self.items = items.collect();
-        self.widest_item_index = self
-            .items
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, item)| match item {
-                ContextMenuItem::Item { label, .. } => label.chars().count(),
-                ContextMenuItem::Separator => 0,
-            })
-            .unwrap()
-            .0;
         self.position = position;
         self.visible = true;
         cx.focus_self();
         cx.notify();
     }
 
+    fn render_menu<Tag: 'static>(
+        &mut self,
+        expanded: bool,
+        cx: &mut RenderContext<Self>,
+    ) -> impl Element {
+        let style = cx.global::<Settings>().theme.context_menu.clone();
+        Flex::column()
+            .with_children(
+                (0..self.items.len())
+                    .map(|ix| self.render_menu_item::<Tag>(ix, expanded, cx, &style)),
+            )
+            .contained()
+            .with_style(style.container)
+    }
+
     fn render_menu_item<T: 'static>(
         &self,
         ix: usize,
+        expanded: bool,
         cx: &mut RenderContext<ContextMenu>,
         style: &theme::ContextMenu,
     ) -> ElementBox {
@@ -115,18 +126,35 @@ impl ContextMenu {
                     let style = style.item.style_for(state, Some(ix) == self.selected_index);
                     Flex::row()
                         .with_child(Label::new(label.to_string(), style.label.clone()).boxed())
+                        .with_child({
+                            let label = KeystrokeLabel::new(
+                                action.boxed_clone(),
+                                style.keystroke.container,
+                                style.keystroke.text.clone(),
+                            );
+                            if expanded {
+                                label.flex_float().boxed()
+                            } else {
+                                label.boxed()
+                            }
+                        })
                         .boxed()
                 })
                 .on_click(move |_, _, cx| cx.dispatch_any_action(action.boxed_clone()))
                 .boxed()
             }
-            ContextMenuItem::Separator => Empty::new()
-                .contained()
-                .with_style(style.separator)
-                .constrained()
-                .with_height(1.)
-                .flex(1., false)
-                .boxed(),
+            ContextMenuItem::Separator => {
+                let mut separator = Empty::new();
+                if !expanded {
+                    separator = separator.collapsed();
+                }
+                separator
+                    .contained()
+                    .with_style(style.separator)
+                    .constrained()
+                    .with_height(1.)
+                    .boxed()
+            }
         }
     }
 }

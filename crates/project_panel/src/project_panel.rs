@@ -220,23 +220,11 @@ impl ProjectPanel {
             menu.show(
                 action.position,
                 [
-                    ContextMenuItem::Item {
-                        label: "New File".to_string(),
-                        action: Box::new(AddFile),
-                    },
-                    ContextMenuItem::Item {
-                        label: "New Directory".to_string(),
-                        action: Box::new(AddDirectory),
-                    },
+                    ContextMenuItem::item("New File".to_string(), AddFile),
+                    ContextMenuItem::item("New Directory".to_string(), AddDirectory),
                     ContextMenuItem::Separator,
-                    ContextMenuItem::Item {
-                        label: "Rename".to_string(),
-                        action: Box::new(Rename),
-                    },
-                    ContextMenuItem::Item {
-                        label: "Delete".to_string(),
-                        action: Box::new(Delete),
-                    },
+                    ContextMenuItem::item("Rename".to_string(), Rename),
+                    ContextMenuItem::item("Delete".to_string(), Delete),
                 ],
                 cx,
             );

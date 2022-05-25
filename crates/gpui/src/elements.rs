@@ -8,6 +8,7 @@ mod expanded;
 mod flex;
 mod hook;
 mod image;
+mod keystroke_label;
 mod label;
 mod list;
 mod mouse_event_handler;
@@ -20,8 +21,8 @@ mod uniform_list;
 use self::expanded::Expanded;
 pub use self::{
     align::*, canvas::*, constrained_box::*, container::*, empty::*, event_handler::*, flex::*,
-    hook::*, image::*, label::*, list::*, mouse_event_handler::*, overlay::*, stack::*, svg::*,
-    text::*, uniform_list::*,
+    hook::*, image::*, keystroke_label::*, label::*, list::*, mouse_event_handler::*, overlay::*,
+    stack::*, svg::*, text::*, uniform_list::*,
 };
 pub use crate::presenter::ChildView;
 use crate::{

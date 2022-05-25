@@ -15,9 +15,10 @@ export default function contextMenu(theme: Theme) {
     shadow: shadow(theme),
     item: {
       label: text(theme, "sans", "secondary", { size: "sm" }),
+      keystroke: text(theme, "sans", "muted", { size: "sm", weight: "bold" }),
     },
     separator: {
       background: "#00ff00"
-    }
+    },
   }
 }

@@ -253,6 +253,7 @@ pub struct ContextMenuItem {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub label: TextStyle,
+    pub keystroke: ContainedText,
 }
 
 #[derive(Debug, Deserialize, Default)]

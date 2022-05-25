@@ -11,3 +11,4 @@ doctest = false
 gpui = { path = "../gpui" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
+smallvec = "1.6"

@@ -185,7 +185,7 @@ impl Matcher {
                 return Some(binding.keystrokes.clone());
             }
         }
-        todo!()
+        None
     }
 }
 
@@ -308,6 +308,34 @@ impl Keystroke {
 
     pub fn modified(&self) -> bool {
         self.ctrl || self.alt || self.shift || self.cmd
+    }
+}
+
+impl std::fmt::Display for Keystroke {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.ctrl {
+            write!(f, "{}", "^")?;
+        }
+        if self.alt {
+            write!(f, "{}", "⎇")?;
+        }
+        if self.cmd {
+            write!(f, "{}", "⌘")?;
+        }
+        if self.shift {
+            write!(f, "{}", "⇧")?;
+        }
+        let key = match self.key.as_str() {
+            "backspace" => "⌫",
+            "up" => "↑",
+            "down" => "↓",
+            "left" => "←",
+            "right" => "→",
+            "tab" => "⇥",
+            "escape" => "⎋",
+            key => key,
+        };
+        write!(f, "{}", key)
     }
 }
 

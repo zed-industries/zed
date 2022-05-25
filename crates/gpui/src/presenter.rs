@@ -4,6 +4,7 @@ use crate::{
     font_cache::FontCache,
     geometry::rect::RectF,
     json::{self, ToJson},
+    keymap::Keystroke,
     platform::{CursorStyle, Event},
     text_layout::TextLayoutCache,
     Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox,
@@ -12,6 +13,7 @@ use crate::{
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
+use smallvec::SmallVec;
 use std::{
     collections::{HashMap, HashSet},
     ops::{Deref, DerefMut},
@@ -148,6 +150,7 @@ impl Presenter {
         cx: &'a mut MutableAppContext,
     ) -> LayoutContext<'a> {
         LayoutContext {
+            window_id: self.window_id,
             rendered_views: &mut self.rendered_views,
             parents: &mut self.parents,
             refreshing,
@@ -257,6 +260,7 @@ pub struct DispatchDirective {
 }
 
 pub struct LayoutContext<'a> {
+    window_id: usize,
     rendered_views: &'a mut HashMap<usize, ElementBox>,
     parents: &'a mut HashMap<usize, usize>,
     view_stack: Vec<usize>,
@@ -280,6 +284,14 @@ impl<'a> LayoutContext<'a> {
         self.rendered_views.insert(view_id, rendered_view);
         self.view_stack.pop();
         size
+    }
+
+    pub(crate) fn keystrokes_for_action(
+        &self,
+        action: &dyn Action,
+    ) -> Option<SmallVec<[Keystroke; 2]>> {
+        self.app
+            .keystrokes_for_action(self.window_id, &self.view_stack, action)
     }
 }
 
