@@ -131,8 +131,8 @@ export function createTheme(
     },
     highlight: {
       selection: player[1].selectionColor,
-      occurrence: withOpacity(rampColor(ramps.neutral, 2), blend),
-      activeOccurrence: withOpacity(rampColor(ramps.neutral, 2), blend * 2), // TODO: Not hooked up - https://github.com/zed-industries/zed/issues/751
+      occurrence: withOpacity(rampColor(ramps.neutral, 3.5), blend),
+      activeOccurrence: withOpacity(rampColor(ramps.neutral, 3.5), blend * 2), // TODO: Not hooked up - https://github.com/zed-industries/zed/issues/751
       matchingBracket: backgroundColor[500].active, // TODO: Not hooked up
       match: rampColor(ramps.violet, 0.15),
       activeMatch: withOpacity(rampColor(ramps.violet, 0.4), blend * 2), // TODO: Not hooked up - https://github.com/zed-industries/zed/issues/751
