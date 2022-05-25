@@ -975,6 +975,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "context_menu"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "theme",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.3"
 source = "git+https://github.com/servo/core-foundation-rs?rev=079665882507dd5e2ff77db3de5070c1f6c0fb85#079665882507dd5e2ff77db3de5070c1f6c0fb85"
