@@ -1413,6 +1413,28 @@ impl MutableAppContext {
         self.global_actions.contains_key(&action_type)
     }
 
+    /// Return keystrokes that would dispatch the given action closest to the focused view, if there are any.
+    pub fn keystrokes_for_action(&self, action: &dyn Action) -> Option<SmallVec<[Keystroke; 2]>> {
+        let window_id = self.cx.platform.key_window_id()?;
+        let (presenter, _) = self.presenters_and_platform_windows.get(&window_id)?;
+        let dispatch_path = presenter.borrow().dispatch_path(&self.cx);
+
+        for view_id in dispatch_path.iter().rev() {
+            let view = self
+                .cx
+                .views
+                .get(&(window_id, *view_id))
+                .expect("view in responder chain does not exist");
+            let cx = view.keymap_context(self.as_ref());
+            let keystrokes = self.keystroke_matcher.keystrokes_for_action(action, &cx);
+            if keystrokes.is_some() {
+                return keystrokes;
+            }
+        }
+
+        None
+    }
+
     pub fn dispatch_action_at(&mut self, window_id: usize, view_id: usize, action: &dyn Action) {
         let presenter = self
             .presenters_and_platform_windows
