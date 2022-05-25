@@ -1,5 +1,5 @@
 import chroma from "chroma-js";
-import Theme, { BackgroundColorSet } from "../themes/theme";
+import Theme, { BackgroundColorSet } from "../themes/common/theme";
 import { fontFamilies, fontSizes, FontWeight } from "../tokens";
 import { Color } from "../utils/color";
 

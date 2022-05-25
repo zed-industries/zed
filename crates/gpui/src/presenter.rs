@@ -122,8 +122,10 @@ impl Presenter {
             self.text_layout_cache.finish_frame();
             self.cursor_styles = scene.cursor_styles();
 
-            if let Some(event) = self.last_mouse_moved_event.clone() {
-                self.dispatch_event(event, cx)
+            if cx.window_is_active(self.window_id) {
+                if let Some(event) = self.last_mouse_moved_event.clone() {
+                    self.dispatch_event(event, cx)
+                }
             }
         } else {
             log::error!("could not find root_view_id for window {}", self.window_id);
@@ -386,11 +388,15 @@ impl<'a> EventContext<'a> {
         }
     }
 
-    pub fn dispatch_action<A: Action>(&mut self, action: A) {
+    pub fn dispatch_any_action(&mut self, action: Box<dyn Action>) {
         self.dispatched_actions.push(DispatchDirective {
             path: self.view_stack.clone(),
-            action: Box::new(action),
+            action,
         });
+    }
+
+    pub fn dispatch_action<A: Action>(&mut self, action: A) {
+        self.dispatch_any_action(Box::new(action));
     }
 
     pub fn notify(&mut self) {

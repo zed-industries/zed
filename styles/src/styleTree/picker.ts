@@ -1,4 +1,4 @@
-import Theme from "../themes/theme";
+import Theme from "../themes/common/theme";
 import { backgroundColor, border, player, shadow, text } from "./components";
 
 export default function picker(theme: Theme) {

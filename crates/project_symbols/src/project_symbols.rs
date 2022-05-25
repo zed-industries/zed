@@ -145,11 +145,9 @@ impl ProjectSymbolsView {
 
                         let editor = workspace.open_project_item::<Editor>(buffer, cx);
                         editor.update(cx, |editor, cx| {
-                            editor.select_ranges(
-                                [position..position],
-                                Some(Autoscroll::Center),
-                                cx,
-                            );
+                            editor.change_selections(Some(Autoscroll::Center), cx, |s| {
+                                s.select_ranges([position..position])
+                            });
                         });
                     });
                     Ok::<_, anyhow::Error>(())
@@ -297,7 +295,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree("/dir", json!({ "test.rs": "" })).await;
 
-        let project = Project::test(fs.clone(), ["/dir"], cx).await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));
 
         let _buffer = project

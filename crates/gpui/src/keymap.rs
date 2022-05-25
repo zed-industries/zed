@@ -123,6 +123,10 @@ impl Matcher {
         self.pending.clear();
     }
 
+    pub fn has_pending_keystrokes(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
     pub fn push_keystroke(
         &mut self,
         keystroke: Keystroke,

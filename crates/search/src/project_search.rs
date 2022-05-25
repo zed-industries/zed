@@ -11,6 +11,7 @@ use gpui::{
 };
 use project::{search::SearchQuery, Project};
 use settings::Settings;
+use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     ops::Range,
@@ -18,7 +19,8 @@ use std::{
 };
 use util::ResultExt as _;
 use workspace::{
-    menu::Confirm, Item, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace,
+    menu::Confirm, Item, ItemHandle, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView,
+    Workspace,
 };
 
 actions!(project_search, [Deploy, SearchInNew, ToggleFocus]);
@@ -234,8 +236,12 @@ impl Item for ProjectSearchView {
         None
     }
 
-    fn project_entry_id(&self, _: &AppContext) -> Option<project::ProjectEntryId> {
-        None
+    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[project::ProjectEntryId; 3]> {
+        self.results_editor.project_entry_ids(cx)
+    }
+
+    fn is_singleton(&self, _: &AppContext) -> bool {
+        false
     }
 
     fn can_save(&self, _: &gpui::AppContext) -> bool {
@@ -257,10 +263,6 @@ impl Item for ProjectSearchView {
     ) -> Task<anyhow::Result<()>> {
         self.results_editor
             .update(cx, |editor, cx| editor.save(project, cx))
-    }
-
-    fn can_save_as(&self, _: &gpui::AppContext) -> bool {
-        false
     }
 
     fn save_as(
@@ -454,15 +456,17 @@ impl ProjectSearchView {
             let results_editor = self.results_editor.read(cx);
             let new_index = match_index_for_direction(
                 &model.match_ranges,
-                &results_editor.newest_anchor_selection().head(),
+                &results_editor.selections.newest_anchor().head(),
                 index,
                 direction,
-                &results_editor.buffer().read(cx).read(cx),
+                &results_editor.buffer().read(cx).snapshot(cx),
             );
             let range_to_select = model.match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
                 editor.unfold_ranges([range_to_select.clone()], false, cx);
-                editor.select_ranges([range_to_select], Some(Autoscroll::Fit), cx);
+                editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                    s.select_ranges([range_to_select])
+                });
             });
         }
     }
@@ -476,8 +480,8 @@ impl ProjectSearchView {
 
     fn focus_results_editor(&self, cx: &mut ViewContext<Self>) {
         self.query_editor.update(cx, |query_editor, cx| {
-            let cursor = query_editor.newest_anchor_selection().head();
-            query_editor.select_ranges([cursor.clone()..cursor], None, cx);
+            let cursor = query_editor.selections.newest_anchor().head();
+            query_editor.change_selections(None, cx, |s| s.select_ranges([cursor.clone()..cursor]));
         });
         cx.focus(&self.results_editor);
     }
@@ -489,7 +493,9 @@ impl ProjectSearchView {
         } else {
             self.results_editor.update(cx, |editor, cx| {
                 if reset_selections {
-                    editor.select_ranges(match_ranges.first().cloned(), Some(Autoscroll::Fit), cx);
+                    editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                        s.select_ranges(match_ranges.first().cloned())
+                    });
                 }
                 editor.highlight_background::<Self>(
                     match_ranges,
@@ -510,8 +516,8 @@ impl ProjectSearchView {
         let results_editor = self.results_editor.read(cx);
         let new_index = active_match_index(
             &self.model.read(cx).match_ranges,
-            &results_editor.newest_anchor_selection().head(),
-            &results_editor.buffer().read(cx).read(cx),
+            &results_editor.selections.newest_anchor().head(),
+            &results_editor.buffer().read(cx).snapshot(cx),
         );
         if self.active_match_index != new_index {
             self.active_match_index = new_index;
@@ -844,7 +850,7 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), ["/dir"], cx).await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let search = cx.add_model(|cx| ProjectSearch::new(project, cx));
         let search_view = cx.add_view(Default::default(), |cx| {
             ProjectSearchView::new(search.clone(), cx)
@@ -887,7 +893,7 @@ mod tests {
             assert_eq!(
                 search_view
                     .results_editor
-                    .update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(2, 32)..DisplayPoint::new(2, 35)]
             );
 
@@ -899,7 +905,7 @@ mod tests {
             assert_eq!(
                 search_view
                     .results_editor
-                    .update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(2, 37)..DisplayPoint::new(2, 40)]
             );
             search_view.select_match(Direction::Next, cx);
@@ -910,7 +916,7 @@ mod tests {
             assert_eq!(
                 search_view
                     .results_editor
-                    .update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(5, 6)..DisplayPoint::new(5, 9)]
             );
             search_view.select_match(Direction::Next, cx);
@@ -921,7 +927,7 @@ mod tests {
             assert_eq!(
                 search_view
                     .results_editor
-                    .update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(2, 32)..DisplayPoint::new(2, 35)]
             );
             search_view.select_match(Direction::Prev, cx);
@@ -932,7 +938,7 @@ mod tests {
             assert_eq!(
                 search_view
                     .results_editor
-                    .update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(5, 6)..DisplayPoint::new(5, 9)]
             );
             search_view.select_match(Direction::Prev, cx);
@@ -943,7 +949,7 @@ mod tests {
             assert_eq!(
                 search_view
                     .results_editor
-                    .update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                    .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(2, 37)..DisplayPoint::new(2, 40)]
             );
         });

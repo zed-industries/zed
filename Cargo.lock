@@ -768,6 +768,7 @@ dependencies = [
  "anyhow",
  "async-recursion",
  "async-tungstenite",
+ "collections",
  "futures",
  "gpui",
  "image",
@@ -850,11 +851,13 @@ dependencies = [
  "envy",
  "futures",
  "gpui",
+ "hyper",
  "language",
  "lazy_static",
  "lipsum",
  "log",
  "lsp",
+ "nanoid",
  "opentelemetry",
  "opentelemetry-otlp",
  "parking_lot",
@@ -906,6 +909,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "picker",
+ "project",
  "serde_json",
  "settings",
  "theme",
@@ -932,6 +936,7 @@ checksum = "f92cfa0fd5690b3cf8c1ef2cabbd9b7ef22fa53cf5e1f92b05103f6d5d1cf6e7"
 name = "contacts_panel"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "client",
  "editor",
  "futures",
@@ -1240,6 +1245,7 @@ dependencies = [
  "project",
  "serde_json",
  "settings",
+ "smallvec",
  "theme",
  "unindent",
  "util",
@@ -2761,6 +2767,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
 
 [[package]]
+name = "nanoid"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ffa00dec017b5b1a8b7cf5e2c008bfda1aa7e0697ac1508b491fdf2622fb4d8"
+dependencies = [
+ "rand 0.8.3",
+]
+
+[[package]]
 name = "native-tls"
 version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3404,6 +3419,7 @@ dependencies = [
  "sum_tree",
  "tempdir",
  "text",
+ "thiserror",
  "toml",
  "unindent",
  "util",
@@ -4134,6 +4150,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smallvec",
  "theme",
  "unindent",
  "util",
@@ -5332,6 +5349,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-serde"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc6b213177105856957181934e4920de57730fc69bf42c37ee5bb664d406d9e1"
+dependencies = [
+ "serde",
+ "tracing-core",
+]
+
+[[package]]
 name = "tracing-subscriber"
 version = "0.3.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5341,19 +5368,22 @@ dependencies = [
  "lazy_static",
  "matchers",
  "regex",
+ "serde",
+ "serde_json",
  "sharded-slab",
  "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
  "tracing-log",
+ "tracing-serde",
 ]
 
 [[package]]
 name = "tree-sitter"
-version = "0.20.4"
+version = "0.20.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e34327f8eac545e3f037382471b2b19367725a242bba7bc45edb9efb49fe39a"
+checksum = "09b3b781640108d29892e8b9684642d2cda5ea05951fd58f0fea1db9edeb9b71"
 dependencies = [
  "cc",
  "regex",
@@ -6009,7 +6039,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "zed"
-version = "0.33.0"
+version = "0.35.0"
 dependencies = [
  "anyhow",
  "assets",

@@ -1,4 +1,4 @@
-import Theme from "../themes/theme";
+import Theme from "../themes/common/theme";
 import picker from "./picker";
 import { backgroundColor, iconColor } from "./components";
 

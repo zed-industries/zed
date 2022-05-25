@@ -13,10 +13,12 @@ editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 picker = { path = "../picker" }
+project = { path = "../project" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
+anyhow = "1.0"
 futures = "0.3"
 log = "0.4"
 postage = { version = "0.4.1", features = ["futures-traits"] }

@@ -12,6 +12,7 @@ editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 picker = { path = "../picker" }
+project = { path = "../project" }
 settings = { path = "../settings" }
 util = { path = "../util" }
 theme = { path = "../theme" }
@@ -20,6 +21,7 @@ workspace = { path = "../workspace" }
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }
+project = { path = "../project", features = ["test-support"] }
 serde_json = { version = "1.0.64", features = ["preserve_order"] }
 workspace = { path = "../workspace", features = ["test-support"] }
 ctor = "0.1"

@@ -1,4 +1,4 @@
-import Theme from "../themes/theme";
+import Theme from "../themes/common/theme";
 import { panel } from "./app";
 import { backgroundColor, border, borderColor, iconColor, player, text } from "./components";
 
@@ -42,6 +42,7 @@ export default function contactsPanel(theme: Theme) {
 
   return {
     ...panel,
+    padding: { top: panel.padding.top, bottom: 0 },
     userQueryEditor: {
       background: backgroundColor(theme, 500),
       cornerRadius: 6,
@@ -122,7 +123,7 @@ export default function contactsPanel(theme: Theme) {
       background: backgroundColor(theme, 100),
       color: iconColor(theme, "muted"),
     },
-    sharedProjectRow: {
+    projectRow: {
       ...projectRow,
       background: backgroundColor(theme, 300),
       name: {
@@ -136,18 +137,15 @@ export default function contactsPanel(theme: Theme) {
         background: backgroundColor(theme, 300, "active"),
       }
     },
-    unsharedProjectRow: {
-      ...projectRow,
-      background: backgroundColor(theme, 300),
-      name: {
-        ...projectRow.name,
-        ...text(theme, "mono", "secondary", { size: "sm" }),
+    inviteRow: {
+      padding: {
+        left: sidePadding,
+        right: sidePadding
       },
+      border: { top: true, width: 1, color: borderColor(theme, "primary") },
+      text: text(theme, "sans", "primary", { size: "sm" }),
       hover: {
-        background: backgroundColor(theme, 300, "hovered"),
-      },
-      active: {
-        background: backgroundColor(theme, 300, "active"),
+        text: text(theme, "sans", "primary", { size: "sm", underline: true })
       }
     }
   }

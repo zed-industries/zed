@@ -1,29 +1,28 @@
-import { createTheme } from "./base16";
-import { color } from "../tokens";
+import chroma from "chroma-js";
+import { colorRamp, createTheme } from "./common/base16";
 
 const name = "molika";
 
-const neutrals = [
-  color("#161616"),
-  color("#161616"),
-  color("#676767"),
-  color("#676767"),
-  color("#c7c7c7"),
-  color("#c7c7c7"),
-  color("#feffff"),
-  color("#feffff"),
-];
-
-const colors = {
-  "red": color("#fa7fac"),
-  "orange": color("#e5da72"),
-  "yellow": color("#fff27f"),
-  "green": color("#bde271"),
-  "cyan": color("#5ed6fe"),
-  "blue": color("#00bdff"),
-  "violet": color("#9a37ff"),
-  "magenta": color("#bd9eff"),
+const ramps = {
+  neutral: chroma.scale([
+    "#161616",
+    "#2f2f2f",
+    "#4a4a4a",
+    "#676767",
+    "#868686",
+    "#a6a6a6",
+    "#c7c7c7",
+    "#feffff",
+  ]),
+  red: colorRamp(chroma("#bd9eff")),
+  orange: colorRamp(chroma("#bde271")),
+  yellow: colorRamp(chroma("#bd9eff")),
+  green: colorRamp(chroma("#bde271")),
+  cyan: colorRamp(chroma("#5ed6fe")),
+  blue: colorRamp(chroma("#fa7fac")),
+  violet: colorRamp(chroma("#fff27f")),
+  magenta: colorRamp(chroma("#00bdff")),
 };
 
-export const dark = createTheme(`${name}-dark`, false, neutrals, colors);
-// export const light = createTheme(`${name}-light`, true, neutrals, colors);
+export const dark = createTheme(`${name}`, false, ramps);
+// export const light = createTheme(`${name}-light`, true, ramps);

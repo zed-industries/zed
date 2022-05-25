@@ -1,4 +1,4 @@
-import Theme from "../themes/theme";
+import Theme from "../themes/common/theme";
 import chatPanel from "./chatPanel";
 import { text } from "./components";
 import contactFinder from "./contactFinder";

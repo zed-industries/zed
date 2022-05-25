@@ -12,7 +12,7 @@ use std::{collections::HashMap, sync::Arc};
 
 pub use theme_registry::*;
 
-pub const DEFAULT_THEME_NAME: &'static str = "dark";
+pub const DEFAULT_THEME_NAME: &'static str = "cave-dark";
 
 #[derive(Deserialize, Default)]
 pub struct Theme {
@@ -48,6 +48,8 @@ pub struct Workspace {
     pub modal: ContainerStyle,
     pub notification: ContainerStyle,
     pub notifications: Notifications,
+    pub joining_project_avatar: ImageStyle,
+    pub joining_project_message: ContainedText,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -221,11 +223,12 @@ pub struct ProjectPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub entry: Interactive<ProjectPanelEntry>,
+    pub ignored_entry_fade: f32,
     pub filename_editor: FieldEditor,
     pub indent_width: f32,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default)]
 pub struct ProjectPanelEntry {
     pub height: f32,
     #[serde(flatten)]
@@ -251,8 +254,7 @@ pub struct ContactsPanel {
     pub add_contact_button: IconButton,
     pub header_row: Interactive<ContainedText>,
     pub contact_row: Interactive<ContainerStyle>,
-    pub shared_project_row: Interactive<ProjectRow>,
-    pub unshared_project_row: Interactive<ProjectRow>,
+    pub project_row: Interactive<ProjectRow>,
     pub row_height: f32,
     pub contact_avatar: ImageStyle,
     pub contact_username: ContainedText,
@@ -261,6 +263,16 @@ pub struct ContactsPanel {
     pub disabled_contact_button: IconButton,
     pub tree_branch: Interactive<TreeBranch>,
     pub section_icon_size: f32,
+    pub invite_row: Interactive<ContainedLabel>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct InviteLink {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    #[serde(flatten)]
+    pub label: LabelStyle,
+    pub icon: Icon,
 }
 
 #[derive(Deserialize, Default, Clone, Copy)]
@@ -276,6 +288,15 @@ pub struct ContactFinder {
     pub contact_username: ContainerStyle,
     pub contact_button: IconButton,
     pub disabled_contact_button: IconButton,
+}
+
+#[derive(Deserialize, Default)]
+pub struct Icon {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub color: Color,
+    pub width: f32,
+    pub path: String,
 }
 
 #[derive(Deserialize, Default)]

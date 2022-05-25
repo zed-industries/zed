@@ -9,6 +9,7 @@ doctest = false
 
 [dependencies]
 anyhow = "1.0"
+smallvec = { version = "1.6", features = ["union"] }
 collections = { path = "../collections" }
 editor = { path = "../editor" }
 language = { path = "../language" }

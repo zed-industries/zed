@@ -12,7 +12,7 @@ use std::{
     sync::Arc,
 };
 use tracing_log::LogTracer;
-use tracing_subscriber::filter::EnvFilter;
+use tracing_subscriber::{filter::EnvFilter, fmt::format::JsonFields, Layer};
 use util::ResultExt;
 
 #[derive(Default, Deserialize)]
@@ -20,14 +20,17 @@ pub struct Config {
     pub http_port: u16,
     pub database_url: String,
     pub api_token: String,
+    pub invite_link_prefix: String,
     pub honeycomb_api_key: Option<String>,
     pub honeycomb_dataset: Option<String>,
     pub rust_log: Option<String>,
+    pub log_json: Option<bool>,
 }
 
 pub struct AppState {
     db: Arc<dyn Db>,
     api_token: String,
+    invite_link_prefix: String,
 }
 
 impl AppState {
@@ -36,6 +39,7 @@ impl AppState {
         let this = Self {
             db: Arc::new(db),
             api_token: config.api_token.clone(),
+            invite_link_prefix: config.invite_link_prefix.clone(),
         };
         Ok(Arc::new(this))
     }
@@ -56,10 +60,11 @@ async fn main() -> Result<()> {
 
     let listener = TcpListener::bind(&format!("0.0.0.0:{}", config.http_port))
         .expect("failed to bind TCP listener");
+    let rpc_server = rpc::Server::new(state.clone(), None);
 
     let app = Router::<Body>::new()
-        .merge(api::routes(state.clone()))
-        .merge(rpc::routes(state));
+        .merge(api::routes(&rpc_server, state.clone()))
+        .merge(rpc::routes(rpc_server));
 
     axum::Server::from_tcp(listener)?
         .serve(app.into_make_service_with_connect_info::<SocketAddr>())
@@ -75,11 +80,26 @@ pub enum Error {
     Internal(anyhow::Error),
 }
 
-impl<E> From<E> for Error
-where
-    E: Into<anyhow::Error>,
-{
-    fn from(error: E) -> Self {
+impl From<anyhow::Error> for Error {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Internal(error)
+    }
+}
+
+impl From<sqlx::Error> for Error {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Internal(error.into())
+    }
+}
+
+impl From<axum::Error> for Error {
+    fn from(error: axum::Error) -> Self {
+        Self::Internal(error.into())
+    }
+}
+
+impl From<hyper::Error> for Error {
+    fn from(error: hyper::Error) -> Self {
         Self::Internal(error.into())
     }
 }
@@ -112,6 +132,8 @@ impl std::fmt::Display for Error {
         }
     }
 }
+
+impl std::error::Error for Error {}
 
 pub fn init_tracing(config: &Config) -> Option<()> {
     use opentelemetry::KeyValue;
@@ -152,10 +174,23 @@ pub fn init_tracing(config: &Config) -> Option<()> {
 
     let subscriber = tracing_subscriber::Registry::default()
         .with(open_telemetry_layer)
-        .with(
-            tracing_subscriber::fmt::layer()
-                .event_format(tracing_subscriber::fmt::format().pretty()),
-        )
+        .with(if config.log_json.unwrap_or(false) {
+            Box::new(
+                tracing_subscriber::fmt::layer()
+                    .fmt_fields(JsonFields::default())
+                    .event_format(
+                        tracing_subscriber::fmt::format()
+                            .json()
+                            .flatten_event(true)
+                            .with_span_list(true),
+                    ),
+            ) as Box<dyn Layer<_> + Send + Sync>
+        } else {
+            Box::new(
+                tracing_subscriber::fmt::layer()
+                    .event_format(tracing_subscriber::fmt::format().pretty()),
+            )
+        })
         .with(EnvFilter::from_str(rust_log.as_str()).log_err()?);
 
     tracing::subscriber::set_global_default(subscriber).unwrap();

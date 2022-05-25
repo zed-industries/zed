@@ -43,7 +43,7 @@ pub fn marked_display_snapshot(
 pub fn select_ranges(editor: &mut Editor, marked_text: &str, cx: &mut ViewContext<Editor>) {
     let (umarked_text, text_ranges) = marked_text_ranges(marked_text);
     assert_eq!(editor.text(cx), umarked_text);
-    editor.select_ranges(text_ranges, None, cx);
+    editor.change_selections(None, cx, |s| s.select_ranges(text_ranges));
 }
 
 pub fn assert_text_with_selections(
@@ -54,5 +54,5 @@ pub fn assert_text_with_selections(
     let (unmarked_text, text_ranges) = marked_text_ranges(marked_text);
 
     assert_eq!(editor.text(cx), unmarked_text);
-    assert_eq!(editor.selected_ranges(cx), text_ranges);
+    assert_eq!(editor.selections.ranges(cx), text_ranges);
 }

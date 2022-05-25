@@ -215,12 +215,12 @@ where
         self.autoscroll(scroll_max, size.y(), item_height);
 
         let start = cmp::min(
-            ((self.scroll_top() - self.padding_top) / item_height) as usize,
+            ((self.scroll_top() - self.padding_top) / item_height.max(1.)) as usize,
             self.item_count,
         );
         let end = cmp::min(
             self.item_count,
-            start + (size.y() / item_height).ceil() as usize + 1,
+            start + (size.y() / item_height.max(1.)).ceil() as usize + 1,
         );
 
         if (start..end).contains(&sample_item_ix) {

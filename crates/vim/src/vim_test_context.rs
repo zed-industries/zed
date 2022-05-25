@@ -3,15 +3,16 @@ use std::ops::{Deref, Range};
 use collections::BTreeMap;
 use itertools::{Either, Itertools};
 
-use editor::display_map::ToDisplayPoint;
+use editor::{display_map::ToDisplayPoint, Autoscroll};
 use gpui::{json::json, keymap::Keystroke, ViewHandle};
 use indoc::indoc;
 use language::Selection;
+use project::Project;
 use util::{
     set_eq,
     test::{marked_text, marked_text_ranges_by, SetEqError},
 };
-use workspace::{WorkspaceHandle, WorkspaceParams};
+use workspace::{AppState, WorkspaceHandle};
 
 use crate::{state::Operator, *};
 
@@ -30,7 +31,8 @@ impl<'a> VimTestContext<'a> {
             settings::KeymapFileContent::load("keymaps/vim.json", cx).unwrap();
         });
 
-        let params = cx.update(WorkspaceParams::test);
+        let params = cx.update(AppState::test);
+        let project = Project::test(params.fs.clone(), [], cx).await;
 
         cx.update(|cx| {
             cx.update_global(|settings: &mut Settings, _| {
@@ -44,9 +46,8 @@ impl<'a> VimTestContext<'a> {
             .insert_tree("/root", json!({ "dir": { "test.txt": "" } }))
             .await;
 
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        params
-            .project
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        project
             .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/root", true, cx)
             })
@@ -128,7 +129,9 @@ impl<'a> VimTestContext<'a> {
             let (unmarked_text, markers) = marked_text(&text);
             editor.set_text(unmarked_text, cx);
             let cursor_offset = markers[0];
-            editor.replace_selections_with(cx, |map| cursor_offset.to_display_point(map));
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.replace_cursors_with(|map| vec![cursor_offset.to_display_point(map)])
+            });
         })
     }
 
@@ -197,7 +200,8 @@ impl<'a> VimTestContext<'a> {
         let (empty_selections, reverse_selections, forward_selections) =
             self.editor.read_with(self.cx, |editor, cx| {
                 let (empty_selections, non_empty_selections): (Vec<_>, Vec<_>) = editor
-                    .local_selections::<usize>(cx)
+                    .selections
+                    .all::<usize>(cx)
                     .into_iter()
                     .partition_map(|selection| {
                         if selection.is_empty() {

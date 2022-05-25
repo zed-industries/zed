@@ -12,6 +12,7 @@ use language::{
     ToPointUtf16 as _, TransactionId,
 };
 use settings::Settings;
+use smallvec::SmallVec;
 use std::{
     cell::{Ref, RefCell},
     cmp, fmt, io,
@@ -93,6 +94,7 @@ pub struct MultiBufferSnapshot {
     parse_count: usize,
     diagnostics_update_count: usize,
     trailing_excerpt_update_count: usize,
+    edit_count: usize,
     is_dirty: bool,
     has_conflict: bool,
 }
@@ -226,7 +228,7 @@ impl MultiBuffer {
         self.snapshot.borrow().clone()
     }
 
-    pub fn read(&self, cx: &AppContext) -> Ref<MultiBufferSnapshot> {
+    pub(crate) fn read(&self, cx: &AppContext) -> Ref<MultiBufferSnapshot> {
         self.sync(cx);
         self.snapshot.borrow()
     }
@@ -253,6 +255,27 @@ impl MultiBuffer {
 
     pub fn subscribe(&mut self) -> Subscription {
         self.subscriptions.subscribe()
+    }
+
+    pub fn is_dirty(&self, cx: &AppContext) -> bool {
+        self.read(cx).is_dirty()
+    }
+
+    pub fn has_conflict(&self, cx: &AppContext) -> bool {
+        self.read(cx).has_conflict()
+    }
+
+    pub fn len(&self, cx: &AppContext) -> usize {
+        self.read(cx).len()
+    }
+
+    pub fn symbols_containing<T: ToOffset>(
+        &self,
+        offset: T,
+        theme: Option<&SyntaxTheme>,
+        cx: &AppContext,
+    ) -> Option<(usize, Vec<OutlineItem<Anchor>>)> {
+        self.read(cx).symbols_containing(offset, theme)
     }
 
     pub fn edit<I, S, T>(&mut self, edits: I, cx: &mut ModelContext<Self>)
@@ -1104,18 +1127,26 @@ impl MultiBuffer {
             .and_then(|(buffer, _)| buffer.read(cx).language())
     }
 
-    pub fn file<'a>(&self, cx: &'a AppContext) -> Option<&'a dyn File> {
-        self.as_singleton()?.read(cx).file()
+    pub fn files<'a>(&'a self, cx: &'a AppContext) -> SmallVec<[&'a dyn File; 2]> {
+        let buffers = self.buffers.borrow();
+        buffers
+            .values()
+            .filter_map(|buffer| buffer.buffer.read(cx).file())
+            .collect()
     }
 
     pub fn title(&self, cx: &AppContext) -> String {
         if let Some(title) = self.title.clone() {
-            title
-        } else if let Some(file) = self.file(cx) {
-            file.file_name(cx).to_string_lossy().into()
-        } else {
-            "untitled".into()
+            return title;
         }
+
+        if let Some(buffer) = self.as_singleton() {
+            if let Some(file) = buffer.read(cx).file() {
+                return file.file_name(cx).to_string_lossy().into();
+            }
+        }
+
+        "untitled".into()
     }
 
     #[cfg(test)]
@@ -1130,6 +1161,7 @@ impl MultiBuffer {
         let mut diagnostics_updated = false;
         let mut is_dirty = false;
         let mut has_conflict = false;
+        let mut edited = false;
         let mut buffers = self.buffers.borrow_mut();
         for buffer_state in buffers.values_mut() {
             let buffer = buffer_state.buffer.read(cx);
@@ -1165,10 +1197,14 @@ impl MultiBuffer {
                 );
             }
 
+            edited |= buffer_edited;
             reparsed |= buffer_reparsed;
             diagnostics_updated |= buffer_diagnostics_updated;
             is_dirty |= buffer.is_dirty();
             has_conflict |= buffer.has_conflict();
+        }
+        if edited {
+            snapshot.edit_count += 1;
         }
         if reparsed {
             snapshot.parse_count += 1;
@@ -2151,6 +2187,10 @@ impl MultiBufferSnapshot {
         })
     }
 
+    pub fn edit_count(&self) -> usize {
+        self.edit_count
+    }
+
     pub fn parse_count(&self) -> usize {
         self.parse_count
     }
@@ -2448,6 +2488,7 @@ impl History {
                 self.undo_stack.pop();
                 false
             } else {
+                self.redo_stack.clear();
                 let transaction = self.undo_stack.last_mut().unwrap();
                 transaction.last_edit_at = now;
                 for (buffer_id, transaction_id) in buffer_transactions {
@@ -2480,6 +2521,7 @@ impl History {
         };
         if !transaction.buffer_transactions.is_empty() {
             self.undo_stack.push(transaction);
+            self.redo_stack.clear();
         }
     }
 
@@ -3904,6 +3946,16 @@ mod tests {
             buffer_1.update(cx, |buffer_1, cx| buffer_1.redo(cx));
             assert_eq!(multibuffer.read(cx).text(), "ABCD1234\nAB5678");
 
+            // Redo stack gets cleared after an edit.
+            now += 2 * group_interval;
+            multibuffer.start_transaction_at(now, cx);
+            multibuffer.edit([(0..0, "X")], cx);
+            multibuffer.end_transaction_at(now, cx);
+            assert_eq!(multibuffer.read(cx).text(), "XABCD1234\nAB5678");
+            multibuffer.redo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "XABCD1234\nAB5678");
+            multibuffer.undo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "ABCD1234\nAB5678");
             multibuffer.undo(cx);
             assert_eq!(multibuffer.read(cx).text(), "1234\n5678");
         });

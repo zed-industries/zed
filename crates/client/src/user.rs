@@ -1,13 +1,11 @@
 use super::{http::HttpClient, proto, Client, Status, TypedEnvelope};
 use anyhow::{anyhow, Context, Result};
+use collections::{hash_map::Entry, BTreeSet, HashMap, HashSet};
 use futures::{channel::mpsc, future, AsyncReadExt, Future, StreamExt};
 use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{prelude::Stream, sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
-use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
-    sync::{Arc, Weak},
-};
+use std::sync::{Arc, Weak};
 use util::TryFutureExt as _;
 
 #[derive(Debug)]
@@ -16,6 +14,26 @@ pub struct User {
     pub github_login: String,
     pub avatar: Option<Arc<ImageData>>,
 }
+
+impl PartialOrd for User {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(&other))
+    }
+}
+
+impl Ord for User {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.github_login.cmp(&other.github_login)
+    }
+}
+
+impl PartialEq for User {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && self.github_login == other.github_login
+    }
+}
+
+impl Eq for User {}
 
 #[derive(Debug)]
 pub struct Contact {
@@ -27,9 +45,8 @@ pub struct Contact {
 #[derive(Debug)]
 pub struct ProjectMetadata {
     pub id: u64,
-    pub is_shared: bool,
     pub worktree_root_names: Vec<String>,
-    pub guests: Vec<Arc<User>>,
+    pub guests: BTreeSet<Arc<User>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +65,7 @@ pub struct UserStore {
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
     pending_contact_requests: HashMap<u64, usize>,
+    invite_info: Option<InviteInfo>,
     client: Weak<Client>,
     http: Arc<dyn HttpClient>,
     _maintain_contacts: Task<()>,
@@ -55,9 +73,17 @@ pub struct UserStore {
 }
 
 #[derive(Clone)]
-pub struct ContactEvent {
-    pub user: Arc<User>,
-    pub kind: ContactEventKind,
+pub struct InviteInfo {
+    pub count: u32,
+    pub url: Arc<str>,
+}
+
+pub enum Event {
+    Contact {
+        user: Arc<User>,
+        kind: ContactEventKind,
+    },
+    ShowContacts,
 }
 
 #[derive(Clone, Copy)]
@@ -68,7 +94,7 @@ pub enum ContactEventKind {
 }
 
 impl Entity for UserStore {
-    type Event = ContactEvent;
+    type Event = Event;
 }
 
 enum UpdateContacts {
@@ -84,19 +110,23 @@ impl UserStore {
     ) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
         let (update_contacts_tx, mut update_contacts_rx) = mpsc::unbounded();
-        let rpc_subscription =
-            client.add_message_handler(cx.handle(), Self::handle_update_contacts);
+        let rpc_subscriptions = vec![
+            client.add_message_handler(cx.handle(), Self::handle_update_contacts),
+            client.add_message_handler(cx.handle(), Self::handle_update_invite_info),
+            client.add_message_handler(cx.handle(), Self::handle_show_contacts),
+        ];
         Self {
             users: Default::default(),
             current_user: current_user_rx,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
             outgoing_contact_requests: Default::default(),
+            invite_info: None,
             client: Arc::downgrade(&client),
             update_contacts_tx,
             http,
             _maintain_contacts: cx.spawn_weak(|this, mut cx| async move {
-                let _subscription = rpc_subscription;
+                let _subscriptions = rpc_subscriptions;
                 while let Some(message) = update_contacts_rx.next().await {
                     if let Some(this) = this.upgrade(&cx) {
                         this.update(&mut cx, |this, cx| this.update_contacts(message, cx))
@@ -137,15 +167,45 @@ impl UserStore {
         }
     }
 
+    async fn handle_update_invite_info(
+        this: ModelHandle<Self>,
+        message: TypedEnvelope<proto::UpdateInviteInfo>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            this.invite_info = Some(InviteInfo {
+                url: Arc::from(message.payload.url),
+                count: message.payload.count,
+            });
+            cx.notify();
+        });
+        Ok(())
+    }
+
+    async fn handle_show_contacts(
+        this: ModelHandle<Self>,
+        _: TypedEnvelope<proto::ShowContacts>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |_, cx| cx.emit(Event::ShowContacts));
+        Ok(())
+    }
+
+    pub fn invite_info(&self) -> Option<&InviteInfo> {
+        self.invite_info.as_ref()
+    }
+
     async fn handle_update_contacts(
         this: ModelHandle<Self>,
-        msg: TypedEnvelope<proto::UpdateContacts>,
+        message: TypedEnvelope<proto::UpdateContacts>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, _| {
             this.update_contacts_tx
-                .unbounded_send(UpdateContacts::Update(msg.payload))
+                .unbounded_send(UpdateContacts::Update(message.payload))
                 .unwrap();
         });
         Ok(())
@@ -170,7 +230,7 @@ impl UserStore {
                     self.client.upgrade().unwrap().id,
                     message
                 );
-                let mut user_ids = HashSet::new();
+                let mut user_ids = HashSet::default();
                 for contact in &message.contacts {
                     user_ids.insert(contact.user_id);
                     user_ids.extend(contact.projects.iter().flat_map(|w| &w.guests).copied());
@@ -227,7 +287,7 @@ impl UserStore {
                         // Update existing contacts and insert new ones
                         for (updated_contact, should_notify) in updated_contacts {
                             if should_notify {
-                                cx.emit(ContactEvent {
+                                cx.emit(Event::Contact {
                                     user: updated_contact.user.clone(),
                                     kind: ContactEventKind::Accepted,
                                 });
@@ -244,7 +304,7 @@ impl UserStore {
                         // Remove incoming contact requests
                         this.incoming_contact_requests.retain(|user| {
                             if removed_incoming_requests.contains(&user.id) {
-                                cx.emit(ContactEvent {
+                                cx.emit(Event::Contact {
                                     user: user.clone(),
                                     kind: ContactEventKind::Cancelled,
                                 });
@@ -256,7 +316,7 @@ impl UserStore {
                         // Update existing incoming requests and insert new ones
                         for (user, should_notify) in incoming_requests {
                             if should_notify {
-                                cx.emit(ContactEvent {
+                                cx.emit(Event::Contact {
                                     user: user.clone(),
                                     kind: ContactEventKind::Requested,
                                 });
@@ -547,9 +607,9 @@ impl Contact {
             .await?;
         let mut projects = Vec::new();
         for project in contact.projects {
-            let mut guests = Vec::new();
+            let mut guests = BTreeSet::new();
             for participant_id in project.guests {
-                guests.push(
+                guests.insert(
                     user_store
                         .update(cx, |user_store, cx| {
                             user_store.fetch_user(participant_id, cx)
@@ -560,7 +620,6 @@ impl Contact {
             projects.push(ProjectMetadata {
                 id: project.id,
                 worktree_root_names: project.worktree_root_names.clone(),
-                is_shared: project.is_shared,
                 guests,
             });
         }

@@ -1,4 +1,4 @@
-import Theme from "../themes/theme";
+import Theme from "../themes/common/theme";
 import { text, backgroundColor, border } from "./components";
 
 export default function commandPalette(theme: Theme) {

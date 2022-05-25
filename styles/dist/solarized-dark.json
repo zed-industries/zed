@@ -89,19 +89,15 @@
   "background": {
     "100": {
       "base": {
-        "value": "#073642",
+        "value": "#1b444f",
         "type": "color"
       },
       "hovered": {
-        "value": "#586e753d",
+        "value": "#30525c",
         "type": "color"
       },
       "active": {
-        "value": "#586e755c",
-        "type": "color"
-      },
-      "focused": {
-        "value": "#586e753d",
+        "value": "#446068",
         "type": "color"
       }
     },
@@ -111,15 +107,11 @@
         "type": "color"
       },
       "hovered": {
-        "value": "#586e753d",
+        "value": "#1b444f",
         "type": "color"
       },
       "active": {
-        "value": "#586e755c",
-        "type": "color"
-      },
-      "focused": {
-        "value": "#586e753d",
+        "value": "#30525c",
         "type": "color"
       }
     },
@@ -129,15 +121,11 @@
         "type": "color"
       },
       "hovered": {
-        "value": "#0736423d",
+        "value": "#022e39",
         "type": "color"
       },
       "active": {
-        "value": "#0736425c",
-        "type": "color"
-      },
-      "focused": {
-        "value": "#0736423d",
+        "value": "#04313c",
         "type": "color"
       }
     },
@@ -147,33 +135,25 @@
         "type": "color"
       },
       "hovered": {
-        "value": "#0736423d",
+        "value": "#022e39",
         "type": "color"
       },
       "active": {
-        "value": "#0736427a",
-        "type": "color"
-      },
-      "focused": {
-        "value": "#0736423d",
+        "value": "#04313c",
         "type": "color"
       }
     },
     "on500": {
       "base": {
-        "value": "#073642",
+        "value": "#1b444f",
         "type": "color"
       },
       "hovered": {
-        "value": "#586e753d",
+        "value": "#30525c",
         "type": "color"
       },
       "active": {
-        "value": "#586e757a",
-        "type": "color"
-      },
-      "focused": {
-        "value": "#586e753d",
+        "value": "#446068",
         "type": "color"
       }
     },
@@ -189,10 +169,6 @@
       "active": {
         "value": "#85990040",
         "type": "color"
-      },
-      "focused": {
-        "value": "#85990033",
-        "type": "color"
       }
     },
     "error": {
@@ -206,10 +182,6 @@
       },
       "active": {
         "value": "#dc322f40",
-        "type": "color"
-      },
-      "focused": {
-        "value": "#dc322f33",
         "type": "color"
       }
     },
@@ -225,10 +197,6 @@
       "active": {
         "value": "#b5890040",
         "type": "color"
-      },
-      "focused": {
-        "value": "#b5890033",
-        "type": "color"
       }
     },
     "info": {
@@ -243,10 +211,6 @@
       "active": {
         "value": "#268bd240",
         "type": "color"
-      },
-      "focused": {
-        "value": "#268bd233",
-        "type": "color"
       }
     }
   },
@@ -260,10 +224,6 @@
       "type": "color"
     },
     "muted": {
-      "value": "#657b83",
-      "type": "color"
-    },
-    "focused": {
       "value": "#657b83",
       "type": "color"
     },
@@ -307,23 +267,11 @@
     },
     "line": {
       "active": {
-        "value": "#fdf6e312",
+        "value": "#073642",
         "type": "color"
       },
       "highlighted": {
-        "value": "#fdf6e31f",
-        "type": "color"
-      },
-      "inserted": {
-        "value": "#85990040",
-        "type": "color"
-      },
-      "deleted": {
-        "value": "#dc322f40",
-        "type": "color"
-      },
-      "modified": {
-        "value": "#268bd240",
+        "value": "#1b444f",
         "type": "color"
       }
     },
@@ -333,27 +281,27 @@
         "type": "color"
       },
       "occurrence": {
-        "value": "#fdf6e31f",
+        "value": "#586e753d",
         "type": "color"
       },
       "activeOccurrence": {
-        "value": "#fdf6e33d",
+        "value": "#586e757a",
         "type": "color"
       },
       "matchingBracket": {
-        "value": "#0736425c",
+        "value": "#04313c",
         "type": "color"
       },
       "match": {
-        "value": "#6c71c47a",
+        "value": "#1b1f6b",
         "type": "color"
       },
       "activeMatch": {
-        "value": "#6c71c4b8",
+        "value": "#434abc7a",
         "type": "color"
       },
       "related": {
-        "value": "#0736423d",
+        "value": "#022e39",
         "type": "color"
       }
     },

@@ -154,7 +154,6 @@ pub struct Menu<'a> {
 pub enum MenuItem<'a> {
     Action {
         name: &'a str,
-        keystroke: Option<&'a str>,
         action: Box<dyn Action>,
     },
     Separator,
@@ -191,6 +190,20 @@ impl App {
             let cx = app.0.clone();
             move || {
                 cx.borrow_mut().quit();
+            }
+        }));
+        foreground_platform.on_will_open_menu(Box::new({
+            let cx = app.0.clone();
+            move || {
+                let mut cx = cx.borrow_mut();
+                cx.keystroke_matcher.clear_pending();
+            }
+        }));
+        foreground_platform.on_validate_menu_command(Box::new({
+            let cx = app.0.clone();
+            move |action| {
+                let cx = cx.borrow_mut();
+                !cx.keystroke_matcher.has_pending_keystrokes() && cx.is_action_available(action)
             }
         }));
         foreground_platform.on_menu_command(Box::new({
@@ -508,10 +521,25 @@ impl TestAppContext {
             .downcast_mut::<platform::test::Window>()
             .unwrap();
         let mut done_tx = test_window
-            .last_prompt
-            .take()
+            .pending_prompts
+            .borrow_mut()
+            .pop_front()
             .expect("prompt was not called");
         let _ = done_tx.try_send(answer);
+    }
+
+    pub fn has_pending_prompt(&self, window_id: usize) -> bool {
+        let mut state = self.cx.borrow_mut();
+        let (_, window) = state
+            .presenters_and_platform_windows
+            .get_mut(&window_id)
+            .unwrap();
+        let test_window = window
+            .as_any_mut()
+            .downcast_mut::<platform::test::Window>()
+            .unwrap();
+        let prompts = test_window.pending_prompts.borrow_mut();
+        !prompts.is_empty()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1005,6 +1033,13 @@ impl MutableAppContext {
             .and_then(|window| window.root_view.clone().downcast::<T>())
     }
 
+    pub fn window_is_active(&self, window_id: usize) -> bool {
+        self.cx
+            .windows
+            .get(&window_id)
+            .map_or(false, |window| window.is_active)
+    }
+
     pub fn render_view(
         &mut self,
         window_id: usize,
@@ -1063,7 +1098,8 @@ impl MutableAppContext {
     }
 
     pub fn set_menus(&mut self, menus: Vec<Menu>) {
-        self.foreground_platform.set_menus(menus);
+        self.foreground_platform
+            .set_menus(menus, &self.keystroke_matcher);
     }
 
     fn prompt(
@@ -1357,6 +1393,26 @@ impl MutableAppContext {
             })
     }
 
+    pub fn is_action_available(&self, action: &dyn Action) -> bool {
+        let action_type = action.as_any().type_id();
+        if let Some(window_id) = self.cx.platform.key_window_id() {
+            if let Some((presenter, _)) = self.presenters_and_platform_windows.get(&window_id) {
+                let dispatch_path = presenter.borrow().dispatch_path(&self.cx);
+                for view_id in dispatch_path {
+                    if let Some(view) = self.views.get(&(window_id, view_id)) {
+                        let view_type = view.as_any().type_id();
+                        if let Some(actions) = self.actions.get(&view_type) {
+                            if actions.contains_key(&action_type) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.global_actions.contains_key(&action_type)
+    }
+
     pub fn dispatch_action_at(&mut self, window_id: usize, view_id: usize, action: &dyn Action) {
         let presenter = self
             .presenters_and_platform_windows
@@ -1604,6 +1660,20 @@ impl MutableAppContext {
         })
     }
 
+    pub fn replace_root_view<T, F>(&mut self, window_id: usize, build_root_view: F) -> ViewHandle<T>
+    where
+        T: View,
+        F: FnOnce(&mut ViewContext<T>) -> T,
+    {
+        self.update(|this| {
+            let root_view = this.add_view(window_id, build_root_view);
+            let window = this.cx.windows.get_mut(&window_id).unwrap();
+            window.root_view = root_view.clone().into();
+            window.focused_view_id = Some(root_view.id());
+            root_view
+        })
+    }
+
     pub fn remove_window(&mut self, window_id: usize) {
         self.cx.windows.remove(&window_id);
         self.presenters_and_platform_windows.remove(&window_id);
@@ -1621,20 +1691,22 @@ impl MutableAppContext {
 
         {
             let mut app = self.upgrade();
-            let presenter = presenter.clone();
+            let presenter = Rc::downgrade(&presenter);
             window.on_event(Box::new(move |event| {
                 app.update(|cx| {
-                    if let Event::KeyDown { keystroke, .. } = &event {
-                        if cx.dispatch_keystroke(
-                            window_id,
-                            presenter.borrow().dispatch_path(cx.as_ref()),
-                            keystroke,
-                        ) {
-                            return;
+                    if let Some(presenter) = presenter.upgrade() {
+                        if let Event::KeyDown { keystroke, .. } = &event {
+                            if cx.dispatch_keystroke(
+                                window_id,
+                                presenter.borrow().dispatch_path(cx.as_ref()),
+                                keystroke,
+                            ) {
+                                return;
+                            }
                         }
-                    }
 
-                    presenter.borrow_mut().dispatch_event(event, cx);
+                        presenter.borrow_mut().dispatch_event(event, cx);
+                    }
                 })
             }));
         }
@@ -3215,6 +3287,21 @@ impl<'a, T: View> ViewContext<'a, T> {
         F: FnOnce(&mut ViewContext<S>) -> Option<S>,
     {
         self.app.add_option_view(self.window_id, build_view)
+    }
+
+    pub fn replace_root_view<V, F>(&mut self, build_root_view: F) -> ViewHandle<V>
+    where
+        V: View,
+        F: FnOnce(&mut ViewContext<V>) -> V,
+    {
+        let window_id = self.window_id;
+        self.update(|this| {
+            let root_view = this.add_view(window_id, build_root_view);
+            let window = this.cx.windows.get_mut(&window_id).unwrap();
+            window.root_view = root_view.clone().into();
+            window.focused_view_id = Some(root_view.id());
+            root_view
+        })
     }
 
     pub fn subscribe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription

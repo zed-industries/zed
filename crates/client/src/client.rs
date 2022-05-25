@@ -1106,7 +1106,7 @@ mod tests {
         let (done_tx1, mut done_rx1) = smol::channel::unbounded();
         let (done_tx2, mut done_rx2) = smol::channel::unbounded();
         client.add_model_message_handler(
-            move |model: ModelHandle<Model>, _: TypedEnvelope<proto::UnshareProject>, _, cx| {
+            move |model: ModelHandle<Model>, _: TypedEnvelope<proto::JoinProject>, _, cx| {
                 match model.read_with(&cx, |model, _| model.id) {
                     1 => done_tx1.try_send(()).unwrap(),
                     2 => done_tx2.try_send(()).unwrap(),
@@ -1135,8 +1135,8 @@ mod tests {
         let subscription3 = model3.update(cx, |_, cx| client.add_model_for_remote_entity(3, cx));
         drop(subscription3);
 
-        server.send(proto::UnshareProject { project_id: 1 });
-        server.send(proto::UnshareProject { project_id: 2 });
+        server.send(proto::JoinProject { project_id: 1 });
+        server.send(proto::JoinProject { project_id: 2 });
         done_rx1.next().await.unwrap();
         done_rx2.next().await.unwrap();
     }

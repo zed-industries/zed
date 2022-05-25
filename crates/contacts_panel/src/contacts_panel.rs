@@ -1,5 +1,7 @@
 mod contact_finder;
 mod contact_notification;
+mod join_project_notification;
+mod notifications;
 
 use client::{Contact, ContactEventKind, User, UserStore};
 use contact_notification::ContactNotification;
@@ -10,9 +12,10 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
-    AppContext, Element, ElementBox, Entity, LayoutContext, ModelHandle, MutableAppContext,
-    RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, ClipboardItem, Element, ElementBox, Entity, LayoutContext, ModelHandle,
+    MutableAppContext, RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
+use join_project_notification::JoinProjectNotification;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
@@ -20,7 +23,7 @@ use theme::IconButton;
 use workspace::{
     menu::{Confirm, SelectNext, SelectPrev},
     sidebar::SidebarItem,
-    AppState, JoinProject, Workspace,
+    JoinProject, Workspace,
 };
 
 impl_actions!(
@@ -57,7 +60,6 @@ pub struct ContactsPanel {
     filter_editor: ViewHandle<Editor>,
     collapsed_sections: Vec<Section>,
     selection: Option<usize>,
-    app_state: Arc<AppState>,
     _maintain_contacts: Subscription,
 }
 
@@ -76,6 +78,7 @@ pub struct RespondToContactRequest {
 pub fn init(cx: &mut MutableAppContext) {
     contact_finder::init(cx);
     contact_notification::init(cx);
+    join_project_notification::init(cx);
     cx.add_action(ContactsPanel::request_contact);
     cx.add_action(ContactsPanel::remove_contact);
     cx.add_action(ContactsPanel::respond_to_contact_request);
@@ -88,7 +91,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
 impl ContactsPanel {
     pub fn new(
-        app_state: Arc<AppState>,
+        user_store: ModelHandle<UserStore>,
         workspace: WeakViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -118,22 +121,63 @@ impl ContactsPanel {
         })
         .detach();
 
-        cx.subscribe(&app_state.user_store, {
-            let user_store = app_state.user_store.downgrade();
+        cx.defer({
+            let workspace = workspace.clone();
+            move |_, cx| {
+                if let Some(workspace_handle) = workspace.upgrade(cx) {
+                    cx.subscribe(&workspace_handle.read(cx).project().clone(), {
+                        let workspace = workspace.clone();
+                        move |_, project, event, cx| match event {
+                            project::Event::ContactRequestedJoin(user) => {
+                                if let Some(workspace) = workspace.upgrade(cx) {
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace.show_notification(user.id as usize, cx, |cx| {
+                                            cx.add_view(|cx| {
+                                                JoinProjectNotification::new(
+                                                    project,
+                                                    user.clone(),
+                                                    cx,
+                                                )
+                                            })
+                                        })
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    })
+                    .detach();
+                }
+            }
+        });
+
+        cx.subscribe(&user_store, {
+            let user_store = user_store.downgrade();
             move |_, _, event, cx| {
                 if let Some((workspace, user_store)) =
                     workspace.upgrade(cx).zip(user_store.upgrade(cx))
                 {
-                    workspace.update(cx, |workspace, cx| match event.kind {
-                        ContactEventKind::Requested | ContactEventKind::Accepted => workspace
-                            .show_notification(
-                                cx.add_view(|cx| {
-                                    ContactNotification::new(event.clone(), user_store, cx)
+                    workspace.update(cx, |workspace, cx| match event {
+                        client::Event::Contact { user, kind } => match kind {
+                            ContactEventKind::Requested | ContactEventKind::Accepted => workspace
+                                .show_notification(user.id as usize, cx, |cx| {
+                                    cx.add_view(|cx| {
+                                        ContactNotification::new(
+                                            user.clone(),
+                                            *kind,
+                                            user_store,
+                                            cx,
+                                        )
+                                    })
                                 }),
-                                cx,
-                            ),
+                            _ => {}
+                        },
                         _ => {}
                     });
+                }
+
+                if let client::Event::ShowContacts = event {
+                    cx.emit(Event::Activate);
                 }
             }
         })
@@ -142,7 +186,6 @@ impl ContactsPanel {
         let mut this = Self {
             list_state: ListState::new(0, Orientation::Top, 1000., {
                 let this = cx.weak_handle();
-                let app_state = app_state.clone();
                 move |ix, cx| {
                     let this = this.upgrade(cx).unwrap();
                     let this = this.read(cx);
@@ -189,7 +232,6 @@ impl ContactsPanel {
                                 contact.clone(),
                                 current_user_id,
                                 *project_ix,
-                                app_state.clone(),
                                 theme,
                                 is_last_project_for_contact,
                                 is_selected,
@@ -204,10 +246,8 @@ impl ContactsPanel {
             entries: Default::default(),
             match_candidates: Default::default(),
             filter_editor,
-            _maintain_contacts: cx
-                .observe(&app_state.user_store, |this, _, cx| this.update_entries(cx)),
-            user_store: app_state.user_store.clone(),
-            app_state,
+            _maintain_contacts: cx.observe(&user_store, |this, _, cx| this.update_entries(cx)),
+            user_store,
         };
         this.update_entries(cx);
         this
@@ -305,22 +345,15 @@ impl ContactsPanel {
     fn render_contact_project(
         contact: Arc<Contact>,
         current_user_id: Option<u64>,
-        project_ix: usize,
-        app_state: Arc<AppState>,
+        project_index: usize,
         theme: &theme::ContactsPanel,
         is_last_project: bool,
         is_selected: bool,
         cx: &mut LayoutContext,
     ) -> ElementBox {
-        let project = &contact.projects[project_ix];
+        let project = &contact.projects[project_index];
         let project_id = project.id;
         let is_host = Some(contact.user.id) == current_user_id;
-        let is_guest = !is_host
-            && project
-                .guests
-                .iter()
-                .any(|guest| Some(guest.id) == current_user_id);
-        let is_shared = project.is_shared;
 
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
@@ -328,7 +361,7 @@ impl ContactsPanel {
             .width
             .or(theme.contact_avatar.height)
             .unwrap_or(0.);
-        let row = &theme.unshared_project_row.default;
+        let row = &theme.project_row.default;
         let tree_branch = theme.tree_branch.clone();
         let line_height = row.name.text.line_height(font_cache);
         let cap_height = row.name.text.cap_height(font_cache);
@@ -337,12 +370,7 @@ impl ContactsPanel {
 
         MouseEventHandler::new::<JoinProject, _, _>(project_id as usize, cx, |mouse_state, _| {
             let tree_branch = *tree_branch.style_for(mouse_state, is_selected);
-            let row = if project.is_shared {
-                &theme.shared_project_row
-            } else {
-                &theme.unshared_project_row
-            }
-            .style_for(mouse_state, is_selected);
+            let row = theme.project_row.style_for(mouse_state, is_selected);
 
             Flex::row()
                 .with_child(
@@ -412,16 +440,16 @@ impl ContactsPanel {
                 .with_style(row.container)
                 .boxed()
         })
-        .with_cursor_style(if !is_host && is_shared {
+        .with_cursor_style(if !is_host {
             CursorStyle::PointingHand
         } else {
             CursorStyle::Arrow
         })
         .on_click(move |_, cx| {
-            if !is_host && !is_guest {
+            if !is_host {
                 cx.dispatch_global_action(JoinProject {
-                    project_id,
-                    app_state: app_state.clone(),
+                    contact: contact.clone(),
+                    project_index,
                 });
             }
         })
@@ -743,12 +771,11 @@ impl ContactsPanel {
                         let section = *section;
                         self.toggle_expanded(&ToggleExpanded(section), cx);
                     }
-                    ContactEntry::ContactProject(contact, project_ix) => {
-                        cx.dispatch_global_action(JoinProject {
-                            project_id: contact.projects[*project_ix].id,
-                            app_state: self.app_state.clone(),
-                        })
-                    }
+                    ContactEntry::ContactProject(contact, project_index) => cx
+                        .dispatch_global_action(JoinProject {
+                            contact: contact.clone(),
+                            project_index: *project_index,
+                        }),
                     _ => {}
                 }
             }
@@ -778,6 +805,10 @@ impl SidebarItem for ContactsPanel {
     fn contains_focused_view(&self, cx: &AppContext) -> bool {
         self.filter_editor.is_focused(cx)
     }
+
+    fn should_activate_item_on_event(&self, event: &Event, _: &AppContext) -> bool {
+        matches!(event, Event::Activate)
+    }
 }
 
 fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Element {
@@ -793,7 +824,9 @@ fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Elemen
         .with_height(style.button_width)
 }
 
-pub enum Event {}
+pub enum Event {
+    Activate,
+}
 
 impl Entity for ContactsPanel {
     type Event = Event;
@@ -840,6 +873,59 @@ impl View for ContactsPanel {
                         .boxed(),
                 )
                 .with_child(List::new(self.list_state.clone()).flex(1., false).boxed())
+                .with_children(
+                    self.user_store
+                        .read(cx)
+                        .invite_info()
+                        .cloned()
+                        .and_then(|info| {
+                            enum InviteLink {}
+
+                            if info.count > 0 {
+                                Some(
+                                    MouseEventHandler::new::<InviteLink, _, _>(
+                                        0,
+                                        cx,
+                                        |state, cx| {
+                                            let style =
+                                                theme.invite_row.style_for(state, false).clone();
+
+                                            let copied =
+                                                cx.read_from_clipboard().map_or(false, |item| {
+                                                    item.text().as_str() == info.url.as_ref()
+                                                });
+
+                                            Label::new(
+                                                format!(
+                                                    "{} invite link ({} left)",
+                                                    if copied { "Copied" } else { "Copy" },
+                                                    info.count
+                                                ),
+                                                style.label.clone(),
+                                            )
+                                            .aligned()
+                                            .left()
+                                            .constrained()
+                                            .with_height(theme.row_height)
+                                            .contained()
+                                            .with_style(style.container)
+                                            .boxed()
+                                        },
+                                    )
+                                    .with_cursor_style(CursorStyle::PointingHand)
+                                    .on_click(move |_, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new(
+                                            info.url.to_string(),
+                                        ));
+                                        cx.notify();
+                                    })
+                                    .boxed(),
+                                )
+                            } else {
+                                None
+                            }
+                        }),
+                )
                 .boxed(),
         )
         .with_style(theme.container)
@@ -893,19 +979,20 @@ impl PartialEq for ContactEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use client::{proto, test::FakeServer, ChannelList, Client};
+    use client::{proto, test::FakeServer, Client};
     use gpui::TestAppContext;
     use language::LanguageRegistry;
+    use project::Project;
     use theme::ThemeRegistry;
-    use workspace::WorkspaceParams;
+    use workspace::AppState;
 
     #[gpui::test]
     async fn test_contact_panel(cx: &mut TestAppContext) {
         let (app_state, server) = init(cx).await;
-        let workspace_params = cx.update(WorkspaceParams::test);
-        let workspace = cx.add_view(0, |cx| Workspace::new(&workspace_params, cx));
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let workspace = cx.add_view(0, |cx| Workspace::new(project, cx));
         let panel = cx.add_view(0, |cx| {
-            ContactsPanel::new(app_state.clone(), workspace.downgrade(), cx)
+            ContactsPanel::new(app_state.user_store.clone(), workspace.downgrade(), cx)
         });
 
         let get_users_request = server.receive::<proto::GetUsers>().await.unwrap();
@@ -947,7 +1034,6 @@ mod tests {
                     projects: vec![proto::ProjectMetadata {
                         id: 101,
                         worktree_root_names: vec!["dir1".to_string()],
-                        is_shared: true,
                         guests: vec![2],
                     }],
                 },
@@ -958,7 +1044,6 @@ mod tests {
                     projects: vec![proto::ProjectMetadata {
                         id: 102,
                         worktree_root_names: vec!["dir2".to_string()],
-                        is_shared: true,
                         guests: vec![2],
                     }],
                 },
@@ -1089,13 +1174,6 @@ mod tests {
         let mut client = Client::new(http_client.clone());
         let server = FakeServer::for_client(100, &mut client, &cx).await;
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let channel_list =
-            cx.add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx));
-
-        let get_channels = server.receive::<proto::GetChannels>().await.unwrap();
-        server
-            .respond(get_channels.receipt(), Default::default())
-            .await;
 
         (
             Arc::new(AppState {
@@ -1104,9 +1182,8 @@ mod tests {
                 client,
                 user_store: user_store.clone(),
                 fs,
-                channel_list,
-                build_window_options: || unimplemented!(),
-                build_workspace: |_, _, _| unimplemented!(),
+                build_window_options: || Default::default(),
+                initialize_workspace: |_, _, _| {},
             }),
             server,
         )

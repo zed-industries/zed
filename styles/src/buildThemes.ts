@@ -1,28 +1,30 @@
 import * as fs from "fs";
 import * as path from "path";
+import { tmpdir } from 'os';
 import app from "./styleTree/app";
-import { dark as caveDark, light as caveLight } from "./themes/cave";
-import dark from "./themes/dark";
-import light from "./themes/light";
-import { dark as molikaDark } from "./themes/molika";
-import { dark as solarizedDark, light as solarizedLight } from "./themes/solarized";
-import { dark as sulphurpoolDark, light as sulphurpoolLight } from "./themes/sulphurpool";
+import themes from "./themes";
 import snakeCase from "./utils/snakeCase";
 
-const themes = [
-  dark, light,
-  caveDark, caveLight,
-  molikaDark,
-  solarizedDark, solarizedLight,
-  sulphurpoolDark, sulphurpoolLight
-];
+const themeDirectory = `${__dirname}/../../assets/themes/`;
+const tempDirectory = fs.mkdtempSync(path.join(tmpdir(), 'build-themes'));
 
+// Clear existing themes
+for (const file of fs.readdirSync(themeDirectory)) {
+  if (file.endsWith('.json')) {
+    const name = file.replace(/\.json$/, '');
+    if (!themes.find(theme => theme.name === name)) {
+      fs.unlinkSync(path.join(themeDirectory, file));
+    }
+  }
+}
+
+// Write new themes to theme directory
 for (let theme of themes) {
   let styleTree = snakeCase(app(theme));
   let styleTreeJSON = JSON.stringify(styleTree, null, 2);
-  let outPath = path.resolve(
-    `${__dirname}/../../assets/themes/${theme.name}.json`
-  );
-  fs.writeFileSync(outPath, styleTreeJSON);
+  let tempPath = path.join(tempDirectory, `${theme.name}.json`);
+  let outPath = path.join(themeDirectory, `${theme.name}.json`);
+  fs.writeFileSync(tempPath, styleTreeJSON);
+  fs.renameSync(tempPath, outPath);
   console.log(`- ${outPath} created`);
 }

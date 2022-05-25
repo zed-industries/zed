@@ -5,7 +5,7 @@ use collections::{BTreeSet, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, RenderBlock},
-    highlight_diagnostic_message, Editor, ExcerptId, MultiBuffer, ToOffset,
+    highlight_diagnostic_message, Autoscroll, Editor, ExcerptId, MultiBuffer, ToOffset,
 };
 use gpui::{
     actions, elements::*, fonts::TextStyle, serde_json, AnyViewHandle, AppContext, Entity,
@@ -18,6 +18,7 @@ use language::{
 use project::{DiagnosticSummary, Project, ProjectPath};
 use serde_json::json;
 use settings::Settings;
+use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cmp::Ordering,
@@ -417,8 +418,9 @@ impl ProjectDiagnosticsEditor {
                 }];
             } else {
                 groups = self.path_states.get(path_ix)?.diagnostic_groups.as_slice();
-                new_excerpt_ids_by_selection_id = editor.refresh_selections(cx);
-                selections = editor.local_selections::<usize>(cx);
+                new_excerpt_ids_by_selection_id =
+                    editor.change_selections(Some(Autoscroll::Fit), cx, |s| s.refresh());
+                selections = editor.selections.all::<usize>(cx);
             }
 
             // If any selection has lost its position, move it to start of the next primary diagnostic.
@@ -441,7 +443,9 @@ impl ProjectDiagnosticsEditor {
                     }
                 }
             }
-            editor.update_selections(selections, None, cx);
+            editor.change_selections(None, cx, |s| {
+                s.select(selections);
+            });
             Some(())
         });
 
@@ -476,8 +480,12 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         None
     }
 
-    fn project_entry_id(&self, _: &AppContext) -> Option<project::ProjectEntryId> {
-        None
+    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[project::ProjectEntryId; 3]> {
+        self.editor.project_entry_ids(cx)
+    }
+
+    fn is_singleton(&self, _: &AppContext) -> bool {
+        false
     }
 
     fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) -> bool {
@@ -486,11 +494,11 @@ impl workspace::Item for ProjectDiagnosticsEditor {
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.excerpts.read(cx).read(cx).is_dirty()
+        self.excerpts.read(cx).is_dirty(cx)
     }
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
-        self.excerpts.read(cx).read(cx).has_conflict()
+        self.excerpts.read(cx).has_conflict(cx)
     }
 
     fn can_save(&self, _: &AppContext) -> bool {
@@ -511,10 +519,6 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         self.editor.reload(project, cx)
-    }
-
-    fn can_save_as(&self, _: &AppContext) -> bool {
-        false
     }
 
     fn save_as(
@@ -704,49 +708,42 @@ mod tests {
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16};
     use serde_json::json;
     use unindent::Unindent as _;
-    use workspace::WorkspaceParams;
+    use workspace::AppState;
 
     #[gpui::test]
     async fn test_diagnostics(cx: &mut TestAppContext) {
-        let params = cx.update(WorkspaceParams::test);
-        let project = params.project.clone();
-        let workspace = cx.add_view(0, |cx| Workspace::new(&params, cx));
-
-        params
+        let app_state = cx.update(AppState::test);
+        app_state
             .fs
             .as_fake()
             .insert_tree(
                 "/test",
                 json!({
                     "consts.rs": "
-                    const a: i32 = 'a';
-                    const b: i32 = c;
-                "
+                        const a: i32 = 'a';
+                        const b: i32 = c;
+                    "
                     .unindent(),
 
                     "main.rs": "
-                    fn main() {
-                        let x = vec![];
-                        let y = vec![];
-                        a(x);
-                        b(y);
-                        // comment 1
-                        // comment 2
-                        c(y);
-                        d(x);
-                    }
-                "
+                        fn main() {
+                            let x = vec![];
+                            let y = vec![];
+                            a(x);
+                            b(y);
+                            // comment 1
+                            // comment 2
+                            c(y);
+                            d(x);
+                        }
+                    "
                     .unindent(),
                 }),
             )
             .await;
 
-        project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/test", true, cx)
-            })
-            .await
-            .unwrap();
+        let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
+        let workspace = cx.add_view(0, |cx| Workspace::new(project.clone(), cx));
 
         // Create some diagnostics
         project.update(cx, |project, cx| {
@@ -894,7 +891,7 @@ mod tests {
             // Cursor is at the first diagnostic
             view.editor.update(cx, |editor, cx| {
                 assert_eq!(
-                    editor.selected_display_ranges(cx),
+                    editor.selections.display_ranges(cx),
                     [DisplayPoint::new(12, 6)..DisplayPoint::new(12, 6)]
                 );
             });
@@ -995,7 +992,7 @@ mod tests {
             // Cursor keeps its position.
             view.editor.update(cx, |editor, cx| {
                 assert_eq!(
-                    editor.selected_display_ranges(cx),
+                    editor.selections.display_ranges(cx),
                     [DisplayPoint::new(19, 6)..DisplayPoint::new(19, 6)]
                 );
             });

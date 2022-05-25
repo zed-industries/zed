@@ -8,9 +8,10 @@ path = "src/client.rs"
 doctest = false
 
 [features]
-test-support = ["gpui/test-support", "rpc/test-support"]
+test-support = ["collections/test-support", "gpui/test-support", "rpc/test-support"]
 
 [dependencies]
+collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 util = { path = "../util" }
 rpc = { path = "../rpc" }
@@ -33,5 +34,6 @@ tiny_http = "0.8"
 url = "2.2"
 
 [dev-dependencies]
+collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
