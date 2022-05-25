@@ -270,7 +270,7 @@ impl View for AutoUpdateIndicator {
                         )
                         .boxed()
                     })
-                    .on_click(|_, cx| cx.dispatch_action(DismissErrorMessage))
+                    .on_click(|_, _, cx| cx.dispatch_action(DismissErrorMessage))
                     .boxed()
                 }
                 AutoUpdateStatus::Idle => Empty::new().boxed(),

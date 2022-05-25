@@ -226,6 +226,7 @@ pub struct ProjectPanel {
     pub ignored_entry_fade: f32,
     pub filename_editor: FieldEditor,
     pub indent_width: f32,
+    pub context_menu: ContextMenu,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]
@@ -237,6 +238,14 @@ pub struct ProjectPanelEntry {
     pub icon_color: Color,
     pub icon_size: f32,
     pub icon_spacing: f32,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct ContextMenu {
+    pub width: f32,
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub label: TextStyle,
 }
 
 #[derive(Debug, Deserialize, Default)]

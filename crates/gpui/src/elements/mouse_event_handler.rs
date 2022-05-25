@@ -14,9 +14,11 @@ pub struct MouseEventHandler {
     state: ElementStateHandle<MouseState>,
     child: ElementBox,
     cursor_style: Option<CursorStyle>,
-    mouse_down_handler: Option<Box<dyn FnMut(&mut EventContext)>>,
-    click_handler: Option<Box<dyn FnMut(usize, &mut EventContext)>>,
+    mouse_down_handler: Option<Box<dyn FnMut(Vector2F, &mut EventContext)>>,
+    click_handler: Option<Box<dyn FnMut(Vector2F, usize, &mut EventContext)>>,
     drag_handler: Option<Box<dyn FnMut(Vector2F, &mut EventContext)>>,
+    right_mouse_down_handler: Option<Box<dyn FnMut(Vector2F, &mut EventContext)>>,
+    right_click_handler: Option<Box<dyn FnMut(Vector2F, usize, &mut EventContext)>>,
     padding: Padding,
 }
 
@@ -24,6 +26,7 @@ pub struct MouseEventHandler {
 pub struct MouseState {
     pub hovered: bool,
     pub clicked: bool,
+    pub right_clicked: bool,
     prev_drag_position: Option<Vector2F>,
 }
 
@@ -43,6 +46,8 @@ impl MouseEventHandler {
             mouse_down_handler: None,
             click_handler: None,
             drag_handler: None,
+            right_mouse_down_handler: None,
+            right_click_handler: None,
             padding: Default::default(),
         }
     }
@@ -52,18 +57,40 @@ impl MouseEventHandler {
         self
     }
 
-    pub fn on_mouse_down(mut self, handler: impl FnMut(&mut EventContext) + 'static) -> Self {
+    pub fn on_mouse_down(
+        mut self,
+        handler: impl FnMut(Vector2F, &mut EventContext) + 'static,
+    ) -> Self {
         self.mouse_down_handler = Some(Box::new(handler));
         self
     }
 
-    pub fn on_click(mut self, handler: impl FnMut(usize, &mut EventContext) + 'static) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl FnMut(Vector2F, usize, &mut EventContext) + 'static,
+    ) -> Self {
         self.click_handler = Some(Box::new(handler));
         self
     }
 
     pub fn on_drag(mut self, handler: impl FnMut(Vector2F, &mut EventContext) + 'static) -> Self {
         self.drag_handler = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_right_mouse_down(
+        mut self,
+        handler: impl FnMut(Vector2F, &mut EventContext) + 'static,
+    ) -> Self {
+        self.right_mouse_down_handler = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_right_click(
+        mut self,
+        handler: impl FnMut(Vector2F, usize, &mut EventContext) + 'static,
+    ) -> Self {
+        self.right_click_handler = Some(Box::new(handler));
         self
     }
 
@@ -120,6 +147,8 @@ impl Element for MouseEventHandler {
         let mouse_down_handler = self.mouse_down_handler.as_mut();
         let click_handler = self.click_handler.as_mut();
         let drag_handler = self.drag_handler.as_mut();
+        let right_mouse_down_handler = self.right_mouse_down_handler.as_mut();
+        let right_click_handler = self.right_click_handler.as_mut();
 
         let handled_in_child = self.child.dispatch_event(event, cx);
 
@@ -144,7 +173,7 @@ impl Element for MouseEventHandler {
                     state.prev_drag_position = Some(*position);
                     cx.notify();
                     if let Some(handler) = mouse_down_handler {
-                        handler(cx);
+                        handler(*position, cx);
                     }
                     true
                 } else {
@@ -162,7 +191,7 @@ impl Element for MouseEventHandler {
                     cx.notify();
                     if let Some(handler) = click_handler {
                         if hit_bounds.contains_point(*position) {
-                            handler(*click_count, cx);
+                            handler(*position, *click_count, cx);
                         }
                     }
                     true
@@ -177,6 +206,36 @@ impl Element for MouseEventHandler {
                         let delta = *position - prev_position;
                         if !delta.is_zero() {
                             (handler)(delta, cx);
+                        }
+                    }
+                    true
+                } else {
+                    handled_in_child
+                }
+            }
+            Event::RightMouseDown { position, .. } => {
+                if !handled_in_child && hit_bounds.contains_point(*position) {
+                    state.right_clicked = true;
+                    cx.notify();
+                    if let Some(handler) = right_mouse_down_handler {
+                        handler(*position, cx);
+                    }
+                    true
+                } else {
+                    handled_in_child
+                }
+            }
+            Event::RightMouseUp {
+                position,
+                click_count,
+                ..
+            } => {
+                if !handled_in_child && state.right_clicked {
+                    state.right_clicked = false;
+                    cx.notify();
+                    if let Some(handler) = right_click_handler {
+                        if hit_bounds.contains_point(*position) {
+                            handler(*position, *click_count, cx);
                         }
                     }
                     true

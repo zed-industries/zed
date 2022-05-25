@@ -119,7 +119,7 @@ impl View for Select {
                 .with_style(style.header)
                 .boxed()
             })
-            .on_click(move |_, cx| cx.dispatch_action(ToggleSelect))
+            .on_click(move |_, _, cx| cx.dispatch_action(ToggleSelect))
             .boxed(),
         );
         if self.is_open {
@@ -153,7 +153,9 @@ impl View for Select {
                                                 )
                                             },
                                         )
-                                        .on_click(move |_, cx| cx.dispatch_action(SelectItem(ix)))
+                                        .on_click(move |_, _, cx| {
+                                            cx.dispatch_action(SelectItem(ix))
+                                        })
                                         .boxed()
                                     }))
                                 },

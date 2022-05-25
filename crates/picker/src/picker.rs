@@ -90,7 +90,7 @@ impl<D: PickerDelegate> View for Picker<D> {
                                         .read(cx)
                                         .render_match(ix, state, ix == selected_ix, cx)
                                 })
-                                .on_mouse_down(move |cx| cx.dispatch_action(SelectIndex(ix)))
+                                .on_mouse_down(move |_, cx| cx.dispatch_action(SelectIndex(ix)))
                                 .with_cursor_style(CursorStyle::PointingHand)
                                 .boxed()
                             }));

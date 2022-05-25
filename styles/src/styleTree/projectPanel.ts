@@ -1,6 +1,6 @@
 import Theme from "../themes/common/theme";
 import { panel } from "./app";
-import { backgroundColor, iconColor, player, text } from "./components";
+import { backgroundColor, iconColor, player, shadow, text } from "./components";
 
 export default function projectPanel(theme: Theme) {
   return {
@@ -32,5 +32,19 @@ export default function projectPanel(theme: Theme) {
       text: text(theme, "mono", "primary", { size: "sm" }),
       selection: player(theme, 1).selection,
     },
+    contextMenu: {
+      width: 100,
+      // background: "#ff0000",
+      background: backgroundColor(theme, 300, "base"),
+      cornerRadius: 6,
+      padding: {
+        bottom: 2,
+        left: 6,
+        right: 6,
+        top: 2,
+      },
+      label: text(theme, "sans", "secondary", { size: "sm" }),
+      shadow: shadow(theme),
+    }
   };
 }

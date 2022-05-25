@@ -61,7 +61,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                     })
                     .with_cursor_style(CursorStyle::PointingHand)
                     .with_padding(Padding::uniform(5.))
-                    .on_click(move |_, cx| cx.dispatch_any_action(dismiss_action.boxed_clone()))
+                    .on_click(move |_, _, cx| cx.dispatch_any_action(dismiss_action.boxed_clone()))
                     .aligned()
                     .constrained()
                     .with_height(
@@ -76,13 +76,10 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                 .named("contact notification header"),
         )
         .with_children(body.map(|body| {
-            Label::new(
-                body.to_string(),
-                theme.body_message.text.clone(),
-            )
-            .contained()
-            .with_style(theme.body_message.container)
-            .boxed()
+            Label::new(body.to_string(), theme.body_message.text.clone())
+                .contained()
+                .with_style(theme.body_message.container)
+                .boxed()
         }))
         .with_children(if buttons.is_empty() {
             None
@@ -99,7 +96,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                                     .boxed()
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
-                            .on_click(move |_, cx| cx.dispatch_any_action(action.boxed_clone()))
+                            .on_click(move |_, _, cx| cx.dispatch_any_action(action.boxed_clone()))
                             .boxed()
                         },
                     ))

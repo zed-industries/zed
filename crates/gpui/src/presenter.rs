@@ -134,15 +134,16 @@ impl Presenter {
         scene
     }
 
-    fn layout(&mut self, size: Vector2F, refreshing: bool, cx: &mut MutableAppContext) {
+    fn layout(&mut self, window_size: Vector2F, refreshing: bool, cx: &mut MutableAppContext) {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            self.build_layout_context(refreshing, cx)
-                .layout(root_view_id, SizeConstraint::strict(size));
+            self.build_layout_context(window_size, refreshing, cx)
+                .layout(root_view_id, SizeConstraint::strict(window_size));
         }
     }
 
     pub fn build_layout_context<'a>(
         &'a mut self,
+        window_size: Vector2F,
         refreshing: bool,
         cx: &'a mut MutableAppContext,
     ) -> LayoutContext<'a> {
@@ -150,6 +151,7 @@ impl Presenter {
             rendered_views: &mut self.rendered_views,
             parents: &mut self.parents,
             refreshing,
+            window_size,
             font_cache: &self.font_cache,
             font_system: cx.platform().fonts(),
             text_layout_cache: &self.text_layout_cache,
@@ -259,6 +261,7 @@ pub struct LayoutContext<'a> {
     parents: &'a mut HashMap<usize, usize>,
     view_stack: Vec<usize>,
     pub refreshing: bool,
+    pub window_size: Vector2F,
     pub font_cache: &'a Arc<FontCache>,
     pub font_system: Arc<dyn FontSystem>,
     pub text_layout_cache: &'a TextLayoutCache,

@@ -788,7 +788,7 @@ impl Pane {
                                             .with_cursor_style(CursorStyle::PointingHand)
                                             .on_click({
                                                 let pane = pane.clone();
-                                                move |_, cx| {
+                                                move |_, _, cx| {
                                                     cx.dispatch_action(CloseItem {
                                                         item_id,
                                                         pane: pane.clone(),

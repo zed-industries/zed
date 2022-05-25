@@ -302,7 +302,7 @@ impl ContactsPanel {
                 .boxed()
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(move |_, cx| cx.dispatch_action(ToggleExpanded(section)))
+        .on_click(move |_, _, cx| cx.dispatch_action(ToggleExpanded(section)))
         .boxed()
     }
 
@@ -445,7 +445,7 @@ impl ContactsPanel {
         } else {
             CursorStyle::Arrow
         })
-        .on_click(move |_, cx| {
+        .on_click(move |_, _, cx| {
             if !is_host {
                 cx.dispatch_global_action(JoinProject {
                     contact: contact.clone(),
@@ -507,7 +507,7 @@ impl ContactsPanel {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(move |_, cx| {
+                .on_click(move |_, _, cx| {
                     cx.dispatch_action(RespondToContactRequest {
                         user_id,
                         accept: false,
@@ -529,7 +529,7 @@ impl ContactsPanel {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(move |_, cx| {
+                .on_click(move |_, _, cx| {
                     cx.dispatch_action(RespondToContactRequest {
                         user_id,
                         accept: true,
@@ -552,7 +552,7 @@ impl ContactsPanel {
                 })
                 .with_padding(Padding::uniform(2.))
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(move |_, cx| cx.dispatch_action(RemoveContact(user_id)))
+                .on_click(move |_, _, cx| cx.dispatch_action(RemoveContact(user_id)))
                 .flex_float()
                 .boxed(),
             );
@@ -865,7 +865,7 @@ impl View for ContactsPanel {
                                     .boxed()
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
-                            .on_click(|_, cx| cx.dispatch_action(contact_finder::Toggle))
+                            .on_click(|_, _, cx| cx.dispatch_action(contact_finder::Toggle))
                             .boxed(),
                         )
                         .constrained()
@@ -913,7 +913,7 @@ impl View for ContactsPanel {
                                         },
                                     )
                                     .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_click(move |_, cx| {
+                                    .on_click(move |_, _, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new(
                                             info.url.to_string(),
                                         ));

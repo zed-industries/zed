@@ -43,6 +43,7 @@ pub enum Event {
     },
     RightMouseUp {
         position: Vector2F,
+        click_count: usize,
     },
     NavigateMouseDown {
         position: Vector2F,
@@ -72,7 +73,7 @@ impl Event {
             | Event::LeftMouseUp { position, .. }
             | Event::LeftMouseDragged { position }
             | Event::RightMouseDown { position, .. }
-            | Event::RightMouseUp { position }
+            | Event::RightMouseUp { position, .. }
             | Event::NavigateMouseDown { position, .. }
             | Event::NavigateMouseUp { position, .. }
             | Event::MouseMoved { position, .. } => Some(*position),

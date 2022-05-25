@@ -4,13 +4,14 @@ use gpui::{
     actions,
     anyhow::{anyhow, Result},
     elements::{
-        ChildView, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement,
-        ScrollTarget, Svg, UniformList, UniformListState,
+        ChildView, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, Overlay, ParentElement,
+        ScrollTarget, Stack, Svg, UniformList, UniformListState,
     },
+    geometry::vector::Vector2F,
     impl_internal_actions, keymap,
     platform::CursorStyle,
-    AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, PromptLevel, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, PromptLevel,
+    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use settings::Settings;
@@ -36,6 +37,7 @@ pub struct ProjectPanel {
     selection: Option<Selection>,
     edit_state: Option<EditState>,
     filename_editor: ViewHandle<Editor>,
+    context_menu: Option<ContextMenu>,
     handle: WeakViewHandle<Self>,
 }
 
@@ -75,6 +77,17 @@ pub struct Open {
     pub change_focus: bool,
 }
 
+#[derive(Clone)]
+pub struct DeployContextMenu {
+    pub position: Vector2F,
+    pub entry_id: Option<ProjectEntryId>,
+}
+
+pub struct ContextMenu {
+    pub position: Vector2F,
+    pub entry_id: Option<ProjectEntryId>,
+}
+
 actions!(
     project_panel,
     [
@@ -86,9 +99,10 @@ actions!(
         Rename
     ]
 );
-impl_internal_actions!(project_panel, [Open, ToggleExpanded]);
+impl_internal_actions!(project_panel, [Open, ToggleExpanded, DeployContextMenu]);
 
 pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action(ProjectPanel::deploy_context_menu);
     cx.add_action(ProjectPanel::expand_selected_entry);
     cx.add_action(ProjectPanel::collapse_selected_entry);
     cx.add_action(ProjectPanel::toggle_expanded);
@@ -156,6 +170,7 @@ impl ProjectPanel {
                 selection: None,
                 edit_state: None,
                 filename_editor,
+                context_menu: None,
                 handle: cx.weak_handle(),
             };
             this.update_visible_entries(None, cx);
@@ -193,6 +208,14 @@ impl ProjectPanel {
         .detach();
 
         project_panel
+    }
+
+    fn deploy_context_menu(&mut self, action: &DeployContextMenu, cx: &mut ViewContext<Self>) {
+        self.context_menu = Some(ContextMenu {
+            position: action.position,
+            entry_id: action.entry_id,
+        });
+        cx.notify();
     }
 
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
@@ -841,7 +864,7 @@ impl ProjectPanel {
                 .with_padding_left(padding)
                 .boxed()
         })
-        .on_click(move |click_count, cx| {
+        .on_click(move |_, click_count, cx| {
             if kind == EntryKind::Dir {
                 cx.dispatch_action(ToggleExpanded(entry_id))
             } else {
@@ -851,8 +874,32 @@ impl ProjectPanel {
                 })
             }
         })
+        .on_right_mouse_down(move |position, cx| {
+            cx.dispatch_action(DeployContextMenu {
+                entry_id: Some(entry_id),
+                position,
+            })
+        })
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
+    }
+
+    fn render_context_menu(&self, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
+        self.context_menu.as_ref().map(|menu| {
+            let style = &cx.global::<Settings>().theme.project_panel.context_menu;
+
+            Overlay::new(
+                Flex::column()
+                    .with_child(Label::new("Add File".to_string(), style.label.clone()).boxed())
+                    .contained()
+                    .with_style(style.container)
+                    // .constrained()
+                    // .with_width(style.width)
+                    .boxed(),
+            )
+            .with_abs_position(menu.position)
+            .named("Project Panel Context Menu")
+        })
     }
 }
 
@@ -866,33 +913,38 @@ impl View for ProjectPanel {
         let mut container_style = theme.container;
         let padding = std::mem::take(&mut container_style.padding);
         let handle = self.handle.clone();
-        UniformList::new(
-            self.list.clone(),
-            self.visible_entries
-                .iter()
-                .map(|(_, worktree_entries)| worktree_entries.len())
-                .sum(),
-            move |range, items, cx| {
-                let theme = cx.global::<Settings>().theme.clone();
-                let this = handle.upgrade(cx).unwrap();
-                this.update(cx.app, |this, cx| {
-                    this.for_each_visible_entry(range.clone(), cx, |id, details, cx| {
-                        items.push(Self::render_entry(
-                            id,
-                            details,
-                            &this.filename_editor,
-                            &theme.project_panel,
-                            cx,
-                        ));
-                    });
-                })
-            },
-        )
-        .with_padding_top(padding.top)
-        .with_padding_bottom(padding.bottom)
-        .contained()
-        .with_style(container_style)
-        .boxed()
+        Stack::new()
+            .with_child(
+                UniformList::new(
+                    self.list.clone(),
+                    self.visible_entries
+                        .iter()
+                        .map(|(_, worktree_entries)| worktree_entries.len())
+                        .sum(),
+                    move |range, items, cx| {
+                        let theme = cx.global::<Settings>().theme.clone();
+                        let this = handle.upgrade(cx).unwrap();
+                        this.update(cx.app, |this, cx| {
+                            this.for_each_visible_entry(range.clone(), cx, |id, details, cx| {
+                                items.push(Self::render_entry(
+                                    id,
+                                    details,
+                                    &this.filename_editor,
+                                    &theme.project_panel,
+                                    cx,
+                                ));
+                            });
+                        })
+                    },
+                )
+                .with_padding_top(padding.top)
+                .with_padding_bottom(padding.bottom)
+                .contained()
+                .with_style(container_style)
+                .boxed(),
+            )
+            .with_children(self.render_context_menu(cx))
+            .boxed()
     }
 
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {

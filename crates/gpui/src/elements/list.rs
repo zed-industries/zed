@@ -612,7 +612,10 @@ mod tests {
         });
 
         let mut list = List::new(state.clone());
-        let (size, _) = list.layout(constraint, &mut presenter.build_layout_context(false, cx));
+        let (size, _) = list.layout(
+            constraint,
+            &mut presenter.build_layout_context(vec2f(100., 40.), false, cx),
+        );
         assert_eq!(size, vec2f(100., 40.));
         assert_eq!(
             state.0.borrow().items.summary().clone(),
@@ -634,8 +637,10 @@ mod tests {
             true,
             &mut presenter.build_event_context(cx),
         );
-        let (_, logical_scroll_top) =
-            list.layout(constraint, &mut presenter.build_layout_context(false, cx));
+        let (_, logical_scroll_top) = list.layout(
+            constraint,
+            &mut presenter.build_layout_context(vec2f(100., 40.), false, cx),
+        );
         assert_eq!(
             logical_scroll_top,
             ListOffset {
@@ -659,8 +664,10 @@ mod tests {
             }
         );
 
-        let (size, logical_scroll_top) =
-            list.layout(constraint, &mut presenter.build_layout_context(false, cx));
+        let (size, logical_scroll_top) = list.layout(
+            constraint,
+            &mut presenter.build_layout_context(vec2f(100., 40.), false, cx),
+        );
         assert_eq!(size, vec2f(100., 40.));
         assert_eq!(
             state.0.borrow().items.summary().clone(),
@@ -770,11 +777,12 @@ mod tests {
             }
 
             let mut list = List::new(state.clone());
+            let window_size = vec2f(width, height);
             let (size, logical_scroll_top) = list.layout(
-                SizeConstraint::new(vec2f(0., 0.), vec2f(width, height)),
-                &mut presenter.build_layout_context(false, cx),
+                SizeConstraint::new(vec2f(0., 0.), window_size),
+                &mut presenter.build_layout_context(window_size, false, cx),
             );
-            assert_eq!(size, vec2f(width, height));
+            assert_eq!(size, window_size);
             last_logical_scroll_top = Some(logical_scroll_top);
 
             let state = state.0.borrow();
