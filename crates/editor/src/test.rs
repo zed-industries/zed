@@ -4,7 +4,6 @@ use indoc::indoc;
 
 use collections::BTreeMap;
 use gpui::{keymap::Keystroke, ModelHandle, ViewContext, ViewHandle};
-use itertools::{Either, Itertools};
 use language::Selection;
 use settings::Settings;
 use util::{
@@ -138,17 +137,26 @@ impl<'a> EditorTestContext<'a> {
     // `{` to `]` represents a non empty selection with the head at `{`
     pub fn set_state(&mut self, text: &str) {
         self.editor.update(self.cx, |editor, cx| {
-            let (text_with_ranges, empty_selections) = marked_text(&text);
-            let (unmarked_text, mut selection_ranges) =
-                marked_text_ranges_by(&text_with_ranges, vec![('[', '}'), ('{', ']')]);
+            let (unmarked_text, mut selection_ranges) = marked_text_ranges_by(
+                &text,
+                vec!['|'.into(), ('[', '}').into(), ('{', ']').into()],
+            );
             editor.set_text(unmarked_text, cx);
 
-            let mut selections: Vec<Range<usize>> = empty_selections
-                .into_iter()
-                .map(|offset| offset..offset)
-                .collect();
-            selections.extend(selection_ranges.remove(&('{', ']')).unwrap_or_default());
-            selections.extend(selection_ranges.remove(&('[', '}')).unwrap_or_default());
+            let mut selections: Vec<Range<usize>> =
+                selection_ranges.remove(&'|'.into()).unwrap_or_default();
+            selections.extend(
+                selection_ranges
+                    .remove(&('{', ']').into())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|range| range.end..range.start),
+            );
+            selections.extend(
+                selection_ranges
+                    .remove(&('[', '}').into())
+                    .unwrap_or_default(),
+            );
 
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| s.select_ranges(selections));
         })
@@ -159,17 +167,23 @@ impl<'a> EditorTestContext<'a> {
     // `[` to `}` represents a non empty selection with the head at `}`
     // `{` to `]` represents a non empty selection with the head at `{`
     pub fn assert_editor_state(&mut self, text: &str) {
-        let (text_with_ranges, expected_empty_selections) = marked_text(&text);
-        let (unmarked_text, mut selection_ranges) =
-            marked_text_ranges_by(&text_with_ranges, vec![('[', '}'), ('{', ']')]);
+        let (unmarked_text, mut selection_ranges) = marked_text_ranges_by(
+            &text,
+            vec!['|'.into(), ('[', '}').into(), ('{', ']').into()],
+        );
         let editor_text = self.editor_text();
         assert_eq!(
             editor_text, unmarked_text,
             "Unmarked text doesn't match editor text"
         );
 
-        let expected_reverse_selections = selection_ranges.remove(&('{', ']')).unwrap_or_default();
-        let expected_forward_selections = selection_ranges.remove(&('[', '}')).unwrap_or_default();
+        let expected_empty_selections = selection_ranges.remove(&'|'.into()).unwrap_or_default();
+        let expected_reverse_selections = selection_ranges
+            .remove(&('{', ']').into())
+            .unwrap_or_default();
+        let expected_forward_selections = selection_ranges
+            .remove(&('[', '}').into())
+            .unwrap_or_default();
 
         self.assert_selections(
             expected_empty_selections,
@@ -180,65 +194,53 @@ impl<'a> EditorTestContext<'a> {
     }
 
     pub fn assert_editor_selections(&mut self, expected_selections: Vec<Selection<usize>>) {
-        let (expected_empty_selections, expected_non_empty_selections): (Vec<_>, Vec<_>) =
-            expected_selections.into_iter().partition_map(|selection| {
-                if selection.is_empty() {
-                    Either::Left(selection.head())
-                } else {
-                    Either::Right(selection)
-                }
-            });
+        let mut empty_selections = Vec::new();
+        let mut reverse_selections = Vec::new();
+        let mut forward_selections = Vec::new();
 
-        let (expected_reverse_selections, expected_forward_selections): (Vec<_>, Vec<_>) =
-            expected_non_empty_selections
-                .into_iter()
-                .partition_map(|selection| {
-                    let range = selection.start..selection.end;
-                    if selection.reversed {
-                        Either::Left(range)
-                    } else {
-                        Either::Right(range)
-                    }
-                });
+        for selection in expected_selections {
+            let range = selection.range();
+            if selection.is_empty() {
+                empty_selections.push(range);
+            } else if selection.reversed {
+                reverse_selections.push(range);
+            } else {
+                forward_selections.push(range)
+            }
+        }
 
         self.assert_selections(
-            expected_empty_selections,
-            expected_reverse_selections,
-            expected_forward_selections,
+            empty_selections,
+            reverse_selections,
+            forward_selections,
             None,
         )
     }
 
     fn assert_selections(
         &mut self,
-        expected_empty_selections: Vec<usize>,
+        expected_empty_selections: Vec<Range<usize>>,
         expected_reverse_selections: Vec<Range<usize>>,
         expected_forward_selections: Vec<Range<usize>>,
         asserted_text: Option<String>,
     ) {
         let (empty_selections, reverse_selections, forward_selections) =
             self.editor.read_with(self.cx, |editor, cx| {
-                let (empty_selections, non_empty_selections): (Vec<_>, Vec<_>) = editor
-                    .selections
-                    .all::<usize>(cx)
-                    .into_iter()
-                    .partition_map(|selection| {
-                        if selection.is_empty() {
-                            Either::Left(selection.head())
-                        } else {
-                            Either::Right(selection)
-                        }
-                    });
+                let mut empty_selections = Vec::new();
+                let mut reverse_selections = Vec::new();
+                let mut forward_selections = Vec::new();
 
-                let (reverse_selections, forward_selections): (Vec<_>, Vec<_>) =
-                    non_empty_selections.into_iter().partition_map(|selection| {
-                        let range = selection.start..selection.end;
-                        if selection.reversed {
-                            Either::Left(range)
-                        } else {
-                            Either::Right(range)
-                        }
-                    });
+                for selection in editor.selections.all::<usize>(cx) {
+                    let range = selection.range();
+                    if selection.is_empty() {
+                        empty_selections.push(range);
+                    } else if selection.reversed {
+                        reverse_selections.push(range);
+                    } else {
+                        forward_selections.push(range)
+                    }
+                }
+
                 (empty_selections, reverse_selections, forward_selections)
             });
 
@@ -258,7 +260,7 @@ impl<'a> EditorTestContext<'a> {
                 .map_err(|err| {
                     err.map(|missing| {
                         let mut error_text = unmarked_text.clone();
-                        error_text.insert(missing, '|');
+                        error_text.insert(missing.start, '|');
                         error_text
                     })
                 })
@@ -316,14 +318,14 @@ impl<'a> EditorTestContext<'a> {
 
     fn insert_markers(
         &mut self,
-        empty_selections: &Vec<usize>,
+        empty_selections: &Vec<Range<usize>>,
         reverse_selections: &Vec<Range<usize>>,
         forward_selections: &Vec<Range<usize>>,
     ) -> String {
         let mut editor_text_with_selections = self.editor_text();
         let mut selection_marks = BTreeMap::new();
-        for offset in empty_selections {
-            selection_marks.insert(offset, '|');
+        for range in empty_selections {
+            selection_marks.insert(&range.start, '|');
         }
         for range in reverse_selections {
             selection_marks.insert(&range.start, '{');

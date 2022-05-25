@@ -2735,28 +2735,31 @@ impl Editor {
     pub fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections.all::<Point>(cx);
-        for selection in &mut selections {
-            if selection.is_empty() && !self.selections.line_mode {
-                let old_head = selection.head();
-                let mut new_head =
-                    movement::left(&display_map, old_head.to_display_point(&display_map))
-                        .to_point(&display_map);
-                if let Some((buffer, line_buffer_range)) = display_map
-                    .buffer_snapshot
-                    .buffer_line_for_row(old_head.row)
-                {
-                    let indent_column = buffer.indent_column_for_line(line_buffer_range.start.row);
-                    let language_name = buffer.language().map(|language| language.name());
-                    let indent = cx.global::<Settings>().tab_size(language_name.as_deref());
-                    if old_head.column <= indent_column && old_head.column > 0 {
-                        new_head = cmp::min(
-                            new_head,
-                            Point::new(old_head.row, ((old_head.column - 1) / indent) * indent),
-                        );
+        if !self.selections.line_mode {
+            for selection in &mut selections {
+                if selection.is_empty() {
+                    let old_head = selection.head();
+                    let mut new_head =
+                        movement::left(&display_map, old_head.to_display_point(&display_map))
+                            .to_point(&display_map);
+                    if let Some((buffer, line_buffer_range)) = display_map
+                        .buffer_snapshot
+                        .buffer_line_for_row(old_head.row)
+                    {
+                        let indent_column =
+                            buffer.indent_column_for_line(line_buffer_range.start.row);
+                        let language_name = buffer.language().map(|language| language.name());
+                        let indent = cx.global::<Settings>().tab_size(language_name.as_deref());
+                        if old_head.column <= indent_column && old_head.column > 0 {
+                            new_head = cmp::min(
+                                new_head,
+                                Point::new(old_head.row, ((old_head.column - 1) / indent) * indent),
+                            );
+                        }
                     }
-                }
 
-                selection.set_head(new_head, SelectionGoal::None);
+                    selection.set_head(new_head, SelectionGoal::None);
+                }
             }
         }
 
@@ -7492,8 +7495,7 @@ mod tests {
             |The qu[ick b}rown"});
         cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
         cx.assert_editor_state(indoc! {"
-            |
-            fox jumps over
+            |fox jumps over
             the lazy dog|"});
     }
 
@@ -7516,13 +7518,11 @@ mod tests {
         cx.update_editor(|e, _| e.selections.line_mode = true);
         cx.set_state(indoc! {"
             The |quick |brown
-            fox {jum]ps over|
+            fox {jum]ps over
             the lazy dog
             |The qu[ick b}rown"});
         cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
-        cx.assert_editor_state(indoc! {"
-            |
-            the lazy dog|"});
+        cx.assert_editor_state("|the lazy dog|");
     }
 
     #[gpui::test]
@@ -7830,131 +7830,79 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_clipboard(cx: &mut gpui::MutableAppContext) {
-        cx.set_global(Settings::test(cx));
-        let buffer = MultiBuffer::build_simple("one✅ two three four five six ", cx);
-        let view = cx
-            .add_window(Default::default(), |cx| build_editor(buffer.clone(), cx))
-            .1;
+    async fn test_clipboard(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx).await;
 
-        // Cut with three selections. Clipboard text is divided into three slices.
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| s.select_ranges(vec![0..7, 11..17, 22..27]));
-            view.cut(&Cut, cx);
-            assert_eq!(view.display_text(cx), "two four six ");
-        });
+        cx.set_state("[one✅ }two [three }four [five }six ");
+        cx.update_editor(|e, cx| e.cut(&Cut, cx));
+        cx.assert_editor_state("|two |four |six ");
 
         // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| s.select_ranges(vec![4..4, 9..9, 13..13]));
-            view.paste(&Paste, cx);
-            assert_eq!(view.display_text(cx), "two one✅ four three six five ");
-            assert_eq!(
-                view.selections.display_ranges(cx),
-                &[
-                    DisplayPoint::new(0, 11)..DisplayPoint::new(0, 11),
-                    DisplayPoint::new(0, 22)..DisplayPoint::new(0, 22),
-                    DisplayPoint::new(0, 31)..DisplayPoint::new(0, 31)
-                ]
-            );
-        });
+        cx.set_state("two |four |six |");
+        cx.update_editor(|e, cx| e.paste(&Paste, cx));
+        cx.assert_editor_state("two one✅ |four three |six five |");
 
         // Paste again but with only two cursors. Since the number of cursors doesn't
         // match the number of slices in the clipboard, the entire clipboard text
         // is pasted at each cursor.
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| s.select_ranges(vec![0..0, 31..31]));
-            view.handle_input(&Input("( ".into()), cx);
-            view.paste(&Paste, cx);
-            view.handle_input(&Input(") ".into()), cx);
-            assert_eq!(
-                view.display_text(cx),
-                "( one✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
-            );
+        cx.set_state("|two one✅ four three six five |");
+        cx.update_editor(|e, cx| {
+            e.handle_input(&Input("( ".into()), cx);
+            e.paste(&Paste, cx);
+            e.handle_input(&Input(") ".into()), cx);
         });
-
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| s.select_ranges(vec![0..0]));
-            view.handle_input(&Input("123\n4567\n89\n".into()), cx);
-            assert_eq!(
-                view.display_text(cx),
-                "123\n4567\n89\n( one✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
-            );
-        });
+        cx.assert_editor_state(indoc! {"
+            ( one✅ 
+            three 
+            five ) |two one✅ four three six five ( one✅ 
+            three 
+            five ) |"});
 
         // Cut with three selections, one of which is full-line.
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| s.select_display_ranges(
-                [
-                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2),
-                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-                    DisplayPoint::new(2, 0)..DisplayPoint::new(2, 1),
-                ],
-            ));
-            view.cut(&Cut, cx);
-            assert_eq!(
-                view.display_text(cx),
-                "13\n9\n( one✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
-            );
-        });
+        cx.set_state(indoc! {"
+            1[2}3
+            4|567
+            [8}9"});
+        cx.update_editor(|e, cx| e.cut(&Cut, cx));
+        cx.assert_editor_state(indoc! {"
+            1|3
+            |9"});
 
         // Paste with three selections, noticing how the copied selection that was full-line
         // gets inserted before the second cursor.
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| s.select_display_ranges(
-                [
-                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-                    DisplayPoint::new(2, 2)..DisplayPoint::new(2, 3),
-                ],
-            ));
-            view.paste(&Paste, cx);
-            assert_eq!(
-                view.display_text(cx),
-                "123\n4567\n9\n( 8ne✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
-            );
-            assert_eq!(
-                view.selections.display_ranges(cx),
-                &[
-                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-                    DisplayPoint::new(3, 3)..DisplayPoint::new(3, 3),
-                ]
-            );
-        });
+        cx.set_state(indoc! {"
+            1|3
+            9|
+            [o}ne"});
+        cx.update_editor(|e, cx| e.paste(&Paste, cx));
+        cx.assert_editor_state(indoc! {"
+            12|3
+            4567
+            9|
+            8|ne"});
 
         // Copy with a single cursor only, which writes the whole line into the clipboard.
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)])
-            });
-            view.copy(&Copy, cx);
-        });
+        cx.set_state(indoc! {"
+            The quick brown
+            fox ju|mps over
+            the lazy dog"});
+        cx.update_editor(|e, cx| e.copy(&Copy, cx));
+        cx.assert_clipboard_content(Some("fox jumps over\n"));
 
         // Paste with three selections, noticing how the copied full-line selection is inserted
         // before the empty selections but replaces the selection that is non-empty.
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| s.select_display_ranges(
-                [
-                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 2),
-                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-                ],
-            ));
-            view.paste(&Paste, cx);
-            assert_eq!(
-                view.display_text(cx),
-                "123\n123\n123\n67\n123\n9\n( 8ne✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
-            );
-            assert_eq!(
-                view.selections.display_ranges(cx),
-                &[
-                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
-                    DisplayPoint::new(5, 1)..DisplayPoint::new(5, 1),
-                ]
-            );
-        });
+        cx.set_state(indoc! {"
+            T|he quick brown
+            [fo}x jumps over
+            t|he lazy dog"});
+        cx.update_editor(|e, cx| e.paste(&Paste, cx));
+        cx.assert_editor_state(indoc! {"
+            fox jumps over
+            T|he quick brown
+            fox jumps over
+            |x jumps over
+            fox jumps over
+            t|he lazy dog"});
     }
 
     #[gpui::test]
@@ -8693,8 +8641,10 @@ mod tests {
             fn assert(editor: &mut Editor, cx: &mut ViewContext<Editor>, marked_text_ranges: &str) {
                 let range_markers = ('<', '>');
                 let (expected_text, mut selection_ranges_lookup) =
-                    marked_text_ranges_by(marked_text_ranges, vec![range_markers.clone()]);
-                let selection_ranges = selection_ranges_lookup.remove(&range_markers).unwrap();
+                    marked_text_ranges_by(marked_text_ranges, vec![range_markers.clone().into()]);
+                let selection_ranges = selection_ranges_lookup
+                    .remove(&range_markers.into())
+                    .unwrap();
                 assert_eq!(editor.text(cx), expected_text);
                 assert_eq!(editor.selections.ranges::<usize>(cx), selection_ranges);
             }
