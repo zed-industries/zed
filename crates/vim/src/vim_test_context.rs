@@ -1,25 +1,14 @@
-use std::ops::{Deref, DerefMut, Range};
+use std::ops::{Deref, DerefMut};
 
-use collections::BTreeMap;
-use itertools::{Either, Itertools};
-
-use editor::{display_map::ToDisplayPoint, Autoscroll};
-use gpui::{json::json, keymap::Keystroke, ViewHandle};
-use indoc::indoc;
-use language::Selection;
+use editor::test::EditorTestContext;
+use gpui::json::json;
 use project::Project;
-use util::{
-    set_eq,
-    test::{marked_text, marked_text_ranges_by, SetEqError},
-};
 use workspace::{pane, AppState, WorkspaceHandle};
 
 use crate::{state::Operator, *};
 
 pub struct VimTestContext<'a> {
-    cx: &'a mut gpui::TestAppContext,
-    window_id: usize,
-    editor: ViewHandle<Editor>,
+    cx: EditorTestContext<'a>,
 }
 
 impl<'a> VimTestContext<'a> {
@@ -70,9 +59,11 @@ impl<'a> VimTestContext<'a> {
         editor.update(cx, |_, cx| cx.focus_self());
 
         Self {
-            cx,
-            window_id,
-            editor,
+            cx: EditorTestContext {
+                cx,
+                window_id,
+                editor,
+            },
         }
     }
 
@@ -101,225 +92,13 @@ impl<'a> VimTestContext<'a> {
             .read(|cx| cx.global::<Vim>().state.operator_stack.last().copied())
     }
 
-    pub fn editor_text(&mut self) -> String {
-        self.editor
-            .update(self.cx, |editor, cx| editor.snapshot(cx).text())
-    }
-
-    pub fn simulate_keystroke(&mut self, keystroke_text: &str) {
-        let keystroke = Keystroke::parse(keystroke_text).unwrap();
-        let input = if keystroke.modified() {
-            None
-        } else {
-            Some(keystroke.key.clone())
-        };
-        self.cx
-            .dispatch_keystroke(self.window_id, keystroke, input, false);
-    }
-
-    pub fn simulate_keystrokes<const COUNT: usize>(&mut self, keystroke_texts: [&str; COUNT]) {
-        for keystroke_text in keystroke_texts.into_iter() {
-            self.simulate_keystroke(keystroke_text);
-        }
-    }
-
     pub fn set_state(&mut self, text: &str, mode: Mode) {
-        self.cx
-            .update(|cx| Vim::update(cx, |vim, cx| vim.switch_mode(mode, cx)));
-        self.editor.update(self.cx, |editor, cx| {
-            let (unmarked_text, markers) = marked_text(&text);
-            editor.set_text(unmarked_text, cx);
-            let cursor_offset = markers[0];
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                s.replace_cursors_with(|map| vec![cursor_offset.to_display_point(map)])
-            });
-        })
-    }
-
-    // Asserts the editor state via a marked string.
-    // `|` characters represent empty selections
-    // `[` to `}` represents a non empty selection with the head at `}`
-    // `{` to `]` represents a non empty selection with the head at `{`
-    pub fn assert_editor_state(&mut self, text: &str) {
-        let (text_with_ranges, expected_empty_selections) = marked_text(&text);
-        let (unmarked_text, mut selection_ranges) =
-            marked_text_ranges_by(&text_with_ranges, vec![('[', '}'), ('{', ']')]);
-        let editor_text = self.editor_text();
-        assert_eq!(
-            editor_text, unmarked_text,
-            "Unmarked text doesn't match editor text"
-        );
-
-        let expected_reverse_selections = selection_ranges.remove(&('{', ']')).unwrap_or_default();
-        let expected_forward_selections = selection_ranges.remove(&('[', '}')).unwrap_or_default();
-
-        self.assert_selections(
-            expected_empty_selections,
-            expected_reverse_selections,
-            expected_forward_selections,
-            Some(text.to_string()),
-        )
-    }
-
-    pub fn assert_editor_selections(&mut self, expected_selections: Vec<Selection<usize>>) {
-        let (expected_empty_selections, expected_non_empty_selections): (Vec<_>, Vec<_>) =
-            expected_selections.into_iter().partition_map(|selection| {
-                if selection.is_empty() {
-                    Either::Left(selection.head())
-                } else {
-                    Either::Right(selection)
-                }
-            });
-
-        let (expected_reverse_selections, expected_forward_selections): (Vec<_>, Vec<_>) =
-            expected_non_empty_selections
-                .into_iter()
-                .partition_map(|selection| {
-                    let range = selection.start..selection.end;
-                    if selection.reversed {
-                        Either::Left(range)
-                    } else {
-                        Either::Right(range)
-                    }
-                });
-
-        self.assert_selections(
-            expected_empty_selections,
-            expected_reverse_selections,
-            expected_forward_selections,
-            None,
-        )
-    }
-
-    fn assert_selections(
-        &mut self,
-        expected_empty_selections: Vec<usize>,
-        expected_reverse_selections: Vec<Range<usize>>,
-        expected_forward_selections: Vec<Range<usize>>,
-        asserted_text: Option<String>,
-    ) {
-        let (empty_selections, reverse_selections, forward_selections) =
-            self.editor.read_with(self.cx, |editor, cx| {
-                let (empty_selections, non_empty_selections): (Vec<_>, Vec<_>) = editor
-                    .selections
-                    .all::<usize>(cx)
-                    .into_iter()
-                    .partition_map(|selection| {
-                        if selection.is_empty() {
-                            Either::Left(selection.head())
-                        } else {
-                            Either::Right(selection)
-                        }
-                    });
-
-                let (reverse_selections, forward_selections): (Vec<_>, Vec<_>) =
-                    non_empty_selections.into_iter().partition_map(|selection| {
-                        let range = selection.start..selection.end;
-                        if selection.reversed {
-                            Either::Left(range)
-                        } else {
-                            Either::Right(range)
-                        }
-                    });
-                (empty_selections, reverse_selections, forward_selections)
-            });
-
-        let asserted_selections = asserted_text.unwrap_or_else(|| {
-            self.insert_markers(
-                &expected_empty_selections,
-                &expected_reverse_selections,
-                &expected_forward_selections,
-            )
+        self.cx.update(|cx| {
+            Vim::update(cx, |vim, cx| {
+                vim.switch_mode(mode, cx);
+            })
         });
-        let actual_selections =
-            self.insert_markers(&empty_selections, &reverse_selections, &forward_selections);
-
-        let unmarked_text = self.editor_text();
-        let all_eq: Result<(), SetEqError<String>> =
-            set_eq!(expected_empty_selections, empty_selections)
-                .map_err(|err| {
-                    err.map(|missing| {
-                        let mut error_text = unmarked_text.clone();
-                        error_text.insert(missing, '|');
-                        error_text
-                    })
-                })
-                .and_then(|_| {
-                    set_eq!(expected_reverse_selections, reverse_selections).map_err(|err| {
-                        err.map(|missing| {
-                            let mut error_text = unmarked_text.clone();
-                            error_text.insert(missing.start, '{');
-                            error_text.insert(missing.end, ']');
-                            error_text
-                        })
-                    })
-                })
-                .and_then(|_| {
-                    set_eq!(expected_forward_selections, forward_selections).map_err(|err| {
-                        err.map(|missing| {
-                            let mut error_text = unmarked_text.clone();
-                            error_text.insert(missing.start, '[');
-                            error_text.insert(missing.end, '}');
-                            error_text
-                        })
-                    })
-                });
-
-        match all_eq {
-            Err(SetEqError::LeftMissing(location_text)) => {
-                panic!(
-                    indoc! {"
-                        Editor has extra selection
-                        Extra Selection Location:
-                        {}
-                        Asserted selections:
-                        {}
-                        Actual selections:
-                        {}"},
-                    location_text, asserted_selections, actual_selections,
-                );
-            }
-            Err(SetEqError::RightMissing(location_text)) => {
-                panic!(
-                    indoc! {"
-                        Editor is missing empty selection
-                        Missing Selection Location:
-                        {}
-                        Asserted selections:
-                        {}
-                        Actual selections:
-                        {}"},
-                    location_text, asserted_selections, actual_selections,
-                );
-            }
-            _ => {}
-        }
-    }
-
-    fn insert_markers(
-        &mut self,
-        empty_selections: &Vec<usize>,
-        reverse_selections: &Vec<Range<usize>>,
-        forward_selections: &Vec<Range<usize>>,
-    ) -> String {
-        let mut editor_text_with_selections = self.editor_text();
-        let mut selection_marks = BTreeMap::new();
-        for offset in empty_selections {
-            selection_marks.insert(offset, '|');
-        }
-        for range in reverse_selections {
-            selection_marks.insert(&range.start, '{');
-            selection_marks.insert(&range.end, ']');
-        }
-        for range in forward_selections {
-            selection_marks.insert(&range.start, '[');
-            selection_marks.insert(&range.end, '}');
-        }
-        for (offset, mark) in selection_marks.into_iter().rev() {
-            editor_text_with_selections.insert(*offset, mark);
-        }
-
-        editor_text_with_selections
+        self.cx.set_state(text);
     }
 
     pub fn assert_binding<const COUNT: usize>(
@@ -331,8 +110,8 @@ impl<'a> VimTestContext<'a> {
         mode_after: Mode,
     ) {
         self.set_state(initial_state, initial_mode);
-        self.simulate_keystrokes(keystrokes);
-        self.assert_editor_state(state_after);
+        self.cx.simulate_keystrokes(keystrokes);
+        self.cx.assert_editor_state(state_after);
         assert_eq!(self.mode(), mode_after);
         assert_eq!(self.active_operator(), None);
     }
@@ -355,10 +134,16 @@ impl<'a> VimTestContext<'a> {
 }
 
 impl<'a> Deref for VimTestContext<'a> {
-    type Target = gpui::TestAppContext;
+    type Target = EditorTestContext<'a>;
 
     fn deref(&self) -> &Self::Target {
-        self.cx
+        &self.cx
+    }
+}
+
+impl<'a> DerefMut for VimTestContext<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.cx
     }
 }
 

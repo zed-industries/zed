@@ -5,8 +5,8 @@ pub mod movement;
 mod multi_buffer;
 pub mod selections_collection;
 
-#[cfg(test)]
-mod test;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test;
 
 use aho_corasick::AhoCorasick;
 use anyhow::Result;
@@ -6017,7 +6017,9 @@ pub fn styled_runs_for_code_label<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::test::{assert_text_with_selections, select_ranges};
+    use crate::test::{
+        assert_text_with_selections, build_editor, select_ranges, EditorTestContext,
+    };
 
     use super::*;
     use gpui::{
@@ -7289,117 +7291,62 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_indent_outdent(cx: &mut gpui::MutableAppContext) {
-        cx.set_global(Settings::test(cx));
-        let buffer = MultiBuffer::build_simple(
-            indoc! {"
-                  one two
-                three
-                 four"},
-            cx,
-        );
-        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
+    async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx).await;
 
-        view.update(cx, |view, cx| {
-            // two selections on the same line
-            select_ranges(
-                view,
-                indoc! {"
-                      [one] [two]
-                    three
-                     four"},
-                cx,
-            );
+        cx.set_state(indoc! {"
+              [one} [two}
+            three
+             four"});
+        cx.update_editor(|e, cx| e.tab(&Tab, cx));
+        cx.assert_editor_state(indoc! {"
+                [one} [two}
+            three
+             four"});
 
-            // indent from mid-tabstop to full tabstop
-            view.tab(&Tab, cx);
-            assert_text_with_selections(
-                view,
-                indoc! {"
-                        [one] [two]
-                    three
-                     four"},
-                cx,
-            );
+        cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+        cx.assert_editor_state(indoc! {"
+            [one} [two}
+            three
+             four"});
 
-            // outdent from 1 tabstop to 0 tabstops
-            view.tab_prev(&TabPrev, cx);
-            assert_text_with_selections(
-                view,
-                indoc! {"
-                    [one] [two]
-                    three
-                     four"},
-                cx,
-            );
+        // select across line ending
+        cx.set_state(indoc! {"
+            one two
+            t[hree
+            } four"});
+        cx.update_editor(|e, cx| e.tab(&Tab, cx));
+        cx.assert_editor_state(indoc! {"
+            one two
+                t[hree
+            } four"});
 
-            // select across line ending
-            select_ranges(
-                view,
-                indoc! {"
-                    one two
-                    t[hree
-                    ] four"},
-                cx,
-            );
+        cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+        cx.assert_editor_state(indoc! {"
+            one two
+            t[hree
+            } four"});
 
-            // indent and outdent affect only the preceding line
-            view.tab(&Tab, cx);
-            assert_text_with_selections(
-                view,
-                indoc! {"
-                    one two
-                        t[hree
-                    ] four"},
-                cx,
-            );
-            view.tab_prev(&TabPrev, cx);
-            assert_text_with_selections(
-                view,
-                indoc! {"
-                    one two
-                    t[hree
-                    ] four"},
-                cx,
-            );
+        // Ensure that indenting/outdenting works when the cursor is at column 0.
+        cx.set_state(indoc! {"
+            one two
+            |three
+                four"});
+        cx.update_editor(|e, cx| e.tab(&Tab, cx));
+        cx.assert_editor_state(indoc! {"
+            one two
+                |three
+                four"});
 
-            // Ensure that indenting/outdenting works when the cursor is at column 0.
-            select_ranges(
-                view,
-                indoc! {"
-                    one two
-                    []three
-                     four"},
-                cx,
-            );
-            view.tab(&Tab, cx);
-            assert_text_with_selections(
-                view,
-                indoc! {"
-                    one two
-                        []three
-                     four"},
-                cx,
-            );
-
-            select_ranges(
-                view,
-                indoc! {"
-                    one two
-                    []    three
-                     four"},
-                cx,
-            );
-            view.tab_prev(&TabPrev, cx);
-            assert_text_with_selections(
-                view,
-                indoc! {"
-                    one two
-                    []three
-                     four"},
-                cx,
-            );
-        });
+        cx.set_state(indoc! {"
+            one two
+            |    three
+             four"});
+        cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+        cx.assert_editor_state(indoc! {"
+            one two
+            |three
+             four"});
     }
 
     #[gpui::test]
@@ -7508,73 +7455,74 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_backspace(cx: &mut gpui::MutableAppContext) {
-        cx.set_global(Settings::test(cx));
-        let (_, view) = cx.add_window(Default::default(), |cx| {
-            build_editor(MultiBuffer::build_simple("", cx), cx)
-        });
+    async fn test_backspace(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx).await;
+        // Basic backspace
+        cx.set_state(indoc! {"
+            on|e two three
+            fou[r} five six
+            seven {eight nine
+            ]ten"});
+        cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
+        cx.assert_editor_state(indoc! {"
+            o|e two three
+            fou| five six
+            seven |ten"});
 
-        view.update(cx, |view, cx| {
-            view.set_text("one two three\nfour five six\nseven eight nine\nten\n", cx);
-            view.change_selections(None, cx, |s| {
-                s.select_display_ranges([
-                    // an empty selection - the preceding character is deleted
-                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                    // one character selected - it is deleted
-                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
-                    // a line suffix selected - it is deleted
-                    DisplayPoint::new(2, 6)..DisplayPoint::new(3, 0),
-                ])
-            });
-            view.backspace(&Backspace, cx);
-            assert_eq!(view.text(cx), "oe two three\nfou five six\nseven ten\n");
+        // Test backspace inside and around indents
+        cx.set_state(indoc! {"
+            zero
+                |one
+                    |two
+                | | |  three
+            |  |  four"});
+        cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
+        cx.assert_editor_state(indoc! {"
+            zero
+            |one
+                |two
+            |  three|  four"});
 
-            view.set_text("    one\n        two\n        three\n   four", cx);
-            view.change_selections(None, cx, |s| {
-                s.select_display_ranges([
-                    // cursors at the the end of leading indent - last indent is deleted
-                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
-                    DisplayPoint::new(1, 8)..DisplayPoint::new(1, 8),
-                    // cursors inside leading indent - overlapping indent deletions are coalesced
-                    DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4),
-                    DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
-                    DisplayPoint::new(2, 6)..DisplayPoint::new(2, 6),
-                    // cursor at the beginning of a line - preceding newline is deleted
-                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
-                    // selection inside leading indent - only the selected character is deleted
-                    DisplayPoint::new(3, 2)..DisplayPoint::new(3, 3),
-                ])
-            });
-            view.backspace(&Backspace, cx);
-            assert_eq!(view.text(cx), "one\n    two\n  three  four");
-        });
+        // Test backspace with line_mode set to true
+        cx.update_editor(|e, _| e.selections.line_mode = true);
+        cx.set_state(indoc! {"
+            The |quick |brown
+            fox jumps over
+            the lazy dog
+            |The qu[ick b}rown"});
+        cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
+        cx.assert_editor_state(indoc! {"
+            |
+            fox jumps over
+            the lazy dog|"});
     }
 
     #[gpui::test]
-    fn test_delete(cx: &mut gpui::MutableAppContext) {
-        cx.set_global(Settings::test(cx));
-        let buffer =
-            MultiBuffer::build_simple("one two three\nfour five six\nseven eight nine\nten\n", cx);
-        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
+    async fn test_delete(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx).await;
 
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| {
-                s.select_display_ranges([
-                    // an empty selection - the following character is deleted
-                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                    // one character selected - it is deleted
-                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
-                    // a line suffix selected - it is deleted
-                    DisplayPoint::new(2, 6)..DisplayPoint::new(3, 0),
-                ])
-            });
-            view.delete(&Delete, cx);
-        });
+        cx.set_state(indoc! {"
+            on|e two three
+            fou[r} five six
+            seven {eight nine
+            ]ten"});
+        cx.update_editor(|e, cx| e.delete(&Delete, cx));
+        cx.assert_editor_state(indoc! {"
+            on| two three
+            fou| five six
+            seven |ten"});
 
-        assert_eq!(
-            buffer.read(cx).read(cx).text(),
-            "on two three\nfou five six\nseven ten\n"
-        );
+        // Test backspace with line_mode set to true
+        cx.update_editor(|e, _| e.selections.line_mode = true);
+        cx.set_state(indoc! {"
+            The |quick |brown
+            fox {jum]ps over|
+            the lazy dog
+            |The qu[ick b}rown"});
+        cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
+        cx.assert_editor_state(indoc! {"
+            |
+            the lazy dog|"});
     }
 
     #[gpui::test]
@@ -9793,10 +9741,6 @@ mod tests {
     fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
         let point = DisplayPoint::new(row as u32, column as u32);
         point..point
-    }
-
-    fn build_editor(buffer: ModelHandle<MultiBuffer>, cx: &mut ViewContext<Editor>) -> Editor {
-        Editor::new(EditorMode::Full, buffer, None, None, None, cx)
     }
 
     fn assert_selection_ranges(
