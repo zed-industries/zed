@@ -207,6 +207,15 @@ impl ProjectPanel {
     }
 
     fn deploy_context_menu(&mut self, action: &DeployContextMenu, cx: &mut ViewContext<Self>) {
+        if let Some(entry_id) = action.entry_id {
+            if let Some(worktree_id) = self.project.read(cx).worktree_id_for_entry(entry_id, cx) {
+                self.selection = Some(Selection {
+                    worktree_id,
+                    entry_id,
+                });
+            }
+        }
+
         self.context_menu.update(cx, |menu, cx| {
             menu.show(
                 action.position,
@@ -232,6 +241,7 @@ impl ProjectPanel {
                 cx,
             );
         });
+
         cx.notify();
     }
 
