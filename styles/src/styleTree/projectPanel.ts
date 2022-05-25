@@ -32,21 +32,5 @@ export default function projectPanel(theme: Theme) {
       text: text(theme, "mono", "primary", { size: "sm" }),
       selection: player(theme, 1).selection,
     },
-    contextMenu: {
-      width: 100,
-      // background: "#ff0000",
-      background: backgroundColor(theme, 300, "base"),
-      cornerRadius: 6,
-      padding: {
-        bottom: 2,
-        left: 6,
-        right: 6,
-        top: 2,
-      },
-      item: {
-        label: text(theme, "sans", "secondary", { size: "sm" }),
-      },
-      shadow: shadow(theme),
-    }
   };
 }

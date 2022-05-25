@@ -9,45 +9,120 @@ use crate::{
 
 pub struct ConstrainedBox {
     child: ElementBox,
-    constraint: SizeConstraint,
+    constraint: Constraint,
+}
+
+pub enum Constraint {
+    Static(SizeConstraint),
+    Dynamic(Box<dyn FnMut(SizeConstraint, &mut LayoutContext) -> SizeConstraint>),
+}
+
+impl ToJson for Constraint {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            Constraint::Static(constraint) => constraint.to_json(),
+            Constraint::Dynamic(_) => "dynamic".into(),
+        }
+    }
 }
 
 impl ConstrainedBox {
     pub fn new(child: ElementBox) -> Self {
         Self {
             child,
-            constraint: SizeConstraint {
-                min: Vector2F::zero(),
-                max: Vector2F::splat(f32::INFINITY),
-            },
+            constraint: Constraint::Static(Default::default()),
         }
     }
 
+    pub fn dynamically(
+        mut self,
+        constraint: impl 'static + FnMut(SizeConstraint, &mut LayoutContext) -> SizeConstraint,
+    ) -> Self {
+        self.constraint = Constraint::Dynamic(Box::new(constraint));
+        self
+    }
+
     pub fn with_min_width(mut self, min_width: f32) -> Self {
-        self.constraint.min.set_x(min_width);
+        if let Constraint::Dynamic(_) = self.constraint {
+            self.constraint = Constraint::Static(Default::default());
+        }
+
+        if let Constraint::Static(constraint) = &mut self.constraint {
+            constraint.min.set_x(min_width);
+        } else {
+            unreachable!()
+        }
+
         self
     }
 
     pub fn with_max_width(mut self, max_width: f32) -> Self {
-        self.constraint.max.set_x(max_width);
+        if let Constraint::Dynamic(_) = self.constraint {
+            self.constraint = Constraint::Static(Default::default());
+        }
+
+        if let Constraint::Static(constraint) = &mut self.constraint {
+            constraint.max.set_x(max_width);
+        } else {
+            unreachable!()
+        }
+
         self
     }
 
     pub fn with_max_height(mut self, max_height: f32) -> Self {
-        self.constraint.max.set_y(max_height);
+        if let Constraint::Dynamic(_) = self.constraint {
+            self.constraint = Constraint::Static(Default::default());
+        }
+
+        if let Constraint::Static(constraint) = &mut self.constraint {
+            constraint.max.set_y(max_height);
+        } else {
+            unreachable!()
+        }
+
         self
     }
 
     pub fn with_width(mut self, width: f32) -> Self {
-        self.constraint.min.set_x(width);
-        self.constraint.max.set_x(width);
+        if let Constraint::Dynamic(_) = self.constraint {
+            self.constraint = Constraint::Static(Default::default());
+        }
+
+        if let Constraint::Static(constraint) = &mut self.constraint {
+            constraint.min.set_x(width);
+            constraint.max.set_x(width);
+        } else {
+            unreachable!()
+        }
+
         self
     }
 
     pub fn with_height(mut self, height: f32) -> Self {
-        self.constraint.min.set_y(height);
-        self.constraint.max.set_y(height);
+        if let Constraint::Dynamic(_) = self.constraint {
+            self.constraint = Constraint::Static(Default::default());
+        }
+
+        if let Constraint::Static(constraint) = &mut self.constraint {
+            constraint.min.set_y(height);
+            constraint.max.set_y(height);
+        } else {
+            unreachable!()
+        }
+
         self
+    }
+
+    fn constraint(
+        &mut self,
+        input_constraint: SizeConstraint,
+        cx: &mut LayoutContext,
+    ) -> SizeConstraint {
+        match &mut self.constraint {
+            Constraint::Static(constraint) => *constraint,
+            Constraint::Dynamic(compute_constraint) => compute_constraint(input_constraint, cx),
+        }
     }
 }
 
@@ -57,13 +132,14 @@ impl Element for ConstrainedBox {
 
     fn layout(
         &mut self,
-        mut constraint: SizeConstraint,
+        mut parent_constraint: SizeConstraint,
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        constraint.min = constraint.min.max(self.constraint.min);
-        constraint.max = constraint.max.min(self.constraint.max);
-        constraint.max = constraint.max.max(constraint.min);
-        let size = self.child.layout(constraint, cx);
+        let constraint = self.constraint(parent_constraint, cx);
+        parent_constraint.min = parent_constraint.min.max(constraint.min);
+        parent_constraint.max = parent_constraint.max.min(constraint.max);
+        parent_constraint.max = parent_constraint.max.max(parent_constraint.min);
+        let size = self.child.layout(parent_constraint, cx);
         (size, ())
     }
 
@@ -96,6 +172,6 @@ impl Element for ConstrainedBox {
         _: &Self::PaintState,
         cx: &DebugContext,
     ) -> json::Value {
-        json!({"type": "ConstrainedBox", "set_constraint": self.constraint.to_json(), "child": self.child.debug(cx)})
+        json!({"type": "ConstrainedBox", "assigned_constraint": self.constraint.to_json(), "child": self.child.debug(cx)})
     }
 }

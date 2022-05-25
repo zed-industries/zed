@@ -9,6 +9,7 @@ import projectPanel from "./projectPanel";
 import search from "./search";
 import picker from "./picker";
 import workspace from "./workspace";
+import contextMenu from "./contextMenu";
 import projectDiagnostics from "./projectDiagnostics";
 import contactNotification from "./contactNotification";
 
@@ -20,6 +21,7 @@ export default function app(theme: Theme): Object {
   return {
     picker: picker(theme),
     workspace: workspace(theme),
+    contextMenu: contextMenu(theme),
     editor: editor(theme),
     projectDiagnostics: projectDiagnostics(theme),
     commandPalette: commandPalette(theme),

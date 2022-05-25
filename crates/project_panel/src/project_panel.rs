@@ -38,7 +38,7 @@ pub struct ProjectPanel {
     selection: Option<Selection>,
     edit_state: Option<EditState>,
     filename_editor: ViewHandle<Editor>,
-    context_menu: ViewHandle<ContextMenu<Self>>,
+    context_menu: ViewHandle<ContextMenu>,
     handle: WeakViewHandle<Self>,
 }
 
@@ -220,6 +220,14 @@ impl ProjectPanel {
                         action: Box::new(AddDirectory),
                     },
                     ContextMenuItem::Separator,
+                    ContextMenuItem::Item {
+                        label: "Rename".to_string(),
+                        action: Box::new(Rename),
+                    },
+                    ContextMenuItem::Item {
+                        label: "Delete".to_string(),
+                        action: Box::new(Delete),
+                    },
                 ],
                 cx,
             );

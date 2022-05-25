@@ -19,6 +19,7 @@ pub struct Theme {
     #[serde(default)]
     pub name: String,
     pub workspace: Workspace,
+    pub context_menu: ContextMenu,
     pub chat_panel: ChatPanel,
     pub contacts_panel: ContactsPanel,
     pub contact_finder: ContactFinder,
@@ -226,7 +227,6 @@ pub struct ProjectPanel {
     pub ignored_entry_fade: f32,
     pub filename_editor: FieldEditor,
     pub indent_width: f32,
-    pub context_menu: ContextMenu,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]

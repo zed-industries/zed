@@ -524,6 +524,15 @@ impl SizeConstraint {
     }
 }
 
+impl Default for SizeConstraint {
+    fn default() -> Self {
+        SizeConstraint {
+            min: Vector2F::zero(),
+            max: Vector2F::splat(f32::INFINITY),
+        }
+    }
+}
+
 impl ToJson for SizeConstraint {
     fn to_json(&self) -> serde_json::Value {
         json!({
