@@ -5,7 +5,7 @@ fn main() {
 
     let output = Command::new("npm")
         .current_dir("../../styles")
-        .args(["ci"])
+        .args(["install"])
         .output()
         .expect("failed to run npm");
     if !output.status.success() {
@@ -27,5 +27,5 @@ fn main() {
         );
     }
 
-    println!("cargo:rerun-if-changed=../../styles");
+    println!("cargo:rerun-if-changed=../../styles/src");
 }
