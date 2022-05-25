@@ -1,10 +1,9 @@
 import Theme from "../themes/common/theme";
-import { shadow, text } from "./components";
+import { backgroundColor, shadow, text } from "./components";
 
 export default function contextMenu(theme: Theme) {
   return {
-    background: "#ff0000",
-    // background: backgroundColor(theme, 300, "base"),
+    background: backgroundColor(theme, 300, "base"),
     cornerRadius: 6,
     padding: {
       bottom: 2,
@@ -15,7 +14,10 @@ export default function contextMenu(theme: Theme) {
     shadow: shadow(theme),
     item: {
       label: text(theme, "sans", "secondary", { size: "sm" }),
-      keystroke: text(theme, "sans", "muted", { size: "sm", weight: "bold" }),
+      keystroke: {
+        margin: { left: 60 },
+        ...text(theme, "sans", "muted", { size: "sm", weight: "bold" })
+      },
     },
     separator: {
       background: "#00ff00"

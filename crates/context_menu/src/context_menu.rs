@@ -42,16 +42,14 @@ impl View for ContextMenu {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        enum Tag {}
-
         if !self.visible {
             return Empty::new().boxed();
         }
 
         // Render the menu once at minimum width.
-        let mut collapsed_menu = self.render_menu::<()>(false, cx).boxed();
+        let mut collapsed_menu = self.render_menu_for_measurement(cx).boxed();
         let expanded_menu = self
-            .render_menu::<Tag>(true, cx)
+            .render_menu(cx)
             .constrained()
             .dynamically(move |constraint, cx| {
                 SizeConstraint::strict_along(
@@ -97,64 +95,100 @@ impl ContextMenu {
         cx.notify();
     }
 
-    fn render_menu<Tag: 'static>(
-        &mut self,
-        expanded: bool,
-        cx: &mut RenderContext<Self>,
-    ) -> impl Element {
+    fn render_menu_for_measurement(&self, cx: &mut RenderContext<Self>) -> impl Element {
         let style = cx.global::<Settings>().theme.context_menu.clone();
-        Flex::column()
-            .with_children(
-                (0..self.items.len())
-                    .map(|ix| self.render_menu_item::<Tag>(ix, expanded, cx, &style)),
+        Flex::row()
+            .with_child(
+                Flex::column()
+                    .with_children(self.items.iter().enumerate().map(|(ix, item)| {
+                        match item {
+                            ContextMenuItem::Item { label, .. } => {
+                                let style = style.item.style_for(
+                                    &Default::default(),
+                                    Some(ix) == self.selected_index,
+                                );
+                                Label::new(label.to_string(), style.label.clone()).boxed()
+                            }
+                            ContextMenuItem::Separator => Empty::new()
+                                .collapsed()
+                                .contained()
+                                .with_style(style.separator)
+                                .constrained()
+                                .with_height(1.)
+                                .boxed(),
+                        }
+                    }))
+                    .boxed(),
+            )
+            .with_child(
+                Flex::column()
+                    .with_children(self.items.iter().enumerate().map(|(ix, item)| {
+                        match item {
+                            ContextMenuItem::Item { action, .. } => {
+                                let style = style.item.style_for(
+                                    &Default::default(),
+                                    Some(ix) == self.selected_index,
+                                );
+                                KeystrokeLabel::new(
+                                    action.boxed_clone(),
+                                    style.keystroke.container,
+                                    style.keystroke.text.clone(),
+                                )
+                                .boxed()
+                            }
+                            ContextMenuItem::Separator => Empty::new()
+                                .collapsed()
+                                .contained()
+                                .with_style(style.separator)
+                                .constrained()
+                                .with_height(1.)
+                                .boxed(),
+                        }
+                    }))
+                    .boxed(),
             )
             .contained()
             .with_style(style.container)
     }
 
-    fn render_menu_item<T: 'static>(
-        &self,
-        ix: usize,
-        expanded: bool,
-        cx: &mut RenderContext<ContextMenu>,
-        style: &theme::ContextMenu,
-    ) -> ElementBox {
-        match &self.items[ix] {
-            ContextMenuItem::Item { label, action } => {
-                let action = action.boxed_clone();
-                MouseEventHandler::new::<T, _, _>(ix, cx, |state, _| {
-                    let style = style.item.style_for(state, Some(ix) == self.selected_index);
-                    Flex::row()
-                        .with_child(Label::new(label.to_string(), style.label.clone()).boxed())
-                        .with_child({
-                            let label = KeystrokeLabel::new(
-                                action.boxed_clone(),
-                                style.keystroke.container,
-                                style.keystroke.text.clone(),
-                            );
-                            if expanded {
-                                label.flex_float().boxed()
-                            } else {
-                                label.boxed()
-                            }
+    fn render_menu(&self, cx: &mut RenderContext<Self>) -> impl Element {
+        enum Tag {}
+        let style = cx.global::<Settings>().theme.context_menu.clone();
+        Flex::column()
+            .with_children(self.items.iter().enumerate().map(|(ix, item)| {
+                match item {
+                    ContextMenuItem::Item { label, action } => {
+                        let action = action.boxed_clone();
+                        MouseEventHandler::new::<Tag, _, _>(ix, cx, |state, _| {
+                            let style =
+                                style.item.style_for(state, Some(ix) == self.selected_index);
+                            Flex::row()
+                                .with_child(
+                                    Label::new(label.to_string(), style.label.clone()).boxed(),
+                                )
+                                .with_child({
+                                    KeystrokeLabel::new(
+                                        action.boxed_clone(),
+                                        style.keystroke.container,
+                                        style.keystroke.text.clone(),
+                                    )
+                                    .flex_float()
+                                    .boxed()
+                                })
+                                .boxed()
                         })
+                        .on_click(move |_, _, cx| cx.dispatch_any_action(action.boxed_clone()))
                         .boxed()
-                })
-                .on_click(move |_, _, cx| cx.dispatch_any_action(action.boxed_clone()))
-                .boxed()
-            }
-            ContextMenuItem::Separator => {
-                let mut separator = Empty::new();
-                if !expanded {
-                    separator = separator.collapsed();
+                    }
+                    ContextMenuItem::Separator => Empty::new()
+                        .contained()
+                        .with_style(style.separator)
+                        .constrained()
+                        .with_height(1.)
+                        .boxed(),
                 }
-                separator
-                    .contained()
-                    .with_style(style.separator)
-                    .constrained()
-                    .with_height(1.)
-                    .boxed()
-            }
-        }
+            }))
+            .contained()
+            .with_style(style.container)
     }
 }
