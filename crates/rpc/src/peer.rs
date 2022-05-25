@@ -10,6 +10,7 @@ use futures::{
     FutureExt, SinkExt, StreamExt,
 };
 use parking_lot::{Mutex, RwLock};
+use serde::{ser::SerializeStruct, Serialize};
 use smol_timeout::TimeoutExt;
 use std::sync::atomic::Ordering::SeqCst;
 use std::{
@@ -24,7 +25,7 @@ use std::{
 };
 use tracing::instrument;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize)]
 pub struct ConnectionId(pub u32);
 
 impl fmt::Display for ConnectionId {
@@ -89,10 +90,12 @@ pub struct Peer {
     next_connection_id: AtomicU32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct ConnectionState {
+    #[serde(skip)]
     outgoing_tx: mpsc::UnboundedSender<proto::Message>,
     next_message_id: Arc<AtomicU32>,
+    #[serde(skip)]
     response_channels:
         Arc<Mutex<Option<HashMap<u32, oneshot::Sender<(proto::Envelope, oneshot::Sender<()>)>>>>>,
 }
@@ -468,6 +471,17 @@ impl Peer {
             .get(&connection_id)
             .ok_or_else(|| anyhow!("no such connection: {}", connection_id))?;
         Ok(connection.clone())
+    }
+}
+
+impl Serialize for Peer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("Peer", 2)?;
+        state.serialize_field("connections", &*self.connections.read())?;
+        state.end()
     }
 }
 

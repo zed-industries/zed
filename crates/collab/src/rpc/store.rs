@@ -2,18 +2,21 @@ use crate::db::{self, ChannelId, UserId};
 use anyhow::{anyhow, Result};
 use collections::{hash_map::Entry, BTreeMap, HashMap, HashSet};
 use rpc::{proto, ConnectionId, Receipt};
+use serde::Serialize;
 use std::{collections::hash_map, mem, path::PathBuf};
 use tracing::instrument;
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 pub struct Store {
     connections: HashMap<ConnectionId, ConnectionState>,
     connections_by_user_id: HashMap<UserId, HashSet<ConnectionId>>,
     projects: HashMap<u64, Project>,
+    #[serde(skip)]
     channels: HashMap<ChannelId, Channel>,
     next_project_id: u64,
 }
 
+#[derive(Serialize)]
 struct ConnectionState {
     user_id: UserId,
     projects: HashSet<u64>,
@@ -21,21 +24,25 @@ struct ConnectionState {
     channels: HashSet<ChannelId>,
 }
 
+#[derive(Serialize)]
 pub struct Project {
     pub host_connection_id: ConnectionId,
     pub host_user_id: UserId,
     pub guests: HashMap<ConnectionId, (ReplicaId, UserId)>,
+    #[serde(skip)]
     pub join_requests: HashMap<UserId, Vec<Receipt<proto::JoinProject>>>,
     pub active_replica_ids: HashSet<ReplicaId>,
     pub worktrees: HashMap<u64, Worktree>,
     pub language_servers: Vec<proto::LanguageServer>,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 pub struct Worktree {
     pub root_name: String,
     pub visible: bool,
+    #[serde(skip)]
     pub entries: HashMap<u64, proto::Entry>,
+    #[serde(skip)]
     pub diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
     pub scan_id: u64,
 }
