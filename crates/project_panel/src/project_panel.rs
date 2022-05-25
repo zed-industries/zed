@@ -890,11 +890,11 @@ impl ProjectPanel {
 
             Overlay::new(
                 Flex::column()
-                    .with_child(Label::new("Add File".to_string(), style.label.clone()).boxed())
+                    .with_child(
+                        Label::new("Add File".to_string(), style.item.label.clone()).boxed(),
+                    )
                     .contained()
                     .with_style(style.container)
-                    // .constrained()
-                    // .with_width(style.width)
                     .boxed(),
             )
             .with_abs_position(menu.position)

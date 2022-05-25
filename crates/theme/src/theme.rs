@@ -242,7 +242,13 @@ pub struct ProjectPanelEntry {
 
 #[derive(Clone, Debug, Deserialize, Default)]
 pub struct ContextMenu {
-    pub width: f32,
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub item: ContextMenuItem,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct ContextMenuItem {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub label: TextStyle,
