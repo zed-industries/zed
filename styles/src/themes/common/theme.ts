@@ -105,6 +105,7 @@ export default interface Theme {
     error: ColorToken;
     warning: ColorToken;
     info: ColorToken;
+    onMedia: ColorToken;
   };
   iconColor: {
     primary: ColorToken;

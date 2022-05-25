@@ -107,6 +107,7 @@ export function createTheme(
     error: rampColor(ramps.red, 0.5),
     warning: rampColor(ramps.yellow, 0.5),
     info: rampColor(ramps.blue, 0.5),
+    onMedia: rampColor(ramps.neutral, isLight ? 0 : 7),
   };
 
   const player = {
