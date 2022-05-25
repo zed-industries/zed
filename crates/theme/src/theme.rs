@@ -244,7 +244,8 @@ pub struct ProjectPanelEntry {
 pub struct ContextMenu {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub item: ContextMenuItem,
+    pub item: Interactive<ContextMenuItem>,
+    pub separator: ContainerStyle,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]

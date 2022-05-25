@@ -9,4 +9,5 @@ doctest = false
 
 [dependencies]
 gpui = { path = "../gpui" }
+settings = { path = "../settings" }
 theme = { path = "../theme" }

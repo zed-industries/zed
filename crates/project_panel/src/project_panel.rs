@@ -1,17 +1,18 @@
+use context_menu::{ContextMenu, ContextMenuItem};
 use editor::{Cancel, Editor};
 use futures::stream::StreamExt;
 use gpui::{
     actions,
     anyhow::{anyhow, Result},
     elements::{
-        ChildView, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, Overlay, ParentElement,
+        ChildView, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement,
         ScrollTarget, Stack, Svg, UniformList, UniformListState,
     },
     geometry::vector::Vector2F,
     impl_internal_actions, keymap,
     platform::CursorStyle,
-    AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, PromptLevel,
-    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, PromptLevel, Task,
+    View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use settings::Settings;
@@ -37,7 +38,7 @@ pub struct ProjectPanel {
     selection: Option<Selection>,
     edit_state: Option<EditState>,
     filename_editor: ViewHandle<Editor>,
-    context_menu: Option<ContextMenu>,
+    context_menu: ViewHandle<ContextMenu<Self>>,
     handle: WeakViewHandle<Self>,
 }
 
@@ -79,11 +80,6 @@ pub struct Open {
 
 #[derive(Clone)]
 pub struct DeployContextMenu {
-    pub position: Vector2F,
-    pub entry_id: Option<ProjectEntryId>,
-}
-
-pub struct ContextMenu {
     pub position: Vector2F,
     pub entry_id: Option<ProjectEntryId>,
 }
@@ -170,7 +166,7 @@ impl ProjectPanel {
                 selection: None,
                 edit_state: None,
                 filename_editor,
-                context_menu: None,
+                context_menu: cx.add_view(|_| ContextMenu::new()),
                 handle: cx.weak_handle(),
             };
             this.update_visible_entries(None, cx);
@@ -211,9 +207,22 @@ impl ProjectPanel {
     }
 
     fn deploy_context_menu(&mut self, action: &DeployContextMenu, cx: &mut ViewContext<Self>) {
-        self.context_menu = Some(ContextMenu {
-            position: action.position,
-            entry_id: action.entry_id,
+        self.context_menu.update(cx, |menu, cx| {
+            menu.show(
+                action.position,
+                [
+                    ContextMenuItem::Item {
+                        label: "New File".to_string(),
+                        action: Box::new(AddFile),
+                    },
+                    ContextMenuItem::Item {
+                        label: "New Directory".to_string(),
+                        action: Box::new(AddDirectory),
+                    },
+                    ContextMenuItem::Separator,
+                ],
+                cx,
+            );
         });
         cx.notify();
     }
@@ -883,24 +892,6 @@ impl ProjectPanel {
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
     }
-
-    fn render_context_menu(&self, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
-        self.context_menu.as_ref().map(|menu| {
-            let style = &cx.global::<Settings>().theme.project_panel.context_menu;
-
-            Overlay::new(
-                Flex::column()
-                    .with_child(
-                        Label::new("Add File".to_string(), style.item.label.clone()).boxed(),
-                    )
-                    .contained()
-                    .with_style(style.container)
-                    .boxed(),
-            )
-            .with_abs_position(menu.position)
-            .named("Project Panel Context Menu")
-        })
-    }
 }
 
 impl View for ProjectPanel {
@@ -943,7 +934,7 @@ impl View for ProjectPanel {
                 .with_style(container_style)
                 .boxed(),
             )
-            .with_children(self.render_context_menu(cx))
+            .with_child(ChildView::new(&self.context_menu).boxed())
             .boxed()
     }
 

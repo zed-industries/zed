@@ -43,7 +43,9 @@ export default function projectPanel(theme: Theme) {
         right: 6,
         top: 2,
       },
-      label: text(theme, "sans", "secondary", { size: "sm" }),
+      item: {
+        label: text(theme, "sans", "secondary", { size: "sm" }),
+      },
       shadow: shadow(theme),
     }
   };

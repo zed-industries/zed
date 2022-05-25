@@ -979,6 +979,7 @@ name = "context_menu"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "settings",
  "theme",
 ]
 
@@ -3457,6 +3458,7 @@ dependencies = [
 name = "project_panel"
 version = "0.1.0"
 dependencies = [
+ "context_menu",
  "editor",
  "futures",
  "gpui",
