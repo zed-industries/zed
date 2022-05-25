@@ -1,4 +1,5 @@
 import Theme from "../themes/common/theme";
+import { withOpacity } from "../utils/color";
 import { backgroundColor, border, iconColor, shadow, text } from "./components";
 import statusBar from "./statusBar";
 
@@ -155,8 +156,8 @@ export default function workspace(theme: Theme) {
       padding: { left: 6 },
     },
     disconnectedOverlay: {
-      ...text(theme, "sans", "onMedia"),
-      background: "#000000aa",
+      ...text(theme, "sans", "active"),
+      background: withOpacity(theme.backgroundColor[500].base, 0.8).value,
     },
     notification: {
       margin: { top: 10 },
