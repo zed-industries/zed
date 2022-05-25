@@ -216,6 +216,7 @@ impl History {
                 self.undo_stack.pop();
                 None
             } else {
+                self.redo_stack.clear();
                 let entry = self.undo_stack.last_mut().unwrap();
                 entry.last_edit_at = now;
                 Some(entry)
@@ -276,6 +277,7 @@ impl History {
             last_edit_at: now,
             suppress_grouping: false,
         });
+        self.redo_stack.clear();
     }
 
     fn push_undo(&mut self, op_id: clock::Local) {

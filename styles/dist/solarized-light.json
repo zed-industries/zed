@@ -216,15 +216,15 @@
   },
   "border": {
     "primary": {
-      "value": "#93a1a1",
+      "value": "#c1c5bb",
       "type": "color"
     },
     "secondary": {
-      "value": "#93a1a1",
+      "value": "#d7d6c8",
       "type": "color"
     },
     "muted": {
-      "value": "#657b83",
+      "value": "#eee8d5",
       "type": "color"
     },
     "active": {
@@ -258,11 +258,11 @@
       "type": "color"
     },
     "indent_guide": {
-      "value": "#657b83",
+      "value": "#eee8d5",
       "type": "color"
     },
     "indent_guide_active": {
-      "value": "#93a1a1",
+      "value": "#d7d6c8",
       "type": "color"
     },
     "line": {

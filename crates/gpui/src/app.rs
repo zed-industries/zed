@@ -154,7 +154,6 @@ pub struct Menu<'a> {
 pub enum MenuItem<'a> {
     Action {
         name: &'a str,
-        keystroke: Option<&'a str>,
         action: Box<dyn Action>,
     },
     Separator,
@@ -191,6 +190,20 @@ impl App {
             let cx = app.0.clone();
             move || {
                 cx.borrow_mut().quit();
+            }
+        }));
+        foreground_platform.on_will_open_menu(Box::new({
+            let cx = app.0.clone();
+            move || {
+                let mut cx = cx.borrow_mut();
+                cx.keystroke_matcher.clear_pending();
+            }
+        }));
+        foreground_platform.on_validate_menu_command(Box::new({
+            let cx = app.0.clone();
+            move |action| {
+                let cx = cx.borrow_mut();
+                !cx.keystroke_matcher.has_pending_keystrokes() && cx.is_action_available(action)
             }
         }));
         foreground_platform.on_menu_command(Box::new({
@@ -508,10 +521,25 @@ impl TestAppContext {
             .downcast_mut::<platform::test::Window>()
             .unwrap();
         let mut done_tx = test_window
-            .last_prompt
-            .take()
+            .pending_prompts
+            .borrow_mut()
+            .pop_front()
             .expect("prompt was not called");
         let _ = done_tx.try_send(answer);
+    }
+
+    pub fn has_pending_prompt(&self, window_id: usize) -> bool {
+        let mut state = self.cx.borrow_mut();
+        let (_, window) = state
+            .presenters_and_platform_windows
+            .get_mut(&window_id)
+            .unwrap();
+        let test_window = window
+            .as_any_mut()
+            .downcast_mut::<platform::test::Window>()
+            .unwrap();
+        let prompts = test_window.pending_prompts.borrow_mut();
+        !prompts.is_empty()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1070,7 +1098,8 @@ impl MutableAppContext {
     }
 
     pub fn set_menus(&mut self, menus: Vec<Menu>) {
-        self.foreground_platform.set_menus(menus);
+        self.foreground_platform
+            .set_menus(menus, &self.keystroke_matcher);
     }
 
     fn prompt(
@@ -1362,6 +1391,26 @@ impl MutableAppContext {
                     None
                 }
             })
+    }
+
+    pub fn is_action_available(&self, action: &dyn Action) -> bool {
+        let action_type = action.as_any().type_id();
+        if let Some(window_id) = self.cx.platform.key_window_id() {
+            if let Some((presenter, _)) = self.presenters_and_platform_windows.get(&window_id) {
+                let dispatch_path = presenter.borrow().dispatch_path(&self.cx);
+                for view_id in dispatch_path {
+                    if let Some(view) = self.views.get(&(window_id, view_id)) {
+                        let view_type = view.as_any().type_id();
+                        if let Some(actions) = self.actions.get(&view_type) {
+                            if actions.contains_key(&action_type) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.global_actions.contains_key(&action_type)
     }
 
     pub fn dispatch_action_at(&mut self, window_id: usize, view_id: usize, action: &dyn Action) {

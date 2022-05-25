@@ -295,7 +295,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree("/dir", json!({ "test.rs": "" })).await;
 
-        let project = Project::test(fs.clone(), ["/dir"], cx).await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));
 
         let _buffer = project

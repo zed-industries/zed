@@ -1,6 +1,6 @@
 use crate::{
     sidebar::{Side, ToggleSidebarItem},
-    AppState, ToggleFollow,
+    AppState, ToggleFollow, Workspace,
 };
 use anyhow::Result;
 use client::{proto, Client, Contact};
@@ -77,86 +77,87 @@ impl WaitingRoom {
     ) -> Self {
         let project_id = contact.projects[project_index].id;
         let client = app_state.client.clone();
-        let _join_task = cx.spawn_weak({
-            let contact = contact.clone();
-            |this, mut cx| async move {
-                let project = Project::remote(
-                    project_id,
-                    app_state.client.clone(),
-                    app_state.user_store.clone(),
-                    app_state.languages.clone(),
-                    app_state.fs.clone(),
-                    &mut cx,
-                )
-                .await;
+        let _join_task =
+            cx.spawn_weak({
+                let contact = contact.clone();
+                |this, mut cx| async move {
+                    let project = Project::remote(
+                        project_id,
+                        app_state.client.clone(),
+                        app_state.user_store.clone(),
+                        app_state.languages.clone(),
+                        app_state.fs.clone(),
+                        &mut cx,
+                    )
+                    .await;
 
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, cx| {
-                        this.waiting = false;
-                        match project {
-                            Ok(project) => {
-                                cx.replace_root_view(|cx| {
-                                    let mut workspace = (app_state.build_workspace)(
-                                        project.clone(),
-                                        &app_state,
-                                        cx,
-                                    );
-                                    workspace.toggle_sidebar_item(
-                                        &ToggleSidebarItem {
-                                            side: Side::Left,
-                                            item_index: 0,
-                                        },
-                                        cx,
-                                    );
-                                    if let Some((host_peer_id, _)) = project
-                                        .read(cx)
-                                        .collaborators()
-                                        .iter()
-                                        .find(|(_, collaborator)| collaborator.replica_id == 0)
-                                    {
-                                        if let Some(follow) = workspace
-                                            .toggle_follow(&ToggleFollow(*host_peer_id), cx)
-                                        {
-                                            follow.detach_and_log_err(cx);
-                                        }
-                                    }
-                                    workspace
-                                });
-                            }
-                            Err(error @ _) => {
-                                let login = &contact.user.github_login;
-                                let message = match error {
-                                    project::JoinProjectError::HostDeclined => {
-                                        format!("@{} declined your request.", login)
-                                    }
-                                    project::JoinProjectError::HostClosedProject => {
-                                        format!(
-                                            "@{} closed their copy of {}.",
-                                            login,
-                                            humanize_list(
-                                                &contact.projects[project_index]
-                                                    .worktree_root_names
+                    if let Some(this) = this.upgrade(&cx) {
+                        this.update(&mut cx, |this, cx| {
+                            this.waiting = false;
+                            match project {
+                                Ok(project) => {
+                                    cx.replace_root_view(|cx| {
+                                        let mut workspace = Workspace::new(project, cx);
+                                        (app_state.initialize_workspace)(
+                                            &mut workspace,
+                                            &app_state,
+                                            cx,
+                                        );
+                                        workspace.toggle_sidebar_item(
+                                            &ToggleSidebarItem {
+                                                side: Side::Left,
+                                                item_index: 0,
+                                            },
+                                            cx,
+                                        );
+                                        if let Some((host_peer_id, _)) =
+                                            workspace.project.read(cx).collaborators().iter().find(
+                                                |(_, collaborator)| collaborator.replica_id == 0,
                                             )
-                                        )
-                                    }
-                                    project::JoinProjectError::HostWentOffline => {
-                                        format!("@{} went offline.", login)
-                                    }
-                                    project::JoinProjectError::Other(error) => {
-                                        log::error!("error joining project: {}", error);
-                                        "An error occurred.".to_string()
-                                    }
-                                };
-                                this.message = message;
-                                cx.notify();
+                                        {
+                                            if let Some(follow) = workspace
+                                                .toggle_follow(&ToggleFollow(*host_peer_id), cx)
+                                            {
+                                                follow.detach_and_log_err(cx);
+                                            }
+                                        }
+                                        workspace
+                                    });
+                                }
+                                Err(error @ _) => {
+                                    let login = &contact.user.github_login;
+                                    let message = match error {
+                                        project::JoinProjectError::HostDeclined => {
+                                            format!("@{} declined your request.", login)
+                                        }
+                                        project::JoinProjectError::HostClosedProject => {
+                                            format!(
+                                                "@{} closed their copy of {}.",
+                                                login,
+                                                humanize_list(
+                                                    &contact.projects[project_index]
+                                                        .worktree_root_names
+                                                )
+                                            )
+                                        }
+                                        project::JoinProjectError::HostWentOffline => {
+                                            format!("@{} went offline.", login)
+                                        }
+                                        project::JoinProjectError::Other(error) => {
+                                            log::error!("error joining project: {}", error);
+                                            "An error occurred.".to_string()
+                                        }
+                                    };
+                                    this.message = message;
+                                    cx.notify();
+                                }
                             }
-                        }
-                    })
-                }
+                        })
+                    }
 
-                Ok(())
-            }
-        });
+                    Ok(())
+                }
+            });
 
         Self {
             project_id,

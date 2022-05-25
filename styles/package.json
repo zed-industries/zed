@@ -6,8 +6,7 @@
     "scripts": {
         "build": "npm run build-themes && npm run build-tokens",
         "build-themes": "ts-node ./src/buildThemes.ts",
-        "build-tokens": "ts-node ./src/buildTokens.ts",
-        "watch": "nodemon"
+        "build-tokens": "ts-node ./src/buildTokens.ts"
     },
     "author": "",
     "license": "ISC",
@@ -16,7 +15,6 @@
         "@types/node": "^17.0.23",
         "case-anything": "^2.1.10",
         "chroma-js": "^2.4.2",
-        "ts-node": "^10.7.0",
-        "nodemon": "^2.0.15"
+        "ts-node": "^10.7.0"
     }
 }

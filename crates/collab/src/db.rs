@@ -1,6 +1,9 @@
-use anyhow::{anyhow, Context, Result};
+use crate::{Error, Result};
+use anyhow::{anyhow, Context};
 use async_trait::async_trait;
+use axum::http::StatusCode;
 use futures::StreamExt;
+use nanoid::nanoid;
 use serde::Serialize;
 pub use sqlx::postgres::PgPoolOptions as DbOptions;
 use sqlx::{types::Uuid, FromRow};
@@ -8,14 +11,30 @@ use time::OffsetDateTime;
 
 #[async_trait]
 pub trait Db: Send + Sync {
-    async fn create_user(&self, github_login: &str, admin: bool) -> Result<UserId>;
+    async fn create_user(
+        &self,
+        github_login: &str,
+        email_address: Option<&str>,
+        admin: bool,
+    ) -> Result<UserId>;
     async fn get_all_users(&self) -> Result<Vec<User>>;
     async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>>;
     async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>>;
     async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>>;
     async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>>;
     async fn set_user_is_admin(&self, id: UserId, is_admin: bool) -> Result<()>;
+    async fn set_user_connected_once(&self, id: UserId, connected_once: bool) -> Result<()>;
     async fn destroy_user(&self, id: UserId) -> Result<()>;
+
+    async fn set_invite_count(&self, id: UserId, count: u32) -> Result<()>;
+    async fn get_invite_code_for_user(&self, id: UserId) -> Result<Option<(String, u32)>>;
+    async fn get_user_for_invite_code(&self, code: &str) -> Result<User>;
+    async fn redeem_invite_code(
+        &self,
+        code: &str,
+        login: &str,
+        email_address: Option<&str>,
+    ) -> Result<UserId>;
 
     async fn get_contacts(&self, id: UserId) -> Result<Vec<Contact>>;
     async fn has_contact(&self, user_id_a: UserId, user_id_b: UserId) -> Result<bool>;
@@ -101,15 +120,21 @@ impl PostgresDb {
 impl Db for PostgresDb {
     // users
 
-    async fn create_user(&self, github_login: &str, admin: bool) -> Result<UserId> {
+    async fn create_user(
+        &self,
+        github_login: &str,
+        email_address: Option<&str>,
+        admin: bool,
+    ) -> Result<UserId> {
         let query = "
-            INSERT INTO users (github_login, admin)
-            VALUES ($1, $2)
+            INSERT INTO users (github_login, email_address, admin)
+            VALUES ($1, $2, $3)
             ON CONFLICT (github_login) DO UPDATE SET github_login = excluded.github_login
             RETURNING id
         ";
         Ok(sqlx::query_scalar(query)
             .bind(github_login)
+            .bind(email_address)
             .bind(admin)
             .fetch_one(&self.pool)
             .await
@@ -174,6 +199,16 @@ impl Db for PostgresDb {
             .map(drop)?)
     }
 
+    async fn set_user_connected_once(&self, id: UserId, connected_once: bool) -> Result<()> {
+        let query = "UPDATE users SET connected_once = $1 WHERE id = $2";
+        Ok(sqlx::query(query)
+            .bind(connected_once)
+            .bind(id.0)
+            .execute(&self.pool)
+            .await
+            .map(drop)?)
+    }
+
     async fn destroy_user(&self, id: UserId) -> Result<()> {
         let query = "DELETE FROM access_tokens WHERE user_id = $1;";
         sqlx::query(query)
@@ -187,6 +222,153 @@ impl Db for PostgresDb {
             .execute(&self.pool)
             .await
             .map(drop)?)
+    }
+
+    // invite codes
+
+    async fn set_invite_count(&self, id: UserId, count: u32) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        if count > 0 {
+            sqlx::query(
+                "
+                UPDATE users
+                SET invite_code = $1
+                WHERE id = $2 AND invite_code IS NULL
+            ",
+            )
+            .bind(nanoid!(16))
+            .bind(id)
+            .execute(&mut tx)
+            .await?;
+        }
+
+        sqlx::query(
+            "
+            UPDATE users
+            SET invite_count = $1
+            WHERE id = $2
+            ",
+        )
+        .bind(count)
+        .bind(id)
+        .execute(&mut tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn get_invite_code_for_user(&self, id: UserId) -> Result<Option<(String, u32)>> {
+        let result: Option<(String, i32)> = sqlx::query_as(
+            "
+                SELECT invite_code, invite_count
+                FROM users
+                WHERE id = $1 AND invite_code IS NOT NULL 
+            ",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        if let Some((code, count)) = result {
+            Ok(Some((code, count.try_into().map_err(anyhow::Error::new)?)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn get_user_for_invite_code(&self, code: &str) -> Result<User> {
+        sqlx::query_as(
+            "
+                SELECT *
+                FROM users
+                WHERE invite_code = $1
+            ",
+        )
+        .bind(code)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| {
+            Error::Http(
+                StatusCode::NOT_FOUND,
+                "that invite code does not exist".to_string(),
+            )
+        })
+    }
+
+    async fn redeem_invite_code(
+        &self,
+        code: &str,
+        login: &str,
+        email_address: Option<&str>,
+    ) -> Result<UserId> {
+        let mut tx = self.pool.begin().await?;
+
+        let inviter_id: Option<UserId> = sqlx::query_scalar(
+            "
+                UPDATE users
+                SET invite_count = invite_count - 1
+                WHERE
+                    invite_code = $1 AND
+                    invite_count > 0
+                RETURNING id
+            ",
+        )
+        .bind(code)
+        .fetch_optional(&mut tx)
+        .await?;
+
+        let inviter_id = match inviter_id {
+            Some(inviter_id) => inviter_id,
+            None => {
+                if sqlx::query_scalar::<_, i32>("SELECT 1 FROM users WHERE invite_code = $1")
+                    .bind(code)
+                    .fetch_optional(&mut tx)
+                    .await?
+                    .is_some()
+                {
+                    Err(Error::Http(
+                        StatusCode::UNAUTHORIZED,
+                        "no invites remaining".to_string(),
+                    ))?
+                } else {
+                    Err(Error::Http(
+                        StatusCode::NOT_FOUND,
+                        "invite code not found".to_string(),
+                    ))?
+                }
+            }
+        };
+
+        let invitee_id = sqlx::query_scalar(
+            "
+                INSERT INTO users
+                    (github_login, email_address, admin, inviter_id)
+                VALUES
+                    ($1, $2, 'f', $3)
+                RETURNING id
+            ",
+        )
+        .bind(login)
+        .bind(email_address)
+        .bind(inviter_id)
+        .fetch_one(&mut tx)
+        .await
+        .map(UserId)?;
+
+        sqlx::query(
+            "
+                INSERT INTO contacts
+                    (user_id_a, user_id_b, a_to_b, should_notify, accepted)
+                VALUES
+                    ($1, $2, 't', 't', 't')
+            ",
+        )
+        .bind(inviter_id)
+        .bind(invitee_id)
+        .execute(&mut tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(invitee_id)
     }
 
     // contacts
@@ -293,7 +475,7 @@ impl Db for PostgresDb {
         if result.rows_affected() == 1 {
             Ok(())
         } else {
-            Err(anyhow!("contact already requested"))
+            Err(anyhow!("contact already requested"))?
         }
     }
 
@@ -316,7 +498,7 @@ impl Db for PostgresDb {
         if result.rows_affected() == 1 {
             Ok(())
         } else {
-            Err(anyhow!("no such contact"))
+            Err(anyhow!("no such contact"))?
         }
     }
 
@@ -394,7 +576,7 @@ impl Db for PostgresDb {
         if result.rows_affected() == 1 {
             Ok(())
         } else {
-            Err(anyhow!("no such contact request"))
+            Err(anyhow!("no such contact request"))?
         }
     }
 
@@ -694,11 +876,15 @@ macro_rules! id_type {
 }
 
 id_type!(UserId);
-#[derive(Clone, Debug, FromRow, Serialize, PartialEq)]
+#[derive(Clone, Debug, Default, FromRow, Serialize, PartialEq)]
 pub struct User {
     pub id: UserId,
     pub github_login: String,
+    pub email_address: Option<String>,
     pub admin: bool,
+    pub invite_code: Option<String>,
+    pub invite_count: i32,
+    pub connected_once: bool,
 }
 
 id_type!(OrgId);
@@ -796,10 +982,10 @@ pub mod tests {
         ] {
             let db = test_db.db();
 
-            let user = db.create_user("user", false).await.unwrap();
-            let friend1 = db.create_user("friend-1", false).await.unwrap();
-            let friend2 = db.create_user("friend-2", false).await.unwrap();
-            let friend3 = db.create_user("friend-3", false).await.unwrap();
+            let user = db.create_user("user", None, false).await.unwrap();
+            let friend1 = db.create_user("friend-1", None, false).await.unwrap();
+            let friend2 = db.create_user("friend-2", None, false).await.unwrap();
+            let friend3 = db.create_user("friend-3", None, false).await.unwrap();
 
             assert_eq!(
                 db.get_users_by_ids(vec![user, friend1, friend2, friend3])
@@ -810,21 +996,25 @@ pub mod tests {
                         id: user,
                         github_login: "user".to_string(),
                         admin: false,
+                        ..Default::default()
                     },
                     User {
                         id: friend1,
                         github_login: "friend-1".to_string(),
                         admin: false,
+                        ..Default::default()
                     },
                     User {
                         id: friend2,
                         github_login: "friend-2".to_string(),
                         admin: false,
+                        ..Default::default()
                     },
                     User {
                         id: friend3,
                         github_login: "friend-3".to_string(),
                         admin: false,
+                        ..Default::default()
                     }
                 ]
             );
@@ -838,7 +1028,7 @@ pub mod tests {
             TestDb::fake(Arc::new(gpui::executor::Background::new())),
         ] {
             let db = test_db.db();
-            let user = db.create_user("user", false).await.unwrap();
+            let user = db.create_user("user", None, false).await.unwrap();
             let org = db.create_org("org", "org").await.unwrap();
             let channel = db.create_org_channel(org, "channel").await.unwrap();
             for i in 0..10 {
@@ -877,7 +1067,7 @@ pub mod tests {
             TestDb::fake(Arc::new(gpui::executor::Background::new())),
         ] {
             let db = test_db.db();
-            let user = db.create_user("user", false).await.unwrap();
+            let user = db.create_user("user", None, false).await.unwrap();
             let org = db.create_org("org", "org").await.unwrap();
             let channel = db.create_org_channel(org, "channel").await.unwrap();
 
@@ -908,7 +1098,7 @@ pub mod tests {
     async fn test_create_access_tokens() {
         let test_db = TestDb::postgres().await;
         let db = test_db.db();
-        let user = db.create_user("the-user", false).await.unwrap();
+        let user = db.create_user("the-user", None, false).await.unwrap();
 
         db.create_access_token_hash(user, "h1", 3).await.unwrap();
         db.create_access_token_hash(user, "h2", 3).await.unwrap();
@@ -956,7 +1146,7 @@ pub mod tests {
             "delaware",
             "rhode-island",
         ] {
-            db.create_user(github_login, false).await.unwrap();
+            db.create_user(github_login, None, false).await.unwrap();
         }
 
         assert_eq!(
@@ -986,9 +1176,9 @@ pub mod tests {
         ] {
             let db = test_db.db();
 
-            let user_1 = db.create_user("user1", false).await.unwrap();
-            let user_2 = db.create_user("user2", false).await.unwrap();
-            let user_3 = db.create_user("user3", false).await.unwrap();
+            let user_1 = db.create_user("user1", None, false).await.unwrap();
+            let user_2 = db.create_user("user2", None, false).await.unwrap();
+            let user_3 = db.create_user("user3", None, false).await.unwrap();
 
             // User starts with no contacts
             assert_eq!(
@@ -1198,6 +1388,159 @@ pub mod tests {
         }
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_invite_codes() {
+        let postgres = TestDb::postgres().await;
+        let db = postgres.db();
+        let user1 = db.create_user("user-1", None, false).await.unwrap();
+
+        // Initially, user 1 has no invite code
+        assert_eq!(db.get_invite_code_for_user(user1).await.unwrap(), None);
+
+        // Setting invite count to 0 when no code is assigned does not assign a new code
+        db.set_invite_count(user1, 0).await.unwrap();
+        assert!(db.get_invite_code_for_user(user1).await.unwrap().is_none());
+
+        // User 1 creates an invite code that can be used twice.
+        db.set_invite_count(user1, 2).await.unwrap();
+        let (invite_code, invite_count) =
+            db.get_invite_code_for_user(user1).await.unwrap().unwrap();
+        assert_eq!(invite_count, 2);
+
+        // User 2 redeems the invite code and becomes a contact of user 1.
+        let user2 = db
+            .redeem_invite_code(&invite_code, "user-2", None)
+            .await
+            .unwrap();
+        let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
+        assert_eq!(invite_count, 1);
+        assert_eq!(
+            db.get_contacts(user1).await.unwrap(),
+            [
+                Contact::Accepted {
+                    user_id: user1,
+                    should_notify: false
+                },
+                Contact::Accepted {
+                    user_id: user2,
+                    should_notify: true
+                }
+            ]
+        );
+        assert_eq!(
+            db.get_contacts(user2).await.unwrap(),
+            [
+                Contact::Accepted {
+                    user_id: user1,
+                    should_notify: false
+                },
+                Contact::Accepted {
+                    user_id: user2,
+                    should_notify: false
+                }
+            ]
+        );
+
+        // User 3 redeems the invite code and becomes a contact of user 1.
+        let user3 = db
+            .redeem_invite_code(&invite_code, "user-3", None)
+            .await
+            .unwrap();
+        let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
+        assert_eq!(invite_count, 0);
+        assert_eq!(
+            db.get_contacts(user1).await.unwrap(),
+            [
+                Contact::Accepted {
+                    user_id: user1,
+                    should_notify: false
+                },
+                Contact::Accepted {
+                    user_id: user2,
+                    should_notify: true
+                },
+                Contact::Accepted {
+                    user_id: user3,
+                    should_notify: true
+                }
+            ]
+        );
+        assert_eq!(
+            db.get_contacts(user3).await.unwrap(),
+            [
+                Contact::Accepted {
+                    user_id: user1,
+                    should_notify: false
+                },
+                Contact::Accepted {
+                    user_id: user3,
+                    should_notify: false
+                },
+            ]
+        );
+
+        // Trying to reedem the code for the third time results in an error.
+        db.redeem_invite_code(&invite_code, "user-4", None)
+            .await
+            .unwrap_err();
+
+        // Invite count can be updated after the code has been created.
+        db.set_invite_count(user1, 2).await.unwrap();
+        let (latest_code, invite_count) =
+            db.get_invite_code_for_user(user1).await.unwrap().unwrap();
+        assert_eq!(latest_code, invite_code); // Invite code doesn't change when we increment above 0
+        assert_eq!(invite_count, 2);
+
+        // User 4 can now redeem the invite code and becomes a contact of user 1.
+        let user4 = db
+            .redeem_invite_code(&invite_code, "user-4", None)
+            .await
+            .unwrap();
+        let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
+        assert_eq!(invite_count, 1);
+        assert_eq!(
+            db.get_contacts(user1).await.unwrap(),
+            [
+                Contact::Accepted {
+                    user_id: user1,
+                    should_notify: false
+                },
+                Contact::Accepted {
+                    user_id: user2,
+                    should_notify: true
+                },
+                Contact::Accepted {
+                    user_id: user3,
+                    should_notify: true
+                },
+                Contact::Accepted {
+                    user_id: user4,
+                    should_notify: true
+                }
+            ]
+        );
+        assert_eq!(
+            db.get_contacts(user4).await.unwrap(),
+            [
+                Contact::Accepted {
+                    user_id: user1,
+                    should_notify: false
+                },
+                Contact::Accepted {
+                    user_id: user4,
+                    should_notify: false
+                },
+            ]
+        );
+
+        // An existing user cannot redeem invite codes.
+        db.redeem_invite_code(&invite_code, "user-2", None)
+            .await
+            .unwrap_err();
+        let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
+        assert_eq!(invite_count, 1);
+    }
+
     pub struct TestDb {
         pub db: Option<Arc<dyn Db>>,
         pub url: String,
@@ -1290,7 +1633,12 @@ pub mod tests {
 
     #[async_trait]
     impl Db for FakeDb {
-        async fn create_user(&self, github_login: &str, admin: bool) -> Result<UserId> {
+        async fn create_user(
+            &self,
+            github_login: &str,
+            email_address: Option<&str>,
+            admin: bool,
+        ) -> Result<UserId> {
             self.background.simulate_random_delay().await;
 
             let mut users = self.users.lock();
@@ -1306,7 +1654,11 @@ pub mod tests {
                     User {
                         id: user_id,
                         github_login: github_login.to_string(),
+                        email_address: email_address.map(str::to_string),
                         admin,
+                        invite_code: None,
+                        invite_count: 0,
+                        connected_once: false,
                     },
                 );
                 Ok(user_id)
@@ -1344,9 +1696,44 @@ pub mod tests {
             unimplemented!()
         }
 
+        async fn set_user_connected_once(&self, id: UserId, connected_once: bool) -> Result<()> {
+            self.background.simulate_random_delay().await;
+            let mut users = self.users.lock();
+            let mut user = users
+                .get_mut(&id)
+                .ok_or_else(|| anyhow!("user not found"))?;
+            user.connected_once = connected_once;
+            Ok(())
+        }
+
         async fn destroy_user(&self, _id: UserId) -> Result<()> {
             unimplemented!()
         }
+
+        // invite codes
+
+        async fn set_invite_count(&self, _id: UserId, _count: u32) -> Result<()> {
+            unimplemented!()
+        }
+
+        async fn get_invite_code_for_user(&self, _id: UserId) -> Result<Option<(String, u32)>> {
+            Ok(None)
+        }
+
+        async fn get_user_for_invite_code(&self, _code: &str) -> Result<User> {
+            unimplemented!()
+        }
+
+        async fn redeem_invite_code(
+            &self,
+            _code: &str,
+            _login: &str,
+            _email_address: Option<&str>,
+        ) -> Result<UserId> {
+            unimplemented!()
+        }
+
+        // contacts
 
         async fn get_contacts(&self, id: UserId) -> Result<Vec<Contact>> {
             self.background.simulate_random_delay().await;
@@ -1457,7 +1844,7 @@ pub mod tests {
                     return Ok(());
                 }
             }
-            Err(anyhow!("no such notification"))
+            Err(anyhow!("no such notification"))?
         }
 
         async fn respond_to_contact_request(
@@ -1470,7 +1857,7 @@ pub mod tests {
             for (ix, contact) in contacts.iter_mut().enumerate() {
                 if contact.requester_id == requester_id && contact.responder_id == responder_id {
                     if contact.accepted {
-                        return Err(anyhow!("contact already confirmed"));
+                        Err(anyhow!("contact already confirmed"))?;
                     }
                     if accept {
                         contact.accepted = true;
@@ -1481,7 +1868,7 @@ pub mod tests {
                     return Ok(());
                 }
             }
-            Err(anyhow!("no such contact request"))
+            Err(anyhow!("no such contact request"))?
         }
 
         async fn create_access_token_hash(
@@ -1505,7 +1892,7 @@ pub mod tests {
             self.background.simulate_random_delay().await;
             let mut orgs = self.orgs.lock();
             if orgs.values().any(|org| org.slug == slug) {
-                Err(anyhow!("org already exists"))
+                Err(anyhow!("org already exists"))?
             } else {
                 let org_id = OrgId(post_inc(&mut *self.next_org_id.lock()));
                 orgs.insert(
@@ -1528,10 +1915,10 @@ pub mod tests {
         ) -> Result<()> {
             self.background.simulate_random_delay().await;
             if !self.orgs.lock().contains_key(&org_id) {
-                return Err(anyhow!("org does not exist"));
+                Err(anyhow!("org does not exist"))?;
             }
             if !self.users.lock().contains_key(&user_id) {
-                return Err(anyhow!("user does not exist"));
+                Err(anyhow!("user does not exist"))?;
             }
 
             self.org_memberships
@@ -1544,7 +1931,7 @@ pub mod tests {
         async fn create_org_channel(&self, org_id: OrgId, name: &str) -> Result<ChannelId> {
             self.background.simulate_random_delay().await;
             if !self.orgs.lock().contains_key(&org_id) {
-                return Err(anyhow!("org does not exist"));
+                Err(anyhow!("org does not exist"))?;
             }
 
             let mut channels = self.channels.lock();
@@ -1603,10 +1990,10 @@ pub mod tests {
         ) -> Result<()> {
             self.background.simulate_random_delay().await;
             if !self.channels.lock().contains_key(&channel_id) {
-                return Err(anyhow!("channel does not exist"));
+                Err(anyhow!("channel does not exist"))?;
             }
             if !self.users.lock().contains_key(&user_id) {
-                return Err(anyhow!("user does not exist"));
+                Err(anyhow!("user does not exist"))?;
             }
 
             self.channel_memberships
@@ -1626,10 +2013,10 @@ pub mod tests {
         ) -> Result<MessageId> {
             self.background.simulate_random_delay().await;
             if !self.channels.lock().contains_key(&channel_id) {
-                return Err(anyhow!("channel does not exist"));
+                Err(anyhow!("channel does not exist"))?;
             }
             if !self.users.lock().contains_key(&sender_id) {
-                return Err(anyhow!("user does not exist"));
+                Err(anyhow!("user does not exist"))?;
             }
 
             let mut messages = self.channel_messages.lock();

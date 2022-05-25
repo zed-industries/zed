@@ -20,6 +20,7 @@ pub struct Config {
     pub http_port: u16,
     pub database_url: String,
     pub api_token: String,
+    pub invite_link_prefix: String,
     pub honeycomb_api_key: Option<String>,
     pub honeycomb_dataset: Option<String>,
     pub rust_log: Option<String>,
@@ -29,6 +30,7 @@ pub struct Config {
 pub struct AppState {
     db: Arc<dyn Db>,
     api_token: String,
+    invite_link_prefix: String,
 }
 
 impl AppState {
@@ -37,6 +39,7 @@ impl AppState {
         let this = Self {
             db: Arc::new(db),
             api_token: config.api_token.clone(),
+            invite_link_prefix: config.invite_link_prefix.clone(),
         };
         Ok(Arc::new(this))
     }
@@ -57,10 +60,11 @@ async fn main() -> Result<()> {
 
     let listener = TcpListener::bind(&format!("0.0.0.0:{}", config.http_port))
         .expect("failed to bind TCP listener");
+    let rpc_server = rpc::Server::new(state.clone(), None);
 
     let app = Router::<Body>::new()
-        .merge(api::routes(state.clone()))
-        .merge(rpc::routes(state));
+        .merge(api::routes(&rpc_server, state.clone()))
+        .merge(rpc::routes(rpc_server));
 
     axum::Server::from_tcp(listener)?
         .serve(app.into_make_service_with_connect_info::<SocketAddr>())
@@ -76,11 +80,26 @@ pub enum Error {
     Internal(anyhow::Error),
 }
 
-impl<E> From<E> for Error
-where
-    E: Into<anyhow::Error>,
-{
-    fn from(error: E) -> Self {
+impl From<anyhow::Error> for Error {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Internal(error)
+    }
+}
+
+impl From<sqlx::Error> for Error {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Internal(error.into())
+    }
+}
+
+impl From<axum::Error> for Error {
+    fn from(error: axum::Error) -> Self {
+        Self::Internal(error.into())
+    }
+}
+
+impl From<hyper::Error> for Error {
+    fn from(error: hyper::Error) -> Self {
         Self::Internal(error.into())
     }
 }
@@ -113,6 +132,8 @@ impl std::fmt::Display for Error {
         }
     }
 }
+
+impl std::error::Error for Error {}
 
 pub fn init_tracing(config: &Config) -> Option<()> {
     use opentelemetry::KeyValue;

@@ -136,6 +136,14 @@ impl Settings {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_async(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let settings = Self::test(cx);
+            cx.set_global(settings.clone());
+        });
+    }
+
     pub fn merge(
         &mut self,
         data: &SettingsFileContent,

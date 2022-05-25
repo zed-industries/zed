@@ -42,6 +42,7 @@ export default function contactsPanel(theme: Theme) {
 
   return {
     ...panel,
+    padding: { top: panel.padding.top, bottom: 0 },
     userQueryEditor: {
       background: backgroundColor(theme, 500),
       cornerRadius: 6,
@@ -136,5 +137,16 @@ export default function contactsPanel(theme: Theme) {
         background: backgroundColor(theme, 300, "active"),
       }
     },
+    inviteRow: {
+      padding: {
+        left: sidePadding,
+        right: sidePadding
+      },
+      border: { top: true, width: 1, color: borderColor(theme, "primary") },
+      text: text(theme, "sans", "primary", { size: "sm" }),
+      hover: {
+        text: text(theme, "sans", "primary", { size: "sm", underline: true })
+      }
+    }
   }
 }

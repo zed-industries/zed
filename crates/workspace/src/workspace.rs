@@ -9,8 +9,7 @@ mod waiting_room;
 
 use anyhow::{anyhow, Context, Result};
 use client::{
-    proto, Authenticate, ChannelList, Client, Contact, PeerId, Subscription, TypedEnvelope, User,
-    UserStore,
+    proto, Authenticate, Client, Contact, PeerId, Subscription, TypedEnvelope, User, UserStore,
 };
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
@@ -34,6 +33,7 @@ use postage::prelude::Stream;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, Worktree};
 use settings::Settings;
 use sidebar::{Side, Sidebar, SidebarButtons, ToggleSidebarItem, ToggleSidebarItemFocus};
+use smallvec::SmallVec;
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
@@ -75,8 +75,15 @@ type FollowableItemBuilders = HashMap<
 actions!(
     workspace,
     [
+        Open,
+        NewFile,
+        NewWindow,
+        CloseWindow,
+        AddFolderToProject,
         Unfollow,
         Save,
+        SaveAs,
+        SaveAll,
         ActivatePreviousPane,
         ActivateNextPane,
         FollowNextCollaborator,
@@ -84,15 +91,8 @@ actions!(
 );
 
 #[derive(Clone)]
-pub struct Open(pub Arc<AppState>);
-
-#[derive(Clone)]
-pub struct OpenNew(pub Arc<AppState>);
-
-#[derive(Clone)]
 pub struct OpenPaths {
     pub paths: Vec<PathBuf>,
-    pub app_state: Arc<AppState>,
 }
 
 #[derive(Clone)]
@@ -102,35 +102,52 @@ pub struct ToggleFollow(pub PeerId);
 pub struct JoinProject {
     pub contact: Arc<Contact>,
     pub project_index: usize,
-    pub app_state: Arc<AppState>,
 }
 
-impl_internal_actions!(
-    workspace,
-    [Open, OpenNew, OpenPaths, ToggleFollow, JoinProject]
-);
+impl_internal_actions!(workspace, [OpenPaths, ToggleFollow, JoinProject]);
 
-pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
+pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     pane::init(cx);
 
     cx.add_global_action(open);
-    cx.add_global_action(move |action: &OpenPaths, cx: &mut MutableAppContext| {
-        open_paths(&action.paths, &action.app_state, cx).detach();
+    cx.add_global_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |action: &OpenPaths, cx: &mut MutableAppContext| {
+            if let Some(app_state) = app_state.upgrade() {
+                open_paths(&action.paths, &app_state, cx).detach();
+            }
+        }
     });
-    cx.add_global_action(move |action: &OpenNew, cx: &mut MutableAppContext| {
-        open_new(&action.0, cx)
+    cx.add_global_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |_: &NewFile, cx: &mut MutableAppContext| {
+            if let Some(app_state) = app_state.upgrade() {
+                open_new(&app_state, cx)
+            }
+        }
     });
-    cx.add_global_action(move |action: &JoinProject, cx: &mut MutableAppContext| {
-        join_project(
-            action.contact.clone(),
-            action.project_index,
-            &action.app_state,
-            cx,
-        );
+    cx.add_global_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |_: &NewWindow, cx: &mut MutableAppContext| {
+            if let Some(app_state) = app_state.upgrade() {
+                open_new(&app_state, cx)
+            }
+        }
+    });
+    cx.add_global_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |action: &JoinProject, cx: &mut MutableAppContext| {
+            if let Some(app_state) = app_state.upgrade() {
+                join_project(action.contact.clone(), action.project_index, &app_state, cx);
+            }
+        }
     });
 
     cx.add_async_action(Workspace::toggle_follow);
     cx.add_async_action(Workspace::follow_next_collaborator);
+    cx.add_async_action(Workspace::close);
+    cx.add_async_action(Workspace::save_all);
+    cx.add_action(Workspace::add_folder_to_project);
     cx.add_action(
         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
             let pane = workspace.active_pane().clone();
@@ -139,7 +156,12 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
     );
     cx.add_action(
         |workspace: &mut Workspace, _: &Save, cx: &mut ViewContext<Workspace>| {
-            workspace.save_active_item(cx).detach_and_log_err(cx);
+            workspace.save_active_item(false, cx).detach_and_log_err(cx);
+        },
+    );
+    cx.add_action(
+        |workspace: &mut Workspace, _: &SaveAs, cx: &mut ViewContext<Workspace>| {
+            workspace.save_active_item(true, cx).detach_and_log_err(cx);
         },
     );
     cx.add_action(Workspace::toggle_sidebar_item);
@@ -151,6 +173,7 @@ pub fn init(client: &Arc<Client>, cx: &mut MutableAppContext) {
         workspace.activate_next_pane(cx)
     });
 
+    let client = &app_state.client;
     client.add_view_request_handler(Workspace::handle_follow);
     client.add_view_message_handler(Workspace::handle_unfollow);
     client.add_view_message_handler(Workspace::handle_update_followers);
@@ -188,10 +211,8 @@ pub struct AppState {
     pub client: Arc<client::Client>,
     pub user_store: ModelHandle<client::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
-    pub channel_list: ModelHandle<client::ChannelList>,
     pub build_window_options: fn() -> WindowOptions<'static>,
-    pub build_workspace:
-        fn(ModelHandle<Project>, &Arc<AppState>, &mut ViewContext<Workspace>) -> Workspace,
+    pub initialize_workspace: fn(&mut Workspace, &Arc<AppState>, &mut ViewContext<Workspace>),
 }
 
 pub trait Item: View {
@@ -201,7 +222,8 @@ pub trait Item: View {
     }
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
-    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
+    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
+    fn is_singleton(&self, cx: &AppContext) -> bool;
     fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>);
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
     where
@@ -221,7 +243,6 @@ pub trait Item: View {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>>;
-    fn can_save_as(&self, cx: &AppContext) -> bool;
     fn save_as(
         &mut self,
         project: ModelHandle<Project>,
@@ -351,7 +372,8 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
 pub trait ItemHandle: 'static + fmt::Debug {
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
-    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
+    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
+    fn is_singleton(&self, cx: &AppContext) -> bool;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn set_nav_history(&self, nav_history: Rc<RefCell<NavHistory>>, cx: &mut MutableAppContext);
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemHandle>>;
@@ -368,7 +390,6 @@ pub trait ItemHandle: 'static + fmt::Debug {
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
     fn can_save(&self, cx: &AppContext) -> bool;
-    fn can_save_as(&self, cx: &AppContext) -> bool;
     fn save(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext) -> Task<Result<()>>;
     fn save_as(
         &self,
@@ -412,8 +433,12 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.read(cx).project_path(cx)
     }
 
-    fn project_entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId> {
-        self.read(cx).project_entry_id(cx)
+    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
+        self.read(cx).project_entry_ids(cx)
+    }
+
+    fn is_singleton(&self, cx: &AppContext) -> bool {
+        self.read(cx).is_singleton(cx)
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemHandle> {
@@ -541,10 +566,6 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.read(cx).can_save(cx)
     }
 
-    fn can_save_as(&self, cx: &AppContext) -> bool {
-        self.read(cx).can_save_as(cx)
-    }
-
     fn save(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.save(project, cx))
     }
@@ -636,20 +657,9 @@ impl Into<AnyViewHandle> for &dyn NotificationHandle {
     }
 }
 
-#[derive(Clone)]
-pub struct WorkspaceParams {
-    pub project: ModelHandle<Project>,
-    pub client: Arc<Client>,
-    pub fs: Arc<dyn Fs>,
-    pub languages: Arc<LanguageRegistry>,
-    pub themes: Arc<ThemeRegistry>,
-    pub user_store: ModelHandle<UserStore>,
-    pub channel_list: ModelHandle<ChannelList>,
-}
-
-impl WorkspaceParams {
+impl AppState {
     #[cfg(any(test, feature = "test-support"))]
-    pub fn test(cx: &mut MutableAppContext) -> Self {
+    pub fn test(cx: &mut MutableAppContext) -> Arc<Self> {
         let settings = Settings::test(cx);
         cx.set_global(settings);
 
@@ -658,42 +668,16 @@ impl WorkspaceParams {
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let project = Project::local(
-            client.clone(),
-            user_store.clone(),
-            languages.clone(),
-            fs.clone(),
-            cx,
-        );
-        Self {
-            project,
-            channel_list: cx
-                .add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx)),
+        let themes = ThemeRegistry::new((), cx.font_cache().clone());
+        Arc::new(Self {
             client,
-            themes: ThemeRegistry::new((), cx.font_cache().clone()),
+            themes,
             fs,
             languages,
             user_store,
-        }
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn local(app_state: &Arc<AppState>, cx: &mut MutableAppContext) -> Self {
-        Self {
-            project: Project::local(
-                app_state.client.clone(),
-                app_state.user_store.clone(),
-                app_state.languages.clone(),
-                app_state.fs.clone(),
-                cx,
-            ),
-            client: app_state.client.clone(),
-            fs: app_state.fs.clone(),
-            themes: app_state.themes.clone(),
-            languages: app_state.languages.clone(),
-            user_store: app_state.user_store.clone(),
-            channel_list: app_state.channel_list.clone(),
-        }
+            initialize_workspace: |_, _, _| {},
+            build_window_options: || Default::default(),
+        })
     }
 }
 
@@ -708,7 +692,6 @@ pub struct Workspace {
     user_store: ModelHandle<client::UserStore>,
     remote_entity_subscription: Option<Subscription>,
     fs: Arc<dyn Fs>,
-    themes: Arc<ThemeRegistry>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
     left_sidebar: ViewHandle<Sidebar>,
@@ -744,8 +727,8 @@ enum FollowerItem {
 }
 
 impl Workspace {
-    pub fn new(params: &WorkspaceParams, cx: &mut ViewContext<Self>) -> Self {
-        cx.observe(&params.project, |_, project, cx| {
+    pub fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
+        cx.observe(&project, |_, project, cx| {
             if project.read(cx).is_read_only() {
                 cx.blur();
             }
@@ -753,7 +736,7 @@ impl Workspace {
         })
         .detach();
 
-        cx.subscribe(&params.project, move |this, project, event, cx| {
+        cx.subscribe(&project, move |this, project, event, cx| {
             match event {
                 project::Event::RemoteIdChanged(remote_id) => {
                     this.project_remote_id_changed(*remote_id, cx);
@@ -785,8 +768,11 @@ impl Workspace {
         cx.focus(&pane);
         cx.emit(Event::PaneAdded(pane.clone()));
 
-        let mut current_user = params.user_store.read(cx).watch_current_user().clone();
-        let mut connection_status = params.client.status().clone();
+        let fs = project.read(cx).fs().clone();
+        let user_store = project.read(cx).user_store();
+        let client = project.read(cx).client();
+        let mut current_user = user_store.read(cx).watch_current_user().clone();
+        let mut connection_status = client.status().clone();
         let _observe_current_user = cx.spawn_weak(|this, mut cx| async move {
             current_user.recv().await;
             connection_status.recv().await;
@@ -826,14 +812,13 @@ impl Workspace {
             active_pane: pane.clone(),
             status_bar,
             notifications: Default::default(),
-            client: params.client.clone(),
+            client,
             remote_entity_subscription: None,
-            user_store: params.user_store.clone(),
-            fs: params.fs.clone(),
-            themes: params.themes.clone(),
+            user_store,
+            fs,
             left_sidebar,
             right_sidebar,
-            project: params.project.clone(),
+            project,
             leader_state: Default::default(),
             follower_states_by_leader: Default::default(),
             last_leaders_by_pane: Default::default(),
@@ -865,10 +850,6 @@ impl Workspace {
 
     pub fn project(&self) -> &ModelHandle<Project> {
         &self.project
-    }
-
-    pub fn themes(&self) -> Arc<ThemeRegistry> {
-        self.themes.clone()
     }
 
     pub fn worktrees<'a>(
@@ -903,6 +884,79 @@ impl Workspace {
                 future.await;
             }
         }
+    }
+
+    fn close(&mut self, _: &CloseWindow, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        let prepare = self.prepare_to_close(cx);
+        Some(cx.spawn(|this, mut cx| async move {
+            if prepare.await? {
+                this.update(&mut cx, |_, cx| {
+                    let window_id = cx.window_id();
+                    cx.remove_window(window_id);
+                });
+            }
+            Ok(())
+        }))
+    }
+
+    fn prepare_to_close(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<bool>> {
+        self.save_all_internal(true, cx)
+    }
+
+    fn save_all(&mut self, _: &SaveAll, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        let save_all = self.save_all_internal(false, cx);
+        Some(cx.foreground().spawn(async move {
+            save_all.await?;
+            Ok(())
+        }))
+    }
+
+    fn save_all_internal(
+        &mut self,
+        should_prompt_to_save: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<bool>> {
+        let dirty_items = self
+            .panes
+            .iter()
+            .flat_map(|pane| {
+                pane.read(cx).items().filter_map(|item| {
+                    if item.is_dirty(cx) {
+                        Some((pane.clone(), item.boxed_clone()))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let project = self.project.clone();
+        cx.spawn_weak(|_, mut cx| async move {
+            // let mut saved_project_entry_ids = HashSet::default();
+            for (pane, item) in dirty_items {
+                let (is_singl, project_entry_ids) =
+                    cx.read(|cx| (item.is_singleton(cx), item.project_entry_ids(cx)));
+                if is_singl || !project_entry_ids.is_empty() {
+                    if let Some(ix) =
+                        pane.read_with(&cx, |pane, _| pane.index_for_item(item.as_ref()))
+                    {
+                        if !Pane::save_item(
+                            project.clone(),
+                            &pane,
+                            ix,
+                            &item,
+                            should_prompt_to_save,
+                            &mut cx,
+                        )
+                        .await?
+                        {
+                            return Ok(false);
+                        }
+                    }
+                }
+            }
+            Ok(true)
+        })
     }
 
     pub fn open_paths(
@@ -951,6 +1005,27 @@ impl Workspace {
 
             futures::future::join_all(tasks).await
         })
+    }
+
+    fn add_folder_to_project(&mut self, _: &AddFolderToProject, cx: &mut ViewContext<Self>) {
+        let mut paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: true,
+        });
+        cx.spawn(|this, mut cx| async move {
+            if let Some(paths) = paths.recv().await.flatten() {
+                let results = this
+                    .update(&mut cx, |this, cx| this.open_paths(paths, cx))
+                    .await;
+                for result in results {
+                    if let Some(result) = result {
+                        result.log_err();
+                    }
+                }
+            }
+        })
+        .detach();
     }
 
     fn project_path_for_path(
@@ -1073,10 +1148,14 @@ impl Workspace {
         self.active_item(cx).and_then(|item| item.project_path(cx))
     }
 
-    pub fn save_active_item(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+    pub fn save_active_item(
+        &mut self,
+        force_name_change: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
         let project = self.project.clone();
         if let Some(item) = self.active_item(cx) {
-            if item.can_save(cx) {
+            if !force_name_change && item.can_save(cx) {
                 if item.has_conflict(cx.as_ref()) {
                     const CONFLICT_MESSAGE: &'static str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
@@ -1095,7 +1174,7 @@ impl Workspace {
                 } else {
                     item.save(project, cx)
                 }
-            } else if item.can_save_as(cx) {
+            } else if item.is_singleton(cx) {
                 let worktree = self.worktrees(cx).next();
                 let start_abs_path = worktree
                     .and_then(|w| w.read(cx).as_local())
@@ -2203,8 +2282,7 @@ impl std::fmt::Debug for OpenPaths {
     }
 }
 
-fn open(action: &Open, cx: &mut MutableAppContext) {
-    let app_state = action.0.clone();
+fn open(_: &Open, cx: &mut MutableAppContext) {
     let mut paths = cx.prompt_for_paths(PathPromptOptions {
         files: true,
         directories: true,
@@ -2212,7 +2290,7 @@ fn open(action: &Open, cx: &mut MutableAppContext) {
     });
     cx.spawn(|mut cx| async move {
         if let Some(paths) = paths.recv().await.flatten() {
-            cx.update(|cx| cx.dispatch_global_action(OpenPaths { paths, app_state }));
+            cx.update(|cx| cx.dispatch_global_action(OpenPaths { paths }));
         }
     })
     .detach();
@@ -2260,14 +2338,17 @@ pub fn open_paths(
                     .contains(&false);
 
             cx.add_window((app_state.build_window_options)(), |cx| {
-                let project = Project::local(
-                    app_state.client.clone(),
-                    app_state.user_store.clone(),
-                    app_state.languages.clone(),
-                    app_state.fs.clone(),
+                let mut workspace = Workspace::new(
+                    Project::local(
+                        app_state.client.clone(),
+                        app_state.user_store.clone(),
+                        app_state.languages.clone(),
+                        app_state.fs.clone(),
+                        cx,
+                    ),
                     cx,
                 );
-                let mut workspace = (app_state.build_workspace)(project, &app_state, cx);
+                (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
                 if contains_directory {
                     workspace.toggle_sidebar_item(
                         &ToggleSidebarItem {
@@ -2313,14 +2394,374 @@ pub fn join_project(
 
 fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
     let (window_id, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
-        let project = Project::local(
-            app_state.client.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
+        let mut workspace = Workspace::new(
+            Project::local(
+                app_state.client.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                cx,
+            ),
             cx,
         );
-        (app_state.build_workspace)(project, &app_state, cx)
+        (app_state.initialize_workspace)(&mut workspace, app_state, cx);
+        workspace
     });
-    cx.dispatch_action(window_id, vec![workspace.id()], &OpenNew(app_state.clone()));
+    cx.dispatch_action(window_id, vec![workspace.id()], &NewFile);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{ModelHandle, TestAppContext, ViewContext};
+    use project::{FakeFs, Project, ProjectEntryId};
+    use serde_json::json;
+
+    #[gpui::test]
+    async fn test_close_window(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree("/root", json!({ "one": "" })).await;
+
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+
+        // When there are no dirty items, there's nothing to do.
+        let item1 = cx.add_view(window_id, |_| TestItem::new());
+        workspace.update(cx, |w, cx| w.add_item(Box::new(item1.clone()), cx));
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(cx));
+        assert_eq!(task.await.unwrap(), true);
+
+        // When there are dirty untitled items, prompt to save each one. If the user
+        // cancels any prompt, then abort.
+        let item2 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item
+        });
+        let item3 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item.project_entry_ids = vec![ProjectEntryId::from_proto(1)];
+            item
+        });
+        workspace.update(cx, |w, cx| {
+            w.add_item(Box::new(item2.clone()), cx);
+            w.add_item(Box::new(item3.clone()), cx);
+        });
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(cx));
+        cx.foreground().run_until_parked();
+        cx.simulate_prompt_answer(window_id, 2 /* cancel */);
+        cx.foreground().run_until_parked();
+        assert!(!cx.has_pending_prompt(window_id));
+        assert_eq!(task.await.unwrap(), false);
+
+        // If there are multiple dirty items representing the same project entry.
+        workspace.update(cx, |w, cx| {
+            w.add_item(Box::new(item2.clone()), cx);
+            w.add_item(Box::new(item3.clone()), cx);
+        });
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(cx));
+        cx.foreground().run_until_parked();
+        cx.simulate_prompt_answer(window_id, 2 /* cancel */);
+        cx.foreground().run_until_parked();
+        assert!(!cx.has_pending_prompt(window_id));
+        assert_eq!(task.await.unwrap(), false);
+    }
+
+    #[gpui::test]
+    async fn test_close_pane_items(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, None, cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+
+        let item1 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item.project_entry_ids = vec![ProjectEntryId::from_proto(1)];
+            item
+        });
+        let item2 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item.has_conflict = true;
+            item.project_entry_ids = vec![ProjectEntryId::from_proto(2)];
+            item
+        });
+        let item3 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item.has_conflict = true;
+            item.project_entry_ids = vec![ProjectEntryId::from_proto(3)];
+            item
+        });
+        let item4 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item
+        });
+        let pane = workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(item1.clone()), cx);
+            workspace.add_item(Box::new(item2.clone()), cx);
+            workspace.add_item(Box::new(item3.clone()), cx);
+            workspace.add_item(Box::new(item4.clone()), cx);
+            workspace.active_pane().clone()
+        });
+
+        let close_items = workspace.update(cx, |workspace, cx| {
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(1, true, true, cx);
+                assert_eq!(pane.active_item().unwrap().id(), item2.id());
+            });
+
+            let item1_id = item1.id();
+            let item3_id = item3.id();
+            let item4_id = item4.id();
+            Pane::close_items(workspace, pane.clone(), cx, move |id| {
+                [item1_id, item3_id, item4_id].contains(&id)
+            })
+        });
+
+        cx.foreground().run_until_parked();
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items().count(), 4);
+            assert_eq!(pane.active_item().unwrap().id(), item1.id());
+        });
+
+        cx.simulate_prompt_answer(window_id, 0);
+        cx.foreground().run_until_parked();
+        pane.read_with(cx, |pane, cx| {
+            assert_eq!(item1.read(cx).save_count, 1);
+            assert_eq!(item1.read(cx).save_as_count, 0);
+            assert_eq!(item1.read(cx).reload_count, 0);
+            assert_eq!(pane.items().count(), 3);
+            assert_eq!(pane.active_item().unwrap().id(), item3.id());
+        });
+
+        cx.simulate_prompt_answer(window_id, 1);
+        cx.foreground().run_until_parked();
+        pane.read_with(cx, |pane, cx| {
+            assert_eq!(item3.read(cx).save_count, 0);
+            assert_eq!(item3.read(cx).save_as_count, 0);
+            assert_eq!(item3.read(cx).reload_count, 1);
+            assert_eq!(pane.items().count(), 2);
+            assert_eq!(pane.active_item().unwrap().id(), item4.id());
+        });
+
+        cx.simulate_prompt_answer(window_id, 0);
+        cx.foreground().run_until_parked();
+        cx.simulate_new_path_selection(|_| Some(Default::default()));
+        close_items.await.unwrap();
+        pane.read_with(cx, |pane, cx| {
+            assert_eq!(item4.read(cx).save_count, 0);
+            assert_eq!(item4.read(cx).save_as_count, 1);
+            assert_eq!(item4.read(cx).reload_count, 0);
+            assert_eq!(pane.items().count(), 1);
+            assert_eq!(pane.active_item().unwrap().id(), item2.id());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_prompting_to_save_only_on_last_item_for_entry(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, [], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+
+        // Create several workspace items with single project entries, and two
+        // workspace items with multiple project entries.
+        let single_entry_items = (0..=4)
+            .map(|project_entry_id| {
+                let mut item = TestItem::new();
+                item.is_dirty = true;
+                item.project_entry_ids = vec![ProjectEntryId::from_proto(project_entry_id)];
+                item.is_singleton = true;
+                item
+            })
+            .collect::<Vec<_>>();
+        let item_2_3 = {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item.is_singleton = false;
+            item.project_entry_ids =
+                vec![ProjectEntryId::from_proto(2), ProjectEntryId::from_proto(3)];
+            item
+        };
+        let item_3_4 = {
+            let mut item = TestItem::new();
+            item.is_dirty = true;
+            item.is_singleton = false;
+            item.project_entry_ids =
+                vec![ProjectEntryId::from_proto(3), ProjectEntryId::from_proto(4)];
+            item
+        };
+
+        // Create two panes that contain the following project entries:
+        //   left pane:
+        //     multi-entry items:   (2, 3)
+        //     single-entry items:  0, 1, 2, 3, 4
+        //   right pane:
+        //     single-entry items:  1
+        //     multi-entry items:   (3, 4)
+        let left_pane = workspace.update(cx, |workspace, cx| {
+            let left_pane = workspace.active_pane().clone();
+            let right_pane = workspace.split_pane(left_pane.clone(), SplitDirection::Right, cx);
+
+            workspace.activate_pane(left_pane.clone(), cx);
+            workspace.add_item(Box::new(cx.add_view(|_| item_2_3.clone())), cx);
+            for item in &single_entry_items {
+                workspace.add_item(Box::new(cx.add_view(|_| item.clone())), cx);
+            }
+
+            workspace.activate_pane(right_pane.clone(), cx);
+            workspace.add_item(Box::new(cx.add_view(|_| single_entry_items[1].clone())), cx);
+            workspace.add_item(Box::new(cx.add_view(|_| item_3_4.clone())), cx);
+
+            left_pane
+        });
+
+        // When closing all of the items in the left pane, we should be prompted twice:
+        // once for project entry 0, and once for project entry 2. After those two
+        // prompts, the task should complete.
+        let close = workspace.update(cx, |workspace, cx| {
+            workspace.activate_pane(left_pane.clone(), cx);
+            Pane::close_items(workspace, left_pane.clone(), cx, |_| true)
+        });
+
+        cx.foreground().run_until_parked();
+        left_pane.read_with(cx, |pane, cx| {
+            assert_eq!(
+                pane.active_item().unwrap().project_entry_ids(cx).as_slice(),
+                &[ProjectEntryId::from_proto(0)]
+            );
+        });
+        cx.simulate_prompt_answer(window_id, 0);
+
+        cx.foreground().run_until_parked();
+        left_pane.read_with(cx, |pane, cx| {
+            assert_eq!(
+                pane.active_item().unwrap().project_entry_ids(cx).as_slice(),
+                &[ProjectEntryId::from_proto(2)]
+            );
+        });
+        cx.simulate_prompt_answer(window_id, 0);
+
+        cx.foreground().run_until_parked();
+        close.await.unwrap();
+        left_pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items().count(), 0);
+        });
+    }
+
+    #[derive(Clone)]
+    struct TestItem {
+        save_count: usize,
+        save_as_count: usize,
+        reload_count: usize,
+        is_dirty: bool,
+        has_conflict: bool,
+        project_entry_ids: Vec<ProjectEntryId>,
+        is_singleton: bool,
+    }
+
+    impl TestItem {
+        fn new() -> Self {
+            Self {
+                save_count: 0,
+                save_as_count: 0,
+                reload_count: 0,
+                is_dirty: false,
+                has_conflict: false,
+                project_entry_ids: Vec::new(),
+                is_singleton: true,
+            }
+        }
+    }
+
+    impl Entity for TestItem {
+        type Event = ();
+    }
+
+    impl View for TestItem {
+        fn ui_name() -> &'static str {
+            "TestItem"
+        }
+
+        fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+            Empty::new().boxed()
+        }
+    }
+
+    impl Item for TestItem {
+        fn tab_content(&self, _: &theme::Tab, _: &AppContext) -> ElementBox {
+            Empty::new().boxed()
+        }
+
+        fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
+            None
+        }
+
+        fn project_entry_ids(&self, _: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
+            self.project_entry_ids.iter().copied().collect()
+        }
+
+        fn is_singleton(&self, _: &AppContext) -> bool {
+            self.is_singleton
+        }
+
+        fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
+
+        fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
+        where
+            Self: Sized,
+        {
+            Some(self.clone())
+        }
+
+        fn is_dirty(&self, _: &AppContext) -> bool {
+            self.is_dirty
+        }
+
+        fn has_conflict(&self, _: &AppContext) -> bool {
+            self.has_conflict
+        }
+
+        fn can_save(&self, _: &AppContext) -> bool {
+            self.project_entry_ids.len() > 0
+        }
+
+        fn save(
+            &mut self,
+            _: ModelHandle<Project>,
+            _: &mut ViewContext<Self>,
+        ) -> Task<anyhow::Result<()>> {
+            self.save_count += 1;
+            Task::ready(Ok(()))
+        }
+
+        fn save_as(
+            &mut self,
+            _: ModelHandle<Project>,
+            _: std::path::PathBuf,
+            _: &mut ViewContext<Self>,
+        ) -> Task<anyhow::Result<()>> {
+            self.save_as_count += 1;
+            Task::ready(Ok(()))
+        }
+
+        fn reload(
+            &mut self,
+            _: ModelHandle<Project>,
+            _: &mut ViewContext<Self>,
+        ) -> Task<anyhow::Result<()>> {
+            self.reload_count += 1;
+            Task::ready(Ok(()))
+        }
+    }
 }

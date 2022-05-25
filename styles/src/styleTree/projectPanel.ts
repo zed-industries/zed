@@ -26,6 +26,7 @@ export default function projectPanel(theme: Theme) {
         text: text(theme, "mono", "active", { size: "sm" }),
       }
     },
+    ignoredEntryFade: 0.6,
     filenameEditor: {
       background: backgroundColor(theme, 500, "active"),
       text: text(theme, "mono", "primary", { size: "sm" }),

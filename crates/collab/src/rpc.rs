@@ -23,7 +23,11 @@ use axum::{
     Extension, Router, TypedHeader,
 };
 use collections::HashMap;
-use futures::{channel::mpsc, future::BoxFuture, FutureExt, SinkExt, StreamExt, TryStreamExt};
+use futures::{
+    channel::mpsc,
+    future::{self, BoxFuture},
+    FutureExt, SinkExt, StreamExt, TryStreamExt,
+};
 use lazy_static::lazy_static;
 use rpc::{
     proto::{self, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},
@@ -276,12 +280,27 @@ impl Server {
                 let _ = send_connection_id.send(connection_id).await;
             }
 
-            let contacts = this.app_state.db.get_contacts(user_id).await?;
+            if !user.connected_once {
+                this.peer.send(connection_id, proto::ShowContacts {})?;
+                this.app_state.db.set_user_connected_once(user_id, true).await?;
+            }
+
+            let (contacts, invite_code) = future::try_join(
+                this.app_state.db.get_contacts(user_id),
+                this.app_state.db.get_invite_code_for_user(user_id)
+            ).await?;
 
             {
                 let mut store = this.store_mut().await;
                 store.add_connection(connection_id, user_id);
                 this.peer.send(connection_id, store.build_initial_contacts_update(contacts))?;
+                
+                if let Some((code, count)) = invite_code {
+                    this.peer.send(connection_id, proto::UpdateInviteInfo {
+                        url: format!("{}{}", this.app_state.invite_link_prefix, code),
+                        count,
+                    })?;
+                }
             }
             this.update_user_contacts(user_id).await?;
 
@@ -398,6 +417,23 @@ impl Server {
         Ok(())
     }
 
+    pub async fn invite_code_redeemed(self: &Arc<Self>, code: &str, invitee_id: UserId) -> Result<()> {
+        let user = self.app_state.db.get_user_for_invite_code(code).await?;
+        let store = self.store().await;
+        let invitee_contact = store.contact_for_user(invitee_id, true);
+        for connection_id in store.connection_ids_for_user(user.id) {
+            self.peer.send(connection_id, proto::UpdateContacts {
+                contacts: vec![invitee_contact.clone()],
+                ..Default::default()
+            })?;
+            self.peer.send(connection_id, proto::UpdateInviteInfo {
+                url: format!("{}{}", self.app_state.invite_link_prefix, code),
+                count: user.invite_count as u32,
+            })?;
+        }
+        Ok(())
+    }
+
     async fn ping(
         self: Arc<Server>,
         _: TypedEnvelope<proto::Ping>,
@@ -434,6 +470,19 @@ impl Server {
                 state.unregister_project(request.payload.project_id, request.sender_id)?;
             (state.user_id_for_connection(request.sender_id)?, project)
         };
+
+        broadcast(
+            request.sender_id,
+            project.guests.keys().copied(),
+            |conn_id| {
+                self.peer.send(
+                    conn_id,
+                    proto::UnregisterProject {
+                        project_id: request.payload.project_id,
+                    },
+                )
+            },
+        );
         for (_, receipts) in project.join_requests {
             for receipt in receipts {
                 self.peer.respond(
@@ -1516,13 +1565,12 @@ impl Header for ProtocolVersion {
     }
 }
 
-pub fn routes(app_state: Arc<AppState>) -> Router<Body> {
-    let server = Server::new(app_state.clone(), None);
+pub fn routes(server: Arc<Server>) -> Router<Body> {
     Router::new()
         .route("/rpc", get(handle_websocket_request))
         .layer(
             ServiceBuilder::new()
-                .layer(Extension(app_state))
+                .layer(Extension(server.app_state.clone()))
                 .layer(middleware::from_fn(auth::validate_header))
                 .layer(Extension(server)),
         )
@@ -1630,7 +1678,7 @@ mod tests {
     use gpui::{
         executor::{self, Deterministic},
         geometry::vector::vec2f,
-        ModelHandle, TestAppContext, ViewHandle,
+        ModelHandle, Task, TestAppContext, ViewHandle,
     };
     use language::{
         range_to_lsp, tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
@@ -1662,7 +1710,7 @@ mod tests {
         time::Duration,
     };
     use theme::ThemeRegistry;
-    use workspace::{Item, SplitDirection, ToggleFollow, Workspace, WorkspaceParams};
+    use workspace::{Item, SplitDirection, ToggleFollow, Workspace};
 
     #[cfg(test)]
     #[ctor::ctor]
@@ -1696,8 +1744,13 @@ mod tests {
         fs.insert_tree(
             "/a",
             json!({
+                ".gitignore": "ignored-dir",
                 "a.txt": "a-contents",
                 "b.txt": "b-contents",
+                "ignored-dir": {
+                    "c.txt": "",
+                    "d.txt": "",
+                }
             }),
         )
         .await;
@@ -1727,7 +1780,6 @@ mod tests {
         // Join that project as client B
         let client_b_peer_id = client_b.peer_id;
         let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
-
         let replica_id_b = project_b.read_with(cx_b, |project, _| {
             assert_eq!(
                 project
@@ -1740,16 +1792,27 @@ mod tests {
             );
             project.replica_id()
         });
-        project_a
-            .condition(&cx_a, |tree, _| {
-                tree.collaborators()
-                    .get(&client_b_peer_id)
-                    .map_or(false, |collaborator| {
-                        collaborator.replica_id == replica_id_b
-                            && collaborator.user.github_login == "user_b"
-                    })
-            })
-            .await;
+
+        deterministic.run_until_parked();
+        project_a.read_with(cx_a, |project, _| {
+            let client_b_collaborator = project.collaborators().get(&client_b_peer_id).unwrap();
+            assert_eq!(client_b_collaborator.replica_id, replica_id_b);
+            assert_eq!(client_b_collaborator.user.github_login, "user_b");
+        });
+        project_b.read_with(cx_b, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap().read(cx);
+            assert_eq!(
+                worktree.paths().map(AsRef::as_ref).collect::<Vec<_>>(),
+                [
+                    Path::new(".gitignore"),
+                    Path::new("a.txt"),
+                    Path::new("b.txt"),
+                    Path::new("ignored-dir"),
+                    Path::new("ignored-dir/c.txt"),
+                    Path::new("ignored-dir/d.txt"),
+                ]
+            );
+        });
 
         // Open the same file as client B and client A.
         let buffer_b = project_b
@@ -1895,6 +1958,14 @@ mod tests {
             .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
+
+        // When client A (the host) leaves, the project gets unshared and guests are notified.
+        cx_a.update(|_| drop(project_a));
+        deterministic.run_until_parked();
+        project_b2.read_with(cx_b, |project, _| {
+            assert!(project.is_read_only());
+            assert!(project.collaborators().is_empty());
+        });
     }
 
     #[gpui::test(iterations = 10)]
@@ -4322,13 +4393,7 @@ mod tests {
 
         // Join the project as client B.
         let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
-        let mut params = cx_b.update(WorkspaceParams::test);
-        params.languages = lang_registry.clone();
-        params.project = project_b.clone();
-        params.client = client_b.client.clone();
-        params.user_store = client_b.user_store.clone();
-
-        let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
+        let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(project_b.clone(), cx));
         let editor_b = workspace_b
             .update(cx_b, |workspace, cx| {
                 workspace.open_path((worktree_id, "main.rs"), true, cx)
@@ -4563,13 +4628,7 @@ mod tests {
 
         // Join the worktree as client B.
         let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
-        let mut params = cx_b.update(WorkspaceParams::test);
-        params.languages = lang_registry.clone();
-        params.project = project_b.clone();
-        params.client = client_b.client.clone();
-        params.user_store = client_b.user_store.clone();
-
-        let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
+        let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(project_b.clone(), cx));
         let editor_b = workspace_b
             .update(cx_b, |workspace, cx| {
                 workspace.open_path((worktree_id, "one.rs"), true, cx)
@@ -6030,9 +6089,9 @@ mod tests {
 
         let mut server = TestServer::start(cx.foreground(), cx.background()).await;
         let db = server.app_state.db.clone();
-        let host_user_id = db.create_user("host", false).await.unwrap();
+        let host_user_id = db.create_user("host", None, false).await.unwrap();
         for username in ["guest-1", "guest-2", "guest-3", "guest-4"] {
-            let guest_user_id = db.create_user(username, false).await.unwrap();
+            let guest_user_id = db.create_user(username, None, false).await.unwrap();
             server
                 .app_state
                 .db
@@ -6547,7 +6606,7 @@ mod tests {
                 if let Ok(Some(user)) = self.app_state.db.get_user_by_github_login(name).await {
                     user.id
                 } else {
-                    self.app_state.db.create_user(name, false).await.unwrap()
+                    self.app_state.db.create_user(name, None, false).await.unwrap()
                 };
             let client_name = name.to_string();
             let mut client = Client::new(http.clone());
@@ -6602,13 +6661,21 @@ mod tests {
                     })
                 });
 
-            Channel::init(&client);
-            Project::init(&client);
-            cx.update(|cx| {
-                workspace::init(&client, cx);
+            let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
+            let app_state = Arc::new(workspace::AppState {
+                client: client.clone(),
+                user_store: user_store.clone(),
+                languages: Arc::new(LanguageRegistry::new(Task::ready(()))),
+                themes: ThemeRegistry::new((), cx.font_cache()),
+                fs: FakeFs::new(cx.background()),
+                build_window_options: || Default::default(),
+                initialize_workspace: |_, _, _| unimplemented!(),
             });
 
-            let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
+            Channel::init(&client);
+            Project::init(&client);
+            cx.update(|cx| workspace::init(app_state.clone(), cx));
+
             client
                 .authenticate_and_connect(false, &cx.to_async())
                 .await
@@ -6670,6 +6737,7 @@ mod tests {
             Arc::new(AppState {
                 db: test_db.db().clone(),
                 api_token: Default::default(),
+                invite_link_prefix: Default::default(),
             })
         }
 
@@ -6846,23 +6914,7 @@ mod tests {
             cx: &mut TestAppContext,
         ) -> ViewHandle<Workspace> {
             let (window_id, _) = cx.add_window(|_| EmptyView);
-            cx.add_view(window_id, |cx| {
-                let fs = project.read(cx).fs().clone();
-                Workspace::new(
-                    &WorkspaceParams {
-                        fs,
-                        project: project.clone(),
-                        user_store: self.user_store.clone(),
-                        languages: self.language_registry.clone(),
-                        themes: ThemeRegistry::new((), cx.font_cache().clone()),
-                        channel_list: cx.add_model(|cx| {
-                            ChannelList::new(self.user_store.clone(), self.client.clone(), cx)
-                        }),
-                        client: self.client.clone(),
-                    },
-                    cx,
-                )
-            })
+            cx.add_view(window_id, |cx| Workspace::new(project.clone(), cx))
         }
 
         async fn simulate_host(

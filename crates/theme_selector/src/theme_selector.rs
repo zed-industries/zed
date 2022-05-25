@@ -7,7 +7,7 @@ use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use std::sync::Arc;
 use theme::{Theme, ThemeRegistry};
-use workspace::Workspace;
+use workspace::{AppState, Workspace};
 
 pub struct ThemeSelector {
     registry: Arc<ThemeRegistry>,
@@ -21,10 +21,14 @@ pub struct ThemeSelector {
 
 actions!(theme_selector, [Toggle, Reload]);
 
-pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(ThemeSelector::toggle);
-    cx.add_action(ThemeSelector::reload);
+pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     Picker::<ThemeSelector>::init(cx);
+    cx.add_action({
+        let theme_registry = app_state.themes.clone();
+        move |workspace, _: &Toggle, cx| {
+            ThemeSelector::toggle(workspace, theme_registry.clone(), cx)
+        }
+    });
 }
 
 pub enum Event {
@@ -64,8 +68,11 @@ impl ThemeSelector {
         this
     }
 
-    fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
-        let themes = workspace.themes();
+    fn toggle(
+        workspace: &mut Workspace,
+        themes: Arc<ThemeRegistry>,
+        cx: &mut ViewContext<Workspace>,
+    ) {
         workspace.toggle_modal(cx, |_, cx| {
             let this = cx.add_view(|cx| Self::new(themes, cx));
             cx.subscribe(&this, Self::on_event).detach();
@@ -73,9 +80,9 @@ impl ThemeSelector {
         });
     }
 
-    fn reload(workspace: &mut Workspace, _: &Reload, cx: &mut ViewContext<Workspace>) {
+    #[cfg(debug_assertions)]
+    pub fn reload(themes: Arc<ThemeRegistry>, cx: &mut MutableAppContext) {
         let current_theme_name = cx.global::<Settings>().theme.name.clone();
-        let themes = workspace.themes();
         themes.clear();
         match themes.get(&current_theme_name) {
             Ok(theme) => {

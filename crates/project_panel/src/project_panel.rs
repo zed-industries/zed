@@ -59,6 +59,7 @@ struct EntryDetails {
     filename: String,
     depth: usize,
     kind: EntryKind,
+    is_ignored: bool,
     is_expanded: bool,
     is_selected: bool,
     is_editing: bool,
@@ -613,7 +614,7 @@ impl ProjectPanel {
             }
 
             let mut visible_worktree_entries = Vec::new();
-            let mut entry_iter = snapshot.entries(false);
+            let mut entry_iter = snapshot.entries(true);
             while let Some(entry) = entry_iter.entry() {
                 visible_worktree_entries.push(entry.clone());
                 if Some(entry.id) == new_entry_parent_id {
@@ -739,6 +740,7 @@ impl ProjectPanel {
                             .to_string(),
                         depth: entry.path.components().count(),
                         kind: entry.kind,
+                        is_ignored: entry.is_ignored,
                         is_expanded: expanded_entry_ids.binary_search(&entry.id).is_ok(),
                         is_selected: self.selection.map_or(false, |e| {
                             e.worktree_id == snapshot.id() && e.entry_id == entry.id
@@ -784,7 +786,11 @@ impl ProjectPanel {
         let show_editor = details.is_editing && !details.is_processing;
         MouseEventHandler::new::<Self, _, _>(entry_id.to_usize(), cx, |state, _| {
             let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
-            let style = theme.entry.style_for(state, details.is_selected);
+            let mut style = theme.entry.style_for(state, details.is_selected).clone();
+            if details.is_ignored {
+                style.text.color.fade_out(theme.ignored_entry_fade);
+                style.icon_color.fade_out(theme.ignored_entry_fade);
+            }
             let row_container_style = if show_editor {
                 theme.filename_editor.container
             } else {
@@ -913,11 +919,14 @@ mod tests {
     use project::FakeFs;
     use serde_json::json;
     use std::{collections::HashSet, path::Path};
-    use workspace::WorkspaceParams;
 
     #[gpui::test]
     async fn test_visible_list(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            let settings = Settings::test(cx);
+            cx.set_global(settings);
+        });
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -956,14 +965,14 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/root1", "/root2"], cx).await;
-        let params = cx.update(WorkspaceParams::test);
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
         let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    > b",
                 "    > C",
@@ -979,6 +988,7 @@ mod tests {
             visible_entries_as_strings(&panel, 0..50, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b  <== selected",
                 "        > 3",
@@ -992,7 +1002,7 @@ mod tests {
         );
 
         assert_eq!(
-            visible_entries_as_strings(&panel, 5..8, cx),
+            visible_entries_as_strings(&panel, 6..9, cx),
             &[
                 //
                 "    > C",
@@ -1005,6 +1015,10 @@ mod tests {
     #[gpui::test(iterations = 30)]
     async fn test_editing_files(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            let settings = Settings::test(cx);
+            cx.set_global(settings);
+        });
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -1043,9 +1057,8 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/root1", "/root2"], cx).await;
-        let params = cx.update(WorkspaceParams::test);
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
         let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
 
         select_path(&panel, "root1", cx);
@@ -1053,6 +1066,7 @@ mod tests {
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1  <== selected",
+                "    > .git",
                 "    > a",
                 "    > b",
                 "    > C",
@@ -1071,6 +1085,7 @@ mod tests {
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    > b",
                 "    > C",
@@ -1092,6 +1107,7 @@ mod tests {
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    > b",
                 "    > C",
@@ -1108,6 +1124,7 @@ mod tests {
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    > b",
                 "    > C",
@@ -1122,9 +1139,10 @@ mod tests {
         select_path(&panel, "root1/b", cx);
         panel.update(cx, |panel, cx| panel.add_file(&AddFile, cx));
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..9, cx),
+            visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b",
                 "        > 3",
@@ -1146,9 +1164,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..9, cx),
+            visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b",
                 "        > 3",
@@ -1163,9 +1182,10 @@ mod tests {
         select_path(&panel, "root1/b/another-filename", cx);
         panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..9, cx),
+            visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b",
                 "        > 3",
@@ -1184,9 +1204,10 @@ mod tests {
             panel.confirm(&Confirm, cx).unwrap()
         });
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..9, cx),
+            visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b",
                 "        > 3",
@@ -1200,9 +1221,10 @@ mod tests {
 
         confirm.await.unwrap();
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..9, cx),
+            visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b",
                 "        > 3",
@@ -1216,9 +1238,10 @@ mod tests {
 
         panel.update(cx, |panel, cx| panel.add_directory(&AddDirectory, cx));
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..9, cx),
+            visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b",
                 "        > [EDITOR: '']  <== selected",
@@ -1238,9 +1261,10 @@ mod tests {
         });
         panel.update(cx, |panel, cx| panel.select_next(&Default::default(), cx));
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..9, cx),
+            visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b",
                 "        > [PROCESSING: 'new-dir']",
@@ -1254,9 +1278,10 @@ mod tests {
 
         confirm.await.unwrap();
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..9, cx),
+            visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
+                "    > .git",
                 "    > a",
                 "    v b",
                 "        > 3  <== selected",

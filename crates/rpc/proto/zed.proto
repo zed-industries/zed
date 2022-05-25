@@ -87,18 +87,20 @@ message Envelope {
         GetChannelMessagesResponse get_channel_messages_response = 75;
 
         UpdateContacts update_contacts = 76;
+        UpdateInviteInfo update_invite_info = 77;
+        ShowContacts show_contacts = 78;
 
-        GetUsers get_users = 77;
-        FuzzySearchUsers fuzzy_search_users = 78;
-        UsersResponse users_response = 79;
-        RequestContact request_contact = 80;
-        RespondToContactRequest respond_to_contact_request = 81;
-        RemoveContact remove_contact = 82;
+        GetUsers get_users = 79;
+        FuzzySearchUsers fuzzy_search_users = 80;
+        UsersResponse users_response = 81;
+        RequestContact request_contact = 82;
+        RespondToContactRequest respond_to_contact_request = 83;
+        RemoveContact remove_contact = 84;
 
-        Follow follow = 83;
-        FollowResponse follow_response = 84;
-        UpdateFollowers update_followers = 85;
-        Unfollow unfollow = 86;
+        Follow follow = 85;
+        FollowResponse follow_response = 86;
+        UpdateFollowers update_followers = 87;
+        Unfollow unfollow = 88;
     }
 }
 
@@ -633,6 +635,13 @@ message UpdateContacts {
     repeated uint64 outgoing_requests = 5;
     repeated uint64 remove_outgoing_requests = 6;
 }
+
+message UpdateInviteInfo {
+    string url = 1;
+    uint32 count = 2;
+}
+
+message ShowContacts {}
 
 message IncomingContactRequest {
     uint64 requester_id = 1;

@@ -18,6 +18,7 @@ use language::{
 use project::{DiagnosticSummary, Project, ProjectPath};
 use serde_json::json;
 use settings::Settings;
+use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cmp::Ordering,
@@ -479,8 +480,12 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         None
     }
 
-    fn project_entry_id(&self, _: &AppContext) -> Option<project::ProjectEntryId> {
-        None
+    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[project::ProjectEntryId; 3]> {
+        self.editor.project_entry_ids(cx)
+    }
+
+    fn is_singleton(&self, _: &AppContext) -> bool {
+        false
     }
 
     fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) -> bool {
@@ -514,10 +519,6 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         self.editor.reload(project, cx)
-    }
-
-    fn can_save_as(&self, _: &AppContext) -> bool {
-        false
     }
 
     fn save_as(
@@ -707,49 +708,42 @@ mod tests {
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16};
     use serde_json::json;
     use unindent::Unindent as _;
-    use workspace::WorkspaceParams;
+    use workspace::AppState;
 
     #[gpui::test]
     async fn test_diagnostics(cx: &mut TestAppContext) {
-        let params = cx.update(WorkspaceParams::test);
-        let project = params.project.clone();
-        let workspace = cx.add_view(0, |cx| Workspace::new(&params, cx));
-
-        params
+        let app_state = cx.update(AppState::test);
+        app_state
             .fs
             .as_fake()
             .insert_tree(
                 "/test",
                 json!({
                     "consts.rs": "
-                    const a: i32 = 'a';
-                    const b: i32 = c;
-                "
+                        const a: i32 = 'a';
+                        const b: i32 = c;
+                    "
                     .unindent(),
 
                     "main.rs": "
-                    fn main() {
-                        let x = vec![];
-                        let y = vec![];
-                        a(x);
-                        b(y);
-                        // comment 1
-                        // comment 2
-                        c(y);
-                        d(x);
-                    }
-                "
+                        fn main() {
+                            let x = vec![];
+                            let y = vec![];
+                            a(x);
+                            b(y);
+                            // comment 1
+                            // comment 2
+                            c(y);
+                            d(x);
+                        }
+                    "
                     .unindent(),
                 }),
             )
             .await;
 
-        project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/test", true, cx)
-            })
-            .await
-            .unwrap();
+        let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
+        let workspace = cx.add_view(0, |cx| Workspace::new(project.clone(), cx));
 
         // Create some diagnostics
         project.update(cx, |project, cx| {
