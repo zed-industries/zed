@@ -21,9 +21,11 @@ fn editor_focused(EditorFocused(editor): &EditorFocused, cx: &mut MutableAppCont
     Vim::update(cx, |vim, cx| {
         vim.active_editor = Some(editor.downgrade());
         vim.selection_subscription = Some(cx.subscribe(editor, |editor, event, cx| {
-            if let editor::Event::SelectionsChanged { local: true } = event {
-                let newest_empty = editor.read(cx).selections.newest::<usize>(cx).is_empty();
-                editor_local_selections_changed(newest_empty, cx);
+            if editor.read(cx).leader_replica_id().is_none() {
+                if let editor::Event::SelectionsChanged { local: true } = event {
+                    let newest_empty = editor.read(cx).selections.newest::<usize>(cx).is_empty();
+                    editor_local_selections_changed(newest_empty, cx);
+                }
             }
         }));
 
@@ -57,7 +59,7 @@ fn editor_released(EditorReleased(editor): &EditorReleased, cx: &mut MutableAppC
 
 fn editor_local_selections_changed(newest_empty: bool, cx: &mut MutableAppContext) {
     Vim::update(cx, |vim, cx| {
-        if vim.state.mode == Mode::Normal && !newest_empty {
+        if vim.enabled && vim.state.mode == Mode::Normal && !newest_empty {
             vim.switch_mode(Mode::Visual { line: false }, cx)
         }
     })

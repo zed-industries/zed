@@ -1025,6 +1025,10 @@ impl Editor {
         self.buffer.read(cx).replica_id()
     }
 
+    pub fn leader_replica_id(&self) -> Option<ReplicaId> {
+        self.leader_replica_id
+    }
+
     pub fn buffer(&self) -> &ModelHandle<MultiBuffer> {
         &self.buffer
     }
