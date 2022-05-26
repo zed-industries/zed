@@ -194,6 +194,7 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
     });
 }
 
+// Supports non empty selections so it can be bound and called from visual mode
 fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
@@ -256,6 +257,23 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
                                     new_selections.push(selection.map(|_| selection_point.clone()));
                                     point..point
                                 } else {
+                                    let mut selection = selection.clone();
+                                    if !selection.reversed {
+                                        let mut adjusted = selection.end;
+                                        // Head is at the end of the selection. Adjust the end position to
+                                        // to include the character under the cursor.
+                                        *adjusted.column_mut() = adjusted.column() + 1;
+                                        adjusted = display_map.clip_point(adjusted, Bias::Right);
+                                        // If the selection is empty, move both the start and end forward one
+                                        // character
+                                        if selection.is_empty() {
+                                            selection.start = adjusted;
+                                            selection.end = adjusted;
+                                        } else {
+                                            selection.end = adjusted;
+                                        }
+                                    }
+
                                     let range = selection.map(|p| p.to_point(&display_map)).range();
                                     new_selections.push(selection.map(|_| range.start.clone()));
                                     range
@@ -1141,5 +1159,26 @@ mod test {
             The quick brown
             the lazy dog
             |fox jumps over"});
+
+        cx.set_state(
+            indoc! {"
+                The quick brown
+                fox [jump}s over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        cx.simulate_keystroke("y");
+        cx.set_state(
+            indoc! {"
+                The quick brown
+                fox jump|s over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        cx.simulate_keystroke("p");
+        cx.assert_editor_state(indoc! {"
+            The quick brown
+            fox jumps|jumps over
+            the lazy dog"});
     }
 }

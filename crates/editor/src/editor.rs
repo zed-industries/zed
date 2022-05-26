@@ -1542,12 +1542,10 @@ impl Editor {
         }
 
         self.change_selections(Some(Autoscroll::Fit), cx, |s| {
-            if add {
-                if click_count > 1 {
-                    s.delete(newest_selection.id);
-                }
-            } else {
+            if !add {
                 s.clear_disjoint();
+            } else if click_count > 1 {
+                s.delete(newest_selection.id)
             }
 
             s.set_pending_range(start..end, mode);
@@ -3283,8 +3281,9 @@ impl Editor {
         self.transact(cx, |this, cx| {
             let edits = this.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 let mut edits: Vec<(Range<usize>, String)> = Default::default();
+                let line_mode = s.line_mode;
                 s.move_with(|display_map, selection| {
-                    if !selection.is_empty() {
+                    if !selection.is_empty() || line_mode {
                         return;
                     }
 
@@ -3422,6 +3421,7 @@ impl Editor {
                         let snapshot = buffer.read(cx);
                         let mut start_offset = 0;
                         let mut edits = Vec::new();
+                        let line_mode = this.selections.line_mode;
                         for (ix, selection) in old_selections.iter().enumerate() {
                             let to_insert;
                             let entire_line;
@@ -3439,7 +3439,7 @@ impl Editor {
                             // clipboard text was written, then the entire line containing the
                             // selection was copied. If this selection is also currently empty,
                             // then paste the line before the current line of the buffer.
-                            let range = if selection.is_empty() && entire_line {
+                            let range = if selection.is_empty() && !line_mode && entire_line {
                                 let column = selection.start.to_point(&snapshot).column as usize;
                                 let line_start = selection.start - column;
                                 line_start..line_start
@@ -3494,8 +3494,9 @@ impl Editor {
 
     pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
         self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                let cursor = if selection.is_empty() {
+                let cursor = if selection.is_empty() && !line_mode {
                     movement::left(map, selection.start)
                 } else {
                     selection.start
@@ -3513,8 +3514,9 @@ impl Editor {
 
     pub fn move_right(&mut self, _: &MoveRight, cx: &mut ViewContext<Self>) {
         self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                let cursor = if selection.is_empty() {
+                let cursor = if selection.is_empty() && !line_mode {
                     movement::right(map, selection.end)
                 } else {
                     selection.end
@@ -3547,8 +3549,9 @@ impl Editor {
         }
 
         self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                if !selection.is_empty() {
+                if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
                 let (cursor, goal) = movement::up(&map, selection.start, selection.goal, false);
@@ -3578,8 +3581,9 @@ impl Editor {
         }
 
         self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                if !selection.is_empty() {
+                if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
                 let (cursor, goal) = movement::down(&map, selection.end, selection.goal, false);
@@ -3680,8 +3684,9 @@ impl Editor {
     ) {
         self.transact(cx, |this, cx| {
             this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
-                    if selection.is_empty() {
+                    if selection.is_empty() && !line_mode {
                         let cursor = movement::previous_subword_start(map, selection.head());
                         selection.set_head(cursor, SelectionGoal::None);
                     }
@@ -3734,8 +3739,9 @@ impl Editor {
     pub fn delete_to_next_word_end(&mut self, _: &DeleteToNextWordEnd, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
-                    if selection.is_empty() {
+                    if selection.is_empty() && !line_mode {
                         let cursor = movement::next_word_end(map, selection.head());
                         selection.set_head(cursor, SelectionGoal::None);
                     }

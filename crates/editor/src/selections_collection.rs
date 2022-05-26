@@ -23,13 +23,6 @@ pub struct PendingSelection {
 }
 
 #[derive(Clone)]
-pub enum LineMode {
-    None,
-    WithNewline,
-    WithoutNewline,
-}
-
-#[derive(Clone)]
 pub struct SelectionsCollection {
     display_map: ModelHandle<DisplayMap>,
     buffer: ModelHandle<MultiBuffer>,

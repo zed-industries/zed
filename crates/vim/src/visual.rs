@@ -6,7 +6,7 @@ use workspace::Workspace;
 
 use crate::{motion::Motion, state::Mode, utils::copy_selections_content, Vim};
 
-actions!(vim, [VisualDelete, VisualChange, VisualYank,]);
+actions!(vim, [VisualDelete, VisualChange, VisualYank]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(change);
@@ -55,7 +55,7 @@ pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspac
                         // Head is at the end of the selection. Adjust the end position to
                         // to include the character under the cursor.
                         *selection.end.column_mut() = selection.end.column() + 1;
-                        selection.end = map.clip_point(selection.end, Bias::Left);
+                        selection.end = map.clip_point(selection.end, Bias::Right);
                     }
 
                     if line_mode {
@@ -77,6 +77,7 @@ pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspac
                         edits.push((range, ""));
                         new_selections.push(selection.map(|_| anchor.clone()));
                     }
+                    selection.goal = SelectionGoal::None;
                 });
             });
             copy_selections_content(editor, editor.selections.line_mode, cx);
@@ -106,6 +107,7 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
                         *selection.end.column_mut() = selection.end.column() + 1;
                         selection.end = map.clip_point(selection.end, Bias::Right);
                     }
+                    selection.goal = SelectionGoal::None;
                 });
             });
             copy_selections_content(editor, line_mode, cx);
@@ -134,16 +136,18 @@ pub fn yank(_: &mut Workspace, _: &VisualYank, cx: &mut ViewContext<Workspace>) 
         vim.update_active_editor(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             let line_mode = editor.selections.line_mode;
-            editor.change_selections(None, cx, |s| {
-                s.move_with(|map, selection| {
-                    if !line_mode && !selection.reversed {
-                        // Head is at the end of the selection. Adjust the end position to
-                        // to include the character under the cursor.
-                        *selection.end.column_mut() = selection.end.column() + 1;
-                        selection.end = map.clip_point(selection.end, Bias::Left);
-                    }
+            if !editor.selections.line_mode {
+                editor.change_selections(None, cx, |s| {
+                    s.move_with(|map, selection| {
+                        if !selection.reversed {
+                            // Head is at the end of the selection. Adjust the end position to
+                            // to include the character under the cursor.
+                            *selection.end.column_mut() = selection.end.column() + 1;
+                            selection.end = map.clip_point(selection.end, Bias::Right);
+                        }
+                    });
                 });
-            });
+            }
             copy_selections_content(editor, line_mode, cx);
             editor.change_selections(None, cx, |s| {
                 s.move_with(|_, selection| {
@@ -251,8 +255,8 @@ mod test {
         cx.simulate_keystrokes(["j", "p"]);
         cx.assert_editor_state(indoc! {"
             The ver
-            the lazy d|quick brown
-            fox jumps oog"});
+            the l|quick brown
+            fox jumps oazy dog"});
 
         cx.assert(
             indoc! {"
