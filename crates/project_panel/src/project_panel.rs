@@ -115,6 +115,10 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(ProjectPanel::delete);
     cx.add_async_action(ProjectPanel::confirm);
     cx.add_action(ProjectPanel::cancel);
+    cx.add_action(ProjectPanel::copy);
+    cx.add_action(ProjectPanel::copy_path);
+    cx.add_action(ProjectPanel::cut);
+    cx.add_action(ProjectPanel::paste);
 }
 
 pub enum Event {
@@ -212,22 +216,47 @@ impl ProjectPanel {
 
     fn deploy_context_menu(&mut self, action: &DeployContextMenu, cx: &mut ViewContext<Self>) {
         let mut menu_entries = Vec::new();
-        menu_entries.push(ContextMenuItem::item("New File", AddFile));
-        menu_entries.push(ContextMenuItem::item("New Directory", AddDirectory));
+
         if let Some(entry_id) = action.entry_id {
             if let Some(worktree_id) = self.project.read(cx).worktree_id_for_entry(entry_id, cx) {
                 self.selection = Some(Selection {
                     worktree_id,
                     entry_id,
                 });
-                menu_entries.push(ContextMenuItem::Separator);
-                menu_entries.push(ContextMenuItem::item("Copy", Copy));
-                menu_entries.push(ContextMenuItem::item("Copy Path", CopyPath));
-                menu_entries.push(ContextMenuItem::item("Cut", Cut));
-                menu_entries.push(ContextMenuItem::item("Rename", Rename));
-                menu_entries.push(ContextMenuItem::item("Delete", Delete));
+
+                if let Some((worktree, entry)) = self.selected_entry(cx) {
+                    let is_root = Some(entry) == worktree.root_entry();
+                    menu_entries.push(ContextMenuItem::item(
+                        "Add Folder to Project",
+                        workspace::AddFolderToProject,
+                    ));
+                    if is_root {
+                        menu_entries.push(ContextMenuItem::item(
+                            "Remove Folder from Project",
+                            workspace::RemoveFolderFromProject(worktree_id),
+                        ));
+                    }
+                    menu_entries.push(ContextMenuItem::item("New File", AddFile));
+                    menu_entries.push(ContextMenuItem::item("New Folder", AddDirectory));
+                    menu_entries.push(ContextMenuItem::Separator);
+                    menu_entries.push(ContextMenuItem::item("Copy", Copy));
+                    menu_entries.push(ContextMenuItem::item("Copy Path", CopyPath));
+                    menu_entries.push(ContextMenuItem::item("Cut", Cut));
+                    menu_entries.push(ContextMenuItem::Separator);
+                    menu_entries.push(ContextMenuItem::item("Rename", Rename));
+                    if !is_root {
+                        menu_entries.push(ContextMenuItem::item("Delete", Delete));
+                    }
+                }
             }
+        } else {
+            self.selection.take();
+            menu_entries.push(ContextMenuItem::item(
+                "Add Folder to Project",
+                workspace::AddFolderToProject,
+            ));
         }
+
         self.context_menu.update(cx, |menu, cx| {
             menu.show(action.position, menu_entries, cx);
         });
@@ -579,6 +608,22 @@ impl ProjectPanel {
         if let Some((_, _, index)) = self.selection.and_then(|s| self.index_for_selection(s)) {
             self.list.scroll_to(ScrollTarget::Show(index));
         }
+    }
+
+    fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
+        todo!()
+    }
+
+    fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
+        todo!()
+    }
+
+    fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
+        todo!()
+    }
+
+    fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
+        todo!()
     }
 
     fn index_for_selection(&self, selection: Selection) -> Option<(usize, usize, usize)> {
