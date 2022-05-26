@@ -43,6 +43,9 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace --no-fail-fast
+    
+      - name: Build collab binaries
+        run: cargo build --bins --all-features 
 
   bundle:
     name: Bundle app
