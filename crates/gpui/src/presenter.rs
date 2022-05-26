@@ -9,8 +9,8 @@ use crate::{
     text_layout::TextLayoutCache,
     Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox,
     ElementStateContext, Entity, FontSystem, ModelHandle, MouseRegion, MouseRegionId, ReadModel,
-    ReadView, Scene, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle,
-    WeakViewHandle,
+    ReadView, RenderParams, Scene, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle,
+    WeakModelHandle, WeakViewHandle,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
@@ -93,8 +93,15 @@ impl Presenter {
         for view_id in &invalidation.updated {
             self.rendered_views.insert(
                 *view_id,
-                cx.render_view(self.window_id, *view_id, self.titlebar_height, false)
-                    .unwrap(),
+                cx.render_view(RenderParams {
+                    window_id: self.window_id,
+                    view_id: *view_id,
+                    titlebar_height: self.titlebar_height,
+                    hovered_region_id: self.hovered_region_id,
+                    clicked_region_id: self.clicked_region.as_ref().map(MouseRegion::id),
+                    refreshing: false,
+                })
+                .unwrap(),
             );
         }
     }
@@ -104,7 +111,14 @@ impl Presenter {
         for (view_id, view) in &mut self.rendered_views {
             if !invalidation.updated.contains(view_id) {
                 *view = cx
-                    .render_view(self.window_id, *view_id, self.titlebar_height, true)
+                    .render_view(RenderParams {
+                        window_id: self.window_id,
+                        view_id: *view_id,
+                        titlebar_height: self.titlebar_height,
+                        hovered_region_id: self.hovered_region_id,
+                        clicked_region_id: self.clicked_region.as_ref().map(MouseRegion::id),
+                        refreshing: true,
+                    })
                     .unwrap();
             }
         }

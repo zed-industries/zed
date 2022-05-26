@@ -7,7 +7,8 @@ use crate::{
     platform::{self, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::post_inc,
-    AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
+    AssetCache, AssetSource, ClipboardItem, FontCache, MouseRegionId, PathPromptOptions,
+    TextLayoutCache,
 };
 pub use action::*;
 use anyhow::{anyhow, Context, Result};
@@ -1040,19 +1041,15 @@ impl MutableAppContext {
             .map_or(false, |window| window.is_active)
     }
 
-    pub fn render_view(
-        &mut self,
-        window_id: usize,
-        view_id: usize,
-        titlebar_height: f32,
-        refreshing: bool,
-    ) -> Result<ElementBox> {
+    pub fn render_view(&mut self, params: RenderParams) -> Result<ElementBox> {
+        let window_id = params.window_id;
+        let view_id = params.view_id;
         let mut view = self
             .cx
             .views
-            .remove(&(window_id, view_id))
+            .remove(&(params.window_id, params.view_id))
             .ok_or(anyhow!("view not found"))?;
-        let element = view.render(window_id, view_id, titlebar_height, refreshing, self);
+        let element = view.render(params, self);
         self.cx.views.insert((window_id, view_id), view);
         Ok(element)
     }
@@ -1079,8 +1076,15 @@ impl MutableAppContext {
             .map(|view_id| {
                 (
                     view_id,
-                    self.render_view(window_id, view_id, titlebar_height, false)
-                        .unwrap(),
+                    self.render_view(RenderParams {
+                        window_id,
+                        view_id,
+                        titlebar_height,
+                        hovered_region_id: None,
+                        clicked_region_id: None,
+                        refreshing: false,
+                    })
+                    .unwrap(),
                 )
             })
             .collect()
@@ -1757,15 +1761,19 @@ impl MutableAppContext {
         window_id: usize,
         view_id: usize,
         titlebar_height: f32,
+        hovered_region_id: Option<MouseRegionId>,
+        clicked_region_id: Option<MouseRegionId>,
         refreshing: bool,
     ) -> RenderContext<V> {
         RenderContext {
             app: self,
-            titlebar_height,
-            refreshing,
             window_id,
             view_id,
             view_type: PhantomData,
+            titlebar_height,
+            hovered_region_id,
+            clicked_region_id,
+            refreshing,
         }
     }
 
@@ -2894,14 +2902,7 @@ pub trait AnyView {
         cx: &mut MutableAppContext,
     ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>>;
     fn ui_name(&self) -> &'static str;
-    fn render<'a>(
-        &mut self,
-        window_id: usize,
-        view_id: usize,
-        titlebar_height: f32,
-        refreshing: bool,
-        cx: &mut MutableAppContext,
-    ) -> ElementBox;
+    fn render<'a>(&mut self, params: RenderParams, cx: &mut MutableAppContext) -> ElementBox;
     fn on_focus(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
     fn on_blur(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
     fn keymap_context(&self, cx: &AppContext) -> keymap::Context;
@@ -2935,25 +2936,8 @@ where
         T::ui_name()
     }
 
-    fn render<'a>(
-        &mut self,
-        window_id: usize,
-        view_id: usize,
-        titlebar_height: f32,
-        refreshing: bool,
-        cx: &mut MutableAppContext,
-    ) -> ElementBox {
-        View::render(
-            self,
-            &mut RenderContext {
-                window_id,
-                view_id,
-                app: cx,
-                view_type: PhantomData::<T>,
-                titlebar_height,
-                refreshing,
-            },
-        )
+    fn render<'a>(&mut self, params: RenderParams, cx: &mut MutableAppContext) -> ElementBox {
+        View::render(self, &mut RenderContext::new(params, cx))
     }
 
     fn on_focus(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize) {
@@ -3435,22 +3419,64 @@ impl<'a, T: View> ViewContext<'a, T> {
     }
 }
 
+pub struct RenderParams {
+    pub window_id: usize,
+    pub view_id: usize,
+    pub titlebar_height: f32,
+    pub hovered_region_id: Option<MouseRegionId>,
+    pub clicked_region_id: Option<MouseRegionId>,
+    pub refreshing: bool,
+}
+
 pub struct RenderContext<'a, T: View> {
     pub app: &'a mut MutableAppContext,
-    pub titlebar_height: f32,
-    pub refreshing: bool,
     window_id: usize,
     view_id: usize,
     view_type: PhantomData<T>,
+    pub titlebar_height: f32,
+    hovered_region_id: Option<MouseRegionId>,
+    clicked_region_id: Option<MouseRegionId>,
+    pub refreshing: bool,
+}
+
+#[derive(Clone, Copy)]
+pub struct MouseState {
+    pub hovered: bool,
+    pub clicked: bool,
 }
 
 impl<'a, T: View> RenderContext<'a, T> {
+    fn new(params: RenderParams, app: &'a mut MutableAppContext) -> Self {
+        Self {
+            app,
+            window_id: params.window_id,
+            view_id: params.view_id,
+            view_type: PhantomData,
+            titlebar_height: params.titlebar_height,
+            hovered_region_id: params.hovered_region_id,
+            clicked_region_id: params.clicked_region_id,
+            refreshing: params.refreshing,
+        }
+    }
+
     pub fn handle(&self) -> WeakViewHandle<T> {
         WeakViewHandle::new(self.window_id, self.view_id)
     }
 
     pub fn view_id(&self) -> usize {
         self.view_id
+    }
+
+    pub fn mouse_state<Tag: 'static>(&self, region_id: usize) -> MouseState {
+        let region_id = Some(MouseRegionId {
+            view_id: self.view_id,
+            tag: TypeId::of::<Tag>(),
+            region_id,
+        });
+        MouseState {
+            hovered: self.hovered_region_id == region_id,
+            clicked: self.clicked_region_id == region_id,
+        }
     }
 }
 
