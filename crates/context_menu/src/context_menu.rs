@@ -1,6 +1,6 @@
 use gpui::{
-    elements::*, geometry::vector::Vector2F, Action, Axis, Entity, RenderContext, SizeConstraint,
-    View, ViewContext,
+    elements::*, geometry::vector::Vector2F, platform::CursorStyle, Action, Axis, Entity,
+    RenderContext, SizeConstraint, View, ViewContext,
 };
 use settings::Settings;
 
@@ -138,10 +138,10 @@ impl ContextMenu {
                             }
                             ContextMenuItem::Separator => Empty::new()
                                 .collapsed()
-                                .contained()
-                                .with_style(style.separator)
                                 .constrained()
                                 .with_height(1.)
+                                .contained()
+                                .with_style(style.separator)
                                 .boxed(),
                         }
                     }))
@@ -175,16 +175,19 @@ impl ContextMenu {
                                     .flex_float()
                                     .boxed()
                                 })
+                                .contained()
+                                .with_style(style.container)
                                 .boxed()
                         })
+                        .with_cursor_style(CursorStyle::PointingHand)
                         .on_click(move |_, _, cx| cx.dispatch_any_action(action.boxed_clone()))
                         .boxed()
                     }
                     ContextMenuItem::Separator => Empty::new()
-                        .contained()
-                        .with_style(style.separator)
                         .constrained()
                         .with_height(1.)
+                        .contained()
+                        .with_style(style.separator)
                         .boxed(),
                 }
             }))

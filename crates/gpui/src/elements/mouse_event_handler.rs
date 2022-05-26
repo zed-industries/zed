@@ -22,7 +22,7 @@ pub struct MouseEventHandler {
     padding: Padding,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct MouseState {
     pub hovered: bool,
     pub clicked: bool,

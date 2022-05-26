@@ -1,6 +1,6 @@
 import Theme from "../themes/common/theme";
 import { panel } from "./app";
-import { backgroundColor, iconColor, player, shadow, text } from "./components";
+import { backgroundColor, iconColor, player, text } from "./components";
 
 export default function projectPanel(theme: Theme) {
   return {
