@@ -91,6 +91,10 @@ actions!(
         CollapseSelectedEntry,
         AddDirectory,
         AddFile,
+        Copy,
+        CopyPath,
+        Cut,
+        Paste,
         Delete,
         Rename
     ]
@@ -207,27 +211,25 @@ impl ProjectPanel {
     }
 
     fn deploy_context_menu(&mut self, action: &DeployContextMenu, cx: &mut ViewContext<Self>) {
+        let mut menu_entries = Vec::new();
+        menu_entries.push(ContextMenuItem::item("New File", AddFile));
+        menu_entries.push(ContextMenuItem::item("New Directory", AddDirectory));
         if let Some(entry_id) = action.entry_id {
             if let Some(worktree_id) = self.project.read(cx).worktree_id_for_entry(entry_id, cx) {
                 self.selection = Some(Selection {
                     worktree_id,
                     entry_id,
                 });
+                menu_entries.push(ContextMenuItem::Separator);
+                menu_entries.push(ContextMenuItem::item("Copy", Copy));
+                menu_entries.push(ContextMenuItem::item("Copy Path", CopyPath));
+                menu_entries.push(ContextMenuItem::item("Cut", Cut));
+                menu_entries.push(ContextMenuItem::item("Rename", Rename));
+                menu_entries.push(ContextMenuItem::item("Delete", Delete));
             }
         }
-
         self.context_menu.update(cx, |menu, cx| {
-            menu.show(
-                action.position,
-                [
-                    ContextMenuItem::item("New File".to_string(), AddFile),
-                    ContextMenuItem::item("New Directory".to_string(), AddDirectory),
-                    ContextMenuItem::Separator,
-                    ContextMenuItem::item("Rename".to_string(), Rename),
-                    ContextMenuItem::item("Delete".to_string(), Delete),
-                ],
-                cx,
-            );
+            menu.show(action.position, menu_entries, cx);
         });
 
         cx.notify();
@@ -906,38 +908,53 @@ impl View for ProjectPanel {
     }
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
+        enum Tag {}
         let theme = &cx.global::<Settings>().theme.project_panel;
         let mut container_style = theme.container;
         let padding = std::mem::take(&mut container_style.padding);
         let handle = self.handle.clone();
         Stack::new()
             .with_child(
-                UniformList::new(
-                    self.list.clone(),
-                    self.visible_entries
-                        .iter()
-                        .map(|(_, worktree_entries)| worktree_entries.len())
-                        .sum(),
-                    move |range, items, cx| {
-                        let theme = cx.global::<Settings>().theme.clone();
-                        let this = handle.upgrade(cx).unwrap();
-                        this.update(cx.app, |this, cx| {
-                            this.for_each_visible_entry(range.clone(), cx, |id, details, cx| {
-                                items.push(Self::render_entry(
-                                    id,
-                                    details,
-                                    &this.filename_editor,
-                                    &theme.project_panel,
+                MouseEventHandler::new::<Tag, _, _>(0, cx, |_, _| {
+                    UniformList::new(
+                        self.list.clone(),
+                        self.visible_entries
+                            .iter()
+                            .map(|(_, worktree_entries)| worktree_entries.len())
+                            .sum(),
+                        move |range, items, cx| {
+                            let theme = cx.global::<Settings>().theme.clone();
+                            let this = handle.upgrade(cx).unwrap();
+                            this.update(cx.app, |this, cx| {
+                                this.for_each_visible_entry(
+                                    range.clone(),
                                     cx,
-                                ));
-                            });
-                        })
-                    },
-                )
-                .with_padding_top(padding.top)
-                .with_padding_bottom(padding.bottom)
-                .contained()
-                .with_style(container_style)
+                                    |id, details, cx| {
+                                        items.push(Self::render_entry(
+                                            id,
+                                            details,
+                                            &this.filename_editor,
+                                            &theme.project_panel,
+                                            cx,
+                                        ));
+                                    },
+                                );
+                            })
+                        },
+                    )
+                    .with_padding_top(padding.top)
+                    .with_padding_bottom(padding.bottom)
+                    .contained()
+                    .with_style(container_style)
+                    .expanded()
+                    .boxed()
+                })
+                .on_right_mouse_down(move |position, cx| {
+                    cx.dispatch_action(DeployContextMenu {
+                        entry_id: None,
+                        position,
+                    })
+                })
                 .boxed(),
             )
             .with_child(ChildView::new(&self.context_menu).boxed())

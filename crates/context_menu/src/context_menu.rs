@@ -13,9 +13,9 @@ pub enum ContextMenuItem {
 }
 
 impl ContextMenuItem {
-    pub fn item(label: String, action: impl 'static + Action) -> Self {
+    pub fn item(label: impl ToString, action: impl 'static + Action) -> Self {
         Self::Item {
-            label,
+            label: label.to_string(),
             action: Box::new(action),
         }
     }
