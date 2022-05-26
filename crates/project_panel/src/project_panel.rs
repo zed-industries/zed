@@ -11,8 +11,8 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_internal_actions, keymap,
     platform::CursorStyle,
-    AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, PromptLevel, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MutableAppContext,
+    PromptLevel, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -22,6 +22,7 @@ use std::{
     collections::{hash_map, HashMap},
     ffi::OsStr,
     ops::Range,
+    path::PathBuf,
 };
 use unicase::UniCase;
 use workspace::Workspace;
@@ -621,7 +622,12 @@ impl ProjectPanel {
     }
 
     fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
-        todo!()
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            let mut path = PathBuf::new();
+            path.push(worktree.root_name());
+            path.push(&entry.path);
+            cx.write_to_clipboard(ClipboardItem::new(path.to_string_lossy().to_string()));
+        }
     }
 
     fn index_for_selection(&self, selection: Selection) -> Option<(usize, usize, usize)> {

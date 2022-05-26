@@ -352,6 +352,7 @@
         "bindings": {
             "left": "project_panel::CollapseSelectedEntry",
             "right": "project_panel::ExpandSelectedEntry",
+            "cmd-alt-c": "project_panel::CopyPath",
             "f2": "project_panel::Rename",
             "backspace": "project_panel::Delete"
         }
