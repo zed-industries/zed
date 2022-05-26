@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use serde_json::json;
-use std::{borrow::Cow, sync::Arc};
+use std::{any::TypeId, borrow::Cow, rc::Rc, sync::Arc};
 
 use crate::{
     color::Color,
@@ -8,7 +8,7 @@ use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
     platform::CursorStyle,
-    ImageData,
+    EventContext, ImageData,
 };
 
 pub struct Scene {
@@ -34,12 +34,30 @@ pub struct Layer {
     icons: Vec<Icon>,
     paths: Vec<Path>,
     cursor_regions: Vec<CursorRegion>,
+    mouse_regions: Vec<MouseRegion>,
 }
 
 #[derive(Copy, Clone)]
 pub struct CursorRegion {
     pub bounds: RectF,
     pub style: CursorStyle,
+}
+
+#[derive(Clone)]
+pub struct MouseRegion {
+    pub view_id: usize,
+    pub tag: TypeId,
+    pub region_id: usize,
+    pub bounds: RectF,
+    pub hover: Option<Rc<dyn Fn(bool, &mut EventContext)>>,
+    pub click: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub struct MouseRegionId {
+    pub view_id: usize,
+    pub tag: TypeId,
+    pub region_id: usize,
 }
 
 #[derive(Default, Debug)]
@@ -188,6 +206,13 @@ impl Scene {
             .collect()
     }
 
+    pub fn mouse_regions(&self) -> Vec<MouseRegion> {
+        self.layers()
+            .flat_map(|layer| &layer.mouse_regions)
+            .cloned()
+            .collect()
+    }
+
     pub fn push_stacking_context(&mut self, clip_bounds: Option<RectF>) {
         self.active_stacking_context_stack
             .push(self.stacking_contexts.len());
@@ -305,6 +330,7 @@ impl Layer {
             icons: Default::default(),
             paths: Default::default(),
             cursor_regions: Default::default(),
+            mouse_regions: Default::default(),
         }
     }
 
@@ -329,6 +355,17 @@ impl Layer {
         {
             if can_draw(bounds) {
                 self.cursor_regions.push(region);
+            }
+        }
+    }
+
+    fn push_mouse_region(&mut self, region: MouseRegion) {
+        if let Some(bounds) = region
+            .bounds
+            .intersection(self.clip_bounds.unwrap_or(region.bounds))
+        {
+            if can_draw(bounds) {
+                self.mouse_regions.push(region);
             }
         }
     }
@@ -490,6 +527,16 @@ impl ToJson for Border {
             value["left"] = json!(self.width);
         }
         value
+    }
+}
+
+impl MouseRegion {
+    pub fn id(&self) -> MouseRegionId {
+        MouseRegionId {
+            view_id: self.view_id,
+            tag: self.tag,
+            region_id: self.region_id,
+        }
     }
 }
 

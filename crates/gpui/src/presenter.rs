@@ -8,8 +8,9 @@ use crate::{
     scene::CursorRegion,
     text_layout::TextLayoutCache,
     Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox,
-    ElementStateContext, Entity, FontSystem, ModelHandle, ReadModel, ReadView, Scene,
-    UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
+    ElementStateContext, Entity, FontSystem, ModelHandle, MouseRegion, MouseRegionId, ReadModel,
+    ReadView, Scene, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle,
+    WeakViewHandle,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
@@ -24,10 +25,13 @@ pub struct Presenter {
     pub(crate) rendered_views: HashMap<usize, ElementBox>,
     parents: HashMap<usize, usize>,
     cursor_regions: Vec<CursorRegion>,
+    mouse_regions: Vec<MouseRegion>,
     font_cache: Arc<FontCache>,
     text_layout_cache: TextLayoutCache,
     asset_cache: Arc<AssetCache>,
     last_mouse_moved_event: Option<Event>,
+    hovered_region_id: Option<MouseRegionId>,
+    clicked_region: Option<MouseRegion>,
     titlebar_height: f32,
 }
 
@@ -45,10 +49,13 @@ impl Presenter {
             rendered_views: cx.render_views(window_id, titlebar_height),
             parents: HashMap::new(),
             cursor_regions: Default::default(),
+            mouse_regions: Default::default(),
             font_cache,
             text_layout_cache,
             asset_cache,
             last_mouse_moved_event: None,
+            hovered_region_id: None,
+            clicked_region: None,
             titlebar_height,
         }
     }
@@ -122,6 +129,7 @@ impl Presenter {
             );
             self.text_layout_cache.finish_frame();
             self.cursor_regions = scene.cursor_regions();
+            self.mouse_regions = scene.mouse_regions();
 
             if cx.window_is_active(self.window_id) {
                 if let Some(event) = self.last_mouse_moved_event.clone() {
@@ -176,7 +184,30 @@ impl Presenter {
 
     pub fn dispatch_event(&mut self, event: Event, cx: &mut MutableAppContext) {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
+            let mut unhovered_region = None;
+            let mut hovered_region = None;
+            let mut clicked_region = None;
+
             match event {
+                Event::LeftMouseDown { position, .. } => {
+                    for region in self.mouse_regions.iter().rev() {
+                        if region.bounds.contains_point(position) {
+                            self.clicked_region = Some(region.clone());
+                            break;
+                        }
+                    }
+                }
+                Event::LeftMouseUp {
+                    position,
+                    click_count,
+                    ..
+                } => {
+                    if let Some(region) = self.clicked_region.take() {
+                        if region.bounds.contains_point(position) {
+                            clicked_region = Some((region, position, click_count));
+                        }
+                    }
+                }
                 Event::MouseMoved {
                     position,
                     left_mouse_down,
@@ -192,6 +223,18 @@ impl Presenter {
                             }
                         }
                         cx.platform().set_cursor_style(style_to_assign);
+
+                        for region in self.mouse_regions.iter().rev() {
+                            if region.bounds.contains_point(position) {
+                                if hovered_region.is_none() {
+                                    hovered_region = Some(region.clone());
+                                }
+                            } else {
+                                if self.hovered_region_id == Some(region.id()) {
+                                    unhovered_region = Some(region.clone())
+                                }
+                            }
+                        }
                     }
                 }
                 Event::LeftMouseDragged { position } => {
@@ -203,7 +246,33 @@ impl Presenter {
                 _ => {}
             }
 
+            self.hovered_region_id = hovered_region.as_ref().map(MouseRegion::id);
+
             let mut event_cx = self.build_event_context(cx);
+            if let Some(unhovered_region) = unhovered_region {
+                if let Some(hover_callback) = unhovered_region.hover {
+                    event_cx.with_current_view(unhovered_region.view_id, |event_cx| {
+                        hover_callback(false, event_cx)
+                    })
+                }
+            }
+
+            if let Some(hovered_region) = hovered_region {
+                if let Some(hover_callback) = hovered_region.hover {
+                    event_cx.with_current_view(hovered_region.view_id, |event_cx| {
+                        hover_callback(true, event_cx)
+                    })
+                }
+            }
+
+            if let Some((clicked_region, position, click_count)) = clicked_region {
+                if let Some(click_callback) = clicked_region.click {
+                    event_cx.with_current_view(clicked_region.view_id, |event_cx| {
+                        click_callback(position, click_count, event_cx)
+                    })
+                }
+            }
+
             event_cx.dispatch_event(root_view_id, &event);
 
             let invalidated_views = event_cx.invalidated_views;
@@ -379,14 +448,23 @@ pub struct EventContext<'a> {
 impl<'a> EventContext<'a> {
     fn dispatch_event(&mut self, view_id: usize, event: &Event) -> bool {
         if let Some(mut element) = self.rendered_views.remove(&view_id) {
-            self.view_stack.push(view_id);
-            let result = element.dispatch_event(event, self);
-            self.view_stack.pop();
+            let result =
+                self.with_current_view(view_id, |this| element.dispatch_event(event, this));
             self.rendered_views.insert(view_id, element);
             result
         } else {
             false
         }
+    }
+
+    fn with_current_view<F, T>(&mut self, view_id: usize, f: F) -> T
+    where
+        F: FnOnce(&mut Self) -> T,
+    {
+        self.view_stack.push(view_id);
+        let result = f(self);
+        self.view_stack.pop();
+        result
     }
 
     pub fn dispatch_any_action(&mut self, action: Box<dyn Action>) {
