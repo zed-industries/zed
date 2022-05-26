@@ -33,6 +33,7 @@ use rpc::{
     proto::{self, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},
     Connection, ConnectionId, Peer, Receipt, TypedEnvelope,
 };
+use serde::{Serialize, Serializer};
 use std::{
     any::TypeId,
     future::Future,
@@ -85,6 +86,7 @@ pub struct Server {
     notifications: Option<mpsc::UnboundedSender<()>>,
 }
 
+
 pub trait Executor: Send + Clone {
     type Sleep: Send + Future;
     fn spawn_detached<F: 'static + Send + Future<Output = ()>>(&self, future: F);
@@ -106,6 +108,23 @@ struct StoreWriteGuard<'a> {
     guard: RwLockWriteGuard<'a, Store>,
     _not_send: PhantomData<Rc<()>>,
 }
+
+#[derive(Serialize)]
+pub struct ServerSnapshot<'a> {
+    peer: &'a Peer,
+    #[serde(serialize_with = "serialize_deref")]
+    store: RwLockReadGuard<'a, Store>,
+}
+
+pub fn serialize_deref<S, T, U>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+    T: Deref<Target = U>,
+    U: Serialize
+{
+    Serialize::serialize(value.deref(), serializer)
+}
+  
 
 impl Server {
     pub fn new(
@@ -1467,6 +1486,13 @@ impl Server {
         StoreWriteGuard {
             guard,
             _not_send: PhantomData,
+        }
+    }
+    
+    pub async fn snapshot<'a>(self: &'a Arc<Self>) -> ServerSnapshot<'a> {
+        ServerSnapshot {
+            store: self.store.read().await,
+            peer: &self.peer
         }
     }
 }

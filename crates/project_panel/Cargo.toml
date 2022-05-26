@@ -23,4 +23,4 @@ unicase = "2.6"
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
-serde_json = { version = "1.0.64", features = ["preserve_order"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }

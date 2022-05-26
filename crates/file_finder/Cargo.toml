@@ -21,7 +21,7 @@ postage = { version = "0.4.1", features = ["futures-traits"] }
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
-serde_json = { version = "1.0.64", features = ["preserve_order"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
 workspace = { path = "../workspace", features = ["test-support"] }
 ctor = "0.1"
 env_logger = "0.8"

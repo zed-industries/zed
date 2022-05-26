@@ -417,6 +417,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "axum-extra"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75330529f6b27544cedc6089108602a056d016df6aa4f2cb24408d840392ef2d"
+dependencies = [
+ "axum",
+ "bytes",
+ "http",
+ "mime",
+ "pin-project-lite 0.2.9",
+ "serde",
+ "serde_json",
+ "tower",
+ "tower-http",
+ "tower-layer",
+ "tower-service",
+]
+
+[[package]]
 name = "backtrace"
 version = "0.3.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -593,9 +612,9 @@ checksum = "ae44d1a3d5a19df61dd0c8beb138458ac2a53a7ac09eba97d55592540004306b"
 
 [[package]]
 name = "bytes"
-version = "1.0.1"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b700ce4376041dcd0a327fd0097c41095743c4c8af8887265942faf1100bd040"
+checksum = "c4872d67bab6358e59559027aa3b9157c53d9358c51423c17554809a8858e0f8"
 
 [[package]]
 name = "cache-padded"
@@ -841,6 +860,7 @@ dependencies = [
  "async-trait",
  "async-tungstenite",
  "axum",
+ "axum-extra",
  "base64 0.13.0",
  "clap 3.1.12",
  "client",
@@ -4237,12 +4257,12 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.64"
+version = "1.0.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "799e97dc9fdae36a5c8b8f2cae9ce2ee9fdce2058c57a93e6099d919fd982f79"
+checksum = "9b7ce2b32a1aed03c558dc61a5cd328f15aff2dbc17daad8fb8af04d2100e15c"
 dependencies = [
  "indexmap",
- "itoa 0.4.7",
+ "itoa 1.0.1",
  "ryu",
  "serde",
 ]

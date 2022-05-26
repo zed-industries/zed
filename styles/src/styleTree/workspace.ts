@@ -8,7 +8,6 @@ export function workspaceBackground(theme: Theme) {
 }
 
 export default function workspace(theme: Theme) {
-
   const tab = {
     height: 32,
     background: workspaceBackground(theme),

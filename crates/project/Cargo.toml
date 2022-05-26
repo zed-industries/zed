@@ -41,7 +41,7 @@ postage = { version = "0.4.1", features = ["futures-traits"] }
 rand = "0.8.3"
 regex = "1.5"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1.0.64", features = ["preserve_order"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
 sha2 = "0.10"
 similar = "1.3"
 smol = "1.2.5"

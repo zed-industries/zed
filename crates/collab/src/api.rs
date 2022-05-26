@@ -1,7 +1,7 @@
 use crate::{
     auth,
     db::{User, UserId},
-    rpc::ResultExt,
+    rpc::{self, ResultExt},
     AppState, Error, Result,
 };
 use anyhow::anyhow;
@@ -14,12 +14,13 @@ use axum::{
     routing::{get, post, put},
     Extension, Json, Router,
 };
+use axum_extra::response::ErasedJson;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tower::ServiceBuilder;
 use tracing::instrument;
 
-pub fn routes(rpc_server: &Arc<crate::rpc::Server>, state: Arc<AppState>) -> Router<Body> {
+pub fn routes(rpc_server: &Arc<rpc::Server>, state: Arc<AppState>) -> Router<Body> {
     Router::new()
         .route("/users", get(get_users).post(create_user))
         .route(
@@ -29,6 +30,7 @@ pub fn routes(rpc_server: &Arc<crate::rpc::Server>, state: Arc<AppState>) -> Rou
         .route("/users/:id/access_tokens", post(create_access_token))
         .route("/invite_codes/:code", get(get_user_for_invite_code))
         .route("/panic", post(trace_panic))
+        .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(state))
@@ -84,7 +86,7 @@ struct CreateUserParams {
 async fn create_user(
     Json(params): Json<CreateUserParams>,
     Extension(app): Extension<Arc<AppState>>,
-    Extension(rpc_server): Extension<Arc<crate::rpc::Server>>,
+    Extension(rpc_server): Extension<Arc<rpc::Server>>,
 ) -> Result<Json<User>> {
     println!("{:?}", params);
 
@@ -175,6 +177,12 @@ struct Panic {
 async fn trace_panic(panic: Json<Panic>) -> Result<()> {
     tracing::error!(version = %panic.version, text = %panic.text, "panic report");
     Ok(())
+}
+
+async fn get_rpc_server_snapshot(
+    Extension(rpc_server): Extension<Arc<rpc::Server>>,
+) -> Result<ErasedJson> {
+    Ok(ErasedJson::pretty(rpc_server.snapshot().await))
 }
 
 #[derive(Deserialize)]
