@@ -10,11 +10,9 @@ use gpui::{
     AppContext, Axis, Element, ElementBox, Entity, MutableAppContext, RenderContext, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
+use menu::{Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrev};
 use settings::Settings;
 use std::cmp;
-use workspace::menu::{
-    Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrev,
-};
 
 pub struct Picker<D: PickerDelegate> {
     delegate: WeakViewHandle<D>,

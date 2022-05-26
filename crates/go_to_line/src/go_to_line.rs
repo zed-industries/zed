@@ -3,12 +3,10 @@ use gpui::{
     actions, elements::*, geometry::vector::Vector2F, Axis, Entity, MutableAppContext,
     RenderContext, View, ViewContext, ViewHandle,
 };
+use menu::{Cancel, Confirm};
 use settings::Settings;
 use text::{Bias, Point};
-use workspace::{
-    menu::{Cancel, Confirm},
-    Workspace,
-};
+use workspace::Workspace;
 
 actions!(go_to_line, [Toggle]);
 

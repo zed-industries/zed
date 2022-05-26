@@ -9,6 +9,7 @@ use gpui::{
     ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
     ViewHandle, WeakModelHandle, WeakViewHandle,
 };
+use menu::Confirm;
 use project::{search::SearchQuery, Project};
 use settings::Settings;
 use smallvec::SmallVec;
@@ -19,8 +20,7 @@ use std::{
 };
 use util::ResultExt as _;
 use workspace::{
-    menu::Confirm, Item, ItemHandle, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView,
-    Workspace,
+    Item, ItemHandle, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 actions!(project_search, [Deploy, SearchInNew, ToggleFocus]);

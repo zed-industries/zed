@@ -16,15 +16,12 @@ use gpui::{
     MutableAppContext, RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use join_project_notification::JoinProjectNotification;
+use menu::{Confirm, SelectNext, SelectPrev};
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
 use theme::IconButton;
-use workspace::{
-    menu::{Confirm, SelectNext, SelectPrev},
-    sidebar::SidebarItem,
-    JoinProject, Workspace,
-};
+use workspace::{sidebar::SidebarItem, JoinProject, Workspace};
 
 impl_actions!(
     contacts_panel,

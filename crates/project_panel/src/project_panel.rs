@@ -14,6 +14,7 @@ use gpui::{
     AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, PromptLevel, Task,
     View, ViewContext, ViewHandle, WeakViewHandle,
 };
+use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use settings::Settings;
 use std::{
@@ -23,10 +24,7 @@ use std::{
     ops::Range,
 };
 use unicase::UniCase;
-use workspace::{
-    menu::{Confirm, SelectNext, SelectPrev},
-    Workspace,
-};
+use workspace::Workspace;
 
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 

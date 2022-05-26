@@ -257,11 +257,9 @@ impl PickerDelegate for FileFinder {
 mod tests {
     use super::*;
     use editor::{Editor, Input};
+    use menu::{Confirm, SelectNext};
     use serde_json::json;
-    use workspace::{
-        menu::{Confirm, SelectNext},
-        AppState, Workspace,
-    };
+    use workspace::{AppState, Workspace};
 
     #[ctor::ctor]
     fn init_logger() {

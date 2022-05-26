@@ -9,6 +9,7 @@ doctest = false
 
 [dependencies]
 gpui = { path = "../gpui" }
+menu = { path = "../menu" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 smallvec = "1.6"

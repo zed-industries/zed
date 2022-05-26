@@ -665,6 +665,7 @@ dependencies = [
  "client",
  "editor",
  "gpui",
+ "menu",
  "postage",
  "settings",
  "theme",
@@ -964,6 +965,7 @@ dependencies = [
  "gpui",
  "language",
  "log",
+ "menu",
  "picker",
  "postage",
  "project",
@@ -979,6 +981,7 @@ name = "context_menu"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "menu",
  "settings",
  "smallvec",
  "theme",
@@ -1526,6 +1529,7 @@ dependencies = [
  "env_logger",
  "fuzzy",
  "gpui",
+ "menu",
  "picker",
  "postage",
  "project",
@@ -1904,6 +1908,7 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "gpui",
+ "menu",
  "postage",
  "settings",
  "text",
@@ -2699,6 +2704,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "menu"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+]
+
+[[package]]
 name = "metal"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3252,6 +3264,7 @@ dependencies = [
  "editor",
  "env_logger",
  "gpui",
+ "menu",
  "serde_json",
  "settings",
  "theme",
@@ -3463,6 +3476,7 @@ dependencies = [
  "editor",
  "futures",
  "gpui",
+ "menu",
  "postage",
  "project",
  "serde_json",
@@ -4176,6 +4190,7 @@ dependencies = [
  "gpui",
  "language",
  "log",
+ "menu",
  "postage",
  "project",
  "serde",

@@ -11,12 +11,12 @@ use gpui::{
     AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View,
     ViewContext, ViewHandle,
 };
+use menu::Confirm;
 use postage::prelude::Stream;
 use settings::{Settings, SoftWrap};
 use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
 use util::{ResultExt, TryFutureExt};
-use workspace::menu::Confirm;
 
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
 
