@@ -7,7 +7,7 @@ use crate::{
     },
     json::ToJson,
     platform::CursorStyle,
-    scene::{self, Border, Quad},
+    scene::{self, Border, CursorRegion, Quad},
     Element, ElementBox, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
 use serde::Deserialize;
@@ -213,7 +213,10 @@ impl Element for Container {
         }
 
         if let Some(style) = self.style.cursor {
-            cx.scene.push_cursor_style(quad_bounds, style);
+            cx.scene.push_cursor_region(CursorRegion {
+                bounds: quad_bounds,
+                style,
+            });
         }
 
         let child_origin =

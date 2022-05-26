@@ -5,6 +5,7 @@ use crate::{
     geometry::rect::RectF,
     json::{self, ToJson},
     platform::{CursorStyle, Event},
+    scene::CursorRegion,
     text_layout::TextLayoutCache,
     Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox,
     ElementStateContext, Entity, FontSystem, ModelHandle, ReadModel, ReadView, Scene,
@@ -22,7 +23,7 @@ pub struct Presenter {
     window_id: usize,
     pub(crate) rendered_views: HashMap<usize, ElementBox>,
     parents: HashMap<usize, usize>,
-    cursor_styles: Vec<(RectF, CursorStyle)>,
+    cursor_regions: Vec<CursorRegion>,
     font_cache: Arc<FontCache>,
     text_layout_cache: TextLayoutCache,
     asset_cache: Arc<AssetCache>,
@@ -43,7 +44,7 @@ impl Presenter {
             window_id,
             rendered_views: cx.render_views(window_id, titlebar_height),
             parents: HashMap::new(),
-            cursor_styles: Default::default(),
+            cursor_regions: Default::default(),
             font_cache,
             text_layout_cache,
             asset_cache,
@@ -120,7 +121,7 @@ impl Presenter {
                 RectF::new(Vector2F::zero(), window_size),
             );
             self.text_layout_cache.finish_frame();
-            self.cursor_styles = scene.cursor_styles();
+            self.cursor_regions = scene.cursor_regions();
 
             if cx.window_is_active(self.window_id) {
                 if let Some(event) = self.last_mouse_moved_event.clone() {
@@ -184,9 +185,9 @@ impl Presenter {
 
                     if !left_mouse_down {
                         let mut style_to_assign = CursorStyle::Arrow;
-                        for (bounds, style) in self.cursor_styles.iter().rev() {
-                            if bounds.contains_point(position) {
-                                style_to_assign = *style;
+                        for region in self.cursor_regions.iter().rev() {
+                            if region.bounds.contains_point(position) {
+                                style_to_assign = region.style;
                                 break;
                             }
                         }

@@ -16,7 +16,7 @@ pub mod fonts;
 pub mod geometry;
 mod presenter;
 mod scene;
-pub use scene::{Border, Quad, Scene};
+pub use scene::{Border, CursorRegion, Quad, Scene};
 pub mod text_layout;
 pub use text_layout::TextLayoutCache;
 mod util;

@@ -5,6 +5,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     platform::CursorStyle,
+    scene::CursorRegion,
     DebugContext, Element, ElementBox, ElementStateContext, ElementStateHandle, Event,
     EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
@@ -100,9 +101,11 @@ impl Element for MouseEventHandler {
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        if let Some(cursor_style) = self.cursor_style {
-            cx.scene
-                .push_cursor_style(self.hit_bounds(bounds), cursor_style);
+        if let Some(style) = self.cursor_style {
+            cx.scene.push_cursor_region(CursorRegion {
+                bounds: self.hit_bounds(bounds),
+                style,
+            });
         }
         self.child.paint(bounds.origin(), visible_bounds, cx);
     }

@@ -18,8 +18,9 @@ use gpui::{
     json::{self, ToJson},
     platform::CursorStyle,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
-    AppContext, Axis, Border, Element, ElementBox, Event, EventContext, LayoutContext,
-    MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
+    AppContext, Axis, Border, CursorRegion, Element, ElementBox, Event, EventContext,
+    LayoutContext, MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext,
+    WeakViewHandle,
 };
 use json::json;
 use language::{Bias, DiagnosticSeverity};
@@ -330,7 +331,10 @@ impl EditorElement {
         let content_origin = bounds.origin() + vec2f(layout.gutter_margin, 0.);
 
         cx.scene.push_layer(Some(bounds));
-        cx.scene.push_cursor_style(bounds, CursorStyle::IBeam);
+        cx.scene.push_cursor_region(CursorRegion {
+            bounds,
+            style: CursorStyle::IBeam,
+        });
 
         for (range, color) in &layout.highlighted_ranges {
             self.paint_highlighted_range(

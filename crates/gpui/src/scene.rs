@@ -33,7 +33,13 @@ pub struct Layer {
     image_glyphs: Vec<ImageGlyph>,
     icons: Vec<Icon>,
     paths: Vec<Path>,
-    cursor_styles: Vec<(RectF, CursorStyle)>,
+    cursor_regions: Vec<CursorRegion>,
+}
+
+#[derive(Copy, Clone)]
+pub struct CursorRegion {
+    pub bounds: RectF,
+    pub style: CursorStyle,
 }
 
 #[derive(Default, Debug)]
@@ -175,9 +181,9 @@ impl Scene {
         self.stacking_contexts.iter().flat_map(|s| &s.layers)
     }
 
-    pub fn cursor_styles(&self) -> Vec<(RectF, CursorStyle)> {
+    pub fn cursor_regions(&self) -> Vec<CursorRegion> {
         self.layers()
-            .flat_map(|layer| &layer.cursor_styles)
+            .flat_map(|layer| &layer.cursor_regions)
             .copied()
             .collect()
     }
@@ -206,8 +212,8 @@ impl Scene {
         self.active_layer().push_quad(quad)
     }
 
-    pub fn push_cursor_style(&mut self, bounds: RectF, style: CursorStyle) {
-        self.active_layer().push_cursor_style(bounds, style);
+    pub fn push_cursor_region(&mut self, region: CursorRegion) {
+        self.active_layer().push_cursor_region(region);
     }
 
     pub fn push_image(&mut self, image: Image) {
@@ -298,7 +304,7 @@ impl Layer {
             glyphs: Default::default(),
             icons: Default::default(),
             paths: Default::default(),
-            cursor_styles: Default::default(),
+            cursor_regions: Default::default(),
         }
     }
 
@@ -316,10 +322,13 @@ impl Layer {
         self.quads.as_slice()
     }
 
-    fn push_cursor_style(&mut self, bounds: RectF, style: CursorStyle) {
-        if let Some(bounds) = bounds.intersection(self.clip_bounds.unwrap_or(bounds)) {
+    fn push_cursor_region(&mut self, region: CursorRegion) {
+        if let Some(bounds) = region
+            .bounds
+            .intersection(self.clip_bounds.unwrap_or(region.bounds))
+        {
             if can_draw(bounds) {
-                self.cursor_styles.push((bounds, style));
+                self.cursor_regions.push(region);
             }
         }
     }
