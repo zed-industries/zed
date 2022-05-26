@@ -14,8 +14,8 @@ use axum::{
     routing::{get, post, put},
     Extension, Json, Router,
 };
+use axum_extra::response::ErasedJson;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::sync::Arc;
 use tower::ServiceBuilder;
 use tracing::instrument;
@@ -179,10 +179,10 @@ async fn trace_panic(panic: Json<Panic>) -> Result<()> {
     Ok(())
 }
 
-async fn get_rpc_server_snapshot<'a>(
+async fn get_rpc_server_snapshot(
     Extension(rpc_server): Extension<Arc<rpc::Server>>,
-) -> Result<Json<Value>> {
-    Ok(Json(serde_json::to_value(rpc_server.snapshot().await)?))
+) -> Result<ErasedJson> {
+    Ok(ErasedJson::pretty(rpc_server.snapshot().await))
 }
 
 #[derive(Deserialize)]

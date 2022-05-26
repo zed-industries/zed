@@ -15,6 +15,6 @@ futures = "0.3"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 rand = { version = "0.8", optional = true }
 tempdir = { version = "0.3.7", optional = true }
-serde_json = { version = "1.0.64", features = [
+serde_json = { version = "1.0", features = [
     "preserve_order",
 ], optional = true }

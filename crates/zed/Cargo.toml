@@ -76,7 +76,7 @@ regex = "1.5"
 rsa = "0.4"
 rust-embed = { version = "6.3", features = ["include-exclude"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1.0.64", features = ["preserve_order"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
 serde_path_to_error = "0.1.4"
 simplelog = "0.9"
 smallvec = { version = "1.6", features = ["union"] }
@@ -107,7 +107,7 @@ settings = { path = "../settings", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
 env_logger = "0.8"
-serde_json = { version = "1.0.64", features = ["preserve_order"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
 unindent = "0.1.7"
 
 [package.metadata.bundle]

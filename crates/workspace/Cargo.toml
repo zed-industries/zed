@@ -26,7 +26,7 @@ log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"
 postage = { version = "0.4.1", features = ["futures-traits"] }
 serde = { version = "1", features = ["derive", "rc"] }
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
 smallvec = { version = "1.6", features = ["union"] }
 
 [dev-dependencies]

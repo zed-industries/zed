@@ -21,6 +21,7 @@ anyhow = "1.0.40"
 async-trait = "0.1.50"
 async-tungstenite = "0.16"
 axum = { version = "0.5", features = ["json", "headers", "ws"] }
+axum-extra = { version = "0.3", features = ["erased-json"] }
 base64 = "0.13"
 clap = { version = "3.1", features = ["derive"], optional = true }
 envy = "0.4.2"
@@ -70,7 +71,7 @@ ctor = "0.1"
 env_logger = "0.8"
 util = { path = "../util" }
 lazy_static = "1.4"
-serde_json = { version = "1.0.64", features = ["preserve_order"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
 
 [features]
 seed-support = ["clap", "lipsum", "reqwest"]
