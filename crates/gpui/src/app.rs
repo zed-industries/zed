@@ -2407,7 +2407,7 @@ impl MutableAppContext {
         })
     }
 
-    fn focus(&mut self, window_id: usize, view_id: Option<usize>) {
+    pub fn focus(&mut self, window_id: usize, view_id: Option<usize>) {
         if let Some(pending_focus_index) = self.pending_focus_index {
             self.pending_effects.remove(pending_focus_index);
         }

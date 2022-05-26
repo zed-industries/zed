@@ -1,8 +1,17 @@
 use gpui::{
-    elements::*, geometry::vector::Vector2F, platform::CursorStyle, Action, Axis, Entity,
-    RenderContext, SizeConstraint, View, ViewContext,
+    elements::*, geometry::vector::Vector2F, impl_internal_actions, platform::CursorStyle, Action,
+    Axis, Entity, MutableAppContext, RenderContext, SizeConstraint, View, ViewContext,
 };
 use settings::Settings;
+
+pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action(ContextMenu::dismiss);
+}
+
+#[derive(Clone)]
+struct Dismiss;
+
+impl_internal_actions!(context_menu, [Dismiss]);
 
 pub enum ContextMenuItem {
     Item {
@@ -25,11 +34,13 @@ impl ContextMenuItem {
     }
 }
 
+#[derive(Default)]
 pub struct ContextMenu {
     position: Vector2F,
     items: Vec<ContextMenuItem>,
     selected_index: Option<usize>,
     visible: bool,
+    previously_focused_view_id: Option<usize>,
 }
 
 impl Entity for ContextMenu {
@@ -72,11 +83,13 @@ impl View for ContextMenu {
 
 impl ContextMenu {
     pub fn new() -> Self {
-        Self {
-            position: Default::default(),
-            items: Default::default(),
-            selected_index: Default::default(),
-            visible: false,
+        Default::default()
+    }
+
+    fn dismiss(&mut self, _: &Dismiss, cx: &mut ViewContext<Self>) {
+        if cx.handle().is_focused(cx) {
+            let window_id = cx.window_id();
+            (**cx).focus(window_id, self.previously_focused_view_id.take());
         }
     }
 
@@ -87,11 +100,15 @@ impl ContextMenu {
         cx: &mut ViewContext<Self>,
     ) {
         let mut items = items.into_iter().peekable();
-        assert!(items.peek().is_some(), "must have at least one item");
-        self.items = items.collect();
-        self.position = position;
-        self.visible = true;
-        cx.focus_self();
+        if items.peek().is_some() {
+            self.items = items.collect();
+            self.position = position;
+            self.visible = true;
+            self.previously_focused_view_id = cx.focused_view_id(cx.window_id());
+            cx.focus_self();
+        } else {
+            self.visible = false;
+        }
         cx.notify();
     }
 
@@ -107,7 +124,10 @@ impl ContextMenu {
                                     &Default::default(),
                                     Some(ix) == self.selected_index,
                                 );
-                                Label::new(label.to_string(), style.label.clone()).boxed()
+                                Label::new(label.to_string(), style.label.clone())
+                                    .contained()
+                                    .with_style(style.container)
+                                    .boxed()
                             }
                             ContextMenuItem::Separator => Empty::new()
                                 .collapsed()
@@ -180,7 +200,10 @@ impl ContextMenu {
                                 .boxed()
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(move |_, _, cx| cx.dispatch_any_action(action.boxed_clone()))
+                        .on_click(move |_, _, cx| {
+                            cx.dispatch_any_action(action.boxed_clone());
+                            cx.dispatch_action(Dismiss);
+                        })
                         .boxed()
                     }
                     ContextMenuItem::Separator => Empty::new()

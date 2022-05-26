@@ -134,6 +134,7 @@ fn main() {
         let mut languages = languages::build_language_registry(login_shell_env_loaded);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
+        context_menu::init(cx);
         auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
         project::Project::init(&client);
         client::Channel::init(&client);

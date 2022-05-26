@@ -6088,6 +6088,7 @@ dependencies = [
  "collections",
  "command_palette",
  "contacts_panel",
+ "context_menu",
  "ctor",
  "diagnostics",
  "dirs 3.0.1",
