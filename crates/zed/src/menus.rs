@@ -16,6 +16,14 @@ pub fn menus() -> Vec<Menu<'static>> {
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
+                    name: "Open Settings",
+                    action: Box::new(super::OpenSettings),
+                },
+                MenuItem::Action {
+                    name: "Open Key Bindings",
+                    action: Box::new(super::OpenKeymap),
+                },
+                MenuItem::Action {
                     name: "Install CLI",
                     action: Box::new(super::InstallCommandLineInterface),
                 },
