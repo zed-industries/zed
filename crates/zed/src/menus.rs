@@ -16,6 +16,14 @@ pub fn menus() -> Vec<Menu<'static>> {
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
+                    name: "Open Settings",
+                    action: Box::new(super::OpenSettings),
+                },
+                MenuItem::Action {
+                    name: "Open Key Bindings",
+                    action: Box::new(super::OpenKeymap),
+                },
+                MenuItem::Action {
                     name: "Install CLI",
                     action: Box::new(super::InstallCommandLineInterface),
                 },
@@ -164,6 +172,10 @@ pub fn menus() -> Vec<Menu<'static>> {
                     name: "Zoom Out",
                     action: Box::new(super::DecreaseBufferFontSize),
                 },
+                MenuItem::Action {
+                    name: "Reset Zoom",
+                    action: Box::new(super::ResetBufferFontSize),
+                },
                 MenuItem::Separator,
                 MenuItem::Action {
                     name: "Project Browser",
@@ -235,10 +247,25 @@ pub fn menus() -> Vec<Menu<'static>> {
         },
         Menu {
             name: "Help",
-            items: vec![MenuItem::Action {
-                name: "Command Palette",
-                action: Box::new(command_palette::Toggle),
-            }],
+            items: vec![
+                MenuItem::Action {
+                    name: "Command Palette",
+                    action: Box::new(command_palette::Toggle),
+                },
+                MenuItem::Separator,
+                MenuItem::Action {
+                    name: "Zed.dev",
+                    action: Box::new(crate::OpenBrowser {
+                        url: "https://zed.dev".into(),
+                    }),
+                },
+                MenuItem::Action {
+                    name: "Zed Twitter",
+                    action: Box::new(crate::OpenBrowser {
+                        url: "https://twitter.com/zeddotdev".into(),
+                    }),
+                },
+            ],
         },
     ]
 }
