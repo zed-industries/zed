@@ -217,7 +217,9 @@ impl Presenter {
             let mut invalidated_views = Vec::new();
             let mut hovered_regions = Vec::new();
             let mut unhovered_regions = Vec::new();
+            let mut mouse_down_region = None;
             let mut clicked_region = None;
+            let mut right_mouse_down_region = None;
             let mut right_clicked_region = None;
             let mut dragged_region = None;
 
@@ -226,6 +228,7 @@ impl Presenter {
                     for region in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(position) {
                             invalidated_views.push(region.view_id);
+                            mouse_down_region = Some((region.clone(), position));
                             self.clicked_region = Some(region.clone());
                             self.prev_drag_position = Some(position);
                             break;
@@ -249,6 +252,7 @@ impl Presenter {
                     for region in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(position) {
                             invalidated_views.push(region.view_id);
+                            right_mouse_down_region = Some((region.clone(), position));
                             self.right_clicked_region = Some(region.clone());
                             break;
                         }
@@ -339,11 +343,29 @@ impl Presenter {
                 }
             }
 
+            if let Some((mouse_down_region, position)) = mouse_down_region {
+                if let Some(mouse_down_callback) = mouse_down_region.mouse_down {
+                    handled = true;
+                    event_cx.with_current_view(mouse_down_region.view_id, |event_cx| {
+                        mouse_down_callback(position, event_cx);
+                    })
+                }
+            }
+
             if let Some((clicked_region, position, click_count)) = clicked_region {
                 if let Some(click_callback) = clicked_region.click {
                     handled = true;
                     event_cx.with_current_view(clicked_region.view_id, |event_cx| {
                         click_callback(position, click_count, event_cx);
+                    })
+                }
+            }
+
+            if let Some((right_mouse_down_region, position)) = right_mouse_down_region {
+                if let Some(right_mouse_down_callback) = right_mouse_down_region.right_mouse_down {
+                    handled = true;
+                    event_cx.with_current_view(right_mouse_down_region.view_id, |event_cx| {
+                        right_mouse_down_callback(position, event_cx);
                     })
                 }
             }
