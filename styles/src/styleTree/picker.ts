@@ -1,5 +1,5 @@
 import Theme from "../themes/common/theme";
-import { backgroundColor, border, player, shadow, text } from "./components";
+import { backgroundColor, border, player, modalShadow, text } from "./components";
 
 export default function picker(theme: Theme) {
   return {
@@ -48,6 +48,6 @@ export default function picker(theme: Theme) {
         top: 7,
       },
     },
-    shadow: shadow(theme),
+    shadow: modalShadow(theme),
   };
 }

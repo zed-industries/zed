@@ -153,6 +153,6 @@ export default interface Theme {
     6: Player;
     7: Player;
     8: Player;
-  };
-  shadowAlpha: NumberToken;
+  },
+  shadow: ColorToken;
 }

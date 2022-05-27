@@ -4,6 +4,7 @@ import {
   border,
   iconColor,
   player,
+  popoverShadow,
   text,
   TextColor
 } from "./components";
@@ -80,6 +81,7 @@ export default function editor(theme: Theme) {
       cornerRadius: 8,
       padding: 4,
       border: border(theme, "secondary"),
+      shadow: popoverShadow(theme),
       item: autocompleteItem,
       hoveredItem: {
         ...autocompleteItem,

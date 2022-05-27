@@ -1,6 +1,6 @@
 import Theme from "../themes/common/theme";
 import { withOpacity } from "../utils/color";
-import { backgroundColor, border, iconColor, shadow, text } from "./components";
+import { backgroundColor, border, iconColor, modalShadow, text } from "./components";
 import statusBar from "./statusBar";
 
 export function workspaceBackground(theme: Theme) {
@@ -164,7 +164,7 @@ export default function workspace(theme: Theme) {
       cornerRadius: 6,
       padding: 12,
       border: border(theme, "primary"),
-      shadow: shadow(theme),
+      shadow: modalShadow(theme),
     },
     notifications: {
       width: 380,
