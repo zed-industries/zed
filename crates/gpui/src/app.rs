@@ -3484,8 +3484,7 @@ impl<'a, V: View> RenderContext<'a, V> {
     pub fn mouse_state<Tag: 'static>(&self, region_id: usize) -> MouseState {
         let region_id = MouseRegionId {
             view_id: self.view_id,
-            tag: TypeId::of::<Tag>(),
-            region_id,
+            discriminant: (TypeId::of::<Tag>(), region_id),
         };
         MouseState {
             hovered: self.hovered_region_ids.contains(&region_id),

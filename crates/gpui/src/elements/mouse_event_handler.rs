@@ -131,8 +131,7 @@ impl Element for MouseEventHandler {
 
         cx.scene.push_mouse_region(MouseRegion {
             view_id: cx.current_view_id(),
-            tag: self.tag,
-            region_id: self.id,
+            discriminant: Some((self.tag, self.id)),
             bounds: self.hit_bounds(bounds),
             hover: None,
             click: self.click_handler.clone(),

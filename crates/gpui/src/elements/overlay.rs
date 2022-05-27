@@ -3,8 +3,8 @@ use serde_json::json;
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
-    DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint,
+    DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, MouseRegion,
+    PaintContext, SizeConstraint,
 };
 
 pub struct Overlay {
@@ -54,6 +54,11 @@ impl Element for Overlay {
         let origin = self.abs_position.unwrap_or(bounds.origin());
         let visible_bounds = RectF::new(origin, *size);
         cx.scene.push_stacking_context(None);
+        cx.scene.push_mouse_region(MouseRegion {
+            view_id: cx.current_view_id(),
+            bounds: visible_bounds,
+            ..Default::default()
+        });
         self.child.paint(origin, visible_bounds, cx);
         cx.scene.pop_stacking_context();
     }

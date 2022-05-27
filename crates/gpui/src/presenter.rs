@@ -103,11 +103,11 @@ impl Presenter {
                     view_id: *view_id,
                     titlebar_height: self.titlebar_height,
                     hovered_region_ids: self.hovered_region_ids.clone(),
-                    clicked_region_id: self.clicked_region.as_ref().map(MouseRegion::id),
+                    clicked_region_id: self.clicked_region.as_ref().and_then(MouseRegion::id),
                     right_clicked_region_id: self
                         .right_clicked_region
                         .as_ref()
-                        .map(MouseRegion::id),
+                        .and_then(MouseRegion::id),
                     refreshing: false,
                 })
                 .unwrap(),
@@ -125,11 +125,11 @@ impl Presenter {
                         view_id: *view_id,
                         titlebar_height: self.titlebar_height,
                         hovered_region_ids: self.hovered_region_ids.clone(),
-                        clicked_region_id: self.clicked_region.as_ref().map(MouseRegion::id),
+                        clicked_region_id: self.clicked_region.as_ref().and_then(MouseRegion::id),
                         right_clicked_region_id: self
                             .right_clicked_region
                             .as_ref()
-                            .map(MouseRegion::id),
+                            .and_then(MouseRegion::id),
                         refreshing: true,
                     })
                     .unwrap();
@@ -194,8 +194,8 @@ impl Presenter {
             view_stack: Vec::new(),
             refreshing,
             hovered_region_ids: self.hovered_region_ids.clone(),
-            clicked_region_id: self.clicked_region.as_ref().map(MouseRegion::id),
-            right_clicked_region_id: self.right_clicked_region.as_ref().map(MouseRegion::id),
+            clicked_region_id: self.clicked_region.as_ref().and_then(MouseRegion::id),
+            right_clicked_region_id: self.right_clicked_region.as_ref().and_then(MouseRegion::id),
             titlebar_height: self.titlebar_height,
             window_size,
             app: cx,
@@ -293,21 +293,24 @@ impl Presenter {
 
                         let mut hover_depth = None;
                         for (region, depth) in self.mouse_regions.iter().rev() {
-                            let region_id = region.id();
                             if region.bounds.contains_point(position)
                                 && hover_depth.map_or(true, |hover_depth| hover_depth == *depth)
                             {
                                 hover_depth = Some(*depth);
-                                if !self.hovered_region_ids.contains(&region_id) {
-                                    invalidated_views.push(region.view_id);
-                                    hovered_regions.push(region.clone());
-                                    self.hovered_region_ids.insert(region_id);
+                                if let Some(region_id) = region.id() {
+                                    if !self.hovered_region_ids.contains(&region_id) {
+                                        invalidated_views.push(region.view_id);
+                                        hovered_regions.push(region.clone());
+                                        self.hovered_region_ids.insert(region_id);
+                                    }
                                 }
                             } else {
-                                if self.hovered_region_ids.contains(&region_id) {
-                                    invalidated_views.push(region.view_id);
-                                    unhovered_regions.push(region.clone());
-                                    self.hovered_region_ids.remove(&region_id);
+                                if let Some(region_id) = region.id() {
+                                    if self.hovered_region_ids.contains(&region_id) {
+                                        invalidated_views.push(region.view_id);
+                                        unhovered_regions.push(region.clone());
+                                        self.hovered_region_ids.remove(&region_id);
+                                    }
                                 }
                             }
                         }

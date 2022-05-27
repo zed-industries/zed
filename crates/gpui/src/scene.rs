@@ -43,11 +43,10 @@ pub struct CursorRegion {
     pub style: CursorStyle,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct MouseRegion {
     pub view_id: usize,
-    pub tag: TypeId,
-    pub region_id: usize,
+    pub discriminant: Option<(TypeId, usize)>,
     pub bounds: RectF,
     pub hover: Option<Rc<dyn Fn(bool, &mut EventContext)>>,
     pub mouse_down: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
@@ -60,8 +59,7 @@ pub struct MouseRegion {
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct MouseRegionId {
     pub view_id: usize,
-    pub tag: TypeId,
-    pub region_id: usize,
+    pub discriminant: (TypeId, usize),
 }
 
 #[derive(Default, Debug)]
@@ -544,12 +542,11 @@ impl ToJson for Border {
 }
 
 impl MouseRegion {
-    pub fn id(&self) -> MouseRegionId {
-        MouseRegionId {
+    pub fn id(&self) -> Option<MouseRegionId> {
+        self.discriminant.map(|discriminant| MouseRegionId {
             view_id: self.view_id,
-            tag: self.tag,
-            region_id: self.region_id,
-        }
+            discriminant,
+        })
     }
 }
 
