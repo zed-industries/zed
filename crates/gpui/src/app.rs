@@ -1370,7 +1370,10 @@ impl MutableAppContext {
             .unwrap()
             .0
             .clone();
-        let dispatch_path = presenter.borrow().dispatch_path_from(view_id);
+        let mut dispatch_path = Vec::new();
+        presenter
+            .borrow()
+            .compute_dispatch_path_from(view_id, &mut dispatch_path);
         for view_id in dispatch_path {
             if let Some(view) = self.views.get(&(window_id, view_id)) {
                 let view_type = view.as_any().type_id();
@@ -1424,7 +1427,10 @@ impl MutableAppContext {
             .unwrap()
             .0
             .clone();
-        let dispatch_path = presenter.borrow().dispatch_path_from(view_id);
+        let mut dispatch_path = Vec::new();
+        presenter
+            .borrow()
+            .compute_dispatch_path_from(view_id, &mut dispatch_path);
         self.dispatch_action_any(window_id, &dispatch_path, action);
     }
 

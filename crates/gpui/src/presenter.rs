@@ -64,22 +64,20 @@ impl Presenter {
     }
 
     pub fn dispatch_path(&self, app: &AppContext) -> Vec<usize> {
+        let mut path = Vec::new();
         if let Some(view_id) = app.focused_view_id(self.window_id) {
-            self.dispatch_path_from(view_id)
-        } else {
-            Vec::new()
+            self.compute_dispatch_path_from(view_id, &mut path)
         }
+        path
     }
 
-    pub(crate) fn dispatch_path_from(&self, mut view_id: usize) -> Vec<usize> {
-        let mut path = Vec::new();
+    pub(crate) fn compute_dispatch_path_from(&self, mut view_id: usize, path: &mut Vec<usize>) {
         path.push(view_id);
         while let Some(parent_id) = self.parents.get(&view_id).copied() {
             path.push(parent_id);
             view_id = parent_id;
         }
         path.reverse();
-        path
     }
 
     pub fn invalidate(
@@ -329,8 +327,14 @@ impl Presenter {
             for view_id in invalidated_views {
                 cx.notify_view(self.window_id, view_id);
             }
+
+            let mut dispatch_path = Vec::new();
             for directive in dispatch_directives {
-                cx.dispatch_action_any(self.window_id, &directive.path, directive.action.as_ref());
+                dispatch_path.clear();
+                if let Some(view_id) = directive.dispatcher_view_id {
+                    self.compute_dispatch_path_from(view_id, &mut dispatch_path);
+                }
+                cx.dispatch_action_any(self.window_id, &dispatch_path, directive.action.as_ref());
             }
         }
     }
@@ -368,7 +372,7 @@ impl Presenter {
 }
 
 pub struct DispatchDirective {
-    pub path: Vec<usize>,
+    pub dispatcher_view_id: Option<usize>,
     pub action: Box<dyn Action>,
 }
 
@@ -541,7 +545,7 @@ impl<'a> EventContext<'a> {
 
     pub fn dispatch_any_action(&mut self, action: Box<dyn Action>) {
         self.dispatched_actions.push(DispatchDirective {
-            path: self.view_stack.clone(),
+            dispatcher_view_id: self.view_stack.last().copied(),
             action,
         });
     }
