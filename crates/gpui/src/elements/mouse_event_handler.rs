@@ -113,7 +113,7 @@ impl Element for MouseEventHandler {
             view_id: cx.current_view_id(),
             tag: self.tag,
             region_id: self.id,
-            bounds,
+            bounds: self.hit_bounds(bounds),
             hover: None,
             click: self.click_handler.clone(),
             mouse_down: self.mouse_down_handler.clone(),
