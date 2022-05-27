@@ -10,7 +10,7 @@ use gpui::{
     impl_internal_actions, keymap,
     platform::CursorStyle,
     AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, PromptLevel,
-    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use settings::Settings;
@@ -36,7 +36,6 @@ pub struct ProjectPanel {
     selection: Option<Selection>,
     edit_state: Option<EditState>,
     filename_editor: ViewHandle<Editor>,
-    handle: WeakViewHandle<Self>,
 }
 
 #[derive(Copy, Clone)]
@@ -156,7 +155,6 @@ impl ProjectPanel {
                 selection: None,
                 edit_state: None,
                 filename_editor,
-                handle: cx.weak_handle(),
             };
             this.update_visible_entries(None, cx);
             this
