@@ -247,10 +247,25 @@ pub fn menus() -> Vec<Menu<'static>> {
         },
         Menu {
             name: "Help",
-            items: vec![MenuItem::Action {
-                name: "Command Palette",
-                action: Box::new(command_palette::Toggle),
-            }],
+            items: vec![
+                MenuItem::Action {
+                    name: "Command Palette",
+                    action: Box::new(command_palette::Toggle),
+                },
+                MenuItem::Separator,
+                MenuItem::Action {
+                    name: "Zed.dev",
+                    action: Box::new(crate::OpenBrowser {
+                        url: "https://zed.dev".into(),
+                    }),
+                },
+                MenuItem::Action {
+                    name: "Zed Twitter",
+                    action: Box::new(crate::OpenBrowser {
+                        url: "https://twitter.com/zeddotdev".into(),
+                    }),
+                },
+            ],
         },
     ]
 }

@@ -14,6 +14,7 @@ use editor::Editor;
 use gpui::{
     actions,
     geometry::vector::vec2f,
+    impl_actions,
     platform::{WindowBounds, WindowOptions},
     AsyncAppContext, ViewContext,
 };
@@ -23,6 +24,7 @@ use project::Project;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
+use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
 use std::{
@@ -32,6 +34,13 @@ use std::{
 use util::ResultExt;
 pub use workspace;
 use workspace::{AppState, Workspace};
+
+#[derive(Deserialize, Clone)]
+struct OpenBrowser {
+    url: Arc<str>,
+}
+
+impl_actions!(zed, [OpenBrowser]);
 
 actions!(
     zed,
@@ -61,6 +70,7 @@ lazy_static! {
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action(about);
     cx.add_global_action(quit);
+    cx.add_global_action(move |action: &OpenBrowser, cx| cx.platform().open_url(&action.url));
     cx.add_global_action(move |_: &IncreaseBufferFontSize, cx| {
         cx.update_global::<Settings, _, _>(|settings, cx| {
             settings.buffer_font_size = (settings.buffer_font_size + 1.0).max(MIN_FONT_SIZE);
