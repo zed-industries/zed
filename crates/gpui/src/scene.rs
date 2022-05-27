@@ -51,6 +51,7 @@ pub struct MouseRegion {
     pub bounds: RectF,
     pub hover: Option<Rc<dyn Fn(bool, &mut EventContext)>>,
     pub click: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
+    pub drag: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]

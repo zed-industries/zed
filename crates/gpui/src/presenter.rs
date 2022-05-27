@@ -33,6 +33,7 @@ pub struct Presenter {
     last_mouse_moved_event: Option<Event>,
     hovered_region_id: Option<MouseRegionId>,
     clicked_region: Option<MouseRegion>,
+    prev_drag_position: Option<Vector2F>,
     titlebar_height: f32,
 }
 
@@ -57,6 +58,7 @@ impl Presenter {
             last_mouse_moved_event: None,
             hovered_region_id: None,
             clicked_region: None,
+            prev_drag_position: None,
             titlebar_height,
         }
     }
@@ -205,12 +207,14 @@ impl Presenter {
             let mut unhovered_region = None;
             let mut hovered_region = None;
             let mut clicked_region = None;
+            let mut dragged_region = None;
 
             match event {
                 Event::LeftMouseDown { position, .. } => {
                     for region in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(position) {
                             self.clicked_region = Some(region.clone());
+                            self.prev_drag_position = Some(position);
                             break;
                         }
                     }
@@ -220,6 +224,7 @@ impl Presenter {
                     click_count,
                     ..
                 } => {
+                    self.prev_drag_position.take();
                     if let Some(region) = self.clicked_region.take() {
                         if region.bounds.contains_point(position) {
                             clicked_region = Some((region, position, click_count));
@@ -256,6 +261,16 @@ impl Presenter {
                     }
                 }
                 Event::LeftMouseDragged { position } => {
+                    if let Some((clicked_region, prev_drag_position)) = self
+                        .clicked_region
+                        .as_ref()
+                        .zip(self.prev_drag_position.as_mut())
+                    {
+                        dragged_region =
+                            Some((clicked_region.clone(), position - *prev_drag_position));
+                        *prev_drag_position = position;
+                    }
+
                     self.last_mouse_moved_event = Some(Event::MouseMoved {
                         position,
                         left_mouse_down: true,
@@ -270,7 +285,7 @@ impl Presenter {
             if let Some(unhovered_region) = unhovered_region {
                 if let Some(hover_callback) = unhovered_region.hover {
                     event_cx.with_current_view(unhovered_region.view_id, |event_cx| {
-                        hover_callback(false, event_cx)
+                        hover_callback(false, event_cx);
                     })
                 }
             }
@@ -278,7 +293,7 @@ impl Presenter {
             if let Some(hovered_region) = hovered_region {
                 if let Some(hover_callback) = hovered_region.hover {
                     event_cx.with_current_view(hovered_region.view_id, |event_cx| {
-                        hover_callback(true, event_cx)
+                        hover_callback(true, event_cx);
                     })
                 }
             }
@@ -286,7 +301,15 @@ impl Presenter {
             if let Some((clicked_region, position, click_count)) = clicked_region {
                 if let Some(click_callback) = clicked_region.click {
                     event_cx.with_current_view(clicked_region.view_id, |event_cx| {
-                        click_callback(position, click_count, event_cx)
+                        click_callback(position, click_count, event_cx);
+                    })
+                }
+            }
+
+            if let Some((dragged_region, delta)) = dragged_region {
+                if let Some(drag_callback) = dragged_region.drag {
+                    event_cx.with_current_view(dragged_region.view_id, |event_cx| {
+                        drag_callback(delta, event_cx);
                     })
                 }
             }
