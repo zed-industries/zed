@@ -5,7 +5,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{self, json},
-    ElementBox,
+    ElementBox, RenderContext, View,
 };
 use json::ToJson;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -41,27 +41,37 @@ pub struct LayoutState {
     items: Vec<ElementBox>,
 }
 
-pub struct UniformList<F>
-where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut LayoutContext),
-{
+pub struct UniformList {
     state: UniformListState,
     item_count: usize,
-    append_items: F,
+    append_items: Box<dyn Fn(Range<usize>, &mut Vec<ElementBox>, &mut LayoutContext)>,
     padding_top: f32,
     padding_bottom: f32,
     get_width_from_item: Option<usize>,
 }
 
-impl<F> UniformList<F>
-where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut LayoutContext),
-{
-    pub fn new(state: UniformListState, item_count: usize, append_items: F) -> Self {
+impl UniformList {
+    pub fn new<F, V>(
+        state: UniformListState,
+        item_count: usize,
+        cx: &mut RenderContext<V>,
+        append_items: F,
+    ) -> Self
+    where
+        V: View,
+        F: 'static + Fn(&mut V, Range<usize>, &mut Vec<ElementBox>, &mut RenderContext<V>),
+    {
+        let handle = cx.handle();
         Self {
             state,
             item_count,
-            append_items,
+            append_items: Box::new(move |range, items, cx| {
+                if let Some(handle) = handle.upgrade(cx) {
+                    cx.render(&handle, |view, cx| {
+                        append_items(view, range, items, cx);
+                    });
+                }
+            }),
             padding_top: 0.,
             padding_bottom: 0.,
             get_width_from_item: None,
@@ -144,10 +154,7 @@ where
     }
 }
 
-impl<F> Element for UniformList<F>
-where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut LayoutContext),
-{
+impl Element for UniformList {
     type LayoutState = LayoutState;
     type PaintState = ();
 
@@ -162,40 +169,51 @@ where
             );
         }
 
+        let no_items = (
+            constraint.min,
+            LayoutState {
+                item_height: 0.,
+                scroll_max: 0.,
+                items: Default::default(),
+            },
+        );
+
         if self.item_count == 0 {
-            return (
-                constraint.min,
-                LayoutState {
-                    item_height: 0.,
-                    scroll_max: 0.,
-                    items: Default::default(),
-                },
-            );
+            return no_items;
         }
 
         let mut items = Vec::new();
         let mut size = constraint.max;
         let mut item_size;
         let sample_item_ix;
-        let mut sample_item;
+        let sample_item;
         if let Some(sample_ix) = self.get_width_from_item {
             (self.append_items)(sample_ix..sample_ix + 1, &mut items, cx);
             sample_item_ix = sample_ix;
-            sample_item = items.pop().unwrap();
-            item_size = sample_item.layout(constraint, cx);
-            size.set_x(item_size.x());
+
+            if let Some(mut item) = items.pop() {
+                item_size = item.layout(constraint, cx);
+                size.set_x(item_size.x());
+                sample_item = item;
+            } else {
+                return no_items;
+            }
         } else {
             (self.append_items)(0..1, &mut items, cx);
             sample_item_ix = 0;
-            sample_item = items.pop().unwrap();
-            item_size = sample_item.layout(
-                SizeConstraint::new(
-                    vec2f(constraint.max.x(), 0.0),
-                    vec2f(constraint.max.x(), f32::INFINITY),
-                ),
-                cx,
-            );
-            item_size.set_x(size.x());
+            if let Some(mut item) = items.pop() {
+                item_size = item.layout(
+                    SizeConstraint::new(
+                        vec2f(constraint.max.x(), 0.0),
+                        vec2f(constraint.max.x(), f32::INFINITY),
+                    ),
+                    cx,
+                );
+                item_size.set_x(size.x());
+                sample_item = item
+            } else {
+                return no_items;
+            }
         }
 
         let item_constraint = SizeConstraint {

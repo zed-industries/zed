@@ -7,7 +7,8 @@ use crate::{
     platform::{self, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::post_inc,
-    AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
+    AssetCache, AssetSource, ClipboardItem, FontCache, MouseRegionId, PathPromptOptions,
+    TextLayoutCache,
 };
 pub use action::*;
 use anyhow::{anyhow, Context, Result};
@@ -124,26 +125,6 @@ pub trait UpdateView {
     ) -> S
     where
         T: View;
-}
-
-pub trait ElementStateContext: DerefMut<Target = MutableAppContext> {
-    fn current_view_id(&self) -> usize;
-
-    fn element_state<Tag: 'static, T: 'static + Default>(
-        &mut self,
-        element_id: usize,
-    ) -> ElementStateHandle<T> {
-        let id = ElementStateId {
-            view_id: self.current_view_id(),
-            element_id,
-            tag: TypeId::of::<Tag>(),
-        };
-        self.cx
-            .element_states
-            .entry(id)
-            .or_insert_with(|| Box::new(T::default()));
-        ElementStateHandle::new(id, self.frame_count, &self.cx.ref_counts)
-    }
 }
 
 pub struct Menu<'a> {
@@ -465,6 +446,27 @@ impl TestAppContext {
         // cases such as the closure dropping handles.
         state.flush_effects();
         result
+    }
+
+    pub fn render<F, V, T>(&mut self, handle: &ViewHandle<V>, f: F) -> T
+    where
+        F: FnOnce(&mut V, &mut RenderContext<V>) -> T,
+        V: View,
+    {
+        handle.update(&mut *self.cx.borrow_mut(), |view, cx| {
+            let mut render_cx = RenderContext {
+                app: cx,
+                window_id: handle.window_id(),
+                view_id: handle.id(),
+                view_type: PhantomData,
+                titlebar_height: 0.,
+                hovered_region_ids: Default::default(),
+                clicked_region_id: None,
+                right_clicked_region_id: None,
+                refreshing: false,
+            };
+            f(view, &mut render_cx)
+        })
     }
 
     pub fn to_async(&self) -> AsyncAppContext {
@@ -1040,19 +1042,15 @@ impl MutableAppContext {
             .map_or(false, |window| window.is_active)
     }
 
-    pub fn render_view(
-        &mut self,
-        window_id: usize,
-        view_id: usize,
-        titlebar_height: f32,
-        refreshing: bool,
-    ) -> Result<ElementBox> {
+    pub fn render_view(&mut self, params: RenderParams) -> Result<ElementBox> {
+        let window_id = params.window_id;
+        let view_id = params.view_id;
         let mut view = self
             .cx
             .views
-            .remove(&(window_id, view_id))
+            .remove(&(params.window_id, params.view_id))
             .ok_or(anyhow!("view not found"))?;
-        let element = view.render(window_id, view_id, titlebar_height, refreshing, self);
+        let element = view.render(params, self);
         self.cx.views.insert((window_id, view_id), view);
         Ok(element)
     }
@@ -1079,8 +1077,16 @@ impl MutableAppContext {
             .map(|view_id| {
                 (
                     view_id,
-                    self.render_view(window_id, view_id, titlebar_height, false)
-                        .unwrap(),
+                    self.render_view(RenderParams {
+                        window_id,
+                        view_id,
+                        titlebar_height,
+                        hovered_region_ids: Default::default(),
+                        clicked_region_id: None,
+                        right_clicked_region_id: None,
+                        refreshing: false,
+                    })
+                    .unwrap(),
                 )
             })
             .collect()
@@ -1366,7 +1372,10 @@ impl MutableAppContext {
             .unwrap()
             .0
             .clone();
-        let dispatch_path = presenter.borrow().dispatch_path_from(view_id);
+        let mut dispatch_path = Vec::new();
+        presenter
+            .borrow()
+            .compute_dispatch_path_from(view_id, &mut dispatch_path);
         for view_id in dispatch_path {
             if let Some(view) = self.views.get(&(window_id, view_id)) {
                 let view_type = view.as_any().type_id();
@@ -1443,7 +1452,10 @@ impl MutableAppContext {
             .unwrap()
             .0
             .clone();
-        let dispatch_path = presenter.borrow().dispatch_path_from(view_id);
+        let mut dispatch_path = Vec::new();
+        presenter
+            .borrow()
+            .compute_dispatch_path_from(view_id, &mut dispatch_path);
         self.dispatch_action_any(window_id, &dispatch_path, action);
     }
 
@@ -1773,23 +1785,6 @@ impl MutableAppContext {
             self.assets.clone(),
             self,
         )
-    }
-
-    pub fn build_render_context<V: View>(
-        &mut self,
-        window_id: usize,
-        view_id: usize,
-        titlebar_height: f32,
-        refreshing: bool,
-    ) -> RenderContext<V> {
-        RenderContext {
-            app: self,
-            titlebar_height,
-            refreshing,
-            window_id,
-            view_id,
-            view_type: PhantomData,
-        }
     }
 
     pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
@@ -2917,14 +2912,7 @@ pub trait AnyView {
         cx: &mut MutableAppContext,
     ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>>;
     fn ui_name(&self) -> &'static str;
-    fn render<'a>(
-        &mut self,
-        window_id: usize,
-        view_id: usize,
-        titlebar_height: f32,
-        refreshing: bool,
-        cx: &mut MutableAppContext,
-    ) -> ElementBox;
+    fn render<'a>(&mut self, params: RenderParams, cx: &mut MutableAppContext) -> ElementBox;
     fn on_focus(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
     fn on_blur(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
     fn keymap_context(&self, cx: &AppContext) -> keymap::Context;
@@ -2958,25 +2946,8 @@ where
         T::ui_name()
     }
 
-    fn render<'a>(
-        &mut self,
-        window_id: usize,
-        view_id: usize,
-        titlebar_height: f32,
-        refreshing: bool,
-        cx: &mut MutableAppContext,
-    ) -> ElementBox {
-        View::render(
-            self,
-            &mut RenderContext {
-                window_id,
-                view_id,
-                app: cx,
-                view_type: PhantomData::<T>,
-                titlebar_height,
-                refreshing,
-            },
-        )
+    fn render<'a>(&mut self, params: RenderParams, cx: &mut MutableAppContext) -> ElementBox {
+        View::render(self, &mut RenderContext::new(params, cx))
     }
 
     fn on_focus(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize) {
@@ -3458,22 +3429,85 @@ impl<'a, T: View> ViewContext<'a, T> {
     }
 }
 
+pub struct RenderParams {
+    pub window_id: usize,
+    pub view_id: usize,
+    pub titlebar_height: f32,
+    pub hovered_region_ids: HashSet<MouseRegionId>,
+    pub clicked_region_id: Option<MouseRegionId>,
+    pub right_clicked_region_id: Option<MouseRegionId>,
+    pub refreshing: bool,
+}
+
 pub struct RenderContext<'a, T: View> {
+    pub(crate) window_id: usize,
+    pub(crate) view_id: usize,
+    pub(crate) view_type: PhantomData<T>,
+    pub(crate) hovered_region_ids: HashSet<MouseRegionId>,
+    pub(crate) clicked_region_id: Option<MouseRegionId>,
+    pub(crate) right_clicked_region_id: Option<MouseRegionId>,
     pub app: &'a mut MutableAppContext,
     pub titlebar_height: f32,
     pub refreshing: bool,
-    window_id: usize,
-    view_id: usize,
-    view_type: PhantomData<T>,
 }
 
-impl<'a, T: View> RenderContext<'a, T> {
-    pub fn handle(&self) -> WeakViewHandle<T> {
+#[derive(Clone, Copy, Default)]
+pub struct MouseState {
+    pub hovered: bool,
+    pub clicked: bool,
+    pub right_clicked: bool,
+}
+
+impl<'a, V: View> RenderContext<'a, V> {
+    fn new(params: RenderParams, app: &'a mut MutableAppContext) -> Self {
+        Self {
+            app,
+            window_id: params.window_id,
+            view_id: params.view_id,
+            view_type: PhantomData,
+            titlebar_height: params.titlebar_height,
+            hovered_region_ids: params.hovered_region_ids.clone(),
+            clicked_region_id: params.clicked_region_id,
+            right_clicked_region_id: params.right_clicked_region_id,
+            refreshing: params.refreshing,
+        }
+    }
+
+    pub fn handle(&self) -> WeakViewHandle<V> {
         WeakViewHandle::new(self.window_id, self.view_id)
     }
 
     pub fn view_id(&self) -> usize {
         self.view_id
+    }
+
+    pub fn mouse_state<Tag: 'static>(&self, region_id: usize) -> MouseState {
+        let region_id = MouseRegionId {
+            view_id: self.view_id,
+            tag: TypeId::of::<Tag>(),
+            region_id,
+        };
+        MouseState {
+            hovered: self.hovered_region_ids.contains(&region_id),
+            clicked: self.clicked_region_id == Some(region_id),
+            right_clicked: self.right_clicked_region_id == Some(region_id),
+        }
+    }
+
+    pub fn element_state<Tag: 'static, T: 'static + Default>(
+        &mut self,
+        element_id: usize,
+    ) -> ElementStateHandle<T> {
+        let id = ElementStateId {
+            view_id: self.view_id(),
+            element_id,
+            tag: TypeId::of::<Tag>(),
+        };
+        self.cx
+            .element_states
+            .entry(id)
+            .or_insert_with(|| Box::new(T::default()));
+        ElementStateHandle::new(id, self.frame_count, &self.cx.ref_counts)
     }
 }
 
@@ -3516,12 +3550,6 @@ impl<V: View> UpdateModel for RenderContext<'_, V> {
 impl<V: View> ReadView for RenderContext<'_, V> {
     fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
         self.app.read_view(handle)
-    }
-}
-
-impl<V: View> ElementStateContext for RenderContext<'_, V> {
-    fn current_view_id(&self) -> usize {
-        self.view_id
     }
 }
 
@@ -3584,6 +3612,16 @@ impl<V> UpgradeViewHandle for ViewContext<'_, V> {
     }
 }
 
+impl<V: View> UpgradeViewHandle for RenderContext<'_, V> {
+    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
+        self.cx.upgrade_view_handle(handle)
+    }
+
+    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
+        self.cx.upgrade_any_view_handle(handle)
+    }
+}
+
 impl<V: View> UpdateModel for ViewContext<'_, V> {
     fn update_model<T: Entity, O>(
         &mut self,
@@ -3610,12 +3648,6 @@ impl<V: View> UpdateView for ViewContext<'_, V> {
         T: View,
     {
         self.app.update_view(handle, update)
-    }
-}
-
-impl<V: View> ElementStateContext for ViewContext<'_, V> {
-    fn current_view_id(&self) -> usize {
-        self.view_id
     }
 }
 

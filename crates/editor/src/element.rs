@@ -18,8 +18,9 @@ use gpui::{
     json::{self, ToJson},
     platform::CursorStyle,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
-    AppContext, Axis, Border, Element, ElementBox, Event, EventContext, LayoutContext,
-    MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
+    AppContext, Axis, Border, CursorRegion, Element, ElementBox, Event, EventContext,
+    LayoutContext, MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext,
+    WeakViewHandle,
 };
 use json::json;
 use language::{Bias, DiagnosticSeverity};
@@ -330,7 +331,10 @@ impl EditorElement {
         let content_origin = bounds.origin() + vec2f(layout.gutter_margin, 0.);
 
         cx.scene.push_layer(Some(bounds));
-        cx.scene.push_cursor_style(bounds, CursorStyle::IBeam);
+        cx.scene.push_cursor_region(CursorRegion {
+            bounds,
+            style: CursorStyle::IBeam,
+        });
 
         for (range, color) in &layout.highlighted_ranges {
             self.paint_highlighted_range(
@@ -1020,8 +1024,6 @@ impl Element for EditorElement {
             max_row.saturating_sub(1) as f32,
         );
 
-        let mut context_menu = None;
-        let mut code_actions_indicator = None;
         self.update_view(cx.app, |view, cx| {
             let clamped = view.clamp_scroll_left(scroll_max.x());
             let autoscrolled;
@@ -1041,7 +1043,11 @@ impl Element for EditorElement {
             if clamped || autoscrolled {
                 snapshot = view.snapshot(cx);
             }
+        });
 
+        let mut context_menu = None;
+        let mut code_actions_indicator = None;
+        cx.render(&self.view.upgrade(cx).unwrap(), |view, cx| {
             let newest_selection_head = view
                 .selections
                 .newest::<usize>(cx)

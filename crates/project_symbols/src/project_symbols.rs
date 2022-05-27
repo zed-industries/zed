@@ -3,8 +3,8 @@ use editor::{
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, elements::*, AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Task,
-    View, ViewContext, ViewHandle,
+    actions, elements::*, AppContext, Entity, ModelHandle, MouseState, MutableAppContext,
+    RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -221,7 +221,7 @@ impl PickerDelegate for ProjectSymbolsView {
     fn render_match(
         &self,
         ix: usize,
-        mouse_state: &MouseState,
+        mouse_state: MouseState,
         selected: bool,
         cx: &AppContext,
     ) -> ElementBox {

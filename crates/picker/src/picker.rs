@@ -1,14 +1,14 @@
 use editor::Editor;
 use gpui::{
     elements::{
-        ChildView, Flex, Label, MouseEventHandler, MouseState, ParentElement, ScrollTarget,
-        UniformList, UniformListState,
+        ChildView, Flex, Label, MouseEventHandler, ParentElement, ScrollTarget, UniformList,
+        UniformListState,
     },
     geometry::vector::{vec2f, Vector2F},
     keymap,
     platform::CursorStyle,
-    AppContext, Axis, Element, ElementBox, Entity, MutableAppContext, RenderContext, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, Axis, Element, ElementBox, Entity, MouseState, MutableAppContext, RenderContext,
+    Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrev};
 use settings::Settings;
@@ -32,7 +32,7 @@ pub trait PickerDelegate: View {
     fn render_match(
         &self,
         ix: usize,
-        state: &MouseState,
+        state: MouseState,
         selected: bool,
         cx: &AppContext,
     ) -> ElementBox;
@@ -52,6 +52,7 @@ impl<D: PickerDelegate> View for Picker<D> {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> gpui::ElementBox {
         let settings = cx.global::<Settings>();
+        let container_style = settings.theme.picker.container;
         let delegate = self.delegate.clone();
         let match_count = if let Some(delegate) = delegate.upgrade(cx.app) {
             delegate.read(cx).match_count()
@@ -78,8 +79,9 @@ impl<D: PickerDelegate> View for Picker<D> {
                     UniformList::new(
                         self.list_state.clone(),
                         match_count,
-                        move |mut range, items, cx| {
-                            let delegate = delegate.upgrade(cx).unwrap();
+                        cx,
+                        move |this, mut range, items, cx| {
+                            let delegate = this.delegate.upgrade(cx).unwrap();
                             let selected_ix = delegate.read(cx).selected_index();
                             range.end = cmp::min(range.end, delegate.read(cx).match_count());
                             items.extend(range.map(move |ix| {
@@ -101,7 +103,7 @@ impl<D: PickerDelegate> View for Picker<D> {
                 .boxed(),
             )
             .contained()
-            .with_style(settings.theme.picker.container)
+            .with_style(container_style)
             .constrained()
             .with_max_width(self.max_size.x())
             .with_max_height(self.max_size.y())

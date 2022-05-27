@@ -12,8 +12,8 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
-    AppContext, ClipboardItem, Element, ElementBox, Entity, LayoutContext, ModelHandle,
-    MutableAppContext, RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MutableAppContext,
+    RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use join_project_notification::JoinProjectNotification;
 use menu::{Confirm, SelectNext, SelectPrev};
@@ -181,11 +181,8 @@ impl ContactsPanel {
         .detach();
 
         let mut this = Self {
-            list_state: ListState::new(0, Orientation::Top, 1000., {
-                let this = cx.weak_handle();
-                move |ix, cx| {
-                    let this = this.upgrade(cx).unwrap();
-                    let this = this.read(cx);
+            list_state: ListState::new(0, Orientation::Top, 1000., cx, {
+                move |this, ix, cx| {
                     let theme = cx.global::<Settings>().theme.clone();
                     let theme = &theme.contacts_panel;
                     let current_user_id =
@@ -255,11 +252,11 @@ impl ContactsPanel {
         theme: &theme::ContactsPanel,
         is_selected: bool,
         is_collapsed: bool,
-        cx: &mut LayoutContext,
+        cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         enum Header {}
 
-        let header_style = theme.header_row.style_for(&Default::default(), is_selected);
+        let header_style = theme.header_row.style_for(Default::default(), is_selected);
         let text = match section {
             Section::Requests => "Requests",
             Section::Online => "Online",
@@ -331,11 +328,7 @@ impl ContactsPanel {
             .constrained()
             .with_height(theme.row_height)
             .contained()
-            .with_style(
-                *theme
-                    .contact_row
-                    .style_for(&Default::default(), is_selected),
-            )
+            .with_style(*theme.contact_row.style_for(Default::default(), is_selected))
             .boxed()
     }
 
@@ -346,7 +339,7 @@ impl ContactsPanel {
         theme: &theme::ContactsPanel,
         is_last_project: bool,
         is_selected: bool,
-        cx: &mut LayoutContext,
+        cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         let project = &contact.projects[project_index];
         let project_id = project.id;
@@ -459,7 +452,7 @@ impl ContactsPanel {
         theme: &theme::ContactsPanel,
         is_incoming: bool,
         is_selected: bool,
-        cx: &mut LayoutContext,
+        cx: &mut RenderContext<ContactsPanel>,
     ) -> ElementBox {
         enum Decline {}
         enum Accept {}
@@ -558,11 +551,7 @@ impl ContactsPanel {
         row.constrained()
             .with_height(theme.row_height)
             .contained()
-            .with_style(
-                *theme
-                    .contact_row
-                    .style_for(&Default::default(), is_selected),
-            )
+            .with_style(*theme.contact_row.style_for(Default::default(), is_selected))
             .boxed()
     }
 

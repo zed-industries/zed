@@ -12,7 +12,7 @@ use gpui::{
     impl_internal_actions, keymap,
     platform::CursorStyle,
     AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MutableAppContext,
-    PromptLevel, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -795,8 +795,8 @@ impl ProjectPanel {
     fn for_each_visible_entry(
         &self,
         range: Range<usize>,
-        cx: &mut ViewContext<ProjectPanel>,
-        mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut ViewContext<ProjectPanel>),
+        cx: &mut RenderContext<ProjectPanel>,
+        mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut RenderContext<ProjectPanel>),
     ) {
         let mut ix = 0;
         for (worktree_id, visible_worktree_entries) in &self.visible_entries {
@@ -869,7 +869,7 @@ impl ProjectPanel {
         details: EntryDetails,
         editor: &ViewHandle<Editor>,
         theme: &theme::ProjectPanel,
-        cx: &mut ViewContext<Self>,
+        cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         let kind = details.kind;
         let show_editor = details.is_editing && !details.is_processing;
@@ -961,34 +961,27 @@ impl View for ProjectPanel {
         let theme = &cx.global::<Settings>().theme.project_panel;
         let mut container_style = theme.container;
         let padding = std::mem::take(&mut container_style.padding);
-        let handle = self.handle.clone();
         Stack::new()
             .with_child(
-                MouseEventHandler::new::<Tag, _, _>(0, cx, |_, _| {
+                MouseEventHandler::new::<Tag, _, _>(0, cx, |_, cx| {
                     UniformList::new(
                         self.list.clone(),
                         self.visible_entries
                             .iter()
                             .map(|(_, worktree_entries)| worktree_entries.len())
                             .sum(),
-                        move |range, items, cx| {
+                        cx,
+                        move |this, range, items, cx| {
                             let theme = cx.global::<Settings>().theme.clone();
-                            let this = handle.upgrade(cx).unwrap();
-                            this.update(cx.app, |this, cx| {
-                                this.for_each_visible_entry(
-                                    range.clone(),
+                            this.for_each_visible_entry(range.clone(), cx, |id, details, cx| {
+                                items.push(Self::render_entry(
+                                    id,
+                                    details,
+                                    &this.filename_editor,
+                                    &theme.project_panel,
                                     cx,
-                                    |id, details, cx| {
-                                        items.push(Self::render_entry(
-                                            id,
-                                            details,
-                                            &this.filename_editor,
-                                            &theme.project_panel,
-                                            cx,
-                                        ));
-                                    },
-                                );
-                            })
+                                ));
+                            });
                         },
                     )
                     .with_padding_top(padding.top)
@@ -1458,7 +1451,7 @@ mod tests {
         let mut result = Vec::new();
         let mut project_entries = HashSet::new();
         let mut has_editor = false;
-        panel.update(cx, |panel, cx| {
+        cx.render(panel, |panel, cx| {
             panel.for_each_visible_entry(range, cx, |project_entry, details, _| {
                 if details.is_editing {
                     assert!(!has_editor, "duplicate editor entry");

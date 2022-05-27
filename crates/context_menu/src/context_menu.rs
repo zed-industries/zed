@@ -185,10 +185,9 @@ impl ContextMenu {
                     .with_children(self.items.iter().enumerate().map(|(ix, item)| {
                         match item {
                             ContextMenuItem::Item { label, .. } => {
-                                let style = style.item.style_for(
-                                    &Default::default(),
-                                    Some(ix) == self.selected_index,
-                                );
+                                let style = style
+                                    .item
+                                    .style_for(Default::default(), Some(ix) == self.selected_index);
                                 Label::new(label.to_string(), style.label.clone())
                                     .contained()
                                     .with_style(style.container)
@@ -210,10 +209,9 @@ impl ContextMenu {
                     .with_children(self.items.iter().enumerate().map(|(ix, item)| {
                         match item {
                             ContextMenuItem::Item { action, .. } => {
-                                let style = style.item.style_for(
-                                    &Default::default(),
-                                    Some(ix) == self.selected_index,
-                                );
+                                let style = style
+                                    .item
+                                    .style_for(Default::default(), Some(ix) == self.selected_index);
                                 KeystrokeLabel::new(
                                     action.boxed_clone(),
                                     style.keystroke.container,

@@ -1,9 +1,9 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
-    elements::{ChildView, Flex, Label, MouseState, ParentElement},
+    elements::{ChildView, Flex, Label, ParentElement},
     keymap::Keystroke,
-    Action, Element, Entity, MutableAppContext, View, ViewContext, ViewHandle,
+    Action, Element, Entity, MouseState, MutableAppContext, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
@@ -203,7 +203,7 @@ impl PickerDelegate for CommandPalette {
     fn render_match(
         &self,
         ix: usize,
-        mouse_state: &MouseState,
+        mouse_state: MouseState,
         selected: bool,
         cx: &gpui::AppContext,
     ) -> gpui::ElementBox {

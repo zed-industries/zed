@@ -2,9 +2,9 @@ mod theme_registry;
 
 use gpui::{
     color::Color,
-    elements::{ContainerStyle, ImageStyle, LabelStyle, MouseState},
+    elements::{ContainerStyle, ImageStyle, LabelStyle},
     fonts::{HighlightStyle, TextStyle},
-    Border,
+    Border, MouseState,
 };
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
@@ -505,7 +505,7 @@ pub struct Interactive<T> {
 }
 
 impl<T> Interactive<T> {
-    pub fn style_for(&self, state: &MouseState, active: bool) -> &T {
+    pub fn style_for(&self, state: MouseState, active: bool) -> &T {
         if active {
             if state.hovered {
                 self.active_hover
