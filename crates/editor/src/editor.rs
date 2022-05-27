@@ -679,7 +679,7 @@ impl CompletionsMenu {
                             },
                         )
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_mouse_down(move |cx| {
+                        .on_mouse_down(move |_, cx| {
                             cx.dispatch_action(ConfirmCompletion {
                                 item_ix: Some(item_ix),
                             });
@@ -812,7 +812,7 @@ impl CodeActionsMenu {
                                 .boxed()
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_mouse_down(move |cx| {
+                        .on_mouse_down(move |_, cx| {
                             cx.dispatch_action(ConfirmCodeAction {
                                 item_ix: Some(item_ix),
                             });
@@ -2603,7 +2603,7 @@ impl Editor {
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .with_padding(Padding::uniform(3.))
-                .on_mouse_down(|cx| {
+                .on_mouse_down(|_, cx| {
                     cx.dispatch_action(ToggleCodeActions {
                         deployed_from_indicator: true,
                     });

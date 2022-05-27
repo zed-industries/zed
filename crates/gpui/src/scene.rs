@@ -50,11 +50,12 @@ pub struct MouseRegion {
     pub region_id: usize,
     pub bounds: RectF,
     pub hover: Option<Rc<dyn Fn(bool, &mut EventContext)>>,
+    pub mouse_down: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
     pub click: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
     pub drag: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct MouseRegionId {
     pub view_id: usize,
     pub tag: TypeId,
@@ -240,6 +241,10 @@ impl Scene {
 
     pub fn push_cursor_region(&mut self, region: CursorRegion) {
         self.active_layer().push_cursor_region(region);
+    }
+
+    pub fn push_mouse_region(&mut self, region: MouseRegion) {
+        self.active_layer().push_mouse_region(region);
     }
 
     pub fn push_image(&mut self, image: Image) {

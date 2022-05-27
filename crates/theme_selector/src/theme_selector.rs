@@ -1,6 +1,6 @@
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, elements::*, AppContext, Element, ElementBox, Entity, MutableAppContext,
+    actions, elements::*, AppContext, Element, ElementBox, Entity, MouseState, MutableAppContext,
     RenderContext, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
@@ -213,7 +213,7 @@ impl PickerDelegate for ThemeSelector {
     fn render_match(
         &self,
         ix: usize,
-        mouse_state: &MouseState,
+        mouse_state: MouseState,
         selected: bool,
         cx: &AppContext,
     ) -> ElementBox {

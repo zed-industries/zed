@@ -1,3 +1,5 @@
+use std::{any::TypeId, rc::Rc};
+
 use super::Padding;
 use crate::{
     geometry::{
@@ -6,26 +8,20 @@ use crate::{
     },
     platform::CursorStyle,
     scene::CursorRegion,
-    DebugContext, Element, ElementBox, ElementStateHandle, Event, EventContext, LayoutContext,
+    DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, MouseRegion, MouseState,
     PaintContext, RenderContext, SizeConstraint, View,
 };
 use serde_json::json;
 
 pub struct MouseEventHandler {
-    state: ElementStateHandle<MouseState>,
     child: ElementBox,
+    tag: TypeId,
+    id: usize,
     cursor_style: Option<CursorStyle>,
-    mouse_down_handler: Option<Box<dyn FnMut(&mut EventContext)>>,
-    click_handler: Option<Box<dyn FnMut(usize, &mut EventContext)>>,
-    drag_handler: Option<Box<dyn FnMut(Vector2F, &mut EventContext)>>,
+    mouse_down_handler: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
+    click_handler: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
+    drag_handler: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
     padding: Padding,
-}
-
-#[derive(Default)]
-pub struct MouseState {
-    pub hovered: bool,
-    pub clicked: bool,
-    prev_drag_position: Option<Vector2F>,
 }
 
 impl MouseEventHandler {
@@ -33,13 +29,12 @@ impl MouseEventHandler {
     where
         Tag: 'static,
         V: View,
-        F: FnOnce(&MouseState, &mut RenderContext<V>) -> ElementBox,
+        F: FnOnce(MouseState, &mut RenderContext<V>) -> ElementBox,
     {
-        let state_handle = cx.element_state::<Tag, _>(id);
-        let child = state_handle.update(cx, |state, cx| render_child(state, cx));
         Self {
-            state: state_handle,
-            child,
+            id,
+            tag: TypeId::of::<Tag>(),
+            child: render_child(cx.mouse_state::<Tag>(id), cx),
             cursor_style: None,
             mouse_down_handler: None,
             click_handler: None,
@@ -53,18 +48,24 @@ impl MouseEventHandler {
         self
     }
 
-    pub fn on_mouse_down(mut self, handler: impl FnMut(&mut EventContext) + 'static) -> Self {
-        self.mouse_down_handler = Some(Box::new(handler));
+    pub fn on_mouse_down(
+        mut self,
+        handler: impl Fn(Vector2F, &mut EventContext) + 'static,
+    ) -> Self {
+        self.mouse_down_handler = Some(Rc::new(handler));
         self
     }
 
-    pub fn on_click(mut self, handler: impl FnMut(usize, &mut EventContext) + 'static) -> Self {
-        self.click_handler = Some(Box::new(handler));
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(Vector2F, usize, &mut EventContext) + 'static,
+    ) -> Self {
+        self.click_handler = Some(Rc::new(handler));
         self
     }
 
-    pub fn on_drag(mut self, handler: impl FnMut(Vector2F, &mut EventContext) + 'static) -> Self {
-        self.drag_handler = Some(Box::new(handler));
+    pub fn on_drag(mut self, handler: impl Fn(Vector2F, &mut EventContext) + 'static) -> Self {
+        self.drag_handler = Some(Rc::new(handler));
         self
     }
 
@@ -107,6 +108,18 @@ impl Element for MouseEventHandler {
                 style,
             });
         }
+
+        cx.scene.push_mouse_region(MouseRegion {
+            view_id: cx.current_view_id(),
+            tag: self.tag,
+            region_id: self.id,
+            bounds,
+            hover: None,
+            click: self.click_handler.clone(),
+            mouse_down: self.mouse_down_handler.clone(),
+            drag: self.drag_handler.clone(),
+        });
+
         self.child.paint(bounds.origin(), visible_bounds, cx);
     }
 
@@ -114,81 +127,12 @@ impl Element for MouseEventHandler {
         &mut self,
         event: &Event,
         _: RectF,
-        visible_bounds: RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
         _: &mut Self::PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        let hit_bounds = self.hit_bounds(visible_bounds);
-        let mouse_down_handler = self.mouse_down_handler.as_mut();
-        let click_handler = self.click_handler.as_mut();
-        let drag_handler = self.drag_handler.as_mut();
-
-        let handled_in_child = self.child.dispatch_event(event, cx);
-
-        self.state.update(cx, |state, cx| match event {
-            Event::MouseMoved {
-                position,
-                left_mouse_down,
-            } => {
-                if !left_mouse_down {
-                    let mouse_in = hit_bounds.contains_point(*position);
-                    if state.hovered != mouse_in {
-                        state.hovered = mouse_in;
-                        cx.notify();
-                        return true;
-                    }
-                }
-                handled_in_child
-            }
-            Event::LeftMouseDown { position, .. } => {
-                if !handled_in_child && hit_bounds.contains_point(*position) {
-                    state.clicked = true;
-                    state.prev_drag_position = Some(*position);
-                    cx.notify();
-                    if let Some(handler) = mouse_down_handler {
-                        handler(cx);
-                    }
-                    true
-                } else {
-                    handled_in_child
-                }
-            }
-            Event::LeftMouseUp {
-                position,
-                click_count,
-                ..
-            } => {
-                state.prev_drag_position = None;
-                if !handled_in_child && state.clicked {
-                    state.clicked = false;
-                    cx.notify();
-                    if let Some(handler) = click_handler {
-                        if hit_bounds.contains_point(*position) {
-                            handler(*click_count, cx);
-                        }
-                    }
-                    true
-                } else {
-                    handled_in_child
-                }
-            }
-            Event::LeftMouseDragged { position, .. } => {
-                if !handled_in_child && state.clicked {
-                    let prev_drag_position = state.prev_drag_position.replace(*position);
-                    if let Some((handler, prev_position)) = drag_handler.zip(prev_drag_position) {
-                        let delta = *position - prev_position;
-                        if !delta.is_zero() {
-                            (handler)(delta, cx);
-                        }
-                    }
-                    true
-                } else {
-                    handled_in_child
-                }
-            }
-            _ => handled_in_child,
-        })
+        self.child.dispatch_event(event, cx)
     }
 
     fn debug(

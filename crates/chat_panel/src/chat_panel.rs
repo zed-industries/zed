@@ -320,7 +320,7 @@ impl ChatPanel {
                 .boxed()
             })
             .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(move |_, cx| {
+            .on_click(move |_, _, cx| {
                 let rpc = rpc.clone();
                 let this = this.clone();
                 cx.spawn(|mut cx| async move {

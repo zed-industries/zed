@@ -31,7 +31,7 @@ pub struct Presenter {
     text_layout_cache: TextLayoutCache,
     asset_cache: Arc<AssetCache>,
     last_mouse_moved_event: Option<Event>,
-    hovered_region_id: Option<MouseRegionId>,
+    hovered_region_ids: HashSet<MouseRegionId>,
     clicked_region: Option<MouseRegion>,
     prev_drag_position: Option<Vector2F>,
     titlebar_height: f32,
@@ -56,7 +56,7 @@ impl Presenter {
             text_layout_cache,
             asset_cache,
             last_mouse_moved_event: None,
-            hovered_region_id: None,
+            hovered_region_ids: Default::default(),
             clicked_region: None,
             prev_drag_position: None,
             titlebar_height,
@@ -100,7 +100,7 @@ impl Presenter {
                     window_id: self.window_id,
                     view_id: *view_id,
                     titlebar_height: self.titlebar_height,
-                    hovered_region_id: self.hovered_region_id,
+                    hovered_region_ids: self.hovered_region_ids.clone(),
                     clicked_region_id: self.clicked_region.as_ref().map(MouseRegion::id),
                     refreshing: false,
                 })
@@ -118,7 +118,7 @@ impl Presenter {
                         window_id: self.window_id,
                         view_id: *view_id,
                         titlebar_height: self.titlebar_height,
-                        hovered_region_id: self.hovered_region_id,
+                        hovered_region_ids: self.hovered_region_ids.clone(),
                         clicked_region_id: self.clicked_region.as_ref().map(MouseRegion::id),
                         refreshing: true,
                     })
@@ -181,7 +181,7 @@ impl Presenter {
             asset_cache: &self.asset_cache,
             view_stack: Vec::new(),
             refreshing,
-            hovered_region_id: self.hovered_region_id,
+            hovered_region_ids: self.hovered_region_ids.clone(),
             clicked_region_id: self.clicked_region.as_ref().map(MouseRegion::id),
             titlebar_height: self.titlebar_height,
             app: cx,
@@ -198,14 +198,16 @@ impl Presenter {
             font_cache: &self.font_cache,
             text_layout_cache: &self.text_layout_cache,
             rendered_views: &mut self.rendered_views,
+            view_stack: Vec::new(),
             app: cx,
         }
     }
 
     pub fn dispatch_event(&mut self, event: Event, cx: &mut MutableAppContext) {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            let mut unhovered_region = None;
-            let mut hovered_region = None;
+            let mut invalidated_views = Vec::new();
+            let mut hovered_regions = Vec::new();
+            let mut unhovered_regions = Vec::new();
             let mut clicked_region = None;
             let mut dragged_region = None;
 
@@ -213,6 +215,7 @@ impl Presenter {
                 Event::LeftMouseDown { position, .. } => {
                     for region in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(position) {
+                            invalidated_views.push(region.view_id);
                             self.clicked_region = Some(region.clone());
                             self.prev_drag_position = Some(position);
                             break;
@@ -226,6 +229,7 @@ impl Presenter {
                 } => {
                     self.prev_drag_position.take();
                     if let Some(region) = self.clicked_region.take() {
+                        invalidated_views.push(region.view_id);
                         if region.bounds.contains_point(position) {
                             clicked_region = Some((region, position, click_count));
                         }
@@ -248,13 +252,18 @@ impl Presenter {
                         cx.platform().set_cursor_style(style_to_assign);
 
                         for region in self.mouse_regions.iter().rev() {
+                            let region_id = region.id();
                             if region.bounds.contains_point(position) {
-                                if hovered_region.is_none() {
-                                    hovered_region = Some(region.clone());
+                                if !self.hovered_region_ids.contains(&region_id) {
+                                    invalidated_views.push(region.view_id);
+                                    hovered_regions.push(region.clone());
+                                    self.hovered_region_ids.insert(region_id);
                                 }
                             } else {
-                                if self.hovered_region_id == Some(region.id()) {
-                                    unhovered_region = Some(region.clone())
+                                if self.hovered_region_ids.contains(&region_id) {
+                                    invalidated_views.push(region.view_id);
+                                    unhovered_regions.push(region.clone());
+                                    self.hovered_region_ids.remove(&region_id);
                                 }
                             }
                         }
@@ -279,10 +288,8 @@ impl Presenter {
                 _ => {}
             }
 
-            self.hovered_region_id = hovered_region.as_ref().map(MouseRegion::id);
-
             let mut event_cx = self.build_event_context(cx);
-            if let Some(unhovered_region) = unhovered_region {
+            for unhovered_region in unhovered_regions {
                 if let Some(hover_callback) = unhovered_region.hover {
                     event_cx.with_current_view(unhovered_region.view_id, |event_cx| {
                         hover_callback(false, event_cx);
@@ -290,7 +297,7 @@ impl Presenter {
                 }
             }
 
-            if let Some(hovered_region) = hovered_region {
+            for hovered_region in hovered_regions {
                 if let Some(hover_callback) = hovered_region.hover {
                     event_cx.with_current_view(hovered_region.view_id, |event_cx| {
                         hover_callback(true, event_cx);
@@ -316,7 +323,7 @@ impl Presenter {
 
             event_cx.dispatch_event(root_view_id, &event);
 
-            let invalidated_views = event_cx.invalidated_views;
+            invalidated_views.extend(event_cx.invalidated_views);
             let dispatch_directives = event_cx.dispatched_actions;
 
             for view_id in invalidated_views {
@@ -376,7 +383,7 @@ pub struct LayoutContext<'a> {
     pub app: &'a mut MutableAppContext,
     pub refreshing: bool,
     titlebar_height: f32,
-    hovered_region_id: Option<MouseRegionId>,
+    hovered_region_ids: HashSet<MouseRegionId>,
     clicked_region_id: Option<MouseRegionId>,
 }
 
@@ -405,7 +412,7 @@ impl<'a> LayoutContext<'a> {
                 view_id: handle.id(),
                 view_type: PhantomData,
                 titlebar_height: self.titlebar_height,
-                hovered_region_id: self.hovered_region_id,
+                hovered_region_ids: self.hovered_region_ids.clone(),
                 clicked_region_id: self.clicked_region_id,
                 refreshing: self.refreshing,
             };
@@ -469,6 +476,7 @@ impl<'a> UpgradeViewHandle for LayoutContext<'a> {
 
 pub struct PaintContext<'a> {
     rendered_views: &'a mut HashMap<usize, ElementBox>,
+    view_stack: Vec<usize>,
     pub scene: &'a mut Scene,
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
@@ -478,9 +486,15 @@ pub struct PaintContext<'a> {
 impl<'a> PaintContext<'a> {
     fn paint(&mut self, view_id: usize, origin: Vector2F, visible_bounds: RectF) {
         if let Some(mut tree) = self.rendered_views.remove(&view_id) {
+            self.view_stack.push(view_id);
             tree.paint(origin, visible_bounds, self);
             self.rendered_views.insert(view_id, tree);
+            self.view_stack.pop();
         }
+    }
+
+    pub fn current_view_id(&self) -> usize {
+        *self.view_stack.last().unwrap()
     }
 }
 

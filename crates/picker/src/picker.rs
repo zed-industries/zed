@@ -1,14 +1,14 @@
 use editor::Editor;
 use gpui::{
     elements::{
-        ChildView, Flex, Label, MouseEventHandler, MouseState, ParentElement, ScrollTarget,
-        UniformList, UniformListState,
+        ChildView, Flex, Label, MouseEventHandler, ParentElement, ScrollTarget, UniformList,
+        UniformListState,
     },
     geometry::vector::{vec2f, Vector2F},
     keymap,
     platform::CursorStyle,
-    AppContext, Axis, Element, ElementBox, Entity, MutableAppContext, RenderContext, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, Axis, Element, ElementBox, Entity, MouseState, MutableAppContext, RenderContext,
+    Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 use std::cmp;
@@ -34,7 +34,7 @@ pub trait PickerDelegate: View {
     fn render_match(
         &self,
         ix: usize,
-        state: &MouseState,
+        state: MouseState,
         selected: bool,
         cx: &AppContext,
     ) -> ElementBox;
@@ -92,7 +92,7 @@ impl<D: PickerDelegate> View for Picker<D> {
                                         .read(cx)
                                         .render_match(ix, state, ix == selected_ix, cx)
                                 })
-                                .on_mouse_down(move |cx| cx.dispatch_action(SelectIndex(ix)))
+                                .on_mouse_down(move |_, cx| cx.dispatch_action(SelectIndex(ix)))
                                 .with_cursor_style(CursorStyle::PointingHand)
                                 .boxed()
                             }));

@@ -839,7 +839,7 @@ impl ProjectPanel {
                 .with_padding_left(padding)
                 .boxed()
         })
-        .on_click(move |click_count, cx| {
+        .on_click(move |_, click_count, cx| {
             if kind == EntryKind::Dir {
                 cx.dispatch_action(ToggleExpanded(entry_id))
             } else {

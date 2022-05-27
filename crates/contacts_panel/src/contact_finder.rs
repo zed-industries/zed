@@ -1,7 +1,7 @@
 use client::{ContactRequestStatus, User, UserStore};
 use gpui::{
-    actions, elements::*, Entity, ModelHandle, MutableAppContext, RenderContext, Task, View,
-    ViewContext, ViewHandle,
+    actions, elements::*, Entity, ModelHandle, MouseState, MutableAppContext, RenderContext, Task,
+    View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
@@ -105,7 +105,7 @@ impl PickerDelegate for ContactFinder {
     fn render_match(
         &self,
         ix: usize,
-        mouse_state: &MouseState,
+        mouse_state: MouseState,
         selected: bool,
         cx: &gpui::AppContext,
     ) -> ElementBox {
