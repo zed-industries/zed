@@ -210,11 +210,16 @@ impl Scene {
             .collect()
     }
 
-    pub fn mouse_regions(&self) -> Vec<MouseRegion> {
-        self.layers()
-            .flat_map(|layer| &layer.mouse_regions)
-            .cloned()
-            .collect()
+    pub fn mouse_regions(&self) -> Vec<(MouseRegion, usize)> {
+        let mut regions = Vec::new();
+        for (stacking_depth, stacking_context) in self.stacking_contexts.iter().enumerate() {
+            for layer in &stacking_context.layers {
+                for mouse_region in &layer.mouse_regions {
+                    regions.push((mouse_region.clone(), stacking_depth));
+                }
+            }
+        }
+        regions
     }
 
     pub fn push_stacking_context(&mut self, clip_bounds: Option<RectF>) {

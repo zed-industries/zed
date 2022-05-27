@@ -28,7 +28,7 @@ pub struct Presenter {
     pub(crate) rendered_views: HashMap<usize, ElementBox>,
     parents: HashMap<usize, usize>,
     cursor_regions: Vec<CursorRegion>,
-    mouse_regions: Vec<MouseRegion>,
+    mouse_regions: Vec<(MouseRegion, usize)>,
     font_cache: Arc<FontCache>,
     text_layout_cache: TextLayoutCache,
     asset_cache: Arc<AssetCache>,
@@ -230,7 +230,7 @@ impl Presenter {
 
             match event {
                 Event::LeftMouseDown { position, .. } => {
-                    for region in self.mouse_regions.iter().rev() {
+                    for (region, _) in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(position) {
                             invalidated_views.push(region.view_id);
                             mouse_down_region = Some((region.clone(), position));
@@ -254,7 +254,7 @@ impl Presenter {
                     }
                 }
                 Event::RightMouseDown { position, .. } => {
-                    for region in self.mouse_regions.iter().rev() {
+                    for (region, _) in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(position) {
                             invalidated_views.push(region.view_id);
                             right_mouse_down_region = Some((region.clone(), position));
@@ -291,9 +291,13 @@ impl Presenter {
                         }
                         cx.platform().set_cursor_style(style_to_assign);
 
-                        for region in self.mouse_regions.iter().rev() {
+                        let mut hover_depth = None;
+                        for (region, depth) in self.mouse_regions.iter().rev() {
                             let region_id = region.id();
-                            if region.bounds.contains_point(position) {
+                            if region.bounds.contains_point(position)
+                                && hover_depth.map_or(true, |hover_depth| hover_depth == *depth)
+                            {
+                                hover_depth = Some(*depth);
                                 if !self.hovered_region_ids.contains(&region_id) {
                                     invalidated_views.push(region.view_id);
                                     hovered_regions.push(region.clone());

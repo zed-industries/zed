@@ -12,7 +12,7 @@ use gpui::{
     impl_internal_actions, keymap,
     platform::CursorStyle,
     AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MutableAppContext,
-    PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -38,7 +38,6 @@ pub struct ProjectPanel {
     edit_state: Option<EditState>,
     filename_editor: ViewHandle<Editor>,
     context_menu: ViewHandle<ContextMenu>,
-    handle: WeakViewHandle<Self>,
 }
 
 #[derive(Copy, Clone)]
@@ -174,7 +173,6 @@ impl ProjectPanel {
                 edit_state: None,
                 filename_editor,
                 context_menu: cx.add_view(|_| ContextMenu::new()),
-                handle: cx.weak_handle(),
             };
             this.update_visible_entries(None, cx);
             this
