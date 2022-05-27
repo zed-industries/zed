@@ -222,6 +222,7 @@ impl Presenter {
             let mut invalidated_views = Vec::new();
             let mut hovered_regions = Vec::new();
             let mut unhovered_regions = Vec::new();
+            let mut mouse_down_out_handlers = Vec::new();
             let mut mouse_down_region = None;
             let mut clicked_region = None;
             let mut right_mouse_down_region = None;
@@ -230,13 +231,18 @@ impl Presenter {
 
             match event {
                 Event::LeftMouseDown { position, .. } => {
+                    let mut hit = false;
                     for (region, _) in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(position) {
-                            invalidated_views.push(region.view_id);
-                            mouse_down_region = Some((region.clone(), position));
-                            self.clicked_region = Some(region.clone());
-                            self.prev_drag_position = Some(position);
-                            break;
+                            if !hit {
+                                hit = true;
+                                invalidated_views.push(region.view_id);
+                                mouse_down_region = Some((region.clone(), position));
+                                self.clicked_region = Some(region.clone());
+                                self.prev_drag_position = Some(position);
+                            }
+                        } else if let Some(handler) = region.mouse_down_out.clone() {
+                            mouse_down_out_handlers.push((handler, region.view_id, position));
                         }
                     }
                 }
@@ -254,12 +260,17 @@ impl Presenter {
                     }
                 }
                 Event::RightMouseDown { position, .. } => {
+                    let mut hit = false;
                     for (region, _) in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(position) {
-                            invalidated_views.push(region.view_id);
-                            right_mouse_down_region = Some((region.clone(), position));
-                            self.right_clicked_region = Some(region.clone());
-                            break;
+                            if !hit {
+                                hit = true;
+                                invalidated_views.push(region.view_id);
+                                right_mouse_down_region = Some((region.clone(), position));
+                                self.right_clicked_region = Some(region.clone());
+                            }
+                        } else if let Some(handler) = region.right_mouse_down_out.clone() {
+                            mouse_down_out_handlers.push((handler, region.view_id, position));
                         }
                     }
                 }
@@ -353,6 +364,10 @@ impl Presenter {
                         hover_callback(true, event_cx);
                     })
                 }
+            }
+
+            for (handler, view_id, position) in mouse_down_out_handlers {
+                event_cx.with_current_view(view_id, |event_cx| handler(position, event_cx))
             }
 
             if let Some((mouse_down_region, position)) = mouse_down_region {

@@ -18,11 +18,13 @@ pub struct MouseEventHandler {
     tag: TypeId,
     id: usize,
     cursor_style: Option<CursorStyle>,
-    mouse_down_handler: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
-    click_handler: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
-    right_mouse_down_handler: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
-    right_click_handler: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
-    drag_handler: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
+    mouse_down: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
+    click: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
+    right_mouse_down: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
+    right_click: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
+    mouse_down_out: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
+    right_mouse_down_out: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
+    drag: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
     padding: Padding,
 }
 
@@ -38,11 +40,13 @@ impl MouseEventHandler {
             tag: TypeId::of::<Tag>(),
             child: render_child(cx.mouse_state::<Tag>(id), cx),
             cursor_style: None,
-            mouse_down_handler: None,
-            click_handler: None,
-            right_mouse_down_handler: None,
-            right_click_handler: None,
-            drag_handler: None,
+            mouse_down: None,
+            click: None,
+            right_mouse_down: None,
+            right_click: None,
+            mouse_down_out: None,
+            right_mouse_down_out: None,
+            drag: None,
             padding: Default::default(),
         }
     }
@@ -56,7 +60,7 @@ impl MouseEventHandler {
         mut self,
         handler: impl Fn(Vector2F, &mut EventContext) + 'static,
     ) -> Self {
-        self.mouse_down_handler = Some(Rc::new(handler));
+        self.mouse_down = Some(Rc::new(handler));
         self
     }
 
@@ -64,7 +68,7 @@ impl MouseEventHandler {
         mut self,
         handler: impl Fn(Vector2F, usize, &mut EventContext) + 'static,
     ) -> Self {
-        self.click_handler = Some(Rc::new(handler));
+        self.click = Some(Rc::new(handler));
         self
     }
 
@@ -72,7 +76,7 @@ impl MouseEventHandler {
         mut self,
         handler: impl Fn(Vector2F, &mut EventContext) + 'static,
     ) -> Self {
-        self.right_mouse_down_handler = Some(Rc::new(handler));
+        self.right_mouse_down = Some(Rc::new(handler));
         self
     }
 
@@ -80,12 +84,12 @@ impl MouseEventHandler {
         mut self,
         handler: impl Fn(Vector2F, usize, &mut EventContext) + 'static,
     ) -> Self {
-        self.right_click_handler = Some(Rc::new(handler));
+        self.right_click = Some(Rc::new(handler));
         self
     }
 
     pub fn on_drag(mut self, handler: impl Fn(Vector2F, &mut EventContext) + 'static) -> Self {
-        self.drag_handler = Some(Rc::new(handler));
+        self.drag = Some(Rc::new(handler));
         self
     }
 
@@ -134,11 +138,13 @@ impl Element for MouseEventHandler {
             discriminant: Some((self.tag, self.id)),
             bounds: self.hit_bounds(bounds),
             hover: None,
-            click: self.click_handler.clone(),
-            mouse_down: self.mouse_down_handler.clone(),
-            right_click: self.right_click_handler.clone(),
-            right_mouse_down: self.right_mouse_down_handler.clone(),
-            drag: self.drag_handler.clone(),
+            click: self.click.clone(),
+            mouse_down: self.mouse_down.clone(),
+            right_click: self.right_click.clone(),
+            right_mouse_down: self.right_mouse_down.clone(),
+            mouse_down_out: self.mouse_down_out.clone(),
+            right_mouse_down_out: self.right_mouse_down_out.clone(),
+            drag: self.drag.clone(),
         });
 
         self.child.paint(bounds.origin(), visible_bounds, cx);
