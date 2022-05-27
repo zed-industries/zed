@@ -1,4 +1,4 @@
-use crate::{motion::Motion, state::Mode, Vim};
+use crate::{motion::Motion, state::Mode, utils::copy_selections_content, Vim};
 use editor::{char_kind, movement, Autoscroll};
 use gpui::{impl_actions, MutableAppContext, ViewContext};
 use serde::Deserialize;
@@ -27,6 +27,7 @@ pub fn change_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
                     motion.expand_selection(map, selection, false);
                 });
             });
+            copy_selections_content(editor, motion.linewise(), cx);
             editor.insert(&"", cx);
         });
     });
@@ -65,6 +66,7 @@ fn change_word(
                             });
                     });
                 });
+                copy_selections_content(editor, false, cx);
                 editor.insert(&"", cx);
             });
         });

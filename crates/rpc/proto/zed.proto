@@ -779,6 +779,7 @@ message SelectionSet {
     uint32 replica_id = 1;
     repeated Selection selections = 2;
     uint32 lamport_timestamp = 3;
+    bool line_mode = 4;
 }
 
 message Selection {
@@ -854,6 +855,7 @@ message Operation {
         uint32 replica_id = 1;
         uint32 lamport_timestamp = 2;
         repeated Selection selections = 3;
+        bool line_mode = 4;
     }
 
     message UpdateCompletionTriggers {

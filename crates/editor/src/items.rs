@@ -103,7 +103,11 @@ impl FollowableItem for Editor {
         } else {
             self.buffer.update(cx, |buffer, cx| {
                 if self.focused {
-                    buffer.set_active_selections(&self.selections.disjoint_anchors(), cx);
+                    buffer.set_active_selections(
+                        &self.selections.disjoint_anchors(),
+                        self.selections.line_mode,
+                        cx,
+                    );
                 }
             });
         }

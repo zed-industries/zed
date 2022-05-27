@@ -3,10 +3,10 @@ mod element;
 pub mod items;
 pub mod movement;
 mod multi_buffer;
-mod selections_collection;
+pub mod selections_collection;
 
-#[cfg(test)]
-mod test;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test;
 
 use aho_corasick::AhoCorasick;
 use anyhow::Result;
@@ -837,9 +837,9 @@ struct ActiveDiagnosticGroup {
 }
 
 #[derive(Serialize, Deserialize)]
-struct ClipboardSelection {
-    len: usize,
-    is_entire_line: bool,
+pub struct ClipboardSelection {
+    pub len: usize,
+    pub is_entire_line: bool,
 }
 
 #[derive(Debug)]
@@ -1023,6 +1023,10 @@ impl Editor {
 
     pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {
         self.buffer.read(cx).replica_id()
+    }
+
+    pub fn leader_replica_id(&self) -> Option<ReplicaId> {
+        self.leader_replica_id
     }
 
     pub fn buffer(&self) -> &ModelHandle<MultiBuffer> {
@@ -1319,7 +1323,11 @@ impl Editor {
     ) {
         if self.focused && self.leader_replica_id.is_none() {
             self.buffer.update(cx, |buffer, cx| {
-                buffer.set_active_selections(&self.selections.disjoint_anchors(), cx)
+                buffer.set_active_selections(
+                    &self.selections.disjoint_anchors(),
+                    self.selections.line_mode,
+                    cx,
+                )
             });
         }
 
@@ -1393,12 +1401,14 @@ impl Editor {
         let old_cursor_position = self.selections.newest_anchor().head();
         self.push_to_selection_history();
 
-        let result = self.selections.change_with(cx, change);
+        let (changed, result) = self.selections.change_with(cx, change);
 
-        if let Some(autoscroll) = autoscroll {
-            self.request_autoscroll(autoscroll, cx);
+        if changed {
+            if let Some(autoscroll) = autoscroll {
+                self.request_autoscroll(autoscroll, cx);
+            }
+            self.selections_did_change(true, &old_cursor_position, cx);
         }
-        self.selections_did_change(true, &old_cursor_position, cx);
 
         result
     }
@@ -1538,12 +1548,10 @@ impl Editor {
         }
 
         self.change_selections(Some(Autoscroll::Fit), cx, |s| {
-            if add {
-                if click_count > 1 {
-                    s.delete(newest_selection.id);
-                }
-            } else {
+            if !add {
                 s.clear_disjoint();
+            } else if click_count > 1 {
+                s.delete(newest_selection.id)
             }
 
             s.set_pending_range(start..end, mode);
@@ -1856,13 +1864,16 @@ impl Editor {
     pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         let text: Arc<str> = text.into();
         self.transact(cx, |this, cx| {
-            let old_selections = this.selections.all::<usize>(cx);
+            let old_selections = this.selections.all_adjusted(cx);
             let selection_anchors = this.buffer.update(cx, |buffer, cx| {
                 let anchors = {
                     let snapshot = buffer.read(cx);
                     old_selections
                         .iter()
-                        .map(|s| (s.id, s.goal, snapshot.anchor_after(s.end)))
+                        .map(|s| {
+                            let anchor = snapshot.anchor_after(s.end);
+                            s.map(|_| anchor.clone())
+                        })
                         .collect::<Vec<_>>()
                 };
                 buffer.edit_with_autoindent(
@@ -1874,25 +1885,8 @@ impl Editor {
                 anchors
             });
 
-            let selections = {
-                let snapshot = this.buffer.read(cx).read(cx);
-                selection_anchors
-                    .into_iter()
-                    .map(|(id, goal, position)| {
-                        let position = position.to_offset(&snapshot);
-                        Selection {
-                            id,
-                            start: position,
-                            end: position,
-                            goal,
-                            reversed: false,
-                        }
-                    })
-                    .collect()
-            };
-
             this.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                s.select(selections);
+                s.select_anchors(selection_anchors);
             })
         });
     }
@@ -2745,28 +2739,31 @@ impl Editor {
     pub fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections.all::<Point>(cx);
-        for selection in &mut selections {
-            if selection.is_empty() {
-                let old_head = selection.head();
-                let mut new_head =
-                    movement::left(&display_map, old_head.to_display_point(&display_map))
-                        .to_point(&display_map);
-                if let Some((buffer, line_buffer_range)) = display_map
-                    .buffer_snapshot
-                    .buffer_line_for_row(old_head.row)
-                {
-                    let indent_column = buffer.indent_column_for_line(line_buffer_range.start.row);
-                    let language_name = buffer.language().map(|language| language.name());
-                    let indent = cx.global::<Settings>().tab_size(language_name.as_deref());
-                    if old_head.column <= indent_column && old_head.column > 0 {
-                        new_head = cmp::min(
-                            new_head,
-                            Point::new(old_head.row, ((old_head.column - 1) / indent) * indent),
-                        );
+        if !self.selections.line_mode {
+            for selection in &mut selections {
+                if selection.is_empty() {
+                    let old_head = selection.head();
+                    let mut new_head =
+                        movement::left(&display_map, old_head.to_display_point(&display_map))
+                            .to_point(&display_map);
+                    if let Some((buffer, line_buffer_range)) = display_map
+                        .buffer_snapshot
+                        .buffer_line_for_row(old_head.row)
+                    {
+                        let indent_column =
+                            buffer.indent_column_for_line(line_buffer_range.start.row);
+                        let language_name = buffer.language().map(|language| language.name());
+                        let indent = cx.global::<Settings>().tab_size(language_name.as_deref());
+                        if old_head.column <= indent_column && old_head.column > 0 {
+                            new_head = cmp::min(
+                                new_head,
+                                Point::new(old_head.row, ((old_head.column - 1) / indent) * indent),
+                            );
+                        }
                     }
-                }
 
-                selection.set_head(new_head, SelectionGoal::None);
+                    selection.set_head(new_head, SelectionGoal::None);
+                }
             }
         }
 
@@ -2779,8 +2776,9 @@ impl Editor {
     pub fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
-                    if selection.is_empty() {
+                    if selection.is_empty() && !line_mode {
                         let cursor = movement::right(map, selection.head());
                         selection.set_head(cursor, SelectionGoal::None);
                     }
@@ -2803,7 +2801,7 @@ impl Editor {
             return;
         }
 
-        let mut selections = self.selections.all::<Point>(cx);
+        let mut selections = self.selections.all_adjusted(cx);
         if selections.iter().all(|s| s.is_empty()) {
             self.transact(cx, |this, cx| {
                 this.buffer.update(cx, |buffer, cx| {
@@ -3289,8 +3287,9 @@ impl Editor {
         self.transact(cx, |this, cx| {
             let edits = this.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 let mut edits: Vec<(Range<usize>, String)> = Default::default();
+                let line_mode = s.line_mode;
                 s.move_with(|display_map, selection| {
-                    if !selection.is_empty() {
+                    if !selection.is_empty() || line_mode {
                         return;
                     }
 
@@ -3343,7 +3342,7 @@ impl Editor {
         {
             let max_point = buffer.max_point();
             for selection in &mut selections {
-                let is_entire_line = selection.is_empty();
+                let is_entire_line = selection.is_empty() || self.selections.line_mode;
                 if is_entire_line {
                     selection.start = Point::new(selection.start.row, 0);
                     selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
@@ -3374,16 +3373,17 @@ impl Editor {
         let selections = self.selections.all::<Point>(cx);
         let buffer = self.buffer.read(cx).read(cx);
         let mut text = String::new();
+
         let mut clipboard_selections = Vec::with_capacity(selections.len());
         {
             let max_point = buffer.max_point();
             for selection in selections.iter() {
                 let mut start = selection.start;
                 let mut end = selection.end;
-                let is_entire_line = selection.is_empty();
+                let is_entire_line = selection.is_empty() || self.selections.line_mode;
                 if is_entire_line {
                     start = Point::new(start.row, 0);
-                    end = cmp::min(max_point, Point::new(start.row + 1, 0));
+                    end = cmp::min(max_point, Point::new(end.row + 1, 0));
                 }
                 let mut len = 0;
                 for chunk in buffer.text_for_range(start..end) {
@@ -3427,6 +3427,7 @@ impl Editor {
                         let snapshot = buffer.read(cx);
                         let mut start_offset = 0;
                         let mut edits = Vec::new();
+                        let line_mode = this.selections.line_mode;
                         for (ix, selection) in old_selections.iter().enumerate() {
                             let to_insert;
                             let entire_line;
@@ -3444,12 +3445,12 @@ impl Editor {
                             // clipboard text was written, then the entire line containing the
                             // selection was copied. If this selection is also currently empty,
                             // then paste the line before the current line of the buffer.
-                            let range = if selection.is_empty() && entire_line {
+                            let range = if selection.is_empty() && !line_mode && entire_line {
                                 let column = selection.start.to_point(&snapshot).column as usize;
                                 let line_start = selection.start - column;
                                 line_start..line_start
                             } else {
-                                selection.start..selection.end
+                                selection.range()
                             };
 
                             edits.push((range, to_insert));
@@ -3499,8 +3500,9 @@ impl Editor {
 
     pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
         self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                let cursor = if selection.is_empty() {
+                let cursor = if selection.is_empty() && !line_mode {
                     movement::left(map, selection.start)
                 } else {
                     selection.start
@@ -3518,8 +3520,9 @@ impl Editor {
 
     pub fn move_right(&mut self, _: &MoveRight, cx: &mut ViewContext<Self>) {
         self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                let cursor = if selection.is_empty() {
+                let cursor = if selection.is_empty() && !line_mode {
                     movement::right(map, selection.end)
                 } else {
                     selection.end
@@ -3552,8 +3555,9 @@ impl Editor {
         }
 
         self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                if !selection.is_empty() {
+                if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
                 let (cursor, goal) = movement::up(&map, selection.start, selection.goal, false);
@@ -3583,8 +3587,9 @@ impl Editor {
         }
 
         self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                if !selection.is_empty() {
+                if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
                 let (cursor, goal) = movement::down(&map, selection.end, selection.goal, false);
@@ -3666,8 +3671,9 @@ impl Editor {
     ) {
         self.transact(cx, |this, cx| {
             this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
-                    if selection.is_empty() {
+                    if selection.is_empty() && !line_mode {
                         let cursor = movement::previous_word_start(map, selection.head());
                         selection.set_head(cursor, SelectionGoal::None);
                     }
@@ -3684,8 +3690,9 @@ impl Editor {
     ) {
         self.transact(cx, |this, cx| {
             this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
-                    if selection.is_empty() {
+                    if selection.is_empty() && !line_mode {
                         let cursor = movement::previous_subword_start(map, selection.head());
                         selection.set_head(cursor, SelectionGoal::None);
                     }
@@ -3738,8 +3745,9 @@ impl Editor {
     pub fn delete_to_next_word_end(&mut self, _: &DeleteToNextWordEnd, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
-                    if selection.is_empty() {
+                    if selection.is_empty() && !line_mode {
                         let cursor = movement::next_word_end(map, selection.head());
                         selection.set_head(cursor, SelectionGoal::None);
                     }
@@ -4685,6 +4693,7 @@ impl Editor {
                     // Position the selection in the rename editor so that it matches the current selection.
                     this.show_local_selections = false;
                     let rename_editor = cx.add_view(|cx| {
+                        println!("Rename editor created.");
                         let mut editor = Editor::single_line(None, cx);
                         if let Some(old_highlight_id) = old_highlight_id {
                             editor.override_text_style =
@@ -5599,7 +5608,11 @@ impl View for Editor {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
                 if self.leader_replica_id.is_none() {
-                    buffer.set_active_selections(&self.selections.disjoint_anchors(), cx);
+                    buffer.set_active_selections(
+                        &self.selections.disjoint_anchors(),
+                        self.selections.line_mode,
+                        cx,
+                    );
                 }
             });
         }
@@ -6020,7 +6033,9 @@ pub fn styled_runs_for_code_label<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::test::{assert_text_with_selections, select_ranges};
+    use crate::test::{
+        assert_text_with_selections, build_editor, select_ranges, EditorTestContext,
+    };
 
     use super::*;
     use gpui::{
@@ -7292,117 +7307,62 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_indent_outdent(cx: &mut gpui::MutableAppContext) {
-        cx.set_global(Settings::test(cx));
-        let buffer = MultiBuffer::build_simple(
-            indoc! {"
-                  one two
-                three
-                 four"},
-            cx,
-        );
-        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
+    async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx).await;
 
-        view.update(cx, |view, cx| {
-            // two selections on the same line
-            select_ranges(
-                view,
-                indoc! {"
-                      [one] [two]
-                    three
-                     four"},
-                cx,
-            );
+        cx.set_state(indoc! {"
+              [one} [two}
+            three
+             four"});
+        cx.update_editor(|e, cx| e.tab(&Tab, cx));
+        cx.assert_editor_state(indoc! {"
+                [one} [two}
+            three
+             four"});
 
-            // indent from mid-tabstop to full tabstop
-            view.tab(&Tab, cx);
-            assert_text_with_selections(
-                view,
-                indoc! {"
-                        [one] [two]
-                    three
-                     four"},
-                cx,
-            );
+        cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+        cx.assert_editor_state(indoc! {"
+            [one} [two}
+            three
+             four"});
 
-            // outdent from 1 tabstop to 0 tabstops
-            view.tab_prev(&TabPrev, cx);
-            assert_text_with_selections(
-                view,
-                indoc! {"
-                    [one] [two]
-                    three
-                     four"},
-                cx,
-            );
+        // select across line ending
+        cx.set_state(indoc! {"
+            one two
+            t[hree
+            } four"});
+        cx.update_editor(|e, cx| e.tab(&Tab, cx));
+        cx.assert_editor_state(indoc! {"
+            one two
+                t[hree
+            } four"});
 
-            // select across line ending
-            select_ranges(
-                view,
-                indoc! {"
-                    one two
-                    t[hree
-                    ] four"},
-                cx,
-            );
+        cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+        cx.assert_editor_state(indoc! {"
+            one two
+            t[hree
+            } four"});
 
-            // indent and outdent affect only the preceding line
-            view.tab(&Tab, cx);
-            assert_text_with_selections(
-                view,
-                indoc! {"
-                    one two
-                        t[hree
-                    ] four"},
-                cx,
-            );
-            view.tab_prev(&TabPrev, cx);
-            assert_text_with_selections(
-                view,
-                indoc! {"
-                    one two
-                    t[hree
-                    ] four"},
-                cx,
-            );
+        // Ensure that indenting/outdenting works when the cursor is at column 0.
+        cx.set_state(indoc! {"
+            one two
+            |three
+                four"});
+        cx.update_editor(|e, cx| e.tab(&Tab, cx));
+        cx.assert_editor_state(indoc! {"
+            one two
+                |three
+                four"});
 
-            // Ensure that indenting/outdenting works when the cursor is at column 0.
-            select_ranges(
-                view,
-                indoc! {"
-                    one two
-                    []three
-                     four"},
-                cx,
-            );
-            view.tab(&Tab, cx);
-            assert_text_with_selections(
-                view,
-                indoc! {"
-                    one two
-                        []three
-                     four"},
-                cx,
-            );
-
-            select_ranges(
-                view,
-                indoc! {"
-                    one two
-                    []    three
-                     four"},
-                cx,
-            );
-            view.tab_prev(&TabPrev, cx);
-            assert_text_with_selections(
-                view,
-                indoc! {"
-                    one two
-                    []three
-                     four"},
-                cx,
-            );
-        });
+        cx.set_state(indoc! {"
+            one two
+            |    three
+             four"});
+        cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+        cx.assert_editor_state(indoc! {"
+            one two
+            |three
+             four"});
     }
 
     #[gpui::test]
@@ -7511,73 +7471,71 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_backspace(cx: &mut gpui::MutableAppContext) {
-        cx.set_global(Settings::test(cx));
-        let (_, view) = cx.add_window(Default::default(), |cx| {
-            build_editor(MultiBuffer::build_simple("", cx), cx)
-        });
+    async fn test_backspace(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx).await;
+        // Basic backspace
+        cx.set_state(indoc! {"
+            on|e two three
+            fou[r} five six
+            seven {eight nine
+            ]ten"});
+        cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
+        cx.assert_editor_state(indoc! {"
+            o|e two three
+            fou| five six
+            seven |ten"});
 
-        view.update(cx, |view, cx| {
-            view.set_text("one two three\nfour five six\nseven eight nine\nten\n", cx);
-            view.change_selections(None, cx, |s| {
-                s.select_display_ranges([
-                    // an empty selection - the preceding character is deleted
-                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                    // one character selected - it is deleted
-                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
-                    // a line suffix selected - it is deleted
-                    DisplayPoint::new(2, 6)..DisplayPoint::new(3, 0),
-                ])
-            });
-            view.backspace(&Backspace, cx);
-            assert_eq!(view.text(cx), "oe two three\nfou five six\nseven ten\n");
+        // Test backspace inside and around indents
+        cx.set_state(indoc! {"
+            zero
+                |one
+                    |two
+                | | |  three
+            |  |  four"});
+        cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
+        cx.assert_editor_state(indoc! {"
+            zero
+            |one
+                |two
+            |  three|  four"});
 
-            view.set_text("    one\n        two\n        three\n   four", cx);
-            view.change_selections(None, cx, |s| {
-                s.select_display_ranges([
-                    // cursors at the the end of leading indent - last indent is deleted
-                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
-                    DisplayPoint::new(1, 8)..DisplayPoint::new(1, 8),
-                    // cursors inside leading indent - overlapping indent deletions are coalesced
-                    DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4),
-                    DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
-                    DisplayPoint::new(2, 6)..DisplayPoint::new(2, 6),
-                    // cursor at the beginning of a line - preceding newline is deleted
-                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
-                    // selection inside leading indent - only the selected character is deleted
-                    DisplayPoint::new(3, 2)..DisplayPoint::new(3, 3),
-                ])
-            });
-            view.backspace(&Backspace, cx);
-            assert_eq!(view.text(cx), "one\n    two\n  three  four");
-        });
+        // Test backspace with line_mode set to true
+        cx.update_editor(|e, _| e.selections.line_mode = true);
+        cx.set_state(indoc! {"
+            The |quick |brown
+            fox jumps over
+            the lazy dog
+            |The qu[ick b}rown"});
+        cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
+        cx.assert_editor_state(indoc! {"
+            |fox jumps over
+            the lazy dog|"});
     }
 
     #[gpui::test]
-    fn test_delete(cx: &mut gpui::MutableAppContext) {
-        cx.set_global(Settings::test(cx));
-        let buffer =
-            MultiBuffer::build_simple("one two three\nfour five six\nseven eight nine\nten\n", cx);
-        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
+    async fn test_delete(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx).await;
 
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| {
-                s.select_display_ranges([
-                    // an empty selection - the following character is deleted
-                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                    // one character selected - it is deleted
-                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
-                    // a line suffix selected - it is deleted
-                    DisplayPoint::new(2, 6)..DisplayPoint::new(3, 0),
-                ])
-            });
-            view.delete(&Delete, cx);
-        });
+        cx.set_state(indoc! {"
+            on|e two three
+            fou[r} five six
+            seven {eight nine
+            ]ten"});
+        cx.update_editor(|e, cx| e.delete(&Delete, cx));
+        cx.assert_editor_state(indoc! {"
+            on| two three
+            fou| five six
+            seven |ten"});
 
-        assert_eq!(
-            buffer.read(cx).read(cx).text(),
-            "on two three\nfou five six\nseven ten\n"
-        );
+        // Test backspace with line_mode set to true
+        cx.update_editor(|e, _| e.selections.line_mode = true);
+        cx.set_state(indoc! {"
+            The |quick |brown
+            fox {jum]ps over
+            the lazy dog
+            |The qu[ick b}rown"});
+        cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
+        cx.assert_editor_state("|the lazy dog|");
     }
 
     #[gpui::test]
@@ -7885,131 +7843,79 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_clipboard(cx: &mut gpui::MutableAppContext) {
-        cx.set_global(Settings::test(cx));
-        let buffer = MultiBuffer::build_simple("one✅ two three four five six ", cx);
-        let view = cx
-            .add_window(Default::default(), |cx| build_editor(buffer.clone(), cx))
-            .1;
+    async fn test_clipboard(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx).await;
 
-        // Cut with three selections. Clipboard text is divided into three slices.
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| s.select_ranges(vec![0..7, 11..17, 22..27]));
-            view.cut(&Cut, cx);
-            assert_eq!(view.display_text(cx), "two four six ");
-        });
+        cx.set_state("[one✅ }two [three }four [five }six ");
+        cx.update_editor(|e, cx| e.cut(&Cut, cx));
+        cx.assert_editor_state("|two |four |six ");
 
         // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| s.select_ranges(vec![4..4, 9..9, 13..13]));
-            view.paste(&Paste, cx);
-            assert_eq!(view.display_text(cx), "two one✅ four three six five ");
-            assert_eq!(
-                view.selections.display_ranges(cx),
-                &[
-                    DisplayPoint::new(0, 11)..DisplayPoint::new(0, 11),
-                    DisplayPoint::new(0, 22)..DisplayPoint::new(0, 22),
-                    DisplayPoint::new(0, 31)..DisplayPoint::new(0, 31)
-                ]
-            );
-        });
+        cx.set_state("two |four |six |");
+        cx.update_editor(|e, cx| e.paste(&Paste, cx));
+        cx.assert_editor_state("two one✅ |four three |six five |");
 
         // Paste again but with only two cursors. Since the number of cursors doesn't
         // match the number of slices in the clipboard, the entire clipboard text
         // is pasted at each cursor.
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| s.select_ranges(vec![0..0, 31..31]));
-            view.handle_input(&Input("( ".into()), cx);
-            view.paste(&Paste, cx);
-            view.handle_input(&Input(") ".into()), cx);
-            assert_eq!(
-                view.display_text(cx),
-                "( one✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
-            );
+        cx.set_state("|two one✅ four three six five |");
+        cx.update_editor(|e, cx| {
+            e.handle_input(&Input("( ".into()), cx);
+            e.paste(&Paste, cx);
+            e.handle_input(&Input(") ".into()), cx);
         });
-
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| s.select_ranges(vec![0..0]));
-            view.handle_input(&Input("123\n4567\n89\n".into()), cx);
-            assert_eq!(
-                view.display_text(cx),
-                "123\n4567\n89\n( one✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
-            );
-        });
+        cx.assert_editor_state(indoc! {"
+            ( one✅ 
+            three 
+            five ) |two one✅ four three six five ( one✅ 
+            three 
+            five ) |"});
 
         // Cut with three selections, one of which is full-line.
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| s.select_display_ranges(
-                [
-                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2),
-                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-                    DisplayPoint::new(2, 0)..DisplayPoint::new(2, 1),
-                ],
-            ));
-            view.cut(&Cut, cx);
-            assert_eq!(
-                view.display_text(cx),
-                "13\n9\n( one✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
-            );
-        });
+        cx.set_state(indoc! {"
+            1[2}3
+            4|567
+            [8}9"});
+        cx.update_editor(|e, cx| e.cut(&Cut, cx));
+        cx.assert_editor_state(indoc! {"
+            1|3
+            |9"});
 
         // Paste with three selections, noticing how the copied selection that was full-line
         // gets inserted before the second cursor.
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| s.select_display_ranges(
-                [
-                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-                    DisplayPoint::new(2, 2)..DisplayPoint::new(2, 3),
-                ],
-            ));
-            view.paste(&Paste, cx);
-            assert_eq!(
-                view.display_text(cx),
-                "123\n4567\n9\n( 8ne✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
-            );
-            assert_eq!(
-                view.selections.display_ranges(cx),
-                &[
-                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-                    DisplayPoint::new(3, 3)..DisplayPoint::new(3, 3),
-                ]
-            );
-        });
+        cx.set_state(indoc! {"
+            1|3
+            9|
+            [o}ne"});
+        cx.update_editor(|e, cx| e.paste(&Paste, cx));
+        cx.assert_editor_state(indoc! {"
+            12|3
+            4567
+            9|
+            8|ne"});
 
         // Copy with a single cursor only, which writes the whole line into the clipboard.
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)])
-            });
-            view.copy(&Copy, cx);
-        });
+        cx.set_state(indoc! {"
+            The quick brown
+            fox ju|mps over
+            the lazy dog"});
+        cx.update_editor(|e, cx| e.copy(&Copy, cx));
+        cx.assert_clipboard_content(Some("fox jumps over\n"));
 
         // Paste with three selections, noticing how the copied full-line selection is inserted
         // before the empty selections but replaces the selection that is non-empty.
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| s.select_display_ranges(
-                [
-                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 2),
-                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-                ],
-            ));
-            view.paste(&Paste, cx);
-            assert_eq!(
-                view.display_text(cx),
-                "123\n123\n123\n67\n123\n9\n( 8ne✅ \nthree \nfive ) two one✅ four three six five ( one✅ \nthree \nfive ) "
-            );
-            assert_eq!(
-                view.selections.display_ranges(cx),
-                &[
-                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
-                    DisplayPoint::new(5, 1)..DisplayPoint::new(5, 1),
-                ]
-            );
-        });
+        cx.set_state(indoc! {"
+            T|he quick brown
+            [fo}x jumps over
+            t|he lazy dog"});
+        cx.update_editor(|e, cx| e.paste(&Paste, cx));
+        cx.assert_editor_state(indoc! {"
+            fox jumps over
+            T|he quick brown
+            fox jumps over
+            |x jumps over
+            fox jumps over
+            t|he lazy dog"});
     }
 
     #[gpui::test]
@@ -8748,8 +8654,10 @@ mod tests {
             fn assert(editor: &mut Editor, cx: &mut ViewContext<Editor>, marked_text_ranges: &str) {
                 let range_markers = ('<', '>');
                 let (expected_text, mut selection_ranges_lookup) =
-                    marked_text_ranges_by(marked_text_ranges, vec![range_markers.clone()]);
-                let selection_ranges = selection_ranges_lookup.remove(&range_markers).unwrap();
+                    marked_text_ranges_by(marked_text_ranges, vec![range_markers.clone().into()]);
+                let selection_ranges = selection_ranges_lookup
+                    .remove(&range_markers.into())
+                    .unwrap();
                 assert_eq!(editor.text(cx), expected_text);
                 assert_eq!(editor.selections.ranges::<usize>(cx), selection_ranges);
             }
@@ -9796,10 +9704,6 @@ mod tests {
     fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
         let point = DisplayPoint::new(row as u32, column as u32);
         point..point
-    }
-
-    fn build_editor(buffer: ModelHandle<MultiBuffer>, cx: &mut ViewContext<Editor>) -> Editor {
-        Editor::new(EditorMode::Full, buffer, None, None, None, cx)
     }
 
     fn assert_selection_ranges(
