@@ -5856,6 +5856,9 @@ mod tests {
             .update(cx_a, |workspace, cx| {
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
                 assert_ne!(*workspace.active_pane(), pane_a1);
+            });
+        workspace_a
+            .update(cx_a, |workspace, cx| {
                 let leader_id = *project_a.read(cx).collaborators().keys().next().unwrap();
                 workspace
                     .toggle_follow(&workspace::ToggleFollow(leader_id), cx)
@@ -5867,6 +5870,9 @@ mod tests {
             .update(cx_b, |workspace, cx| {
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
                 assert_ne!(*workspace.active_pane(), pane_b1);
+            });
+        workspace_b
+            .update(cx_b, |workspace, cx| {
                 let leader_id = *project_b.read(cx).collaborators().keys().next().unwrap();
                 workspace
                     .toggle_follow(&workspace::ToggleFollow(leader_id), cx)
