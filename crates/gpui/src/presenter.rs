@@ -33,6 +33,7 @@ pub struct Presenter {
     last_mouse_moved_event: Option<Event>,
     hovered_region_ids: HashSet<MouseRegionId>,
     clicked_region: Option<MouseRegion>,
+    right_clicked_region: Option<MouseRegion>,
     prev_drag_position: Option<Vector2F>,
     titlebar_height: f32,
 }
@@ -58,6 +59,7 @@ impl Presenter {
             last_mouse_moved_event: None,
             hovered_region_ids: Default::default(),
             clicked_region: None,
+            right_clicked_region: None,
             prev_drag_position: None,
             titlebar_height,
         }
@@ -100,6 +102,10 @@ impl Presenter {
                     titlebar_height: self.titlebar_height,
                     hovered_region_ids: self.hovered_region_ids.clone(),
                     clicked_region_id: self.clicked_region.as_ref().map(MouseRegion::id),
+                    right_clicked_region_id: self
+                        .right_clicked_region
+                        .as_ref()
+                        .map(MouseRegion::id),
                     refreshing: false,
                 })
                 .unwrap(),
@@ -118,6 +124,10 @@ impl Presenter {
                         titlebar_height: self.titlebar_height,
                         hovered_region_ids: self.hovered_region_ids.clone(),
                         clicked_region_id: self.clicked_region.as_ref().map(MouseRegion::id),
+                        right_clicked_region_id: self
+                            .right_clicked_region
+                            .as_ref()
+                            .map(MouseRegion::id),
                         refreshing: true,
                     })
                     .unwrap();
@@ -181,6 +191,7 @@ impl Presenter {
             refreshing,
             hovered_region_ids: self.hovered_region_ids.clone(),
             clicked_region_id: self.clicked_region.as_ref().map(MouseRegion::id),
+            right_clicked_region_id: self.right_clicked_region.as_ref().map(MouseRegion::id),
             titlebar_height: self.titlebar_height,
             app: cx,
         }
@@ -207,6 +218,7 @@ impl Presenter {
             let mut hovered_regions = Vec::new();
             let mut unhovered_regions = Vec::new();
             let mut clicked_region = None;
+            let mut right_clicked_region = None;
             let mut dragged_region = None;
 
             match event {
@@ -230,6 +242,27 @@ impl Presenter {
                         invalidated_views.push(region.view_id);
                         if region.bounds.contains_point(position) {
                             clicked_region = Some((region, position, click_count));
+                        }
+                    }
+                }
+                Event::RightMouseDown { position, .. } => {
+                    for region in self.mouse_regions.iter().rev() {
+                        if region.bounds.contains_point(position) {
+                            invalidated_views.push(region.view_id);
+                            self.right_clicked_region = Some(region.clone());
+                            break;
+                        }
+                    }
+                }
+                Event::RightMouseUp {
+                    position,
+                    click_count,
+                    ..
+                } => {
+                    if let Some(region) = self.right_clicked_region.take() {
+                        invalidated_views.push(region.view_id);
+                        if region.bounds.contains_point(position) {
+                            right_clicked_region = Some((region, position, click_count));
                         }
                     }
                 }
@@ -307,6 +340,14 @@ impl Presenter {
                 if let Some(click_callback) = clicked_region.click {
                     event_cx.with_current_view(clicked_region.view_id, |event_cx| {
                         click_callback(position, click_count, event_cx);
+                    })
+                }
+            }
+
+            if let Some((right_clicked_region, position, click_count)) = right_clicked_region {
+                if let Some(right_click_callback) = right_clicked_region.right_click {
+                    event_cx.with_current_view(right_clicked_region.view_id, |event_cx| {
+                        right_click_callback(position, click_count, event_cx);
                     })
                 }
             }
@@ -389,6 +430,7 @@ pub struct LayoutContext<'a> {
     titlebar_height: f32,
     hovered_region_ids: HashSet<MouseRegionId>,
     clicked_region_id: Option<MouseRegionId>,
+    right_clicked_region_id: Option<MouseRegionId>,
 }
 
 impl<'a> LayoutContext<'a> {
@@ -418,6 +460,7 @@ impl<'a> LayoutContext<'a> {
                 titlebar_height: self.titlebar_height,
                 hovered_region_ids: self.hovered_region_ids.clone(),
                 clicked_region_id: self.clicked_region_id,
+                right_clicked_region_id: self.right_clicked_region_id,
                 refreshing: self.refreshing,
             };
             f(view, &mut render_cx)

@@ -20,6 +20,8 @@ pub struct MouseEventHandler {
     cursor_style: Option<CursorStyle>,
     mouse_down_handler: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
     click_handler: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
+    right_mouse_down_handler: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
+    right_click_handler: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
     drag_handler: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
     padding: Padding,
 }
@@ -38,6 +40,8 @@ impl MouseEventHandler {
             cursor_style: None,
             mouse_down_handler: None,
             click_handler: None,
+            right_mouse_down_handler: None,
+            right_click_handler: None,
             drag_handler: None,
             padding: Default::default(),
         }
@@ -61,6 +65,22 @@ impl MouseEventHandler {
         handler: impl Fn(Vector2F, usize, &mut EventContext) + 'static,
     ) -> Self {
         self.click_handler = Some(Rc::new(handler));
+        self
+    }
+
+    pub fn on_right_mouse_down(
+        mut self,
+        handler: impl Fn(Vector2F, &mut EventContext) + 'static,
+    ) -> Self {
+        self.right_mouse_down_handler = Some(Rc::new(handler));
+        self
+    }
+
+    pub fn on_right_click(
+        mut self,
+        handler: impl Fn(Vector2F, usize, &mut EventContext) + 'static,
+    ) -> Self {
+        self.right_click_handler = Some(Rc::new(handler));
         self
     }
 
@@ -117,6 +137,8 @@ impl Element for MouseEventHandler {
             hover: None,
             click: self.click_handler.clone(),
             mouse_down: self.mouse_down_handler.clone(),
+            right_click: self.right_click_handler.clone(),
+            right_mouse_down: self.right_mouse_down_handler.clone(),
             drag: self.drag_handler.clone(),
         });
 

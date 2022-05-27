@@ -462,6 +462,7 @@ impl TestAppContext {
                 titlebar_height: 0.,
                 hovered_region_ids: Default::default(),
                 clicked_region_id: None,
+                right_clicked_region_id: None,
                 refreshing: false,
             };
             f(view, &mut render_cx)
@@ -1082,6 +1083,7 @@ impl MutableAppContext {
                         titlebar_height,
                         hovered_region_ids: Default::default(),
                         clicked_region_id: None,
+                        right_clicked_region_id: None,
                         refreshing: false,
                     })
                     .unwrap(),
@@ -3410,6 +3412,7 @@ pub struct RenderParams {
     pub titlebar_height: f32,
     pub hovered_region_ids: HashSet<MouseRegionId>,
     pub clicked_region_id: Option<MouseRegionId>,
+    pub right_clicked_region_id: Option<MouseRegionId>,
     pub refreshing: bool,
 }
 
@@ -3419,6 +3422,7 @@ pub struct RenderContext<'a, T: View> {
     pub(crate) view_type: PhantomData<T>,
     pub(crate) hovered_region_ids: HashSet<MouseRegionId>,
     pub(crate) clicked_region_id: Option<MouseRegionId>,
+    pub(crate) right_clicked_region_id: Option<MouseRegionId>,
     pub app: &'a mut MutableAppContext,
     pub titlebar_height: f32,
     pub refreshing: bool,
@@ -3428,6 +3432,7 @@ pub struct RenderContext<'a, T: View> {
 pub struct MouseState {
     pub hovered: bool,
     pub clicked: bool,
+    pub right_clicked: bool,
 }
 
 impl<'a, V: View> RenderContext<'a, V> {
@@ -3440,6 +3445,7 @@ impl<'a, V: View> RenderContext<'a, V> {
             titlebar_height: params.titlebar_height,
             hovered_region_ids: params.hovered_region_ids.clone(),
             clicked_region_id: params.clicked_region_id,
+            right_clicked_region_id: params.right_clicked_region_id,
             refreshing: params.refreshing,
         }
     }
@@ -3461,6 +3467,7 @@ impl<'a, V: View> RenderContext<'a, V> {
         MouseState {
             hovered: self.hovered_region_ids.contains(&region_id),
             clicked: self.clicked_region_id == Some(region_id),
+            right_clicked: self.right_clicked_region_id == Some(region_id),
         }
     }
 

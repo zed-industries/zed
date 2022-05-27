@@ -52,6 +52,8 @@ pub struct MouseRegion {
     pub hover: Option<Rc<dyn Fn(bool, &mut EventContext)>>,
     pub mouse_down: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
     pub click: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
+    pub right_mouse_down: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
+    pub right_click: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
     pub drag: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
 }
 
