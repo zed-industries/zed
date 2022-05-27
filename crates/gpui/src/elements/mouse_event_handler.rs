@@ -6,8 +6,8 @@ use crate::{
     },
     platform::CursorStyle,
     scene::CursorRegion,
-    DebugContext, Element, ElementBox, ElementStateContext, ElementStateHandle, Event,
-    EventContext, LayoutContext, PaintContext, SizeConstraint,
+    DebugContext, Element, ElementBox, ElementStateHandle, Event, EventContext, LayoutContext,
+    PaintContext, RenderContext, SizeConstraint, View,
 };
 use serde_json::json;
 
@@ -29,11 +29,11 @@ pub struct MouseState {
 }
 
 impl MouseEventHandler {
-    pub fn new<Tag, C, F>(id: usize, cx: &mut C, render_child: F) -> Self
+    pub fn new<Tag, V, F>(id: usize, cx: &mut RenderContext<V>, render_child: F) -> Self
     where
         Tag: 'static,
-        C: ElementStateContext,
-        F: FnOnce(&MouseState, &mut C) -> ElementBox,
+        V: View,
+        F: FnOnce(&MouseState, &mut RenderContext<V>) -> ElementBox,
     {
         let state_handle = cx.element_state::<Tag, _>(id);
         let child = state_handle.update(cx, |state, cx| render_child(state, cx));

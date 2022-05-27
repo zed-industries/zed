@@ -127,26 +127,6 @@ pub trait UpdateView {
         T: View;
 }
 
-pub trait ElementStateContext: DerefMut<Target = MutableAppContext> {
-    fn current_view_id(&self) -> usize;
-
-    fn element_state<Tag: 'static, T: 'static + Default>(
-        &mut self,
-        element_id: usize,
-    ) -> ElementStateHandle<T> {
-        let id = ElementStateId {
-            view_id: self.current_view_id(),
-            element_id,
-            tag: TypeId::of::<Tag>(),
-        };
-        self.cx
-            .element_states
-            .entry(id)
-            .or_insert_with(|| Box::new(T::default()));
-        ElementStateHandle::new(id, self.frame_count, &self.cx.ref_counts)
-    }
-}
-
 pub struct Menu<'a> {
     pub name: &'a str,
     pub items: Vec<MenuItem<'a>>,
@@ -3444,7 +3424,7 @@ pub struct MouseState {
     pub clicked: bool,
 }
 
-impl<'a, T: View> RenderContext<'a, T> {
+impl<'a, V: View> RenderContext<'a, V> {
     fn new(params: RenderParams, app: &'a mut MutableAppContext) -> Self {
         Self {
             app,
@@ -3458,7 +3438,7 @@ impl<'a, T: View> RenderContext<'a, T> {
         }
     }
 
-    pub fn handle(&self) -> WeakViewHandle<T> {
+    pub fn handle(&self) -> WeakViewHandle<V> {
         WeakViewHandle::new(self.window_id, self.view_id)
     }
 
@@ -3476,6 +3456,22 @@ impl<'a, T: View> RenderContext<'a, T> {
             hovered: self.hovered_region_id == region_id,
             clicked: self.clicked_region_id == region_id,
         }
+    }
+
+    pub fn element_state<Tag: 'static, T: 'static + Default>(
+        &mut self,
+        element_id: usize,
+    ) -> ElementStateHandle<T> {
+        let id = ElementStateId {
+            view_id: self.view_id(),
+            element_id,
+            tag: TypeId::of::<Tag>(),
+        };
+        self.cx
+            .element_states
+            .entry(id)
+            .or_insert_with(|| Box::new(T::default()));
+        ElementStateHandle::new(id, self.frame_count, &self.cx.ref_counts)
     }
 }
 
@@ -3518,12 +3514,6 @@ impl<V: View> UpdateModel for RenderContext<'_, V> {
 impl<V: View> ReadView for RenderContext<'_, V> {
     fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
         self.app.read_view(handle)
-    }
-}
-
-impl<V: View> ElementStateContext for RenderContext<'_, V> {
-    fn current_view_id(&self) -> usize {
-        self.view_id
     }
 }
 
@@ -3622,12 +3612,6 @@ impl<V: View> UpdateView for ViewContext<'_, V> {
         T: View,
     {
         self.app.update_view(handle, update)
-    }
-}
-
-impl<V: View> ElementStateContext for ViewContext<'_, V> {
-    fn current_view_id(&self) -> usize {
-        self.view_id
     }
 }
 

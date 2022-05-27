@@ -7,10 +7,10 @@ use crate::{
     platform::{CursorStyle, Event},
     scene::CursorRegion,
     text_layout::TextLayoutCache,
-    Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox,
-    ElementStateContext, Entity, FontSystem, ModelHandle, MouseRegion, MouseRegionId, ReadModel,
-    ReadView, RenderContext, RenderParams, Scene, UpgradeModelHandle, UpgradeViewHandle, View,
-    ViewHandle, WeakModelHandle, WeakViewHandle,
+    Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox, Entity,
+    FontSystem, ModelHandle, MouseRegion, MouseRegionId, ReadModel, ReadView, RenderContext,
+    RenderParams, Scene, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle,
+    WeakViewHandle,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
@@ -441,12 +441,6 @@ impl<'a> UpgradeViewHandle for LayoutContext<'a> {
 
     fn upgrade_any_view_handle(&self, handle: &crate::AnyWeakViewHandle) -> Option<AnyViewHandle> {
         self.app.upgrade_any_view_handle(handle)
-    }
-}
-
-impl<'a> ElementStateContext for LayoutContext<'a> {
-    fn current_view_id(&self) -> usize {
-        *self.view_stack.last().unwrap()
     }
 }
 

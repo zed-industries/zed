@@ -2,8 +2,8 @@ use std::{any::Any, f32::INFINITY};
 
 use crate::{
     json::{self, ToJson, Value},
-    Axis, DebugContext, Element, ElementBox, ElementStateContext, ElementStateHandle, Event,
-    EventContext, LayoutContext, PaintContext, SizeConstraint, Vector2FExt,
+    Axis, DebugContext, Element, ElementBox, ElementStateHandle, Event, EventContext,
+    LayoutContext, PaintContext, RenderContext, SizeConstraint, Vector2FExt, View,
 };
 use pathfinder_geometry::{
     rect::RectF,
@@ -40,15 +40,15 @@ impl Flex {
         Self::new(Axis::Vertical)
     }
 
-    pub fn scrollable<Tag, C>(
+    pub fn scrollable<Tag, V>(
         mut self,
         element_id: usize,
         scroll_to: Option<usize>,
-        cx: &mut C,
+        cx: &mut RenderContext<V>,
     ) -> Self
     where
         Tag: 'static,
-        C: ElementStateContext,
+        V: View,
     {
         let scroll_state = cx.element_state::<Tag, ScrollState>(element_id);
         scroll_state.update(cx, |scroll_state, _| scroll_state.scroll_to = scroll_to);
