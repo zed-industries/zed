@@ -386,8 +386,15 @@ impl platform::Window for Window {
     }
 
     fn activate(&self) {
+        unsafe { msg_send![self.0.borrow().native_window, makeKeyAndOrderFront: nil] }
+    }
+
+    fn set_title(&mut self, title: &str) {
         unsafe {
-            let _: () = msg_send![self.0.borrow().native_window, makeKeyAndOrderFront: nil];
+            let app = NSApplication::sharedApplication(nil);
+            let window = self.0.borrow().native_window;
+            let title = ns_string(title);
+            msg_send![app, changeWindowsItem:window title:title filename:false]
         }
     }
 }

@@ -542,12 +542,23 @@ impl TestAppContext {
         !prompts.is_empty()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    pub fn current_window_title(&self, window_id: usize) -> Option<String> {
+        let mut state = self.cx.borrow_mut();
+        let (_, window) = state
+            .presenters_and_platform_windows
+            .get_mut(&window_id)
+            .unwrap();
+        let test_window = window
+            .as_any_mut()
+            .downcast_mut::<platform::test::Window>()
+            .unwrap();
+        test_window.title.clone()
+    }
+
     pub fn leak_detector(&self) -> Arc<Mutex<LeakDetector>> {
         self.cx.borrow().leak_detector()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn assert_dropped(&self, handle: impl WeakHandle) {
         self.cx
             .borrow()
@@ -3263,6 +3274,13 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn blur(&mut self) {
         self.app.focus(self.window_id, None);
+    }
+
+    pub fn set_window_title(&mut self, title: &str) {
+        let window_id = self.window_id();
+        if let Some((_, window)) = self.presenters_and_platform_windows.get_mut(&window_id) {
+            window.set_title(title);
+        }
     }
 
     pub fn add_model<S, F>(&mut self, build_model: F) -> ModelHandle<S>
