@@ -1,4 +1,5 @@
 use clap::Parser;
+use collab::{Error, Result};
 use db::{Db, PostgresDb, UserId};
 use rand::prelude::*;
 use serde::Deserialize;
@@ -32,12 +33,12 @@ async fn main() {
         .expect("failed to connect to postgres database");
 
     let mut zed_users = vec![
-        "nathansobo".to_string(),
-        "maxbrunsfeld".to_string(),
-        "as-cii".to_string(),
-        "iamnbutler".to_string(),
-        "gibusu".to_string(),
-        "Kethku".to_string(),
+        ("nathansobo".to_string(), Some("nathan@zed.dev")),
+        ("maxbrunsfeld".to_string(), Some("max@zed.dev")),
+        ("as-cii".to_string(), Some("antonio@zed.dev")),
+        ("iamnbutler".to_string(), Some("nate@zed.dev")),
+        ("gibusu".to_string(), Some("greg@zed.dev")),
+        ("Kethku".to_string(), Some("keith@zed.dev")),
     ];
 
     if args.github_users {
@@ -61,7 +62,7 @@ async fn main() {
                 .json::<Vec<GitHubUser>>()
                 .await
                 .expect("failed to deserialize github user");
-            zed_users.extend(users.iter().map(|user| user.login.clone()));
+            zed_users.extend(users.iter().map(|user| (user.login.clone(), None)));
 
             if let Some(last_user) = users.last() {
                 last_user_id = Some(last_user.id);
@@ -72,7 +73,7 @@ async fn main() {
     }
 
     let mut zed_user_ids = Vec::<UserId>::new();
-    for zed_user in zed_users {
+    for (zed_user, email) in zed_users {
         if let Some(user) = db
             .get_user_by_github_login(&zed_user)
             .await
@@ -81,7 +82,7 @@ async fn main() {
             zed_user_ids.push(user.id);
         } else {
             zed_user_ids.push(
-                db.create_user(&zed_user, true)
+                db.create_user(&zed_user, email, true)
                     .await
                     .expect("failed to insert user"),
             );
