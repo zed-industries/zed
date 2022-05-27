@@ -289,9 +289,10 @@ impl SelectionsCollection {
         &mut self,
         cx: &mut MutableAppContext,
         change: impl FnOnce(&mut MutableSelectionsCollection) -> R,
-    ) -> R {
+    ) -> (bool, R) {
         let mut mutable_collection = MutableSelectionsCollection {
             collection: self,
+            selections_changed: false,
             cx,
         };
 
@@ -300,12 +301,13 @@ impl SelectionsCollection {
             !mutable_collection.disjoint.is_empty() || mutable_collection.pending.is_some(),
             "There must be at least one selection"
         );
-        result
+        (mutable_collection.selections_changed, result)
     }
 }
 
 pub struct MutableSelectionsCollection<'a> {
     collection: &'a mut SelectionsCollection,
+    selections_changed: bool,
     cx: &'a mut MutableAppContext,
 }
 
@@ -323,16 +325,26 @@ impl<'a> MutableSelectionsCollection<'a> {
     }
 
     pub fn delete(&mut self, selection_id: usize) {
+        let mut changed = false;
         self.collection.disjoint = self
             .disjoint
             .into_iter()
-            .filter(|selection| selection.id != selection_id)
+            .filter(|selection| {
+                let found = selection.id == selection_id;
+                changed |= found;
+                !found
+            })
             .cloned()
             .collect();
+
+        self.selections_changed |= changed;
     }
 
     pub fn clear_pending(&mut self) {
-        self.collection.pending = None;
+        if self.collection.pending.is_some() {
+            self.collection.pending = None;
+            self.selections_changed = true;
+        }
     }
 
     pub fn set_pending_range(&mut self, range: Range<Anchor>, mode: SelectMode) {
@@ -345,11 +357,13 @@ impl<'a> MutableSelectionsCollection<'a> {
                 goal: SelectionGoal::None,
             },
             mode,
-        })
+        });
+        self.selections_changed = true;
     }
 
     pub fn set_pending(&mut self, selection: Selection<Anchor>, mode: SelectMode) {
         self.collection.pending = Some(PendingSelection { selection, mode });
+        self.selections_changed = true;
     }
 
     pub fn try_cancel(&mut self) -> bool {
@@ -357,12 +371,14 @@ impl<'a> MutableSelectionsCollection<'a> {
             if self.disjoint.is_empty() {
                 self.collection.disjoint = Arc::from([pending.selection]);
             }
+            self.selections_changed = true;
             return true;
         }
 
         let mut oldest = self.oldest_anchor().clone();
         if self.count() > 1 {
             self.collection.disjoint = Arc::from([oldest]);
+            self.selections_changed = true;
             return true;
         }
 
@@ -371,25 +387,11 @@ impl<'a> MutableSelectionsCollection<'a> {
             oldest.start = head.clone();
             oldest.end = head;
             self.collection.disjoint = Arc::from([oldest]);
+            self.selections_changed = true;
             return true;
         }
 
         return false;
-    }
-
-    pub fn reset_biases(&mut self) {
-        let buffer = self.buffer.read(self.cx).snapshot(self.cx);
-        self.collection.disjoint = self
-            .collection
-            .disjoint
-            .into_iter()
-            .cloned()
-            .map(|selection| reset_biases(selection, &buffer))
-            .collect();
-
-        if let Some(pending) = self.collection.pending.as_mut() {
-            pending.selection = reset_biases(pending.selection.clone(), &buffer);
-        }
     }
 
     pub fn insert_range<T>(&mut self, range: Range<T>)
@@ -453,6 +455,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         }));
 
         self.collection.pending = None;
+        self.selections_changed = true;
     }
 
     pub fn select_anchors(&mut self, selections: Vec<Selection<Anchor>>) {
@@ -551,18 +554,27 @@ impl<'a> MutableSelectionsCollection<'a> {
         &mut self,
         mut move_selection: impl FnMut(&DisplaySnapshot, &mut Selection<DisplayPoint>),
     ) {
+        let mut changed = false;
         let display_map = self.display_map();
         let selections = self
             .all::<Point>(self.cx)
             .into_iter()
             .map(|selection| {
-                let mut selection = selection.map(|point| point.to_display_point(&display_map));
-                move_selection(&display_map, &mut selection);
-                selection.map(|display_point| display_point.to_point(&display_map))
+                let mut moved_selection =
+                    selection.map(|point| point.to_display_point(&display_map));
+                move_selection(&display_map, &mut moved_selection);
+                let moved_selection =
+                    moved_selection.map(|display_point| display_point.to_point(&display_map));
+                if selection != moved_selection {
+                    changed = true;
+                }
+                moved_selection
             })
             .collect();
 
-        self.select(selections)
+        if changed {
+            self.select(selections)
+        }
     }
 
     pub fn move_heads_with(
@@ -686,6 +698,7 @@ impl<'a> MutableSelectionsCollection<'a> {
             pending.selection.end = end;
         }
         self.collection.pending = pending;
+        self.selections_changed = true;
 
         selections_with_lost_position
     }
@@ -729,18 +742,4 @@ fn resolve<D: TextDimension + Ord + Sub<D, Output = D>>(
     buffer: &MultiBufferSnapshot,
 ) -> Selection<D> {
     selection.map(|p| p.summary::<D>(&buffer))
-}
-
-fn reset_biases(
-    mut selection: Selection<Anchor>,
-    buffer: &MultiBufferSnapshot,
-) -> Selection<Anchor> {
-    let end_bias = if selection.end.to_offset(buffer) > selection.start.to_offset(buffer) {
-        Bias::Left
-    } else {
-        Bias::Right
-    };
-    selection.start = buffer.anchor_after(selection.start);
-    selection.end = buffer.anchor_at(selection.end, end_bias);
-    selection
 }

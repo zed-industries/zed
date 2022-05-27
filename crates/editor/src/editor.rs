@@ -1401,12 +1401,14 @@ impl Editor {
         let old_cursor_position = self.selections.newest_anchor().head();
         self.push_to_selection_history();
 
-        let result = self.selections.change_with(cx, change);
+        let (changed, result) = self.selections.change_with(cx, change);
 
-        if let Some(autoscroll) = autoscroll {
-            self.request_autoscroll(autoscroll, cx);
+        if changed {
+            if let Some(autoscroll) = autoscroll {
+                self.request_autoscroll(autoscroll, cx);
+            }
+            self.selections_did_change(true, &old_cursor_position, cx);
         }
-        self.selections_did_change(true, &old_cursor_position, cx);
 
         result
     }
@@ -4691,6 +4693,7 @@ impl Editor {
                     // Position the selection in the rename editor so that it matches the current selection.
                     this.show_local_selections = false;
                     let rename_editor = cx.add_view(|cx| {
+                        println!("Rename editor created.");
                         let mut editor = Editor::single_line(None, cx);
                         if let Some(old_highlight_id) = old_highlight_id {
                             editor.override_text_style =

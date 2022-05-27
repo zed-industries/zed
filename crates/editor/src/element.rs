@@ -41,7 +41,7 @@ struct SelectionLayout {
 }
 
 impl SelectionLayout {
-    fn from<T: ToPoint + ToDisplayPoint + Clone>(
+    fn new<T: ToPoint + ToDisplayPoint + Clone>(
         selection: Selection<T>,
         line_mode: bool,
         map: &DisplaySnapshot,
@@ -977,7 +977,7 @@ impl Element for EditorElement {
                 remote_selections
                     .entry(replica_id)
                     .or_insert(Vec::new())
-                    .push(SelectionLayout::from(selection, line_mode, &display_map));
+                    .push(SelectionLayout::new(selection, line_mode, &display_map));
             }
             selections.extend(remote_selections);
 
@@ -1007,11 +1007,7 @@ impl Element for EditorElement {
                     local_selections
                         .into_iter()
                         .map(|selection| {
-                            SelectionLayout::from(
-                                selection,
-                                view.selections.line_mode,
-                                &display_map,
-                            )
+                            SelectionLayout::new(selection, view.selections.line_mode, &display_map)
                         })
                         .collect(),
                 ));
