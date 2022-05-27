@@ -139,6 +139,7 @@ pub struct Collaborator {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     ActiveEntryChanged(Option<ProjectEntryId>),
+    WorktreeAdded,
     WorktreeRemoved(WorktreeId),
     DiskBasedDiagnosticsStarted,
     DiskBasedDiagnosticsUpdated,
@@ -3637,6 +3638,7 @@ impl Project {
             self.worktrees
                 .push(WorktreeHandle::Weak(worktree.downgrade()));
         }
+        cx.emit(Event::WorktreeAdded);
         cx.notify();
     }
 
