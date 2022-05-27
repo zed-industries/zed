@@ -230,6 +230,10 @@ pub fn menus() -> Vec<Menu<'static>> {
             ],
         },
         Menu {
+            name: "Window",
+            items: vec![MenuItem::Separator],
+        },
+        Menu {
             name: "Help",
             items: vec![MenuItem::Action {
                 name: "Command Palette",

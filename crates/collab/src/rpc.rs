@@ -2234,7 +2234,6 @@ mod tests {
             .read_with(cx_a, |project, _| project.next_remote_id())
             .await;
 
-        let project_a_events = Rc::new(RefCell::new(Vec::new()));
         let user_b = client_a
             .user_store
             .update(cx_a, |store, cx| {
@@ -2242,15 +2241,6 @@ mod tests {
             })
             .await
             .unwrap();
-        project_a.update(cx_a, {
-            let project_a_events = project_a_events.clone();
-            move |_, cx| {
-                cx.subscribe(&cx.handle(), move |_, _, event, _| {
-                    project_a_events.borrow_mut().push(event.clone());
-                })
-                .detach();
-            }
-        });
 
         let (worktree_a, _) = project_a
             .update(cx_a, |p, cx| {
@@ -2261,6 +2251,17 @@ mod tests {
         worktree_a
             .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
+
+        let project_a_events = Rc::new(RefCell::new(Vec::new()));
+        project_a.update(cx_a, {
+            let project_a_events = project_a_events.clone();
+            move |_, cx| {
+                cx.subscribe(&cx.handle(), move |_, _, event, _| {
+                    project_a_events.borrow_mut().push(event.clone());
+                })
+                .detach();
+            }
+        });
 
         // Request to join that project as client B
         let project_b = cx_b.spawn(|mut cx| {
@@ -5855,6 +5856,9 @@ mod tests {
             .update(cx_a, |workspace, cx| {
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
                 assert_ne!(*workspace.active_pane(), pane_a1);
+            });
+        workspace_a
+            .update(cx_a, |workspace, cx| {
                 let leader_id = *project_a.read(cx).collaborators().keys().next().unwrap();
                 workspace
                     .toggle_follow(&workspace::ToggleFollow(leader_id), cx)
@@ -5866,6 +5870,9 @@ mod tests {
             .update(cx_b, |workspace, cx| {
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
                 assert_ne!(*workspace.active_pane(), pane_b1);
+            });
+        workspace_b
+            .update(cx_b, |workspace, cx| {
                 let leader_id = *project_b.read(cx).collaborators().keys().next().unwrap();
                 workspace
                     .toggle_follow(&workspace::ToggleFollow(leader_id), cx)
