@@ -592,11 +592,11 @@ impl ContextMenu {
         &self,
         cursor_position: DisplayPoint,
         style: EditorStyle,
-        cx: &AppContext,
+        cx: &mut RenderContext<Editor>,
     ) -> (DisplayPoint, ElementBox) {
         match self {
             ContextMenu::Completions(menu) => (cursor_position, menu.render(style, cx)),
-            ContextMenu::CodeActions(menu) => menu.render(cursor_position, style),
+            ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, cx),
         }
     }
 }
@@ -633,54 +633,62 @@ impl CompletionsMenu {
         !self.matches.is_empty()
     }
 
-    fn render(&self, style: EditorStyle, _: &AppContext) -> ElementBox {
+    fn render(&self, style: EditorStyle, cx: &mut RenderContext<Editor>) -> ElementBox {
         enum CompletionTag {}
 
         let completions = self.completions.clone();
         let matches = self.matches.clone();
         let selected_item = self.selected_item;
         let container_style = style.autocomplete.container;
-        UniformList::new(self.list.clone(), matches.len(), move |range, items, cx| {
-            let start_ix = range.start;
-            for (ix, mat) in matches[range].iter().enumerate() {
-                let completion = &completions[mat.candidate_id];
-                let item_ix = start_ix + ix;
-                items.push(
-                    MouseEventHandler::new::<CompletionTag, _, _>(
-                        mat.candidate_id,
-                        cx,
-                        |state, _| {
-                            let item_style = if item_ix == selected_item {
-                                style.autocomplete.selected_item
-                            } else if state.hovered {
-                                style.autocomplete.hovered_item
-                            } else {
-                                style.autocomplete.item
-                            };
+        UniformList::new(
+            self.list.clone(),
+            matches.len(),
+            cx,
+            move |_, range, items, cx| {
+                let start_ix = range.start;
+                for (ix, mat) in matches[range].iter().enumerate() {
+                    let completion = &completions[mat.candidate_id];
+                    let item_ix = start_ix + ix;
+                    items.push(
+                        MouseEventHandler::new::<CompletionTag, _, _>(
+                            mat.candidate_id,
+                            cx,
+                            |state, _| {
+                                let item_style = if item_ix == selected_item {
+                                    style.autocomplete.selected_item
+                                } else if state.hovered {
+                                    style.autocomplete.hovered_item
+                                } else {
+                                    style.autocomplete.item
+                                };
 
-                            Text::new(completion.label.text.clone(), style.text.clone())
-                                .with_soft_wrap(false)
-                                .with_highlights(combine_syntax_and_fuzzy_match_highlights(
-                                    &completion.label.text,
-                                    style.text.color.into(),
-                                    styled_runs_for_code_label(&completion.label, &style.syntax),
-                                    &mat.positions,
-                                ))
-                                .contained()
-                                .with_style(item_style)
-                                .boxed()
-                        },
-                    )
-                    .with_cursor_style(CursorStyle::PointingHand)
-                    .on_mouse_down(move |cx| {
-                        cx.dispatch_action(ConfirmCompletion {
-                            item_ix: Some(item_ix),
-                        });
-                    })
-                    .boxed(),
-                );
-            }
-        })
+                                Text::new(completion.label.text.clone(), style.text.clone())
+                                    .with_soft_wrap(false)
+                                    .with_highlights(combine_syntax_and_fuzzy_match_highlights(
+                                        &completion.label.text,
+                                        style.text.color.into(),
+                                        styled_runs_for_code_label(
+                                            &completion.label,
+                                            &style.syntax,
+                                        ),
+                                        &mat.positions,
+                                    ))
+                                    .contained()
+                                    .with_style(item_style)
+                                    .boxed()
+                            },
+                        )
+                        .with_cursor_style(CursorStyle::PointingHand)
+                        .on_mouse_down(move |cx| {
+                            cx.dispatch_action(ConfirmCompletion {
+                                item_ix: Some(item_ix),
+                            });
+                        })
+                        .boxed(),
+                    );
+                }
+            },
+        )
         .with_width_from_item(
             self.matches
                 .iter()
@@ -772,14 +780,18 @@ impl CodeActionsMenu {
         &self,
         mut cursor_position: DisplayPoint,
         style: EditorStyle,
+        cx: &mut RenderContext<Editor>,
     ) -> (DisplayPoint, ElementBox) {
         enum ActionTag {}
 
         let container_style = style.autocomplete.container;
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
-        let element =
-            UniformList::new(self.list.clone(), actions.len(), move |range, items, cx| {
+        let element = UniformList::new(
+            self.list.clone(),
+            actions.len(),
+            cx,
+            move |_, range, items, cx| {
                 let start_ix = range.start;
                 for (ix, action) in actions[range].iter().enumerate() {
                     let item_ix = start_ix + ix;
@@ -808,17 +820,18 @@ impl CodeActionsMenu {
                         .boxed(),
                     );
                 }
-            })
-            .with_width_from_item(
-                self.actions
-                    .iter()
-                    .enumerate()
-                    .max_by_key(|(_, action)| action.lsp_action.title.chars().count())
-                    .map(|(ix, _)| ix),
-            )
-            .contained()
-            .with_style(container_style)
-            .boxed();
+            },
+        )
+        .with_width_from_item(
+            self.actions
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, action)| action.lsp_action.title.chars().count())
+                .map(|(ix, _)| ix),
+        )
+        .contained()
+        .with_style(container_style)
+        .boxed();
 
         if self.deployed_from_indicator {
             *cursor_position.column_mut() = 0;
@@ -2578,7 +2591,7 @@ impl Editor {
     pub fn render_code_actions_indicator(
         &self,
         style: &EditorStyle,
-        cx: &mut ViewContext<Self>,
+        cx: &mut RenderContext<Self>,
     ) -> Option<ElementBox> {
         if self.available_code_actions.is_some() {
             enum Tag {}
@@ -2612,7 +2625,7 @@ impl Editor {
         &self,
         cursor_position: DisplayPoint,
         style: EditorStyle,
-        cx: &AppContext,
+        cx: &mut RenderContext<Editor>,
     ) -> Option<(DisplayPoint, ElementBox)> {
         self.context_menu
             .as_ref()

@@ -1024,8 +1024,6 @@ impl Element for EditorElement {
             max_row.saturating_sub(1) as f32,
         );
 
-        let mut context_menu = None;
-        let mut code_actions_indicator = None;
         self.update_view(cx.app, |view, cx| {
             let clamped = view.clamp_scroll_left(scroll_max.x());
             let autoscrolled;
@@ -1045,7 +1043,11 @@ impl Element for EditorElement {
             if clamped || autoscrolled {
                 snapshot = view.snapshot(cx);
             }
+        });
 
+        let mut context_menu = None;
+        let mut code_actions_indicator = None;
+        cx.render(&self.view.upgrade(cx).unwrap(), |view, cx| {
             let newest_selection_head = view
                 .selections
                 .newest::<usize>(cx)

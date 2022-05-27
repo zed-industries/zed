@@ -54,6 +54,7 @@ impl<D: PickerDelegate> View for Picker<D> {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> gpui::ElementBox {
         let settings = cx.global::<Settings>();
+        let container_style = settings.theme.picker.container;
         let delegate = self.delegate.clone();
         let match_count = if let Some(delegate) = delegate.upgrade(cx.app) {
             delegate.read(cx).match_count()
@@ -80,8 +81,9 @@ impl<D: PickerDelegate> View for Picker<D> {
                     UniformList::new(
                         self.list_state.clone(),
                         match_count,
-                        move |mut range, items, cx| {
-                            let delegate = delegate.upgrade(cx).unwrap();
+                        cx,
+                        move |this, mut range, items, cx| {
+                            let delegate = this.delegate.upgrade(cx).unwrap();
                             let selected_ix = delegate.read(cx).selected_index();
                             range.end = cmp::min(range.end, delegate.read(cx).match_count());
                             items.extend(range.map(move |ix| {
@@ -103,7 +105,7 @@ impl<D: PickerDelegate> View for Picker<D> {
                 .boxed(),
             )
             .contained()
-            .with_style(settings.theme.picker.container)
+            .with_style(container_style)
             .constrained()
             .with_max_width(self.max_size.x())
             .with_max_height(self.max_size.y())

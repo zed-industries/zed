@@ -5,7 +5,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{self, json},
-    ElementBox,
+    ElementBox, RenderContext, View,
 };
 use json::ToJson;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -41,27 +41,40 @@ pub struct LayoutState {
     items: Vec<ElementBox>,
 }
 
-pub struct UniformList<F>
-where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut LayoutContext),
-{
+pub struct UniformList {
     state: UniformListState,
     item_count: usize,
-    append_items: F,
+    append_items: Box<dyn Fn(Range<usize>, &mut Vec<ElementBox>, &mut LayoutContext) -> bool>,
     padding_top: f32,
     padding_bottom: f32,
     get_width_from_item: Option<usize>,
 }
 
-impl<F> UniformList<F>
-where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut LayoutContext),
-{
-    pub fn new(state: UniformListState, item_count: usize, append_items: F) -> Self {
+impl UniformList {
+    pub fn new<F, V>(
+        state: UniformListState,
+        item_count: usize,
+        cx: &mut RenderContext<V>,
+        append_items: F,
+    ) -> Self
+    where
+        V: View,
+        F: 'static + Fn(&mut V, Range<usize>, &mut Vec<ElementBox>, &mut RenderContext<V>),
+    {
+        let handle = cx.handle();
         Self {
             state,
             item_count,
-            append_items,
+            append_items: Box::new(move |range, items, cx| {
+                if let Some(handle) = handle.upgrade(cx) {
+                    cx.render(&handle, |view, cx| {
+                        append_items(view, range, items, cx);
+                    });
+                    true
+                } else {
+                    false
+                }
+            }),
             padding_top: 0.,
             padding_bottom: 0.,
             get_width_from_item: None,
@@ -144,10 +157,7 @@ where
     }
 }
 
-impl<F> Element for UniformList<F>
-where
-    F: Fn(Range<usize>, &mut Vec<ElementBox>, &mut LayoutContext),
-{
+impl Element for UniformList {
     type LayoutState = LayoutState;
     type PaintState = ();
 

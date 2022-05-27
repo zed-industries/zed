@@ -9,13 +9,14 @@ use crate::{
     text_layout::TextLayoutCache,
     Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox,
     ElementStateContext, Entity, FontSystem, ModelHandle, MouseRegion, MouseRegionId, ReadModel,
-    ReadView, RenderParams, Scene, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle,
-    WeakModelHandle, WeakViewHandle,
+    ReadView, RenderContext, RenderParams, Scene, UpgradeModelHandle, UpgradeViewHandle, View,
+    ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
+    marker::PhantomData,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
@@ -172,12 +173,15 @@ impl Presenter {
         LayoutContext {
             rendered_views: &mut self.rendered_views,
             parents: &mut self.parents,
-            refreshing,
             font_cache: &self.font_cache,
             font_system: cx.platform().fonts(),
             text_layout_cache: &self.text_layout_cache,
             asset_cache: &self.asset_cache,
             view_stack: Vec::new(),
+            refreshing,
+            hovered_region_id: self.hovered_region_id,
+            clicked_region_id: self.clicked_region.as_ref().map(MouseRegion::id),
+            titlebar_height: self.titlebar_height,
             app: cx,
         }
     }
@@ -342,12 +346,15 @@ pub struct LayoutContext<'a> {
     rendered_views: &'a mut HashMap<usize, ElementBox>,
     parents: &'a mut HashMap<usize, usize>,
     view_stack: Vec<usize>,
-    pub refreshing: bool,
     pub font_cache: &'a Arc<FontCache>,
     pub font_system: Arc<dyn FontSystem>,
     pub text_layout_cache: &'a TextLayoutCache,
     pub asset_cache: &'a AssetCache,
     pub app: &'a mut MutableAppContext,
+    pub refreshing: bool,
+    titlebar_height: f32,
+    hovered_region_id: Option<MouseRegionId>,
+    clicked_region_id: Option<MouseRegionId>,
 }
 
 impl<'a> LayoutContext<'a> {
@@ -361,6 +368,26 @@ impl<'a> LayoutContext<'a> {
         self.rendered_views.insert(view_id, rendered_view);
         self.view_stack.pop();
         size
+    }
+
+    pub fn render<F, V, T>(&mut self, handle: &ViewHandle<V>, f: F) -> T
+    where
+        F: FnOnce(&mut V, &mut RenderContext<V>) -> T,
+        V: View,
+    {
+        handle.update(self.app, |view, cx| {
+            let mut render_cx = RenderContext {
+                app: cx,
+                window_id: handle.window_id(),
+                view_id: handle.id(),
+                view_type: PhantomData,
+                titlebar_height: self.titlebar_height,
+                hovered_region_id: self.hovered_region_id,
+                clicked_region_id: self.clicked_region_id,
+                refreshing: self.refreshing,
+            };
+            f(view, &mut render_cx)
+        })
     }
 }
 

@@ -468,6 +468,26 @@ impl TestAppContext {
         result
     }
 
+    pub fn render<F, V, T>(&mut self, handle: &ViewHandle<V>, f: F) -> T
+    where
+        F: FnOnce(&mut V, &mut RenderContext<V>) -> T,
+        V: View,
+    {
+        handle.update(&mut *self.cx.borrow_mut(), |view, cx| {
+            let mut render_cx = RenderContext {
+                app: cx,
+                window_id: handle.window_id(),
+                view_id: handle.id(),
+                view_type: PhantomData,
+                titlebar_height: 0.,
+                hovered_region_id: None,
+                clicked_region_id: None,
+                refreshing: false,
+            };
+            f(view, &mut render_cx)
+        })
+    }
+
     pub fn to_async(&self) -> AsyncAppContext {
         AsyncAppContext(self.cx.clone())
     }
@@ -1754,27 +1774,6 @@ impl MutableAppContext {
             self.assets.clone(),
             self,
         )
-    }
-
-    pub fn build_render_context<V: View>(
-        &mut self,
-        window_id: usize,
-        view_id: usize,
-        titlebar_height: f32,
-        hovered_region_id: Option<MouseRegionId>,
-        clicked_region_id: Option<MouseRegionId>,
-        refreshing: bool,
-    ) -> RenderContext<V> {
-        RenderContext {
-            app: self,
-            window_id,
-            view_id,
-            view_type: PhantomData,
-            titlebar_height,
-            hovered_region_id,
-            clicked_region_id,
-            refreshing,
-        }
     }
 
     pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
@@ -3429,13 +3428,13 @@ pub struct RenderParams {
 }
 
 pub struct RenderContext<'a, T: View> {
+    pub(crate) window_id: usize,
+    pub(crate) view_id: usize,
+    pub(crate) view_type: PhantomData<T>,
+    pub(crate) hovered_region_id: Option<MouseRegionId>,
+    pub(crate) clicked_region_id: Option<MouseRegionId>,
     pub app: &'a mut MutableAppContext,
-    window_id: usize,
-    view_id: usize,
-    view_type: PhantomData<T>,
     pub titlebar_height: f32,
-    hovered_region_id: Option<MouseRegionId>,
-    clicked_region_id: Option<MouseRegionId>,
     pub refreshing: bool,
 }
 
@@ -3578,6 +3577,16 @@ impl<V> UpgradeModelHandle for ViewContext<'_, V> {
 }
 
 impl<V> UpgradeViewHandle for ViewContext<'_, V> {
+    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
+        self.cx.upgrade_view_handle(handle)
+    }
+
+    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
+        self.cx.upgrade_any_view_handle(handle)
+    }
+}
+
+impl<V: View> UpgradeViewHandle for RenderContext<'_, V> {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
         self.cx.upgrade_view_handle(handle)
     }
