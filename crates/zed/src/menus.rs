@@ -164,6 +164,10 @@ pub fn menus() -> Vec<Menu<'static>> {
                     name: "Zoom Out",
                     action: Box::new(super::DecreaseBufferFontSize),
                 },
+                MenuItem::Action {
+                    name: "Reset Zoom",
+                    action: Box::new(super::ResetBufferFontSize),
+                },
                 MenuItem::Separator,
                 MenuItem::Action {
                     name: "Project Browser",

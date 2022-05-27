@@ -43,6 +43,7 @@ actions!(
         OpenKeymap,
         IncreaseBufferFontSize,
         DecreaseBufferFontSize,
+        ResetBufferFontSize,
         InstallCommandLineInterface,
     ]
 );
@@ -69,6 +70,12 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_global_action(move |_: &DecreaseBufferFontSize, cx| {
         cx.update_global::<Settings, _, _>(|settings, cx| {
             settings.buffer_font_size = (settings.buffer_font_size - 1.0).max(MIN_FONT_SIZE);
+            cx.refresh_windows();
+        });
+    });
+    cx.add_global_action(move |_: &ResetBufferFontSize, cx| {
+        cx.update_global::<Settings, _, _>(|settings, cx| {
+            settings.buffer_font_size = settings.default_buffer_font_size;
             cx.refresh_windows();
         });
     });
