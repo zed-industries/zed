@@ -169,7 +169,9 @@ impl ContextMenu {
             self.items = items.collect();
             self.position = position;
             self.visible = true;
-            self.previously_focused_view_id = cx.focused_view_id(cx.window_id());
+            if !cx.is_self_focused() {
+                self.previously_focused_view_id = cx.focused_view_id(cx.window_id());
+            }
             cx.focus_self();
         } else {
             self.visible = false;

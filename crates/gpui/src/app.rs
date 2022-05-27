@@ -3255,6 +3255,10 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.app.focus(self.window_id, Some(self.view_id));
     }
 
+    pub fn is_self_focused(&self) -> bool {
+        self.app.focused_view_id(self.window_id) == Some(self.view_id)
+    }
+
     pub fn blur(&mut self) {
         self.app.focus(self.window_id, None);
     }
