@@ -4,6 +4,9 @@ mod db;
 mod env;
 mod rpc;
 
+#[cfg(test)]
+mod integration_tests;
+
 use axum::{body::Body, Router};
 use collab::{Error, Result};
 use db::{Db, PostgresDb};
