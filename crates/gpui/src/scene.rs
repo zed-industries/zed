@@ -20,6 +20,7 @@ pub struct Scene {
 struct StackingContext {
     layers: Vec<Layer>,
     active_layer_stack: Vec<usize>,
+    depth: usize,
 }
 
 #[derive(Default)]
@@ -187,7 +188,7 @@ pub struct Image {
 
 impl Scene {
     pub fn new(scale_factor: f32) -> Self {
-        let stacking_context = StackingContext::new(None);
+        let stacking_context = StackingContext::new(0, None);
         Scene {
             scale_factor,
             stacking_contexts: vec![stacking_context],
@@ -212,21 +213,23 @@ impl Scene {
 
     pub fn mouse_regions(&self) -> Vec<(MouseRegion, usize)> {
         let mut regions = Vec::new();
-        for (stacking_depth, stacking_context) in self.stacking_contexts.iter().enumerate() {
+        for stacking_context in self.stacking_contexts.iter() {
             for layer in &stacking_context.layers {
                 for mouse_region in &layer.mouse_regions {
-                    regions.push((mouse_region.clone(), stacking_depth));
+                    regions.push((mouse_region.clone(), stacking_context.depth));
                 }
             }
         }
+        regions.sort_by_key(|(_, depth)| *depth);
         regions
     }
 
     pub fn push_stacking_context(&mut self, clip_bounds: Option<RectF>) {
+        let depth = self.active_stacking_context().depth + 1;
         self.active_stacking_context_stack
             .push(self.stacking_contexts.len());
         self.stacking_contexts
-            .push(StackingContext::new(clip_bounds))
+            .push(StackingContext::new(depth, clip_bounds))
     }
 
     pub fn pop_stacking_context(&mut self) {
@@ -293,10 +296,11 @@ impl Scene {
 }
 
 impl StackingContext {
-    fn new(clip_bounds: Option<RectF>) -> Self {
+    fn new(depth: usize, clip_bounds: Option<RectF>) -> Self {
         Self {
             layers: vec![Layer::new(clip_bounds)],
             active_layer_stack: vec![0],
+            depth,
         }
     }
 
