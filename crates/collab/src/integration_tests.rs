@@ -504,6 +504,70 @@ async fn test_cancel_join_request(
     );
 }
 
+#[gpui::test(iterations = 3)]
+async fn test_private_projects(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    cx_a.foreground().forbid_parking();
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let mut client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let user_a = UserId::from_proto(client_a.user_id().unwrap());
+
+    let fs = FakeFs::new(cx_a.background());
+    fs.insert_tree("/a", json!({})).await;
+
+    // Create a private project
+    let project_a = cx_a.update(|cx| {
+        Project::local(
+            false,
+            client_a.client.clone(),
+            client_a.user_store.clone(),
+            client_a.language_registry.clone(),
+            fs.clone(),
+            cx,
+        )
+    });
+    client_a.project = Some(project_a.clone());
+
+    // Private projects are not registered with the server.
+    deterministic.run_until_parked();
+    assert!(project_a.read_with(cx_a, |project, _| project.remote_id().is_none()));
+    assert!(client_b
+        .user_store
+        .read_with(cx_b, |store, _| { store.contacts()[0].projects.is_empty() }));
+
+    // The project is registered when it is made public.
+    project_a.update(cx_a, |project, _| project.set_public(true));
+    deterministic.run_until_parked();
+    assert!(project_a.read_with(cx_a, |project, _| project.remote_id().is_some()));
+    assert!(!client_b
+        .user_store
+        .read_with(cx_b, |store, _| { store.contacts()[0].projects.is_empty() }));
+
+    // The project is registered again when it loses and regains connection.
+    server.disconnect_client(user_a);
+    server.forbid_connections();
+    cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
+    // deterministic.run_until_parked();
+    assert!(project_a.read_with(cx_a, |project, _| project.remote_id().is_none()));
+    assert!(client_b
+        .user_store
+        .read_with(cx_b, |store, _| { store.contacts()[0].projects.is_empty() }));
+    server.allow_connections();
+    cx_b.foreground().advance_clock(Duration::from_secs(10));
+    assert!(project_a.read_with(cx_a, |project, _| project.remote_id().is_some()));
+    assert!(!client_b
+        .user_store
+        .read_with(cx_b, |store, _| { store.contacts()[0].projects.is_empty() }));
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_propagate_saves_and_fs_changes(
     cx_a: &mut TestAppContext,
@@ -4009,6 +4073,7 @@ async fn test_random_collaboration(
     let host = server.create_client(&mut host_cx, "host").await;
     let host_project = host_cx.update(|cx| {
         Project::local(
+            true,
             host.client.clone(),
             host.user_store.clone(),
             host_language_registry.clone(),
@@ -4735,6 +4800,7 @@ impl TestClient {
     ) -> (ModelHandle<Project>, WorktreeId) {
         let project = cx.update(|cx| {
             Project::local(
+                true,
                 self.client.clone(),
                 self.user_store.clone(),
                 self.language_registry.clone(),

@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
-use futures::{future::Shared, Future, FutureExt, StreamExt, TryFutureExt};
+use futures::{future::Shared, select_biased, Future, FutureExt, StreamExt, TryFutureExt};
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
@@ -120,6 +120,7 @@ enum ProjectClientState {
         is_shared: bool,
         remote_id_tx: watch::Sender<Option<u64>>,
         remote_id_rx: watch::Receiver<Option<u64>>,
+        public_tx: watch::Sender<bool>,
         _maintain_remote_id_task: Task<Option<()>>,
     },
     Remote {
@@ -305,6 +306,7 @@ impl Project {
     }
 
     pub fn local(
+        public: bool,
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
         languages: Arc<LanguageRegistry>,
@@ -312,24 +314,25 @@ impl Project {
         cx: &mut MutableAppContext,
     ) -> ModelHandle<Self> {
         cx.add_model(|cx: &mut ModelContext<Self>| {
+            let (public_tx, mut public_rx) = watch::channel_with(public);
             let (remote_id_tx, remote_id_rx) = watch::channel();
             let _maintain_remote_id_task = cx.spawn_weak({
-                let rpc = client.clone();
-                move |this, mut cx| {
-                    async move {
-                        let mut status = rpc.status();
-                        while let Some(status) = status.next().await {
-                            if let Some(this) = this.upgrade(&cx) {
-                                if status.is_connected() {
-                                    this.update(&mut cx, |this, cx| this.register(cx)).await?;
-                                } else {
-                                    this.update(&mut cx, |this, cx| this.unregister(cx));
-                                }
-                            }
+                let mut status_rx = client.clone().status();
+                move |this, mut cx| async move {
+                    loop {
+                        select_biased! {
+                            value = status_rx.next().fuse() => { value?; }
+                            value = public_rx.next().fuse() => { value?; }
+                        };
+                        let this = this.upgrade(&cx)?;
+                        if status_rx.borrow().is_connected() && *public_rx.borrow() {
+                            this.update(&mut cx, |this, cx| this.register(cx))
+                                .await
+                                .log_err()?;
+                        } else {
+                            this.update(&mut cx, |this, cx| this.unregister(cx));
                         }
-                        Ok(())
                     }
-                    .log_err()
                 }
             });
 
@@ -346,6 +349,7 @@ impl Project {
                     is_shared: false,
                     remote_id_tx,
                     remote_id_rx,
+                    public_tx,
                     _maintain_remote_id_task,
                 },
                 opened_buffer: (Rc::new(RefCell::new(opened_buffer_tx)), opened_buffer_rx),
@@ -509,7 +513,7 @@ impl Project {
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = client::Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let project = cx.update(|cx| Project::local(client, user_store, languages, fs, cx));
+        let project = cx.update(|cx| Project::local(true, client, user_store, languages, fs, cx));
         for path in root_paths {
             let (tree, _) = project
                 .update(cx, |project, cx| {
@@ -598,6 +602,20 @@ impl Project {
         &self.fs
     }
 
+    pub fn set_public(&mut self, is_public: bool) {
+        if let ProjectClientState::Local { public_tx, .. } = &mut self.client_state {
+            *public_tx.borrow_mut() = is_public;
+        }
+    }
+
+    pub fn is_public(&mut self) -> bool {
+        if let ProjectClientState::Local { public_tx, .. } = &mut self.client_state {
+            *public_tx.borrow()
+        } else {
+            true
+        }
+    }
+
     fn unregister(&mut self, cx: &mut ModelContext<Self>) {
         self.unshared(cx);
         for worktree in &self.worktrees {
@@ -616,7 +634,11 @@ impl Project {
     }
 
     fn register(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        self.unregister(cx);
+        if let ProjectClientState::Local { remote_id_rx, .. } = &self.client_state {
+            if remote_id_rx.borrow().is_some() {
+                return Task::ready(Ok(()));
+            }
+        }
 
         let response = self.client.request(proto::RegisterProject {});
         cx.spawn(|this, mut cx| async move {

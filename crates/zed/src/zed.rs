@@ -295,6 +295,7 @@ fn open_config_file(
                     let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
                         let mut workspace = Workspace::new(
                             Project::local(
+                                false,
                                 app_state.client.clone(),
                                 app_state.user_store.clone(),
                                 app_state.languages.clone(),

@@ -2407,6 +2407,7 @@ pub fn open_paths(
             cx.add_window((app_state.build_window_options)(), |cx| {
                 let mut workspace = Workspace::new(
                     Project::local(
+                        false,
                         app_state.client.clone(),
                         app_state.user_store.clone(),
                         app_state.languages.clone(),
@@ -2463,6 +2464,7 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
     let (window_id, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
         let mut workspace = Workspace::new(
             Project::local(
+                false,
                 app_state.client.clone(),
                 app_state.user_store.clone(),
                 app_state.languages.clone(),
