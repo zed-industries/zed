@@ -237,49 +237,55 @@ impl ContextMenu {
     }
 
     fn render_menu(&self, cx: &mut RenderContext<Self>) -> impl Element {
-        enum Tag {}
+        enum Menu {}
+        enum MenuItem {}
         let style = cx.global::<Settings>().theme.context_menu.clone();
-        Flex::column()
-            .with_children(self.items.iter().enumerate().map(|(ix, item)| {
-                match item {
-                    ContextMenuItem::Item { label, action } => {
-                        let action = action.boxed_clone();
-                        MouseEventHandler::new::<Tag, _, _>(ix, cx, |state, _| {
-                            let style =
-                                style.item.style_for(state, Some(ix) == self.selected_index);
-                            Flex::row()
-                                .with_child(
-                                    Label::new(label.to_string(), style.label.clone()).boxed(),
-                                )
-                                .with_child({
-                                    KeystrokeLabel::new(
-                                        action.boxed_clone(),
-                                        style.keystroke.container,
-                                        style.keystroke.text.clone(),
+        MouseEventHandler::new::<Menu, _, _>(0, cx, |_, cx| {
+            Flex::column()
+                .with_children(self.items.iter().enumerate().map(|(ix, item)| {
+                    match item {
+                        ContextMenuItem::Item { label, action } => {
+                            let action = action.boxed_clone();
+                            MouseEventHandler::new::<MenuItem, _, _>(ix, cx, |state, _| {
+                                let style =
+                                    style.item.style_for(state, Some(ix) == self.selected_index);
+                                Flex::row()
+                                    .with_child(
+                                        Label::new(label.to_string(), style.label.clone()).boxed(),
                                     )
-                                    .flex_float()
+                                    .with_child({
+                                        KeystrokeLabel::new(
+                                            action.boxed_clone(),
+                                            style.keystroke.container,
+                                            style.keystroke.text.clone(),
+                                        )
+                                        .flex_float()
+                                        .boxed()
+                                    })
+                                    .contained()
+                                    .with_style(style.container)
                                     .boxed()
-                                })
-                                .contained()
-                                .with_style(style.container)
-                                .boxed()
-                        })
-                        .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(move |_, _, cx| {
-                            cx.dispatch_any_action(action.boxed_clone());
-                            cx.dispatch_action(Cancel);
-                        })
-                        .boxed()
+                            })
+                            .with_cursor_style(CursorStyle::PointingHand)
+                            .on_click(move |_, _, cx| {
+                                cx.dispatch_any_action(action.boxed_clone());
+                                cx.dispatch_action(Cancel);
+                            })
+                            .boxed()
+                        }
+                        ContextMenuItem::Separator => Empty::new()
+                            .constrained()
+                            .with_height(1.)
+                            .contained()
+                            .with_style(style.separator)
+                            .boxed(),
                     }
-                    ContextMenuItem::Separator => Empty::new()
-                        .constrained()
-                        .with_height(1.)
-                        .contained()
-                        .with_style(style.separator)
-                        .boxed(),
-                }
-            }))
-            .contained()
-            .with_style(style.container)
+                }))
+                .contained()
+                .with_style(style.container)
+                .boxed()
+        })
+        .on_mouse_down_out(|_, cx| cx.dispatch_action(Cancel))
+        .on_right_mouse_down_out(|_, cx| cx.dispatch_action(Cancel))
     }
 }

@@ -88,6 +88,22 @@ impl MouseEventHandler {
         self
     }
 
+    pub fn on_mouse_down_out(
+        mut self,
+        handler: impl Fn(Vector2F, &mut EventContext) + 'static,
+    ) -> Self {
+        self.mouse_down_out = Some(Rc::new(handler));
+        self
+    }
+
+    pub fn on_right_mouse_down_out(
+        mut self,
+        handler: impl Fn(Vector2F, &mut EventContext) + 'static,
+    ) -> Self {
+        self.right_mouse_down_out = Some(Rc::new(handler));
+        self
+    }
+
     pub fn on_drag(mut self, handler: impl Fn(Vector2F, &mut EventContext) + 'static) -> Self {
         self.drag = Some(Rc::new(handler));
         self
