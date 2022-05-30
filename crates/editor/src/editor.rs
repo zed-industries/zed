@@ -2439,16 +2439,49 @@ impl Editor {
             return;
         };
 
-        let hover = HoverPopover {
-            // TODO: beginning of symbol based on range
-            point: action.0,
-            text: "Test hover information".to_string(),
-            runs: Vec::new(),
+        let snapshot = self.snapshot(cx);
+        let (buffer, buffer_position) = if let Some(output) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(action.0.to_point(&snapshot.display_snapshot), cx)
+        {
+            output
+        } else {
+            return;
         };
+
+        let hover = project.update(cx, |project, cx| {
+            project.hover(&buffer, buffer_position.clone(), cx)
+        });
+
+        let point = action.0.clone();
 
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn_weak(|this, mut cx| {
             async move {
+                // TODO: what to show while language server is loading?
+                let text: String = match hover.await? {
+                    None => "Language server is warming up...".into(),
+                    Some(hover) => match hover.contents {
+                        lsp::HoverContents::Scalar(marked_string) => match marked_string {
+                            lsp::MarkedString::String(string) => string,
+                            lsp::MarkedString::LanguageString(string) => string.value,
+                        },
+                        lsp::HoverContents::Array(marked_strings) => {
+                            // TODO: what to do?
+                            todo!()
+                        }
+                        lsp::HoverContents::Markup(markup) => markup.value,
+                    },
+                };
+
+                let mut hover_popover = HoverPopover {
+                    // TODO: fix tooltip to beginning of symbol based on range
+                    point,
+                    text,
+                    runs: Vec::new(),
+                };
+
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
                         if !matches!(
@@ -2459,7 +2492,7 @@ impl Editor {
                         }
 
                         if this.focused {
-                            this.show_context_menu(ContextMenu::Hover(hover), cx);
+                            this.show_context_menu(ContextMenu::Hover(hover_popover), cx);
                         }
 
                         cx.notify();

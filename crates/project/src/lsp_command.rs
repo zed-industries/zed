@@ -80,6 +80,10 @@ pub(crate) struct GetDocumentHighlights {
     pub position: PointUtf16,
 }
 
+pub(crate) struct GetHover {
+    pub position: PointUtf16,
+}
+
 #[async_trait(?Send)]
 impl LspCommand for PrepareRename {
     type Response = Option<Range<Anchor>>;
@@ -791,6 +795,102 @@ impl LspCommand for GetDocumentHighlights {
     }
 
     fn buffer_id_from_proto(message: &proto::GetDocumentHighlights) -> u64 {
+        message.buffer_id
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetHover {
+    // TODO: proper response type
+    type Response = Option<lsp::Hover>;
+    type LspRequest = lsp::request::HoverRequest;
+    type ProtoRequest = proto::GetHover;
+
+    fn to_lsp(&self, path: &Path, cx: &AppContext) -> lsp::HoverParams {
+        lsp::HoverParams {
+            text_document_position_params: lsp::TextDocumentPositionParams {
+                text_document: lsp::TextDocumentIdentifier {
+                    uri: lsp::Url::from_file_path(path).unwrap(),
+                },
+                position: point_to_lsp(self.position),
+            },
+            work_done_progress_params: Default::default(),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<lsp::Hover>,
+        project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        cx: AsyncAppContext,
+    ) -> Result<Self::Response> {
+        // let (lsp_adapter, language_server) = project
+        //     .read_with(&cx, |project, cx| {
+        //         project
+        //             .language_server_for_buffer(buffer.read(cx), cx)
+        //             .cloned()
+        //     })
+        //     .ok_or_else(|| anyhow!("no language server found for buffer"))?;
+
+        // TODO: what here?
+        Ok(Some(
+            message.ok_or_else(|| anyhow!("invalid lsp response"))?,
+        ))
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
+        proto::GetHover {
+            project_id,
+            buffer_id: buffer.remote_id(),
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
+            version: serialize_version(&buffer.version),
+        }
+    }
+
+    async fn from_proto(
+        message: Self::ProtoRequest,
+        project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
+        let position = message
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(message.version))
+            })
+            .await;
+        Ok(Self {
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
+        })
+    }
+
+    fn response_to_proto(
+        response: Self::Response,
+        project: &mut Project,
+        peer_id: PeerId,
+        buffer_version: &clock::Global,
+        cx: &AppContext,
+    ) -> proto::GetHoverResponse {
+        todo!()
+    }
+
+    async fn response_from_proto(
+        self,
+        message: <Self::ProtoRequest as proto::RequestMessage>::Response,
+        project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        cx: AsyncAppContext,
+    ) -> Result<Self::Response> {
+        todo!()
+    }
+
+    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> u64 {
         message.buffer_id
     }
 }

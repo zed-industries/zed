@@ -302,6 +302,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_format_buffers);
         client.add_model_request_handler(Self::handle_get_code_actions);
         client.add_model_request_handler(Self::handle_get_completions);
+        client.add_model_request_handler(Self::handle_lsp_command::<GetHover>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetDefinition>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetReferences>);
@@ -2882,6 +2883,17 @@ impl Project {
         } else {
             Task::ready(Err(anyhow!("project does not have a remote id")))
         }
+    }
+
+    pub fn hover<T: ToPointUtf16>(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Option<lsp::Hover>>> {
+        // TODO: proper return type
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.request_lsp(buffer.clone(), GetHover { position }, cx)
     }
 
     pub fn completions<T: ToPointUtf16>(
