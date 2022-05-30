@@ -172,7 +172,7 @@ impl ProjectPanel {
                 selection: None,
                 edit_state: None,
                 filename_editor,
-                context_menu: cx.add_view(|_| ContextMenu::new()),
+                context_menu: cx.add_view(|cx| ContextMenu::new(cx)),
             };
             this.update_visible_entries(None, cx);
             this

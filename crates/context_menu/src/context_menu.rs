@@ -1,6 +1,9 @@
+use std::{any::TypeId, time::Duration};
+
 use gpui::{
     elements::*, geometry::vector::Vector2F, keymap, platform::CursorStyle, Action, AppContext,
-    Axis, Entity, MutableAppContext, RenderContext, SizeConstraint, View, ViewContext,
+    Axis, Entity, MutableAppContext, RenderContext, SizeConstraint, Subscription, View,
+    ViewContext,
 };
 use menu::*;
 use settings::Settings;
@@ -37,15 +40,22 @@ impl ContextMenuItem {
     fn is_separator(&self) -> bool {
         matches!(self, Self::Separator)
     }
+
+    fn action_id(&self) -> Option<TypeId> {
+        match self {
+            ContextMenuItem::Item { action, .. } => Some(action.id()),
+            ContextMenuItem::Separator => None,
+        }
+    }
 }
 
-#[derive(Default)]
 pub struct ContextMenu {
     position: Vector2F,
     items: Vec<ContextMenuItem>,
     selected_index: Option<usize>,
     visible: bool,
     previously_focused_view_id: Option<usize>,
+    _actions_observation: Subscription,
 }
 
 impl Entity for ContextMenu {
@@ -87,15 +97,36 @@ impl View for ContextMenu {
     }
 
     fn on_blur(&mut self, cx: &mut ViewContext<Self>) {
-        self.visible = false;
-        self.selected_index.take();
-        cx.notify();
+        self.reset(cx);
     }
 }
 
 impl ContextMenu {
-    pub fn new() -> Self {
-        Default::default()
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+        Self {
+            position: Default::default(),
+            items: Default::default(),
+            selected_index: Default::default(),
+            visible: Default::default(),
+            previously_focused_view_id: Default::default(),
+            _actions_observation: cx.observe_actions(Self::action_dispatched),
+        }
+    }
+
+    fn action_dispatched(&mut self, action_id: TypeId, cx: &mut ViewContext<Self>) {
+        if let Some(ix) = self
+            .items
+            .iter()
+            .position(|item| item.action_id() == Some(action_id))
+        {
+            self.selected_index = Some(ix);
+            cx.notify();
+            cx.spawn(|this, mut cx| async move {
+                cx.background().timer(Duration::from_millis(100)).await;
+                this.update(&mut cx, |this, cx| this.cancel(&Default::default(), cx));
+            })
+            .detach();
+        }
     }
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
@@ -109,10 +140,18 @@ impl ContextMenu {
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        self.reset(cx);
         if cx.handle().is_focused(cx) {
             let window_id = cx.window_id();
             (**cx).focus(window_id, self.previously_focused_view_id.take());
         }
+    }
+
+    fn reset(&mut self, cx: &mut ViewContext<Self>) {
+        self.items.clear();
+        self.visible = false;
+        self.selected_index.take();
+        cx.notify();
     }
 
     fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
