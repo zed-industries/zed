@@ -784,7 +784,7 @@ impl Project {
         entry_id: ProjectEntryId,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Self>,
-    ) -> Option<Task<Result<Entry>>> {
+    ) -> Option<Task<Result<(Entry, Vec<Entry>)>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
         let new_path = new_path.into();
         if self.is_local() {
@@ -809,15 +809,24 @@ impl Project {
                 let entry = response
                     .entry
                     .ok_or_else(|| anyhow!("missing entry in response"))?;
-                worktree
-                    .update(&mut cx, |worktree, cx| {
-                        worktree.as_remote().unwrap().insert_entry(
+                let (entry, child_entries) = worktree.update(&mut cx, |worktree, cx| {
+                    let worktree = worktree.as_remote().unwrap();
+                    let root_entry =
+                        worktree.insert_entry(entry, response.worktree_scan_id as usize, cx);
+                    let mut child_entries = Vec::new();
+                    for entry in response.child_entries {
+                        child_entries.push(worktree.insert_entry(
                             entry,
                             response.worktree_scan_id as usize,
                             cx,
-                        )
-                    })
-                    .await
+                        ));
+                    }
+                    (root_entry, child_entries)
+                });
+                Ok((
+                    entry.await?,
+                    futures::future::try_join_all(child_entries).await?,
+                ))
             }))
         }
     }
@@ -4039,6 +4048,7 @@ impl Project {
             .await?;
         Ok(proto::ProjectEntryResponse {
             entry: Some((&entry).into()),
+            child_entries: Default::default(),
             worktree_scan_id: worktree_scan_id as u64,
         })
     }
@@ -4067,6 +4077,7 @@ impl Project {
             .await?;
         Ok(proto::ProjectEntryResponse {
             entry: Some((&entry).into()),
+            child_entries: Default::default(),
             worktree_scan_id: worktree_scan_id as u64,
         })
     }
@@ -4083,7 +4094,7 @@ impl Project {
                 .ok_or_else(|| anyhow!("worktree not found"))
         })?;
         let worktree_scan_id = worktree.read_with(&cx, |worktree, _| worktree.scan_id());
-        let entry = worktree
+        let (entry, child_entries) = worktree
             .update(&mut cx, |worktree, cx| {
                 let new_path = PathBuf::from(OsString::from_vec(envelope.payload.new_path));
                 worktree
@@ -4095,6 +4106,7 @@ impl Project {
             .await?;
         Ok(proto::ProjectEntryResponse {
             entry: Some((&entry).into()),
+            child_entries: child_entries.iter().map(Into::into).collect(),
             worktree_scan_id: worktree_scan_id as u64,
         })
     }
@@ -4122,6 +4134,7 @@ impl Project {
             .await?;
         Ok(proto::ProjectEntryResponse {
             entry: None,
+            child_entries: Default::default(),
             worktree_scan_id: worktree_scan_id as u64,
         })
     }

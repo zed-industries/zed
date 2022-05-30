@@ -15,7 +15,12 @@ use text::Rope;
 pub trait Fs: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;
     async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()>;
-    async fn copy(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()>;
+    async fn copy(
+        &self,
+        source: &Path,
+        target: &Path,
+        options: CopyOptions,
+    ) -> Result<Vec<PathBuf>>;
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
@@ -91,15 +96,21 @@ impl Fs for RealFs {
         Ok(())
     }
 
-    async fn copy(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()> {
+    async fn copy(
+        &self,
+        source: &Path,
+        target: &Path,
+        options: CopyOptions,
+    ) -> Result<Vec<PathBuf>> {
         if !options.overwrite && smol::fs::metadata(target).await.is_ok() {
             if options.ignore_if_exists {
-                return Ok(());
+                return Ok(Default::default());
             } else {
                 return Err(anyhow!("{target:?} already exists"));
             }
         }
 
+        let mut paths = vec![target.to_path_buf()];
         let metadata = smol::fs::metadata(source).await?;
         let _ = smol::fs::remove_dir_all(target).await;
         if metadata.is_dir() {
@@ -109,15 +120,17 @@ impl Fs for RealFs {
                 if let Ok(child) = child {
                     let child_source_path = child.path();
                     let child_target_path = target.join(child.file_name());
-                    self.copy(&child_source_path, &child_target_path, options)
-                        .await?;
+                    paths.extend(
+                        self.copy(&child_source_path, &child_target_path, options)
+                            .await?,
+                    );
                 }
             }
         } else {
             smol::fs::copy(source, target).await?;
         }
 
-        Ok(())
+        Ok(paths)
     }
 
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()> {
@@ -547,7 +560,12 @@ impl Fs for FakeFs {
         Ok(())
     }
 
-    async fn copy(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()> {
+    async fn copy(
+        &self,
+        source: &Path,
+        target: &Path,
+        options: CopyOptions,
+    ) -> Result<Vec<PathBuf>> {
         let source = normalize_path(source);
         let target = normalize_path(target);
 
@@ -557,7 +575,7 @@ impl Fs for FakeFs {
 
         if !options.overwrite && state.entries.contains_key(&target) {
             if options.ignore_if_exists {
-                return Ok(());
+                return Ok(Default::default());
             } else {
                 return Err(anyhow!("{target:?} already exists"));
             }
@@ -570,15 +588,15 @@ impl Fs for FakeFs {
             }
         }
 
-        let mut events = Vec::new();
+        let mut paths = Vec::new();
         for (relative_path, entry) in new_entries {
             let new_path = normalize_path(&target.join(relative_path));
-            events.push(new_path.clone());
+            paths.push(new_path.clone());
             state.entries.insert(new_path, entry);
         }
 
-        state.emit_event(&events).await;
-        Ok(())
+        state.emit_event(&paths).await;
+        Ok(paths)
     }
 
     async fn remove_dir(&self, dir_path: &Path, options: RemoveOptions) -> Result<()> {

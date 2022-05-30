@@ -779,7 +779,7 @@ impl LocalWorktree {
         entry_id: ProjectEntryId,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Worktree>,
-    ) -> Option<Task<Result<Entry>>> {
+    ) -> Option<Task<Result<(Entry, Vec<Entry>)>>> {
         let old_path = self.entry_for_id(entry_id)?.path.clone();
         let new_path = new_path.into();
         let abs_old_path = self.absolutize(&old_path);
@@ -794,23 +794,38 @@ impl LocalWorktree {
         });
 
         Some(cx.spawn(|this, mut cx| async move {
-            copy.await?;
-            let entry = this
-                .update(&mut cx, |this, cx| {
-                    this.as_local_mut().unwrap().refresh_entry(
-                        new_path.clone(),
-                        abs_new_path,
-                        None,
-                        cx,
-                    )
-                })
-                .await?;
+            let copied_paths = copy.await?;
+            let (entry, child_entries) = this.update(&mut cx, |this, cx| {
+                let this = this.as_local_mut().unwrap();
+                let root_entry =
+                    this.refresh_entry(new_path.clone(), abs_new_path.clone(), None, cx);
+
+                let mut child_entries = Vec::new();
+                for copied_path in copied_paths {
+                    if copied_path != abs_new_path {
+                        let relative_copied_path = copied_path.strip_prefix(this.abs_path())?;
+                        child_entries.push(this.refresh_entry(
+                            relative_copied_path.into(),
+                            copied_path,
+                            None,
+                            cx,
+                        ));
+                    }
+                }
+
+                anyhow::Ok((root_entry, child_entries))
+            })?;
+            let (entry, child_entries) = (
+                entry.await?,
+                futures::future::try_join_all(child_entries).await?,
+            );
+
             this.update(&mut cx, |this, cx| {
                 this.poll_snapshot(cx);
                 this.as_local().unwrap().broadcast_snapshot()
             })
             .await;
-            Ok(entry)
+            Ok((entry, child_entries))
         }))
     }
 
@@ -1202,8 +1217,23 @@ impl Snapshot {
     }
 
     fn delete_entry(&mut self, entry_id: ProjectEntryId) -> bool {
-        if let Some(entry) = self.entries_by_id.remove(&entry_id, &()) {
-            self.entries_by_path.remove(&PathKey(entry.path), &());
+        if let Some(removed_entry) = self.entries_by_id.remove(&entry_id, &()) {
+            self.entries_by_path = {
+                let mut cursor = self.entries_by_path.cursor();
+                let mut new_entries_by_path =
+                    cursor.slice(&TraversalTarget::Path(&removed_entry.path), Bias::Left, &());
+                while let Some(entry) = cursor.item() {
+                    if entry.path.starts_with(&removed_entry.path) {
+                        self.entries_by_id.remove(&entry.id, &());
+                        cursor.next(&());
+                    } else {
+                        break;
+                    }
+                }
+                new_entries_by_path.push_tree(cursor.suffix(&()), &());
+                new_entries_by_path
+            };
+
             true
         } else {
             false
