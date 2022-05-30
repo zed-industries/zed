@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     display_map::{DisplaySnapshot, TransformBlock},
-    EditorStyle, GoToDefinition,
+    EditorStyle, GoToDefinition, Hover,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
@@ -126,7 +126,7 @@ impl EditorElement {
         } else if shift && alt {
             cx.dispatch_action(Select(SelectPhase::BeginColumnar {
                 position,
-                overshoot,
+                overshoot: overshoot.column(),
             }));
         } else if shift {
             cx.dispatch_action(Select(SelectPhase::Extend {
@@ -195,7 +195,7 @@ impl EditorElement {
 
             cx.dispatch_action(Select(SelectPhase::Update {
                 position,
-                overshoot,
+                overshoot: overshoot.column(),
                 scroll_position: (snapshot.scroll_position() + scroll_delta)
                     .clamp(Vector2F::zero(), layout.scroll_max),
             }));
@@ -1251,6 +1251,16 @@ impl Element for EditorElement {
                 precise,
             } => self.scroll(*position, *delta, *precise, layout, paint, cx),
             Event::KeyDown { input, .. } => self.key_down(input.as_deref(), cx),
+            Event::MouseMoved { position, .. } => {
+                if paint.text_bounds.contains_point(*position) {
+                    let (point, overshoot) =
+                        paint.point_for_position(&self.snapshot(cx), layout, *position);
+                    cx.dispatch_action(Hover { point, overshoot });
+                    true
+                } else {
+                    false
+                }
+            }
             _ => false,
         }
     }
@@ -1329,16 +1339,20 @@ pub struct PaintState {
 }
 
 impl PaintState {
+    /// Returns two display points. The first is the nearest valid
+    /// position in the current buffer and the second is the distance to the
+    /// nearest valid position if there was overshoot.
     fn point_for_position(
         &self,
         snapshot: &EditorSnapshot,
         layout: &LayoutState,
         position: Vector2F,
-    ) -> (DisplayPoint, u32) {
+    ) -> (DisplayPoint, DisplayPoint) {
         let scroll_position = snapshot.scroll_position();
         let position = position - self.text_bounds.origin();
         let y = position.y().max(0.0).min(layout.size.y());
         let row = ((y / layout.line_height) + scroll_position.y()) as u32;
+        let row_overshoot = row.saturating_sub(snapshot.max_point().row());
         let row = cmp::min(row, snapshot.max_point().row());
         let line = &layout.line_layouts[(row - scroll_position.y() as u32) as usize];
         let x = position.x() + (scroll_position.x() * layout.em_width);
@@ -1350,9 +1364,12 @@ impl PaintState {
         } else {
             0
         };
-        let overshoot = (0f32.max(x - line.width()) / layout.em_advance) as u32;
+        let column_overshoot = (0f32.max(x - line.width()) / layout.em_advance) as u32;
 
-        (DisplayPoint::new(row, column), overshoot)
+        (
+            DisplayPoint::new(row, column),
+            DisplayPoint::new(row_overshoot, column_overshoot),
+        )
     }
 }
 

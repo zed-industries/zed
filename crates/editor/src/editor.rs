@@ -80,6 +80,15 @@ pub struct Scroll(pub Vector2F);
 #[derive(Clone, PartialEq)]
 pub struct Select(pub SelectPhase);
 
+#[derive(Clone)]
+pub struct ShowHover(DisplayPoint);
+
+#[derive(Clone)]
+pub struct Hover {
+    point: DisplayPoint,
+    overshoot: DisplayPoint,
+}
+
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Input(pub String);
 
@@ -191,7 +200,6 @@ actions!(
         UnfoldLines,
         FoldSelectedRanges,
         ShowCompletions,
-        ShowHover,
         OpenExcerpts,
         RestartLanguageServer,
     ]
@@ -210,7 +218,7 @@ impl_actions!(
     ]
 );
 
-impl_internal_actions!(editor, [Scroll, Select, GoToDefinitionAt]);
+impl_internal_actions!(editor, [Scroll, Select, Hover, ShowHover, GoToDefinitionAt]);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -297,6 +305,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::fold_selected_ranges);
     cx.add_action(Editor::show_completions);
     cx.add_action(Editor::toggle_code_actions);
+    cx.add_action(Editor::hover);
+    cx.add_action(Editor::show_hover);
     cx.add_action(Editor::open_excerpts);
     cx.add_action(Editor::restart_language_server);
     cx.add_async_action(Editor::confirm_completion);
@@ -855,16 +865,19 @@ impl CodeActionsMenu {
 
 #[derive(Clone)]
 struct HoverPopover {
+    pub point: DisplayPoint,
     pub text: String,
     pub runs: Vec<(Range<usize>, HighlightStyle)>,
 }
 
 impl HoverPopover {
     fn render(&self, style: EditorStyle) -> ElementBox {
+        let container_style = style.autocomplete.container;
         Text::new(self.text.clone(), style.text.clone())
             .with_soft_wrap(false)
             .with_highlights(self.runs.clone())
             .contained()
+            .with_style(container_style)
             .boxed()
     }
 }
@@ -1026,6 +1039,7 @@ impl Editor {
             next_completion_id: 0,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
+            hover_task: Default::default(),
             document_highlights_task: Default::default(),
             pending_rename: Default::default(),
             searchable: true,
@@ -2408,7 +2422,13 @@ impl Editor {
         }))
     }
 
-    fn show_hover(&mut self, _: &ShowHover, cx: &mut ViewContext<Self>) {
+    fn hover(&mut self, action: &Hover, cx: &mut ViewContext<Self>) {
+        if action.overshoot.is_zero() {
+            self.show_hover(&ShowHover(action.point), cx);
+        }
+    }
+
+    fn show_hover(&mut self, action: &ShowHover, cx: &mut ViewContext<Self>) {
         if self.pending_rename.is_some() {
             return;
         }
@@ -2419,18 +2439,9 @@ impl Editor {
             return;
         };
 
-        let position = self.selections.newest_anchor().head();
-        let (buffer, buffer_position) = if let Some(output) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(position.clone(), cx)
-        {
-            output
-        } else {
-            return;
-        };
-
         let hover = HoverPopover {
+            // TODO: beginning of symbol based on range
+            point: action.0,
             text: "Test hover information".to_string(),
             runs: Vec::new(),
         };
