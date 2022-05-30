@@ -2583,6 +2583,76 @@ mod tests {
 
         project_b
             .update(cx_b, |project, cx| {
+                project
+                    .create_entry((worktree_id, "DIR/e.txt"), false, cx)
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+        project_b
+            .update(cx_b, |project, cx| {
+                project
+                    .create_entry((worktree_id, "DIR/SUBDIR"), true, cx)
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+        project_b
+            .update(cx_b, |project, cx| {
+                project
+                    .create_entry((worktree_id, "DIR/SUBDIR/f.txt"), false, cx)
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+        worktree_a.read_with(cx_a, |worktree, _| {
+            assert_eq!(
+                worktree
+                .paths()
+                .map(|p| p.to_string_lossy())
+                .collect::<Vec<_>>(),
+                ["DIR", "DIR/SUBDIR", "DIR/SUBDIR/f.txt", "DIR/e.txt", "a.txt", "b.txt", "d.txt"]
+            );
+        });
+        worktree_b.read_with(cx_b, |worktree, _| {
+            assert_eq!(
+                worktree
+                .paths()
+                .map(|p| p.to_string_lossy())
+                .collect::<Vec<_>>(),
+                ["DIR", "DIR/SUBDIR", "DIR/SUBDIR/f.txt", "DIR/e.txt", "a.txt", "b.txt", "d.txt"]
+            );
+        });
+
+        project_b
+            .update(cx_b, |project, cx| {
+                project
+                    .copy_entry(dir_entry.id, Path::new("DIR2"), cx)
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+        worktree_a.read_with(cx_a, |worktree, _| {
+            assert_eq!(
+                worktree
+                .paths()
+                .map(|p| p.to_string_lossy())
+                .collect::<Vec<_>>(),
+                ["DIR", "DIR/SUBDIR", "DIR/SUBDIR/f.txt", "DIR/e.txt", "DIR2", "DIR2/SUBDIR", "DIR2/SUBDIR/f.txt", "DIR2/e.txt", "a.txt", "b.txt", "d.txt"]
+            );
+        });
+        worktree_b.read_with(cx_b, |worktree, _| {
+            assert_eq!(
+                worktree
+                .paths()
+                .map(|p| p.to_string_lossy())
+                .collect::<Vec<_>>(),
+                ["DIR", "DIR/SUBDIR", "DIR/SUBDIR/f.txt", "DIR/e.txt", "DIR2", "DIR2/SUBDIR", "DIR2/SUBDIR/f.txt", "DIR2/e.txt", "a.txt", "b.txt", "d.txt"]
+            );
+        });
+
+        project_b
+            .update(cx_b, |project, cx| {
                 project.delete_entry(dir_entry.id, cx).unwrap()
             })
             .await
@@ -2593,7 +2663,7 @@ mod tests {
                     .paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                ["a.txt", "b.txt", "d.txt"]
+                ["DIR2", "DIR2/SUBDIR", "DIR2/SUBDIR/f.txt", "DIR2/e.txt", "a.txt", "b.txt", "d.txt"]
             );
         });
         worktree_b.read_with(cx_b, |worktree, _| {
@@ -2602,7 +2672,7 @@ mod tests {
                     .paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                ["a.txt", "b.txt", "d.txt"]
+                ["DIR2", "DIR2/SUBDIR", "DIR2/SUBDIR/f.txt", "DIR2/e.txt", "a.txt", "b.txt", "d.txt"]
             );
         });
 
@@ -2618,7 +2688,7 @@ mod tests {
                     .paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                ["a.txt", "b.txt"]
+                ["DIR2", "DIR2/SUBDIR", "DIR2/SUBDIR/f.txt", "DIR2/e.txt", "a.txt", "b.txt"]
             );
         });
         worktree_b.read_with(cx_b, |worktree, _| {
@@ -2627,7 +2697,7 @@ mod tests {
                     .paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                ["a.txt", "b.txt"]
+                ["DIR2", "DIR2/SUBDIR", "DIR2/SUBDIR/f.txt", "DIR2/e.txt", "a.txt", "b.txt"]
             );
         });
     }
