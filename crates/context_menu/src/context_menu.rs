@@ -141,10 +141,12 @@ impl ContextMenu {
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         self.reset(cx);
-        if cx.handle().is_focused(cx) {
-            let window_id = cx.window_id();
-            (**cx).focus(window_id, self.previously_focused_view_id.take());
-        }
+        cx.defer(|this, cx| {
+            if cx.handle().is_focused(cx) {
+                let window_id = cx.window_id();
+                (**cx).focus(window_id, this.previously_focused_view_id.take());
+            }
+        });
     }
 
     fn reset(&mut self, cx: &mut ViewContext<Self>) {
