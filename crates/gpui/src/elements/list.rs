@@ -352,10 +352,11 @@ impl ListState {
     {
         let mut items = SumTree::new();
         items.extend((0..element_count).map(|_| ListItem::Unrendered), &());
-        let handle = cx.handle();
+        let handle = cx.weak_handle();
         Self(Rc::new(RefCell::new(StateInner {
             last_layout_width: None,
             render_item: Box::new(move |ix, cx| {
+                let handle = handle.upgrade(cx)?;
                 Some(cx.render(&handle, |view, cx| render_item(view, ix, cx)))
             }),
             rendered_range: 0..0,
