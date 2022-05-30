@@ -774,6 +774,46 @@ impl LocalWorktree {
         }))
     }
 
+    pub fn copy_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        new_path: impl Into<Arc<Path>>,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Option<Task<Result<Entry>>> {
+        let old_path = self.entry_for_id(entry_id)?.path.clone();
+        let new_path = new_path.into();
+        let abs_old_path = self.absolutize(&old_path);
+        let abs_new_path = self.absolutize(&new_path);
+        let copy = cx.background().spawn({
+            let fs = self.fs.clone();
+            let abs_new_path = abs_new_path.clone();
+            async move {
+                fs.copy(&abs_old_path, &abs_new_path, Default::default())
+                    .await
+            }
+        });
+
+        Some(cx.spawn(|this, mut cx| async move {
+            copy.await?;
+            let entry = this
+                .update(&mut cx, |this, cx| {
+                    this.as_local_mut().unwrap().refresh_entry(
+                        new_path.clone(),
+                        abs_new_path,
+                        None,
+                        cx,
+                    )
+                })
+                .await?;
+            this.update(&mut cx, |this, cx| {
+                this.poll_snapshot(cx);
+                this.as_local().unwrap().broadcast_snapshot()
+            })
+            .await;
+            Ok(entry)
+        }))
+    }
+
     fn write_entry_internal(
         &self,
         path: impl Into<Arc<Path>>,

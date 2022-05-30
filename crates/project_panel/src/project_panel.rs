@@ -698,6 +698,11 @@ impl ProjectPanel {
                     })
                     .map(|task| task.detach_and_log_err(cx));
             } else {
+                self.project
+                    .update(cx, |project, cx| {
+                        project.copy_entry(clipboard_entry.entry_id(), new_path, cx)
+                    })
+                    .map(|task| task.detach_and_log_err(cx));
             }
         }
         None

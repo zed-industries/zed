@@ -41,66 +41,67 @@ message Envelope {
 
         CreateProjectEntry create_project_entry = 33;
         RenameProjectEntry rename_project_entry = 34;
-        DeleteProjectEntry delete_project_entry = 35;
-        ProjectEntryResponse project_entry_response = 36;
+        CopyProjectEntry copy_project_entry = 35;
+        DeleteProjectEntry delete_project_entry = 36;
+        ProjectEntryResponse project_entry_response = 37;
 
-        UpdateDiagnosticSummary update_diagnostic_summary = 37;
-        StartLanguageServer start_language_server = 38;
-        UpdateLanguageServer update_language_server = 39;
+        UpdateDiagnosticSummary update_diagnostic_summary = 38;
+        StartLanguageServer start_language_server = 39;
+        UpdateLanguageServer update_language_server = 40;
 
-        OpenBufferById open_buffer_by_id = 40;
-        OpenBufferByPath open_buffer_by_path = 41;
-        OpenBufferResponse open_buffer_response = 42;
-        UpdateBuffer update_buffer = 43;
-        UpdateBufferFile update_buffer_file = 44;
-        SaveBuffer save_buffer = 45;
-        BufferSaved buffer_saved = 46;
-        BufferReloaded buffer_reloaded = 47;
-        ReloadBuffers reload_buffers = 48;
-        ReloadBuffersResponse reload_buffers_response = 49;
-        FormatBuffers format_buffers = 50;
-        FormatBuffersResponse format_buffers_response = 51;
-        GetCompletions get_completions = 52;
-        GetCompletionsResponse get_completions_response = 53;
-        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 54;
-        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 55;
-        GetCodeActions get_code_actions = 56;
-        GetCodeActionsResponse get_code_actions_response = 57;
-        ApplyCodeAction apply_code_action = 58;
-        ApplyCodeActionResponse apply_code_action_response = 59;
-        PrepareRename prepare_rename = 60;
-        PrepareRenameResponse prepare_rename_response = 61;
-        PerformRename perform_rename = 62;
-        PerformRenameResponse perform_rename_response = 63;
-        SearchProject search_project = 64;
-        SearchProjectResponse search_project_response = 65;
+        OpenBufferById open_buffer_by_id = 41;
+        OpenBufferByPath open_buffer_by_path = 42;
+        OpenBufferResponse open_buffer_response = 43;
+        UpdateBuffer update_buffer = 44;
+        UpdateBufferFile update_buffer_file = 45;
+        SaveBuffer save_buffer = 46;
+        BufferSaved buffer_saved = 47;
+        BufferReloaded buffer_reloaded = 48;
+        ReloadBuffers reload_buffers = 49;
+        ReloadBuffersResponse reload_buffers_response = 50;
+        FormatBuffers format_buffers = 51;
+        FormatBuffersResponse format_buffers_response = 52;
+        GetCompletions get_completions = 53;
+        GetCompletionsResponse get_completions_response = 54;
+        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 55;
+        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 56;
+        GetCodeActions get_code_actions = 57;
+        GetCodeActionsResponse get_code_actions_response = 58;
+        ApplyCodeAction apply_code_action = 59;
+        ApplyCodeActionResponse apply_code_action_response = 60;
+        PrepareRename prepare_rename = 61;
+        PrepareRenameResponse prepare_rename_response = 62;
+        PerformRename perform_rename = 63;
+        PerformRenameResponse perform_rename_response = 64;
+        SearchProject search_project = 65;
+        SearchProjectResponse search_project_response = 66;
 
-        GetChannels get_channels = 66;
-        GetChannelsResponse get_channels_response = 67;
-        JoinChannel join_channel = 68;
-        JoinChannelResponse join_channel_response = 69;
-        LeaveChannel leave_channel = 70;
-        SendChannelMessage send_channel_message = 71;
-        SendChannelMessageResponse send_channel_message_response = 72;
-        ChannelMessageSent channel_message_sent = 73;
-        GetChannelMessages get_channel_messages = 74;
-        GetChannelMessagesResponse get_channel_messages_response = 75;
+        GetChannels get_channels = 67;
+        GetChannelsResponse get_channels_response = 68;
+        JoinChannel join_channel = 69;
+        JoinChannelResponse join_channel_response = 70;
+        LeaveChannel leave_channel = 71;
+        SendChannelMessage send_channel_message = 72;
+        SendChannelMessageResponse send_channel_message_response = 73;
+        ChannelMessageSent channel_message_sent = 74;
+        GetChannelMessages get_channel_messages = 75;
+        GetChannelMessagesResponse get_channel_messages_response = 76;
 
-        UpdateContacts update_contacts = 76;
-        UpdateInviteInfo update_invite_info = 77;
-        ShowContacts show_contacts = 78;
+        UpdateContacts update_contacts = 77;
+        UpdateInviteInfo update_invite_info = 78;
+        ShowContacts show_contacts = 79;
 
-        GetUsers get_users = 79;
-        FuzzySearchUsers fuzzy_search_users = 80;
-        UsersResponse users_response = 81;
-        RequestContact request_contact = 82;
-        RespondToContactRequest respond_to_contact_request = 83;
-        RemoveContact remove_contact = 84;
+        GetUsers get_users = 80;
+        FuzzySearchUsers fuzzy_search_users = 81;
+        UsersResponse users_response = 82;
+        RequestContact request_contact = 83;
+        RespondToContactRequest respond_to_contact_request = 84;
+        RemoveContact remove_contact = 85;
 
-        Follow follow = 85;
-        FollowResponse follow_response = 86;
-        UpdateFollowers update_followers = 87;
-        Unfollow unfollow = 88;
+        Follow follow = 86;
+        FollowResponse follow_response = 87;
+        UpdateFollowers update_followers = 88;
+        Unfollow unfollow = 89;
     }
 }
 
@@ -205,6 +206,12 @@ message CreateProjectEntry {
 }
 
 message RenameProjectEntry {
+    uint64 project_id = 1;
+    uint64 entry_id = 2;
+    bytes new_path = 3;
+}
+
+message CopyProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
     bytes new_path = 3;

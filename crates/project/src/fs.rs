@@ -15,6 +15,7 @@ use text::Rope;
 pub trait Fs: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;
     async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()>;
+    async fn copy(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()>;
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
@@ -40,6 +41,12 @@ pub trait Fs: Send + Sync {
 
 #[derive(Copy, Clone, Default)]
 pub struct CreateOptions {
+    pub overwrite: bool,
+    pub ignore_if_exists: bool,
+}
+
+#[derive(Copy, Clone, Default)]
+pub struct CopyOptions {
     pub overwrite: bool,
     pub ignore_if_exists: bool,
 }
@@ -81,6 +88,35 @@ impl Fs for RealFs {
             open_options.create_new(true);
         }
         open_options.open(path).await?;
+        Ok(())
+    }
+
+    async fn copy(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()> {
+        if !options.overwrite && smol::fs::metadata(target).await.is_ok() {
+            if options.ignore_if_exists {
+                return Ok(());
+            } else {
+                return Err(anyhow!("{target:?} already exists"));
+            }
+        }
+
+        let metadata = smol::fs::metadata(source).await?;
+        let _ = smol::fs::remove_dir_all(target).await;
+        if metadata.is_dir() {
+            self.create_dir(target).await?;
+            let mut children = smol::fs::read_dir(source).await?;
+            while let Some(child) = children.next().await {
+                if let Ok(child) = child {
+                    let child_source_path = child.path();
+                    let child_target_path = target.join(child.file_name());
+                    self.copy(&child_source_path, &child_target_path, options)
+                        .await?;
+                }
+            }
+        } else {
+            smol::fs::copy(source, target).await?;
+        }
+
         Ok(())
     }
 
@@ -508,6 +544,40 @@ impl Fs for FakeFs {
         }
 
         state.emit_event(&[source, target]).await;
+        Ok(())
+    }
+
+    async fn copy(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()> {
+        let source = normalize_path(source);
+        let target = normalize_path(target);
+
+        let mut state = self.state.lock().await;
+        state.validate_path(&source)?;
+        state.validate_path(&target)?;
+
+        if !options.overwrite && state.entries.contains_key(&target) {
+            if options.ignore_if_exists {
+                return Ok(());
+            } else {
+                return Err(anyhow!("{target:?} already exists"));
+            }
+        }
+
+        let mut new_entries = Vec::new();
+        for (path, entry) in &state.entries {
+            if let Ok(relative_path) = path.strip_prefix(&source) {
+                new_entries.push((relative_path.to_path_buf(), entry.clone()));
+            }
+        }
+
+        let mut events = Vec::new();
+        for (relative_path, entry) in new_entries {
+            let new_path = normalize_path(&target.join(relative_path));
+            events.push(new_path.clone());
+            state.entries.insert(new_path, entry);
+        }
+
+        state.emit_event(&events).await;
         Ok(())
     }
 
