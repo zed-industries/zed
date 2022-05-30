@@ -22,7 +22,7 @@ use std::{
     collections::{hash_map, HashMap},
     ffi::OsStr,
     ops::Range,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 use unicase::UniCase;
 use workspace::Workspace;
@@ -37,6 +37,7 @@ pub struct ProjectPanel {
     selection: Option<Selection>,
     edit_state: Option<EditState>,
     filename_editor: ViewHandle<Editor>,
+    clipboard_entry: Option<ClipboardEntry>,
     context_menu: ViewHandle<ContextMenu>,
 }
 
@@ -55,6 +56,18 @@ struct EditState {
     processing_filename: Option<String>,
 }
 
+#[derive(Copy, Clone)]
+pub enum ClipboardEntry {
+    Copied {
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+    },
+    Cut {
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+    },
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct EntryDetails {
     filename: String,
@@ -65,6 +78,7 @@ struct EntryDetails {
     is_selected: bool,
     is_editing: bool,
     is_processing: bool,
+    is_cut: bool,
 }
 
 #[derive(Clone)]
@@ -116,7 +130,11 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::copy);
     cx.add_action(ProjectPanel::copy_path);
     cx.add_action(ProjectPanel::cut);
-    cx.add_action(ProjectPanel::paste);
+    cx.add_action(
+        |this: &mut ProjectPanel, action: &Paste, cx: &mut ViewContext<ProjectPanel>| {
+            this.paste(action, cx);
+        },
+    );
 }
 
 pub enum Event {
@@ -172,6 +190,7 @@ impl ProjectPanel {
                 selection: None,
                 edit_state: None,
                 filename_editor,
+                clipboard_entry: None,
                 context_menu: cx.add_view(|cx| ContextMenu::new(cx)),
             };
             this.update_visible_entries(None, cx);
@@ -239,6 +258,11 @@ impl ProjectPanel {
                     menu_entries.push(ContextMenuItem::item("Copy", Copy));
                     menu_entries.push(ContextMenuItem::item("Copy Path", CopyPath));
                     menu_entries.push(ContextMenuItem::item("Cut", Cut));
+                    if let Some(clipboard_entry) = self.clipboard_entry {
+                        if clipboard_entry.worktree_id() == worktree.id() {
+                            menu_entries.push(ContextMenuItem::item("Paste", Paste));
+                        }
+                    }
                     menu_entries.push(ContextMenuItem::Separator);
                     menu_entries.push(ContextMenuItem::item("Rename", Rename));
                     if !is_root {
@@ -608,15 +632,75 @@ impl ProjectPanel {
     }
 
     fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
-        todo!()
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            self.clipboard_entry = Some(ClipboardEntry::Cut {
+                worktree_id: worktree.id(),
+                entry_id: entry.id,
+            });
+            cx.notify();
+        }
     }
 
     fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
-        todo!()
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            self.clipboard_entry = Some(ClipboardEntry::Copied {
+                worktree_id: worktree.id(),
+                entry_id: entry.id,
+            });
+            cx.notify();
+        }
     }
 
-    fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
-        todo!()
+    fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) -> Option<()> {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            let clipboard_entry = self.clipboard_entry?;
+            if clipboard_entry.worktree_id() != worktree.id() {
+                return None;
+            }
+
+            let clipboard_entry_file_name = self
+                .project
+                .read(cx)
+                .path_for_entry(clipboard_entry.entry_id(), cx)?
+                .path
+                .file_name()?
+                .to_os_string();
+
+            let mut new_path = entry.path.to_path_buf();
+            if entry.is_file() {
+                new_path.pop();
+            }
+
+            new_path.push(&clipboard_entry_file_name);
+            let extension = new_path.extension().map(|e| e.to_os_string());
+            let file_name_without_extension = Path::new(&clipboard_entry_file_name).file_stem()?;
+            let mut ix = 0;
+            while worktree.entry_for_path(&new_path).is_some() {
+                new_path.pop();
+
+                let mut new_file_name = file_name_without_extension.to_os_string();
+                new_file_name.push(" copy");
+                if ix > 0 {
+                    new_file_name.push(format!(" {}", ix));
+                }
+                new_path.push(new_file_name);
+                if let Some(extension) = extension.as_ref() {
+                    new_path.set_extension(&extension);
+                }
+                ix += 1;
+            }
+
+            self.clipboard_entry.take();
+            if clipboard_entry.is_cut() {
+                self.project
+                    .update(cx, |project, cx| {
+                        project.rename_entry(clipboard_entry.entry_id(), new_path, cx)
+                    })
+                    .map(|task| task.detach_and_log_err(cx));
+            } else {
+            }
+        }
+        None
     }
 
     fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
@@ -834,6 +918,9 @@ impl ProjectPanel {
                         }),
                         is_editing: false,
                         is_processing: false,
+                        is_cut: self
+                            .clipboard_entry
+                            .map_or(false, |e| e.is_cut() && e.entry_id() == entry.id),
                     };
                     if let Some(edit_state) = &self.edit_state {
                         let is_edited_entry = if edit_state.is_new_entry {
@@ -877,6 +964,10 @@ impl ProjectPanel {
             if details.is_ignored {
                 style.text.color.fade_out(theme.ignored_entry_fade);
                 style.icon_color.fade_out(theme.ignored_entry_fade);
+            }
+            if details.is_cut {
+                style.text.color.fade_out(theme.cut_entry_fade);
+                style.icon_color.fade_out(theme.cut_entry_fade);
             }
             let row_container_style = if show_editor {
                 theme.filename_editor.container
@@ -1015,6 +1106,27 @@ impl Entity for ProjectPanel {
 impl workspace::sidebar::SidebarItem for ProjectPanel {
     fn should_show_badge(&self, _: &AppContext) -> bool {
         false
+    }
+}
+
+impl ClipboardEntry {
+    fn is_cut(&self) -> bool {
+        matches!(self, Self::Cut { .. })
+    }
+
+    fn entry_id(&self) -> ProjectEntryId {
+        match self {
+            ClipboardEntry::Copied { entry_id, .. } | ClipboardEntry::Cut { entry_id, .. } => {
+                *entry_id
+            }
+        }
+    }
+
+    fn worktree_id(&self) -> WorktreeId {
+        match self {
+            ClipboardEntry::Copied { worktree_id, .. }
+            | ClipboardEntry::Cut { worktree_id, .. } => *worktree_id,
+        }
     }
 }
 
