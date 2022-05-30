@@ -191,6 +191,7 @@ actions!(
         UnfoldLines,
         FoldSelectedRanges,
         ShowCompletions,
+        ShowHover,
         OpenExcerpts,
         RestartLanguageServer,
     ]
@@ -413,6 +414,7 @@ pub struct Editor {
     next_completion_id: CompletionId,
     available_code_actions: Option<(ModelHandle<Buffer>, Arc<[CodeAction]>)>,
     code_actions_task: Option<Task<()>>,
+    hover_task: Option<Task<()>>,
     document_highlights_task: Option<Task<()>>,
     pending_rename: Option<RenameState>,
     searchable: bool,
@@ -559,6 +561,7 @@ struct InvalidationStack<T>(Vec<T>);
 enum ContextMenu {
     Completions(CompletionsMenu),
     CodeActions(CodeActionsMenu),
+    Hover(HoverPopover),
 }
 
 impl ContextMenu {
@@ -567,6 +570,7 @@ impl ContextMenu {
             match self {
                 ContextMenu::Completions(menu) => menu.select_prev(cx),
                 ContextMenu::CodeActions(menu) => menu.select_prev(cx),
+                _ => {}
             }
             true
         } else {
@@ -579,6 +583,7 @@ impl ContextMenu {
             match self {
                 ContextMenu::Completions(menu) => menu.select_next(cx),
                 ContextMenu::CodeActions(menu) => menu.select_next(cx),
+                _ => {}
             }
             true
         } else {
@@ -590,6 +595,7 @@ impl ContextMenu {
         match self {
             ContextMenu::Completions(menu) => menu.visible(),
             ContextMenu::CodeActions(menu) => menu.visible(),
+            ContextMenu::Hover(_) => true,
         }
     }
 
@@ -602,6 +608,7 @@ impl ContextMenu {
         match self {
             ContextMenu::Completions(menu) => (cursor_position, menu.render(style, cx)),
             ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, cx),
+            ContextMenu::Hover(popover) => (cursor_position, popover.render(style)),
         }
     }
 }
@@ -843,6 +850,22 @@ impl CodeActionsMenu {
         }
 
         (cursor_position, element)
+    }
+}
+
+#[derive(Clone)]
+struct HoverPopover {
+    pub text: String,
+    pub runs: Vec<(Range<usize>, HighlightStyle)>,
+}
+
+impl HoverPopover {
+    fn render(&self, style: EditorStyle) -> ElementBox {
+        Text::new(self.text.clone(), style.text.clone())
+            .with_soft_wrap(false)
+            .with_highlights(self.runs.clone())
+            .contained()
+            .boxed()
     }
 }
 
@@ -2385,6 +2408,59 @@ impl Editor {
         }))
     }
 
+    fn show_hover(&mut self, _: &ShowHover, cx: &mut ViewContext<Self>) {
+        if self.pending_rename.is_some() {
+            return;
+        }
+
+        let project = if let Some(project) = self.project.clone() {
+            project
+        } else {
+            return;
+        };
+
+        let position = self.selections.newest_anchor().head();
+        let (buffer, buffer_position) = if let Some(output) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(position.clone(), cx)
+        {
+            output
+        } else {
+            return;
+        };
+
+        let hover = HoverPopover {
+            text: "Test hover information".to_string(),
+            runs: Vec::new(),
+        };
+
+        let id = post_inc(&mut self.next_completion_id);
+        let task = cx.spawn_weak(|this, mut cx| {
+            async move {
+                if let Some(this) = this.upgrade(&cx) {
+                    this.update(&mut cx, |this, cx| {
+                        if !matches!(
+                            this.context_menu.as_ref(),
+                            None | Some(ContextMenu::Hover(_))
+                        ) {
+                            return;
+                        }
+
+                        if this.focused {
+                            this.show_context_menu(ContextMenu::Hover(hover), cx);
+                        }
+
+                        cx.notify();
+                    });
+                }
+                Ok::<_, anyhow::Error>(())
+            }
+            .log_err()
+        });
+        self.completion_tasks.push((id, task));
+    }
+
     async fn open_project_transaction(
         this: ViewHandle<Editor>,
         workspace: ViewHandle<Workspace>,
@@ -2628,7 +2704,7 @@ impl Editor {
     ) -> Option<(DisplayPoint, ElementBox)> {
         self.context_menu
             .as_ref()
-            .map(|menu| menu.render(cursor_position, style, cx))
+            .map(|menu| menu.render(cursor_position, style))
     }
 
     fn show_context_menu(&mut self, menu: ContextMenu, cx: &mut ViewContext<Self>) {
@@ -5664,6 +5740,9 @@ impl View for Editor {
             }
             Some(ContextMenu::CodeActions(_)) => {
                 context.set.insert("showing_code_actions".into());
+            }
+            Some(ContextMenu::Hover(_)) => {
+                context.set.insert("showing_hover".into());
             }
             None => {}
         }

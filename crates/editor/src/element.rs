@@ -1091,8 +1091,7 @@ impl Element for EditorElement {
             if (start_row..end_row).contains(&newest_selection_head.row()) {
                 let style = view.style(cx);
                 if view.context_menu_visible() {
-                    context_menu =
-                        view.render_context_menu(newest_selection_head, style.clone(), cx);
+                    context_menu = view.render_context_menu(newest_selection_head, style.clone());
                 }
 
                 code_actions_indicator = view
