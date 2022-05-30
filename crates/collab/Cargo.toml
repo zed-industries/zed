@@ -30,8 +30,6 @@ hyper = "0.14"
 lazy_static = "1.4"
 lipsum = { version = "0.8", optional = true }
 nanoid = "0.4"
-opentelemetry = { version = "0.17", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.10", features = ["tls-roots"] }
 parking_lot = "0.11.1"
 rand = "0.8"
 reqwest = { version = "0.11", features = ["json"], optional = true }
@@ -47,7 +45,6 @@ tower = "0.4"
 toml = "0.5.8"
 tracing = "0.1.34"
 tracing-log = "0.1.3"
-tracing-opentelemetry = "0.17"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json"] }
 
 [dependencies.sqlx]
