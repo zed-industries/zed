@@ -37,6 +37,7 @@ pub struct Window {
     event_handlers: Vec<Box<dyn FnMut(super::Event)>>,
     resize_handlers: Vec<Box<dyn FnMut()>>,
     close_handlers: Vec<Box<dyn FnOnce()>>,
+    pub(crate) title: Option<String>,
     pub(crate) pending_prompts: RefCell<VecDeque<oneshot::Sender<usize>>>,
 }
 
@@ -189,8 +190,13 @@ impl Window {
             close_handlers: Vec::new(),
             scale_factor: 1.0,
             current_scene: None,
+            title: None,
             pending_prompts: Default::default(),
         }
+    }
+
+    pub fn title(&self) -> Option<String> {
+        self.title.clone()
     }
 }
 
@@ -248,6 +254,10 @@ impl super::Window for Window {
     }
 
     fn activate(&self) {}
+
+    fn set_title(&mut self, title: &str) {
+        self.title = Some(title.to_string())
+    }
 }
 
 pub fn platform() -> Platform {

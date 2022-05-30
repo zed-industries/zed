@@ -96,6 +96,7 @@ pub trait Window: WindowContext {
     fn on_close(&mut self, callback: Box<dyn FnOnce()>);
     fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize>;
     fn activate(&self);
+    fn set_title(&mut self, title: &str);
 }
 
 pub trait WindowContext {

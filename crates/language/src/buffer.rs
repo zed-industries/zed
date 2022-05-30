@@ -83,6 +83,7 @@ pub struct BufferSnapshot {
 
 #[derive(Clone, Debug)]
 struct SelectionSet {
+    line_mode: bool,
     selections: Arc<[Selection<Anchor>]>,
     lamport_timestamp: clock::Lamport,
 }
@@ -129,6 +130,7 @@ pub enum Operation {
     UpdateSelections {
         selections: Arc<[Selection<Anchor>]>,
         lamport_timestamp: clock::Lamport,
+        line_mode: bool,
     },
     UpdateCompletionTriggers {
         triggers: Vec<String>,
@@ -343,6 +345,7 @@ impl Buffer {
             this.remote_selections.insert(
                 selection_set.replica_id as ReplicaId,
                 SelectionSet {
+                    line_mode: selection_set.line_mode,
                     selections: proto::deserialize_selections(selection_set.selections),
                     lamport_timestamp,
                 },
@@ -385,6 +388,7 @@ impl Buffer {
                     replica_id: *replica_id as u32,
                     selections: proto::serialize_selections(&set.selections),
                     lamport_timestamp: set.lamport_timestamp.value,
+                    line_mode: set.line_mode,
                 })
                 .collect(),
             diagnostics: proto::serialize_diagnostics(self.diagnostics.iter()),
@@ -1030,6 +1034,7 @@ impl Buffer {
     pub fn set_active_selections(
         &mut self,
         selections: Arc<[Selection<Anchor>]>,
+        line_mode: bool,
         cx: &mut ModelContext<Self>,
     ) {
         let lamport_timestamp = self.text.lamport_clock.tick();
@@ -1038,11 +1043,13 @@ impl Buffer {
             SelectionSet {
                 selections: selections.clone(),
                 lamport_timestamp,
+                line_mode,
             },
         );
         self.send_operation(
             Operation::UpdateSelections {
                 selections,
+                line_mode,
                 lamport_timestamp,
             },
             cx,
@@ -1050,7 +1057,7 @@ impl Buffer {
     }
 
     pub fn remove_active_selections(&mut self, cx: &mut ModelContext<Self>) {
-        self.set_active_selections(Arc::from([]), cx);
+        self.set_active_selections(Arc::from([]), false, cx);
     }
 
     pub fn set_text<T>(&mut self, text: T, cx: &mut ModelContext<Self>) -> Option<clock::Local>
@@ -1287,6 +1294,7 @@ impl Buffer {
             Operation::UpdateSelections {
                 selections,
                 lamport_timestamp,
+                line_mode,
             } => {
                 if let Some(set) = self.remote_selections.get(&lamport_timestamp.replica_id) {
                     if set.lamport_timestamp > lamport_timestamp {
@@ -1299,6 +1307,7 @@ impl Buffer {
                     SelectionSet {
                         selections,
                         lamport_timestamp,
+                        line_mode,
                     },
                 );
                 self.text.lamport_clock.observe(lamport_timestamp);
@@ -1890,8 +1899,14 @@ impl BufferSnapshot {
     pub fn remote_selections_in_range<'a>(
         &'a self,
         range: Range<Anchor>,
-    ) -> impl 'a + Iterator<Item = (ReplicaId, impl 'a + Iterator<Item = &'a Selection<Anchor>>)>
-    {
+    ) -> impl 'a
+           + Iterator<
+        Item = (
+            ReplicaId,
+            bool,
+            impl 'a + Iterator<Item = &'a Selection<Anchor>>,
+        ),
+    > {
         self.remote_selections
             .iter()
             .filter(|(replica_id, set)| {
@@ -1909,7 +1924,11 @@ impl BufferSnapshot {
                     Ok(ix) | Err(ix) => ix,
                 };
 
-                (*replica_id, set.selections[start_ix..end_ix].iter())
+                (
+                    *replica_id,
+                    set.line_mode,
+                    set.selections[start_ix..end_ix].iter(),
+                )
             })
     }
 

@@ -57,6 +57,10 @@
                 "Delete"
             ],
             "shift-D": "vim::DeleteToEndOfLine",
+            "y": [
+                "vim::PushOperator",
+                "Yank"
+            ],
             "i": [
                 "vim::SwitchMode",
                 "Insert"
@@ -71,8 +75,24 @@
             "shift-O": "vim::InsertLineAbove",
             "v": [
                 "vim::SwitchMode",
-                "Visual"
-            ]
+                {
+                    "Visual": {
+                        "line": false
+                    }
+                }
+            ],
+            "shift-V": [
+                "vim::SwitchMode",
+                {
+                    "Visual": {
+                        "line": true
+                    }
+                }
+            ],
+            "p": "vim::Paste",
+            "u": "editor::Undo",
+            "ctrl-r": "editor::Redo",
+            "ctrl-o": "pane::GoBack"
         }
     },
     {
@@ -105,11 +125,18 @@
         }
     },
     {
+        "context": "Editor && vim_operator == y",
+        "bindings": {
+            "y": "vim::CurrentLine"
+        }
+    },
+    {
         "context": "Editor && vim_mode == visual",
         "bindings": {
             "c": "vim::VisualChange",
             "d": "vim::VisualDelete",
-            "x": "vim::VisualDelete"
+            "x": "vim::VisualDelete",
+            "y": "vim::VisualYank"
         }
     },
     {

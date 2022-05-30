@@ -180,8 +180,8 @@ fn main() {
 
         cx.observe_global::<Settings, _>({
             let languages = languages.clone();
-            move |settings, _| {
-                languages.set_theme(&settings.theme.editor.syntax);
+            move |cx| {
+                languages.set_theme(&cx.global::<Settings>().theme.editor.syntax);
             }
         })
         .detach();

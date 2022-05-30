@@ -1,5 +1,8 @@
 mod change;
 mod delete;
+mod yank;
+
+use std::borrow::Cow;
 
 use crate::{
     motion::Motion,
@@ -8,12 +11,12 @@ use crate::{
 };
 use change::init as change_init;
 use collections::HashSet;
-use editor::{Autoscroll, Bias, DisplayPoint};
+use editor::{Autoscroll, Bias, ClipboardSelection, DisplayPoint};
 use gpui::{actions, MutableAppContext, ViewContext};
-use language::SelectionGoal;
+use language::{Point, SelectionGoal};
 use workspace::Workspace;
 
-use self::{change::change_over, delete::delete_over};
+use self::{change::change_over, delete::delete_over, yank::yank_over};
 
 actions!(
     vim,
@@ -27,6 +30,8 @@ actions!(
         DeleteRight,
         ChangeToEndOfLine,
         DeleteToEndOfLine,
+        Paste,
+        Yank,
     ]
 );
 
@@ -56,6 +61,7 @@ pub fn init(cx: &mut MutableAppContext) {
             delete_over(vim, Motion::EndOfLine, cx);
         })
     });
+    cx.add_action(paste);
 
     change_init(cx);
 }
@@ -64,11 +70,12 @@ pub fn normal_motion(motion: Motion, cx: &mut MutableAppContext) {
     Vim::update(cx, |vim, cx| {
         match vim.state.operator_stack.pop() {
             None => move_cursor(vim, motion, cx),
-            Some(Operator::Change) => change_over(vim, motion, cx),
-            Some(Operator::Delete) => delete_over(vim, motion, cx),
             Some(Operator::Namespace(_)) => {
                 // Can't do anything for a namespace operator. Ignoring
             }
+            Some(Operator::Change) => change_over(vim, motion, cx),
+            Some(Operator::Delete) => delete_over(vim, motion, cx),
+            Some(Operator::Yank) => yank_over(vim, motion, cx),
         }
         vim.clear_operator(cx);
     });
@@ -182,6 +189,116 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
                     });
                 });
                 editor.edit_with_autoindent(edits, cx);
+            });
+        });
+    });
+}
+
+// Supports non empty selections so it can be bound and called from visual mode
+fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
+    Vim::update(cx, |vim, cx| {
+        vim.update_active_editor(cx, |editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                if let Some(item) = cx.as_mut().read_from_clipboard() {
+                    let mut clipboard_text = Cow::Borrowed(item.text());
+                    if let Some(mut clipboard_selections) =
+                        item.metadata::<Vec<ClipboardSelection>>()
+                    {
+                        let (display_map, selections) = editor.selections.all_display(cx);
+                        let all_selections_were_entire_line =
+                            clipboard_selections.iter().all(|s| s.is_entire_line);
+                        if clipboard_selections.len() != selections.len() {
+                            let mut newline_separated_text = String::new();
+                            let mut clipboard_selections =
+                                clipboard_selections.drain(..).peekable();
+                            let mut ix = 0;
+                            while let Some(clipboard_selection) = clipboard_selections.next() {
+                                newline_separated_text
+                                    .push_str(&clipboard_text[ix..ix + clipboard_selection.len]);
+                                ix += clipboard_selection.len;
+                                if clipboard_selections.peek().is_some() {
+                                    newline_separated_text.push('\n');
+                                }
+                            }
+                            clipboard_text = Cow::Owned(newline_separated_text);
+                        }
+
+                        let mut new_selections = Vec::new();
+                        editor.buffer().update(cx, |buffer, cx| {
+                            let snapshot = buffer.snapshot(cx);
+                            let mut start_offset = 0;
+                            let mut edits = Vec::new();
+                            for (ix, selection) in selections.iter().enumerate() {
+                                let to_insert;
+                                let linewise;
+                                if let Some(clipboard_selection) = clipboard_selections.get(ix) {
+                                    let end_offset = start_offset + clipboard_selection.len;
+                                    to_insert = &clipboard_text[start_offset..end_offset];
+                                    linewise = clipboard_selection.is_entire_line;
+                                    start_offset = end_offset;
+                                } else {
+                                    to_insert = clipboard_text.as_str();
+                                    linewise = all_selections_were_entire_line;
+                                }
+
+                                // If the clipboard text was copied linewise, and the current selection
+                                // is empty, then paste the text after this line and move the selection
+                                // to the start of the pasted text
+                                let range = if selection.is_empty() && linewise {
+                                    let (point, _) = display_map
+                                        .next_line_boundary(selection.start.to_point(&display_map));
+
+                                    if !to_insert.starts_with('\n') {
+                                        // Add newline before pasted text so that it shows up
+                                        edits.push((point..point, "\n"));
+                                    }
+                                    // Drop selection at the start of the next line
+                                    let selection_point = Point::new(point.row + 1, 0);
+                                    new_selections.push(selection.map(|_| selection_point.clone()));
+                                    point..point
+                                } else {
+                                    let mut selection = selection.clone();
+                                    if !selection.reversed {
+                                        let mut adjusted = selection.end;
+                                        // Head is at the end of the selection. Adjust the end position to
+                                        // to include the character under the cursor.
+                                        *adjusted.column_mut() = adjusted.column() + 1;
+                                        adjusted = display_map.clip_point(adjusted, Bias::Right);
+                                        // If the selection is empty, move both the start and end forward one
+                                        // character
+                                        if selection.is_empty() {
+                                            selection.start = adjusted;
+                                            selection.end = adjusted;
+                                        } else {
+                                            selection.end = adjusted;
+                                        }
+                                    }
+
+                                    let range = selection.map(|p| p.to_point(&display_map)).range();
+                                    new_selections.push(selection.map(|_| range.start.clone()));
+                                    range
+                                };
+
+                                if linewise && to_insert.ends_with('\n') {
+                                    edits.push((
+                                        range,
+                                        &to_insert[0..to_insert.len().saturating_sub(1)],
+                                    ))
+                                } else {
+                                    edits.push((range, to_insert));
+                                }
+                            }
+                            drop(snapshot);
+                            buffer.edit_with_autoindent(edits, cx);
+                        });
+
+                        editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                            s.select(new_selections)
+                        });
+                    } else {
+                        editor.insert(&clipboard_text, cx);
+                    }
+                }
             });
         });
     });
@@ -678,14 +795,8 @@ mod test {
                 |
                 The quick"},
         );
-        cx.assert(
-            indoc! {"
-                    |
-                The quick"},
-            indoc! {"
-                    |
-                The quick"},
-        );
+        // Indoc disallows trailing whitspace.
+        cx.assert("   | \nThe quick", "   | \nThe quick");
     }
 
     #[gpui::test]
@@ -1025,5 +1136,49 @@ mod test {
                 |
                 brown fox"},
         );
+    }
+
+    #[gpui::test]
+    async fn test_p(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state(
+            indoc! {"
+                The quick brown
+                fox ju|mps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(["d", "d"]);
+        cx.assert_editor_state(indoc! {"
+            The quick brown
+            the la|zy dog"});
+
+        cx.simulate_keystroke("p");
+        cx.assert_editor_state(indoc! {"
+            The quick brown
+            the lazy dog
+            |fox jumps over"});
+
+        cx.set_state(
+            indoc! {"
+                The quick brown
+                fox [jump}s over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        cx.simulate_keystroke("y");
+        cx.set_state(
+            indoc! {"
+                The quick brown
+                fox jump|s over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        cx.simulate_keystroke("p");
+        cx.assert_editor_state(indoc! {"
+            The quick brown
+            fox jumps|jumps over
+            the lazy dog"});
     }
 }

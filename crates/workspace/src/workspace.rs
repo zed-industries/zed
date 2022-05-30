@@ -37,6 +37,7 @@ use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
     any::{Any, TypeId},
+    borrow::Cow,
     cell::RefCell,
     fmt,
     future::Future,
@@ -543,7 +544,10 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             }
 
             if T::should_update_tab_on_event(event) {
-                pane.update(cx, |_, cx| cx.notify());
+                pane.update(cx, |_, cx| {
+                    cx.emit(pane::Event::ChangeItemTitle);
+                    cx.notify();
+                });
             }
         })
         .detach();
@@ -755,6 +759,9 @@ impl Workspace {
                 project::Event::CollaboratorLeft(peer_id) => {
                     this.collaborator_left(*peer_id, cx);
                 }
+                project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded => {
+                    this.update_window_title(cx);
+                }
                 _ => {}
             }
             if project.read(cx).is_read_only() {
@@ -766,14 +773,8 @@ impl Workspace {
 
         let pane = cx.add_view(|cx| Pane::new(cx));
         let pane_id = pane.id();
-        cx.observe(&pane, move |me, _, cx| {
-            let active_entry = me.active_project_path(cx);
-            me.project
-                .update(cx, |project, cx| project.set_active_path(active_entry, cx));
-        })
-        .detach();
-        cx.subscribe(&pane, move |me, _, event, cx| {
-            me.handle_pane_event(pane_id, event, cx)
+        cx.subscribe(&pane, move |this, _, event, cx| {
+            this.handle_pane_event(pane_id, event, cx)
         })
         .detach();
         cx.focus(&pane);
@@ -836,6 +837,11 @@ impl Workspace {
             _observe_current_user,
         };
         this.project_remote_id_changed(this.project.read(cx).remote_id(), cx);
+
+        cx.defer(|this, cx| {
+            this.update_window_title(cx);
+        });
+
         this
     }
 
@@ -1258,14 +1264,8 @@ impl Workspace {
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
         let pane = cx.add_view(|cx| Pane::new(cx));
         let pane_id = pane.id();
-        cx.observe(&pane, move |me, _, cx| {
-            let active_entry = me.active_project_path(cx);
-            me.project
-                .update(cx, |project, cx| project.set_active_path(active_entry, cx));
-        })
-        .detach();
-        cx.subscribe(&pane, move |me, _, event, cx| {
-            me.handle_pane_event(pane_id, event, cx)
+        cx.subscribe(&pane, move |this, _, event, cx| {
+            this.handle_pane_event(pane_id, event, cx)
         })
         .detach();
         self.panes.push(pane.clone());
@@ -1405,6 +1405,7 @@ impl Workspace {
             self.status_bar.update(cx, |status_bar, cx| {
                 status_bar.set_active_pane(&self.active_pane, cx);
             });
+            self.active_item_path_changed(cx);
             cx.focus(&self.active_pane);
             cx.notify();
         }
@@ -1439,6 +1440,14 @@ impl Workspace {
                     if *local {
                         self.unfollow(&pane, cx);
                     }
+                    if pane == self.active_pane {
+                        self.active_item_path_changed(cx);
+                    }
+                }
+                pane::Event::ChangeItemTitle => {
+                    if pane == self.active_pane {
+                        self.active_item_path_changed(cx);
+                    }
                 }
             }
         } else {
@@ -1471,6 +1480,8 @@ impl Workspace {
             self.unfollow(&pane, cx);
             self.last_leaders_by_pane.remove(&pane.downgrade());
             cx.notify();
+        } else {
+            self.active_item_path_changed(cx);
         }
     }
 
@@ -1658,15 +1669,7 @@ impl Workspace {
 
     fn render_titlebar(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
         let mut worktree_root_names = String::new();
-        {
-            let mut worktrees = self.project.read(cx).visible_worktrees(cx).peekable();
-            while let Some(worktree) = worktrees.next() {
-                worktree_root_names.push_str(worktree.read(cx).root_name());
-                if worktrees.peek().is_some() {
-                    worktree_root_names.push_str(", ");
-                }
-            }
-        }
+        self.worktree_root_names(&mut worktree_root_names, cx);
 
         ConstrainedBox::new(
             Container::new(
@@ -1700,6 +1703,50 @@ impl Workspace {
         )
         .with_height(theme.workspace.titlebar.height)
         .named("titlebar")
+    }
+
+    fn active_item_path_changed(&mut self, cx: &mut ViewContext<Self>) {
+        let active_entry = self.active_project_path(cx);
+        self.project
+            .update(cx, |project, cx| project.set_active_path(active_entry, cx));
+        self.update_window_title(cx);
+    }
+
+    fn update_window_title(&mut self, cx: &mut ViewContext<Self>) {
+        let mut title = String::new();
+        if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
+            let filename = path
+                .path
+                .file_name()
+                .map(|s| s.to_string_lossy())
+                .or_else(|| {
+                    Some(Cow::Borrowed(
+                        self.project()
+                            .read(cx)
+                            .worktree_for_id(path.worktree_id, cx)?
+                            .read(cx)
+                            .root_name(),
+                    ))
+                });
+            if let Some(filename) = filename {
+                title.push_str(filename.as_ref());
+                title.push_str(" — ");
+            }
+        }
+        self.worktree_root_names(&mut title, cx);
+        if title.is_empty() {
+            title = "empty project".to_string();
+        }
+        cx.set_window_title(&title);
+    }
+
+    fn worktree_root_names(&self, string: &mut String, cx: &mut MutableAppContext) {
+        for (i, worktree) in self.project.read(cx).visible_worktrees(cx).enumerate() {
+            if i != 0 {
+                string.push_str(", ");
+            }
+            string.push_str(worktree.read(cx).root_name());
+        }
     }
 
     fn render_collaborators(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> Vec<ElementBox> {
@@ -2438,6 +2485,110 @@ mod tests {
     use serde_json::json;
 
     #[gpui::test]
+    async fn test_tracking_active_path(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                "one.txt": "",
+                "two.txt": "",
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/root2",
+            json!({
+                "three.txt": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["root1".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let item1 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.project_path = Some((worktree_id, "one.txt").into());
+            item
+        });
+        let item2 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.project_path = Some((worktree_id, "two.txt").into());
+            item
+        });
+
+        // Add an item to an empty pane
+        workspace.update(cx, |workspace, cx| workspace.add_item(Box::new(item1), cx));
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                project.active_entry(),
+                project.entry_for_path(&(worktree_id, "one.txt").into(), cx)
+            );
+        });
+        assert_eq!(
+            cx.current_window_title(window_id).as_deref(),
+            Some("one.txt — root1")
+        );
+
+        // Add a second item to a non-empty pane
+        workspace.update(cx, |workspace, cx| workspace.add_item(Box::new(item2), cx));
+        assert_eq!(
+            cx.current_window_title(window_id).as_deref(),
+            Some("two.txt — root1")
+        );
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                project.active_entry(),
+                project.entry_for_path(&(worktree_id, "two.txt").into(), cx)
+            );
+        });
+
+        // Close the active item
+        workspace
+            .update(cx, |workspace, cx| {
+                Pane::close_active_item(workspace, &Default::default(), cx).unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            cx.current_window_title(window_id).as_deref(),
+            Some("one.txt — root1")
+        );
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                project.active_entry(),
+                project.entry_for_path(&(worktree_id, "one.txt").into(), cx)
+            );
+        });
+
+        // Add a project folder
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/root2", true, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            cx.current_window_title(window_id).as_deref(),
+            Some("one.txt — root1, root2")
+        );
+
+        // Remove a project folder
+        project.update(cx, |project, cx| {
+            project.remove_worktree(worktree_id, cx);
+        });
+        assert_eq!(
+            cx.current_window_title(window_id).as_deref(),
+            Some("one.txt — root2")
+        );
+    }
+
+    #[gpui::test]
     async fn test_close_window(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
         Settings::test_async(cx);
@@ -2466,18 +2617,6 @@ mod tests {
             item.project_entry_ids = vec![ProjectEntryId::from_proto(1)];
             item
         });
-        workspace.update(cx, |w, cx| {
-            w.add_item(Box::new(item2.clone()), cx);
-            w.add_item(Box::new(item3.clone()), cx);
-        });
-        let task = workspace.update(cx, |w, cx| w.prepare_to_close(cx));
-        cx.foreground().run_until_parked();
-        cx.simulate_prompt_answer(window_id, 2 /* cancel */);
-        cx.foreground().run_until_parked();
-        assert!(!cx.has_pending_prompt(window_id));
-        assert_eq!(task.await.unwrap(), false);
-
-        // If there are multiple dirty items representing the same project entry.
         workspace.update(cx, |w, cx| {
             w.add_item(Box::new(item2.clone()), cx);
             w.add_item(Box::new(item3.clone()), cx);
@@ -2687,6 +2826,7 @@ mod tests {
         is_dirty: bool,
         has_conflict: bool,
         project_entry_ids: Vec<ProjectEntryId>,
+        project_path: Option<ProjectPath>,
         is_singleton: bool,
     }
 
@@ -2699,6 +2839,7 @@ mod tests {
                 is_dirty: false,
                 has_conflict: false,
                 project_entry_ids: Vec::new(),
+                project_path: None,
                 is_singleton: true,
             }
         }
@@ -2724,7 +2865,7 @@ mod tests {
         }
 
         fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
-            None
+            self.project_path.clone()
         }
 
         fn project_entry_ids(&self, _: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
@@ -2782,6 +2923,10 @@ mod tests {
         ) -> Task<anyhow::Result<()>> {
             self.reload_count += 1;
             Task::ready(Ok(()))
+        }
+
+        fn should_update_tab_on_event(_: &Self::Event) -> bool {
+            true
         }
     }
 }

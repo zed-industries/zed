@@ -15,7 +15,7 @@ use gpui::{
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
 use settings::Settings;
-use std::{any::Any, cell::RefCell, cmp, mem, path::Path, rc::Rc};
+use std::{any::Any, cell::RefCell, mem, path::Path, rc::Rc};
 use util::ResultExt;
 
 actions!(
@@ -109,6 +109,7 @@ pub enum Event {
     ActivateItem { local: bool },
     Remove,
     Split(SplitDirection),
+    ChangeItemTitle,
 }
 
 pub struct Pane {
@@ -334,9 +335,20 @@ impl Pane {
         item.set_nav_history(pane.read(cx).nav_history.clone(), cx);
         item.added_to_pane(workspace, pane.clone(), cx);
         pane.update(cx, |pane, cx| {
-            let item_idx = cmp::min(pane.active_item_index + 1, pane.items.len());
-            pane.items.insert(item_idx, item);
-            pane.activate_item(item_idx, activate_pane, focus_item, cx);
+            // If there is already an active item, then insert the new item
+            // right after it. Otherwise, adjust the `active_item_index` field
+            // before activating the new item, so that in the `activate_item`
+            // method, we can detect that the active item is changing.
+            let item_ix;
+            if pane.active_item_index < pane.items.len() {
+                item_ix = pane.active_item_index + 1
+            } else {
+                item_ix = pane.items.len();
+                pane.active_item_index = usize::MAX;
+            };
+
+            pane.items.insert(item_ix, item);
+            pane.activate_item(item_ix, activate_pane, focus_item, cx);
             cx.notify();
         });
     }
@@ -383,11 +395,12 @@ impl Pane {
         use NavigationMode::{GoingBack, GoingForward};
         if index < self.items.len() {
             let prev_active_item_ix = mem::replace(&mut self.active_item_index, index);
-            if matches!(self.nav_history.borrow().mode, GoingBack | GoingForward)
-                || (prev_active_item_ix != self.active_item_index
-                    && prev_active_item_ix < self.items.len())
+            if prev_active_item_ix != self.active_item_index
+                || matches!(self.nav_history.borrow().mode, GoingBack | GoingForward)
             {
-                self.items[prev_active_item_ix].deactivated(cx);
+                if let Some(prev_item) = self.items.get(prev_active_item_ix) {
+                    prev_item.deactivated(cx);
+                }
                 cx.emit(Event::ActivateItem {
                     local: activate_pane,
                 });
@@ -424,7 +437,7 @@ impl Pane {
         self.activate_item(index, true, true, cx);
     }
 
-    fn close_active_item(
+    pub fn close_active_item(
         workspace: &mut Workspace,
         _: &CloseActiveItem,
         cx: &mut ViewContext<Workspace>,

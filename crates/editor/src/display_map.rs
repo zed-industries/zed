@@ -279,6 +279,23 @@ impl DisplaySnapshot {
         }
     }
 
+    pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
+        let mut new_start = self.prev_line_boundary(range.start).0;
+        let mut new_end = self.next_line_boundary(range.end).0;
+
+        if new_start.row == range.start.row && new_end.row == range.end.row {
+            if new_end.row < self.buffer_snapshot.max_point().row {
+                new_end.row += 1;
+                new_end.column = 0;
+            } else if new_start.row > 0 {
+                new_start.row -= 1;
+                new_start.column = self.buffer_snapshot.line_len(new_start.row);
+            }
+        }
+
+        new_start..new_end
+    }
+
     fn point_to_display_point(&self, point: Point, bias: Bias) -> DisplayPoint {
         let fold_point = self.folds_snapshot.to_fold_point(point, bias);
         let tab_point = self.tabs_snapshot.to_tab_point(fold_point);

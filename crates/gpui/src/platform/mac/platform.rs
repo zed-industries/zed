@@ -202,6 +202,11 @@ impl MacForegroundPlatform {
 
             menu_bar_item.setSubmenu_(menu);
             menu_bar.addItem_(menu_bar_item);
+
+            if menu_name == "Window" {
+                let app: id = msg_send![APP_CLASS, sharedApplication];
+                app.setWindowsMenu_(menu);
+            }
         }
 
         menu_bar

@@ -139,6 +139,7 @@ pub struct Collaborator {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     ActiveEntryChanged(Option<ProjectEntryId>),
+    WorktreeAdded,
     WorktreeRemoved(WorktreeId),
     DiskBasedDiagnosticsStarted,
     DiskBasedDiagnosticsUpdated,
@@ -3655,11 +3656,19 @@ impl Project {
         })
     }
 
-    pub fn remove_worktree(&mut self, id: WorktreeId, cx: &mut ModelContext<Self>) {
+    pub fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
         self.worktrees.retain(|worktree| {
-            worktree
-                .upgrade(cx)
-                .map_or(false, |w| w.read(cx).id() != id)
+            if let Some(worktree) = worktree.upgrade(cx) {
+                let id = worktree.read(cx).id();
+                if id == id_to_remove {
+                    cx.emit(Event::WorktreeRemoved(id));
+                    false
+                } else {
+                    true
+                }
+            } else {
+                false
+            }
         });
         cx.notify();
     }
@@ -3690,6 +3699,7 @@ impl Project {
             self.worktrees
                 .push(WorktreeHandle::Weak(worktree.downgrade()));
         }
+        cx.emit(Event::WorktreeAdded);
         cx.notify();
     }
 

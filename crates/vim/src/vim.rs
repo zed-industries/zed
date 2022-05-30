@@ -6,11 +6,12 @@ mod insert;
 mod motion;
 mod normal;
 mod state;
+mod utils;
 mod visual;
 
 use collections::HashMap;
-use editor::{CursorShape, Editor};
-use gpui::{impl_actions, MutableAppContext, ViewContext, WeakViewHandle};
+use editor::{Bias, CursorShape, Editor, Input};
+use gpui::{impl_actions, MutableAppContext, Subscription, ViewContext, WeakViewHandle};
 use serde::Deserialize;
 
 use settings::Settings;
@@ -40,9 +41,19 @@ pub fn init(cx: &mut MutableAppContext) {
             Vim::update(cx, |vim, cx| vim.push_operator(operator, cx))
         },
     );
+    cx.add_action(|_: &mut Editor, _: &Input, cx| {
+        if Vim::read(cx).active_operator().is_some() {
+            // Defer without updating editor
+            MutableAppContext::defer(cx, |cx| Vim::update(cx, |vim, cx| vim.clear_operator(cx)))
+        } else {
+            cx.propagate_action()
+        }
+    });
 
-    cx.observe_global::<Settings, _>(|settings, cx| {
-        Vim::update(cx, |state, cx| state.set_enabled(settings.vim_mode, cx))
+    cx.observe_global::<Settings, _>(|cx| {
+        Vim::update(cx, |state, cx| {
+            state.set_enabled(cx.global::<Settings>().vim_mode, cx)
+        })
     })
     .detach();
 }
@@ -51,6 +62,7 @@ pub fn init(cx: &mut MutableAppContext) {
 pub struct Vim {
     editors: HashMap<usize, WeakViewHandle<Editor>>,
     active_editor: Option<WeakViewHandle<Editor>>,
+    selection_subscription: Option<Subscription>,
 
     enabled: bool,
     state: VimState,
@@ -101,7 +113,7 @@ impl Vim {
         self.sync_editor_options(cx);
     }
 
-    fn active_operator(&mut self) -> Option<Operator> {
+    fn active_operator(&self) -> Option<Operator> {
         self.state.operator_stack.last().copied()
     }
 
@@ -118,23 +130,38 @@ impl Vim {
 
     fn sync_editor_options(&self, cx: &mut MutableAppContext) {
         let state = &self.state;
-
         let cursor_shape = state.cursor_shape();
+
         for editor in self.editors.values() {
             if let Some(editor) = editor.upgrade(cx) {
                 editor.update(cx, |editor, cx| {
                     if self.enabled {
                         editor.set_cursor_shape(cursor_shape, cx);
-                        editor.set_clip_at_line_ends(cursor_shape == CursorShape::Block, cx);
+                        editor.set_clip_at_line_ends(state.clip_at_line_end(), cx);
                         editor.set_input_enabled(!state.vim_controlled());
+                        editor.selections.line_mode =
+                            matches!(state.mode, Mode::Visual { line: true });
                         let context_layer = state.keymap_context_layer();
                         editor.set_keymap_context_layer::<Self>(context_layer);
                     } else {
                         editor.set_cursor_shape(CursorShape::Bar, cx);
                         editor.set_clip_at_line_ends(false, cx);
                         editor.set_input_enabled(true);
+                        editor.selections.line_mode = false;
                         editor.remove_keymap_context_layer::<Self>();
                     }
+
+                    editor.change_selections(None, cx, |s| {
+                        s.move_with(|map, selection| {
+                            selection.set_head(
+                                map.clip_point(selection.head(), Bias::Left),
+                                selection.goal,
+                            );
+                            if state.empty_selections_only() {
+                                selection.collapse_to(selection.head(), selection.goal)
+                            }
+                        });
+                    })
                 });
             }
         }
@@ -169,9 +196,9 @@ mod test {
         assert_eq!(cx.mode(), Mode::Normal);
         cx.simulate_keystrokes(["h", "h", "h", "l"]);
         assert_eq!(cx.editor_text(), "hjkl".to_owned());
-        cx.assert_editor_state("hj|kl");
+        cx.assert_editor_state("h|jkl");
         cx.simulate_keystrokes(["i", "T", "e", "s", "t"]);
-        cx.assert_editor_state("hjTest|kl");
+        cx.assert_editor_state("hTest|jkl");
 
         // Disabling and enabling resets to normal mode
         assert_eq!(cx.mode(), Mode::Insert);

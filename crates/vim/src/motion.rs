@@ -111,7 +111,7 @@ fn motion(motion: Motion, cx: &mut MutableAppContext) {
     });
     match Vim::read(cx).state.mode {
         Mode::Normal => normal_motion(motion, cx),
-        Mode::Visual => visual_motion(motion, cx),
+        Mode::Visual { .. } => visual_motion(motion, cx),
         Mode::Insert => {
             // Shouldn't execute a motion in insert mode. Ignoring
         }
@@ -192,11 +192,13 @@ impl Motion {
                 if selection.end.row() < map.max_point().row() {
                     *selection.end.row_mut() += 1;
                     *selection.end.column_mut() = 0;
+                    selection.end = map.clip_point(selection.end, Bias::Right);
                     // Don't reset the end here
                     return;
                 } else if selection.start.row() > 0 {
                     *selection.start.row_mut() -= 1;
                     *selection.start.column_mut() = map.line_len(selection.start.row());
+                    selection.start = map.clip_point(selection.start, Bias::Left);
                 }
             }
 

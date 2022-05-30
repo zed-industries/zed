@@ -3,7 +3,10 @@ use super::{
     Anchor, DisplayPoint, Editor, EditorMode, EditorSnapshot, Input, Scroll, Select, SelectPhase,
     SoftWrap, ToPoint, MAX_LINE_LEN,
 };
-use crate::{display_map::TransformBlock, EditorStyle};
+use crate::{
+    display_map::{DisplaySnapshot, TransformBlock},
+    EditorStyle,
+};
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
 use gpui::{
@@ -23,7 +26,7 @@ use gpui::{
     WeakViewHandle,
 };
 use json::json;
-use language::{Bias, DiagnosticSeverity};
+use language::{Bias, DiagnosticSeverity, Selection};
 use settings::Settings;
 use smallvec::SmallVec;
 use std::{
@@ -32,6 +35,35 @@ use std::{
     iter,
     ops::Range,
 };
+
+struct SelectionLayout {
+    head: DisplayPoint,
+    range: Range<DisplayPoint>,
+}
+
+impl SelectionLayout {
+    fn new<T: ToPoint + ToDisplayPoint + Clone>(
+        selection: Selection<T>,
+        line_mode: bool,
+        map: &DisplaySnapshot,
+    ) -> Self {
+        if line_mode {
+            let selection = selection.map(|p| p.to_point(&map.buffer_snapshot));
+            let point_range = map.expand_to_line(selection.range());
+            Self {
+                head: selection.head().to_display_point(map),
+                range: point_range.start.to_display_point(map)
+                    ..point_range.end.to_display_point(map),
+            }
+        } else {
+            let selection = selection.map(|p| p.to_display_point(map));
+            Self {
+                head: selection.head(),
+                range: selection.range(),
+            }
+        }
+    }
+}
 
 pub struct EditorElement {
     view: WeakViewHandle<Editor>,
@@ -360,7 +392,7 @@ impl EditorElement {
 
             for selection in selections {
                 self.paint_highlighted_range(
-                    selection.start..selection.end,
+                    selection.range.clone(),
                     start_row,
                     end_row,
                     selection_style.selection,
@@ -375,7 +407,7 @@ impl EditorElement {
                 );
 
                 if view.show_local_cursors() || *replica_id != local_replica_id {
-                    let cursor_position = selection.head();
+                    let cursor_position = selection.head;
                     if (start_row..end_row).contains(&cursor_position.row()) {
                         let cursor_row_layout =
                             &layout.line_layouts[(cursor_position.row() - start_row) as usize];
@@ -922,7 +954,7 @@ impl Element for EditorElement {
                 .anchor_before(DisplayPoint::new(end_row, 0).to_offset(&snapshot, Bias::Right))
         };
 
-        let mut selections = Vec::new();
+        let mut selections: Vec<(ReplicaId, Vec<SelectionLayout>)> = Vec::new();
         let mut active_rows = BTreeMap::new();
         let mut highlighted_rows = None;
         let mut highlighted_ranges = Vec::new();
@@ -938,7 +970,7 @@ impl Element for EditorElement {
             );
 
             let mut remote_selections = HashMap::default();
-            for (replica_id, selection) in display_map
+            for (replica_id, line_mode, selection) in display_map
                 .buffer_snapshot
                 .remote_selections_in_range(&(start_anchor.clone()..end_anchor.clone()))
             {
@@ -946,17 +978,10 @@ impl Element for EditorElement {
                 if Some(replica_id) == view.leader_replica_id {
                     continue;
                 }
-
                 remote_selections
                     .entry(replica_id)
                     .or_insert(Vec::new())
-                    .push(crate::Selection {
-                        id: selection.id,
-                        goal: selection.goal,
-                        reversed: selection.reversed,
-                        start: selection.start.to_display_point(&display_map),
-                        end: selection.end.to_display_point(&display_map),
-                    });
+                    .push(SelectionLayout::new(selection, line_mode, &display_map));
             }
             selections.extend(remote_selections);
 
@@ -985,12 +1010,8 @@ impl Element for EditorElement {
                     local_replica_id,
                     local_selections
                         .into_iter()
-                        .map(|selection| crate::Selection {
-                            id: selection.id,
-                            goal: selection.goal,
-                            reversed: selection.reversed,
-                            start: selection.start.to_display_point(&display_map),
-                            end: selection.end.to_display_point(&display_map),
+                        .map(|selection| {
+                            SelectionLayout::new(selection, view.selections.line_mode, &display_map)
                         })
                         .collect(),
                 ));
@@ -1243,7 +1264,7 @@ pub struct LayoutState {
     em_width: f32,
     em_advance: f32,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
-    selections: Vec<(ReplicaId, Vec<text::Selection<DisplayPoint>>)>,
+    selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
     context_menu: Option<(DisplayPoint, ElementBox)>,
     code_actions_indicator: Option<(u32, ElementBox)>,
 }

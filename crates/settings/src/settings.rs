@@ -21,6 +21,7 @@ pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
 pub struct Settings {
     pub buffer_font_family: FamilyId,
     pub buffer_font_size: f32,
+    pub default_buffer_font_size: f32,
     pub vim_mode: bool,
     pub tab_size: u32,
     pub soft_wrap: SoftWrap,
@@ -73,6 +74,7 @@ impl Settings {
         Ok(Self {
             buffer_font_family: font_cache.load_family(&[buffer_font_family])?,
             buffer_font_size: 15.,
+            default_buffer_font_size: 15.,
             vim_mode: false,
             tab_size: 4,
             soft_wrap: SoftWrap::None,
@@ -126,6 +128,7 @@ impl Settings {
         Settings {
             buffer_font_family: cx.font_cache().load_family(&["Monaco"]).unwrap(),
             buffer_font_size: 14.,
+            default_buffer_font_size: 14.,
             vim_mode: false,
             tab_size: 4,
             soft_wrap: SoftWrap::None,
@@ -162,6 +165,7 @@ impl Settings {
         }
 
         merge(&mut self.buffer_font_size, data.buffer_font_size);
+        merge(&mut self.default_buffer_font_size, data.buffer_font_size);
         merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.format_on_save, data.format_on_save);
         merge(&mut self.soft_wrap, data.editor.soft_wrap);
