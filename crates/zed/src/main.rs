@@ -23,7 +23,7 @@ use gpui::{executor::Background, App, AssetSource, AsyncAppContext, Task};
 use isahc::{config::Configurable, AsyncBody, Request};
 use log::LevelFilter;
 use parking_lot::Mutex;
-use project::Fs;
+use project::{Fs, ProjectStore};
 use serde_json::json;
 use settings::{self, KeymapFileContent, Settings, SettingsFileContent};
 use smol::process::Command;
@@ -136,6 +136,7 @@ fn main() {
         let client = client::Client::new(http.clone());
         let mut languages = languages::build_language_registry(login_shell_env_loaded);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
+        let project_store = cx.add_model(|_| ProjectStore::default());
 
         context_menu::init(cx);
         auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
@@ -195,6 +196,7 @@ fn main() {
             themes,
             client: client.clone(),
             user_store,
+            project_store,
             fs,
             build_window_options,
             initialize_workspace,

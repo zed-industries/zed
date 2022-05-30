@@ -17,19 +17,20 @@ use gpui::{
     color::Color,
     elements::*,
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
-    impl_internal_actions,
+    impl_actions, impl_internal_actions,
     json::{self, ToJson},
     platform::{CursorStyle, WindowOptions},
     AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Border, Entity, ImageData,
-    ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    ModelContext, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext,
+    Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use language::LanguageRegistry;
 use log::error;
 pub use pane::*;
 pub use pane_group::*;
 use postage::prelude::Stream;
-use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
+use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
+use serde::Deserialize;
 use settings::Settings;
 use sidebar::{Side, Sidebar, SidebarButtons, ToggleSidebarItem, ToggleSidebarItemFocus};
 use smallvec::SmallVec;
@@ -98,6 +99,12 @@ pub struct OpenPaths {
     pub paths: Vec<PathBuf>,
 }
 
+#[derive(Clone, Deserialize)]
+pub struct ToggleProjectPublic {
+    #[serde(skip_deserializing)]
+    pub project: Option<WeakModelHandle<Project>>,
+}
+
 #[derive(Clone)]
 pub struct ToggleFollow(pub PeerId);
 
@@ -116,6 +123,7 @@ impl_internal_actions!(
         RemoveFolderFromProject
     ]
 );
+impl_actions!(workspace, [ToggleProjectPublic]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     pane::init(cx);
@@ -160,6 +168,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_async_action(Workspace::save_all);
     cx.add_action(Workspace::add_folder_to_project);
     cx.add_action(Workspace::remove_folder_from_project);
+    cx.add_action(Workspace::toggle_project_public);
     cx.add_action(
         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
             let pane = workspace.active_pane().clone();
@@ -222,6 +231,7 @@ pub struct AppState {
     pub themes: Arc<ThemeRegistry>,
     pub client: Arc<client::Client>,
     pub user_store: ModelHandle<client::UserStore>,
+    pub project_store: ModelHandle<ProjectStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options: fn() -> WindowOptions<'static>,
     pub initialize_workspace: fn(&mut Workspace, &Arc<AppState>, &mut ViewContext<Workspace>),
@@ -682,6 +692,7 @@ impl AppState {
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone());
+        let project_store = cx.add_model(|_| ProjectStore::default());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let themes = ThemeRegistry::new((), cx.font_cache().clone());
         Arc::new(Self {
@@ -690,6 +701,7 @@ impl AppState {
             fs,
             languages,
             user_store,
+            project_store,
             initialize_workspace: |_, _, _| {},
             build_window_options: || Default::default(),
         })
@@ -837,10 +849,7 @@ impl Workspace {
             _observe_current_user,
         };
         this.project_remote_id_changed(this.project.read(cx).remote_id(), cx);
-
-        cx.defer(|this, cx| {
-            this.update_window_title(cx);
-        });
+        cx.defer(|this, cx| this.update_window_title(cx));
 
         this
     }
@@ -874,20 +883,6 @@ impl Workspace {
         cx: &'a AppContext,
     ) -> impl 'a + Iterator<Item = ModelHandle<Worktree>> {
         self.project.read(cx).worktrees(cx)
-    }
-
-    pub fn contains_paths(&self, paths: &[PathBuf], cx: &AppContext) -> bool {
-        paths.iter().all(|path| self.contains_path(&path, cx))
-    }
-
-    pub fn contains_path(&self, path: &Path, cx: &AppContext) -> bool {
-        for worktree in self.worktrees(cx) {
-            let worktree = worktree.read(cx).as_local();
-            if worktree.map_or(false, |w| w.contains_abs_path(path)) {
-                return true;
-            }
-        }
-        false
     }
 
     pub fn worktree_scans_complete(&self, cx: &AppContext) -> impl Future<Output = ()> + 'static {
@@ -1052,6 +1047,23 @@ impl Workspace {
     ) {
         self.project
             .update(cx, |project, cx| project.remove_worktree(*worktree_id, cx));
+    }
+
+    fn toggle_project_public(&mut self, action: &ToggleProjectPublic, cx: &mut ViewContext<Self>) {
+        let project = if let Some(project) = action.project {
+            if let Some(project) = project.upgrade(cx) {
+                project
+            } else {
+                return;
+            }
+        } else {
+            self.project.clone()
+        };
+
+        project.update(cx, |project, _| {
+            let is_public = project.is_public();
+            project.set_public(!is_public);
+        });
     }
 
     fn project_path_for_path(
@@ -1668,8 +1680,15 @@ impl Workspace {
     }
 
     fn render_titlebar(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
+        let project = &self.project.read(cx);
+        let replica_id = project.replica_id();
         let mut worktree_root_names = String::new();
-        self.worktree_root_names(&mut worktree_root_names, cx);
+        for (i, name) in project.worktree_root_names(cx).enumerate() {
+            if i > 0 {
+                worktree_root_names.push_str(", ");
+            }
+            worktree_root_names.push_str(name);
+        }
 
         ConstrainedBox::new(
             Container::new(
@@ -1686,7 +1705,7 @@ impl Workspace {
                                 .with_children(self.render_collaborators(theme, cx))
                                 .with_children(self.render_current_user(
                                     self.user_store.read(cx).current_user().as_ref(),
-                                    self.project.read(cx).replica_id(),
+                                    replica_id,
                                     theme,
                                     cx,
                                 ))
@@ -1714,6 +1733,7 @@ impl Workspace {
 
     fn update_window_title(&mut self, cx: &mut ViewContext<Self>) {
         let mut title = String::new();
+        let project = self.project().read(cx);
         if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
             let filename = path
                 .path
@@ -1721,8 +1741,7 @@ impl Workspace {
                 .map(|s| s.to_string_lossy())
                 .or_else(|| {
                     Some(Cow::Borrowed(
-                        self.project()
-                            .read(cx)
+                        project
                             .worktree_for_id(path.worktree_id, cx)?
                             .read(cx)
                             .root_name(),
@@ -1733,20 +1752,16 @@ impl Workspace {
                 title.push_str(" — ");
             }
         }
-        self.worktree_root_names(&mut title, cx);
+        for (i, name) in project.worktree_root_names(cx).enumerate() {
+            if i > 0 {
+                title.push_str(", ");
+            }
+            title.push_str(name);
+        }
         if title.is_empty() {
             title = "empty project".to_string();
         }
         cx.set_window_title(&title);
-    }
-
-    fn worktree_root_names(&self, string: &mut String, cx: &mut MutableAppContext) {
-        for (i, worktree) in self.project.read(cx).visible_worktrees(cx).enumerate() {
-            if i != 0 {
-                string.push_str(", ");
-            }
-            string.push_str(worktree.read(cx).root_name());
-        }
     }
 
     fn render_collaborators(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> Vec<ElementBox> {
@@ -2365,6 +2380,22 @@ fn open(_: &Open, cx: &mut MutableAppContext) {
 
 pub struct WorkspaceCreated(WeakViewHandle<Workspace>);
 
+pub fn activate_workspace_for_project(
+    cx: &mut MutableAppContext,
+    predicate: impl Fn(&mut Project, &mut ModelContext<Project>) -> bool,
+) -> Option<ViewHandle<Workspace>> {
+    for window_id in cx.window_ids().collect::<Vec<_>>() {
+        if let Some(workspace_handle) = cx.root_view::<Workspace>(window_id) {
+            let project = workspace_handle.read(cx).project.clone();
+            if project.update(cx, &predicate) {
+                cx.activate_window(window_id);
+                return Some(workspace_handle);
+            }
+        }
+    }
+    None
+}
+
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: &Arc<AppState>,
@@ -2376,22 +2407,8 @@ pub fn open_paths(
     log::info!("open paths {:?}", abs_paths);
 
     // Open paths in existing workspace if possible
-    let mut existing = None;
-    for window_id in cx.window_ids().collect::<Vec<_>>() {
-        if let Some(workspace_handle) = cx.root_view::<Workspace>(window_id) {
-            if workspace_handle.update(cx, |workspace, cx| {
-                if workspace.contains_paths(abs_paths, cx.as_ref()) {
-                    cx.activate_window(window_id);
-                    existing = Some(workspace_handle.clone());
-                    true
-                } else {
-                    false
-                }
-            }) {
-                break;
-            }
-        }
-    }
+    let existing =
+        activate_workspace_for_project(cx, |project, cx| project.contains_paths(abs_paths, cx));
 
     let app_state = app_state.clone();
     let abs_paths = abs_paths.to_vec();
@@ -2410,6 +2427,7 @@ pub fn open_paths(
                         false,
                         app_state.client.clone(),
                         app_state.user_store.clone(),
+                        app_state.project_store.clone(),
                         app_state.languages.clone(),
                         app_state.fs.clone(),
                         cx,
@@ -2467,6 +2485,7 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
                 false,
                 app_state.client.clone(),
                 app_state.user_store.clone(),
+                app_state.project_store.clone(),
                 app_state.languages.clone(),
                 app_state.fs.clone(),
                 cx,

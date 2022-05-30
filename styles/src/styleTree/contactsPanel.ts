@@ -68,6 +68,11 @@ export default function contactsPanel(theme: Theme) {
       buttonWidth: 8,
       iconWidth: 8,
     },
+    privateButton: {
+      iconWidth: 8,
+      color: iconColor(theme, "primary"),
+      buttonWidth: 8,
+    },
     rowHeight: 28,
     sectionIconSize: 8,
     headerRow: {

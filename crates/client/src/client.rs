@@ -67,17 +67,23 @@ pub struct Client {
     peer: Arc<Peer>,
     http: Arc<dyn HttpClient>,
     state: RwLock<ClientState>,
-    authenticate:
+
+    #[cfg(any(test, feature = "test-support"))]
+    authenticate: RwLock<
         Option<Box<dyn 'static + Send + Sync + Fn(&AsyncAppContext) -> Task<Result<Credentials>>>>,
-    establish_connection: Option<
-        Box<
-            dyn 'static
-                + Send
-                + Sync
-                + Fn(
-                    &Credentials,
-                    &AsyncAppContext,
-                ) -> Task<Result<Connection, EstablishConnectionError>>,
+    >,
+    #[cfg(any(test, feature = "test-support"))]
+    establish_connection: RwLock<
+        Option<
+            Box<
+                dyn 'static
+                    + Send
+                    + Sync
+                    + Fn(
+                        &Credentials,
+                        &AsyncAppContext,
+                    ) -> Task<Result<Connection, EstablishConnectionError>>,
+            >,
         >,
     >,
 }
@@ -235,8 +241,11 @@ impl Client {
             peer: Peer::new(),
             http,
             state: Default::default(),
-            authenticate: None,
-            establish_connection: None,
+
+            #[cfg(any(test, feature = "test-support"))]
+            authenticate: Default::default(),
+            #[cfg(any(test, feature = "test-support"))]
+            establish_connection: Default::default(),
         })
     }
 
@@ -260,23 +269,23 @@ impl Client {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn override_authenticate<F>(&mut self, authenticate: F) -> &mut Self
+    pub fn override_authenticate<F>(&self, authenticate: F) -> &Self
     where
         F: 'static + Send + Sync + Fn(&AsyncAppContext) -> Task<Result<Credentials>>,
     {
-        self.authenticate = Some(Box::new(authenticate));
+        *self.authenticate.write() = Some(Box::new(authenticate));
         self
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn override_establish_connection<F>(&mut self, connect: F) -> &mut Self
+    pub fn override_establish_connection<F>(&self, connect: F) -> &Self
     where
         F: 'static
             + Send
             + Sync
             + Fn(&Credentials, &AsyncAppContext) -> Task<Result<Connection, EstablishConnectionError>>,
     {
-        self.establish_connection = Some(Box::new(connect));
+        *self.establish_connection.write() = Some(Box::new(connect));
         self
     }
 
@@ -755,11 +764,12 @@ impl Client {
     }
 
     fn authenticate(self: &Arc<Self>, cx: &AsyncAppContext) -> Task<Result<Credentials>> {
-        if let Some(callback) = self.authenticate.as_ref() {
-            callback(cx)
-        } else {
-            self.authenticate_with_browser(cx)
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(callback) = self.authenticate.read().as_ref() {
+            return callback(cx);
         }
+
+        self.authenticate_with_browser(cx)
     }
 
     fn establish_connection(
@@ -767,11 +777,12 @@ impl Client {
         credentials: &Credentials,
         cx: &AsyncAppContext,
     ) -> Task<Result<Connection, EstablishConnectionError>> {
-        if let Some(callback) = self.establish_connection.as_ref() {
-            callback(credentials, cx)
-        } else {
-            self.establish_websocket_connection(credentials, cx)
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(callback) = self.establish_connection.read().as_ref() {
+            return callback(credentials, cx);
         }
+
+        self.establish_websocket_connection(credentials, cx)
     }
 
     fn establish_websocket_connection(

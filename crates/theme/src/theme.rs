@@ -281,6 +281,7 @@ pub struct ContactsPanel {
     pub contact_button_spacing: f32,
     pub disabled_contact_button: IconButton,
     pub tree_branch: Interactive<TreeBranch>,
+    pub private_button: Interactive<IconButton>,
     pub section_icon_size: f32,
     pub invite_row: Interactive<ContainedLabel>,
 }

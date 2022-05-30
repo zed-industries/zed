@@ -4604,6 +4604,10 @@ impl<T: View> WeakViewHandle<T> {
         self.view_id
     }
 
+    pub fn window_id(&self) -> usize {
+        self.window_id
+    }
+
     pub fn upgrade(&self, cx: &impl UpgradeViewHandle) -> Option<ViewHandle<T>> {
         cx.upgrade_view_handle(self)
     }

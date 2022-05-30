@@ -30,7 +30,7 @@ use project::{
     fs::{FakeFs, Fs as _},
     search::SearchQuery,
     worktree::WorktreeHandle,
-    DiagnosticSummary, Project, ProjectPath, WorktreeId,
+    DiagnosticSummary, Project, ProjectPath, ProjectStore, WorktreeId,
 };
 use rand::prelude::*;
 use rpc::PeerId;
@@ -174,9 +174,10 @@ async fn test_share_project(
         project_id,
         client_b2.client.clone(),
         client_b2.user_store.clone(),
+        client_b2.project_store.clone(),
         client_b2.language_registry.clone(),
         FakeFs::new(cx_b2.background()),
-        &mut cx_b2.to_async(),
+        cx_b2.to_async(),
     )
     .await
     .unwrap();
@@ -310,16 +311,16 @@ async fn test_host_disconnect(
         .unwrap();
 
     // Request to join that project as client C
-    let project_c = cx_c.spawn(|mut cx| async move {
+    let project_c = cx_c.spawn(|cx| {
         Project::remote(
             project_id,
             client_c.client.clone(),
             client_c.user_store.clone(),
+            client_c.project_store.clone(),
             client_c.language_registry.clone(),
             FakeFs::new(cx.background()),
-            &mut cx,
+            cx,
         )
-        .await
     });
     deterministic.run_until_parked();
 
@@ -372,21 +373,16 @@ async fn test_decline_join_request(
     let project_id = project_a.read_with(cx_a, |project, _| project.remote_id().unwrap());
 
     // Request to join that project as client B
-    let project_b = cx_b.spawn(|mut cx| {
-        let client = client_b.client.clone();
-        let user_store = client_b.user_store.clone();
-        let language_registry = client_b.language_registry.clone();
-        async move {
-            Project::remote(
-                project_id,
-                client,
-                user_store,
-                language_registry,
-                FakeFs::new(cx.background()),
-                &mut cx,
-            )
-            .await
-        }
+    let project_b = cx_b.spawn(|cx| {
+        Project::remote(
+            project_id,
+            client_b.client.clone(),
+            client_b.user_store.clone(),
+            client_b.project_store.clone(),
+            client_b.language_registry.clone(),
+            FakeFs::new(cx.background()),
+            cx,
+        )
     });
     deterministic.run_until_parked();
     project_a.update(cx_a, |project, cx| {
@@ -398,20 +394,16 @@ async fn test_decline_join_request(
     ));
 
     // Request to join the project again as client B
-    let project_b = cx_b.spawn(|mut cx| {
-        let client = client_b.client.clone();
-        let user_store = client_b.user_store.clone();
-        async move {
-            Project::remote(
-                project_id,
-                client,
-                user_store,
-                client_b.language_registry.clone(),
-                FakeFs::new(cx.background()),
-                &mut cx,
-            )
-            .await
-        }
+    let project_b = cx_b.spawn(|cx| {
+        Project::remote(
+            project_id,
+            client_b.client.clone(),
+            client_b.user_store.clone(),
+            client_b.project_store.clone(),
+            client_b.language_registry.clone(),
+            FakeFs::new(cx.background()),
+            cx,
+        )
     });
 
     // Close the project on the host
@@ -467,21 +459,16 @@ async fn test_cancel_join_request(
     });
 
     // Request to join that project as client B
-    let project_b = cx_b.spawn(|mut cx| {
-        let client = client_b.client.clone();
-        let user_store = client_b.user_store.clone();
-        let language_registry = client_b.language_registry.clone();
-        async move {
-            Project::remote(
-                project_id,
-                client,
-                user_store,
-                language_registry.clone(),
-                FakeFs::new(cx.background()),
-                &mut cx,
-            )
-            .await
-        }
+    let project_b = cx_b.spawn(|cx| {
+        Project::remote(
+            project_id,
+            client_b.client.clone(),
+            client_b.user_store.clone(),
+            client_b.project_store.clone(),
+            client_b.language_registry.clone().clone(),
+            FakeFs::new(cx.background()),
+            cx,
+        )
     });
     deterministic.run_until_parked();
     assert_eq!(
@@ -529,6 +516,7 @@ async fn test_private_projects(
             false,
             client_a.client.clone(),
             client_a.user_store.clone(),
+            client_a.project_store.clone(),
             client_a.language_registry.clone(),
             fs.clone(),
             cx,
@@ -4076,6 +4064,7 @@ async fn test_random_collaboration(
             true,
             host.client.clone(),
             host.user_store.clone(),
+            host.project_store.clone(),
             host_language_registry.clone(),
             fs.clone(),
             cx,
@@ -4311,9 +4300,10 @@ async fn test_random_collaboration(
                     host_project_id,
                     guest.client.clone(),
                     guest.user_store.clone(),
+                    guest.project_store.clone(),
                     guest_lang_registry.clone(),
                     FakeFs::new(cx.background()),
-                    &mut guest_cx.to_async(),
+                    guest_cx.to_async(),
                 )
                 .await
                 .unwrap();
@@ -4614,9 +4604,11 @@ impl TestServer {
             });
 
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
+        let project_store = cx.add_model(|_| ProjectStore::default());
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
+            project_store: project_store.clone(),
             languages: Arc::new(LanguageRegistry::new(Task::ready(()))),
             themes: ThemeRegistry::new((), cx.font_cache()),
             fs: FakeFs::new(cx.background()),
@@ -4639,6 +4631,7 @@ impl TestServer {
             peer_id,
             username: name.to_string(),
             user_store,
+            project_store,
             language_registry: Arc::new(LanguageRegistry::test()),
             project: Default::default(),
             buffers: Default::default(),
@@ -4732,6 +4725,7 @@ struct TestClient {
     username: String,
     pub peer_id: PeerId,
     pub user_store: ModelHandle<UserStore>,
+    pub project_store: ModelHandle<ProjectStore>,
     language_registry: Arc<LanguageRegistry>,
     project: Option<ModelHandle<Project>>,
     buffers: HashSet<ModelHandle<language::Buffer>>,
@@ -4803,6 +4797,7 @@ impl TestClient {
                 true,
                 self.client.clone(),
                 self.user_store.clone(),
+                self.project_store.clone(),
                 self.language_registry.clone(),
                 fs,
                 cx,
@@ -4835,27 +4830,22 @@ impl TestClient {
             .await;
         let guest_user_id = self.user_id().unwrap();
         let languages = host_project.read_with(host_cx, |project, _| project.languages().clone());
-        let project_b = guest_cx.spawn(|mut cx| {
-            let user_store = self.user_store.clone();
-            let guest_client = self.client.clone();
-            async move {
-                Project::remote(
-                    host_project_id,
-                    guest_client,
-                    user_store.clone(),
-                    languages,
-                    FakeFs::new(cx.background()),
-                    &mut cx,
-                )
-                .await
-                .unwrap()
-            }
+        let project_b = guest_cx.spawn(|cx| {
+            Project::remote(
+                host_project_id,
+                self.client.clone(),
+                self.user_store.clone(),
+                self.project_store.clone(),
+                languages,
+                FakeFs::new(cx.background()),
+                cx,
+            )
         });
         host_cx.foreground().run_until_parked();
         host_project.update(host_cx, |project, cx| {
             project.respond_to_join_request(guest_user_id, true, cx)
         });
-        let project = project_b.await;
+        let project = project_b.await.unwrap();
         self.project = Some(project.clone());
         project
     }
