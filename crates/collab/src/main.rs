@@ -78,44 +78,13 @@ async fn main() -> Result<()> {
 }
 
 pub fn init_tracing(config: &Config) -> Option<()> {
-    use opentelemetry::KeyValue;
-    use opentelemetry_otlp::WithExportConfig;
     use std::str::FromStr;
-    use tracing_opentelemetry::OpenTelemetryLayer;
     use tracing_subscriber::layer::SubscriberExt;
     let rust_log = config.rust_log.clone()?;
 
     LogTracer::init().log_err()?;
 
-    let open_telemetry_layer = config
-        .honeycomb_api_key
-        .clone()
-        .zip(config.honeycomb_dataset.clone())
-        .map(|(honeycomb_api_key, honeycomb_dataset)| {
-            let mut metadata = tonic::metadata::MetadataMap::new();
-            metadata.insert("x-honeycomb-team", honeycomb_api_key.parse().unwrap());
-            let tracer = opentelemetry_otlp::new_pipeline()
-                .tracing()
-                .with_exporter(
-                    opentelemetry_otlp::new_exporter()
-                        .tonic()
-                        .with_endpoint("https://api.honeycomb.io")
-                        .with_metadata(metadata),
-                )
-                .with_trace_config(opentelemetry::sdk::trace::config().with_resource(
-                    opentelemetry::sdk::Resource::new(vec![KeyValue::new(
-                        "service.name",
-                        honeycomb_dataset,
-                    )]),
-                ))
-                .install_batch(opentelemetry::runtime::Tokio)
-                .expect("failed to initialize tracing");
-
-            OpenTelemetryLayer::new(tracer)
-        });
-
     let subscriber = tracing_subscriber::Registry::default()
-        .with(open_telemetry_layer)
         .with(if config.log_json.unwrap_or(false) {
             Box::new(
                 tracing_subscriber::fmt::layer()
