@@ -3194,7 +3194,7 @@ async fn test_contacts(
     // Add a local project as client B
     let fs = FakeFs::new(cx_b.background());
     fs.create_dir(Path::new("/b")).await.unwrap();
-    let (_project_b, _) = client_b.build_local_project(fs, "/b", cx_a).await;
+    let (_project_b, _) = client_b.build_local_project(fs, "/b", cx_b).await;
 
     deterministic.run_until_parked();
     for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
