@@ -499,7 +499,14 @@ impl TestAppContext {
         Fut: 'static + Future<Output = T>,
         T: 'static,
     {
-        self.cx.borrow_mut().spawn(f)
+        let foreground = self.foreground();
+        let future = f(self.to_async());
+        let cx = self.to_async();
+        foreground.spawn(async move {
+            let result = future.await;
+            cx.0.borrow_mut().flush_effects();
+            result
+        })
     }
 
     pub fn simulate_new_path_selection(&self, result: impl FnOnce(PathBuf) -> Option<PathBuf>) {
