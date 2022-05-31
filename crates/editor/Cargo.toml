@@ -45,7 +45,7 @@ ordered-float = "2.1.1"
 parking_lot = "0.11"
 postage = { version = "0.4", features = ["futures-traits"] }
 rand = { version = "0.8.3", optional = true }
-serde = { version = "1", features = ["derive", "rc"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 

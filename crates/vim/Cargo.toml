@@ -13,7 +13,7 @@ collections = { path = "../collections" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 settings = { path = "../settings" }
 workspace = { path = "../workspace" }
 itertools = "0.10"
