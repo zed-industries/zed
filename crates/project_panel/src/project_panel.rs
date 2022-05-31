@@ -242,15 +242,17 @@ impl ProjectPanel {
 
                 if let Some((worktree, entry)) = self.selected_entry(cx) {
                     let is_root = Some(entry) == worktree.root_entry();
-                    menu_entries.push(ContextMenuItem::item(
-                        "Add Folder to Project",
-                        workspace::AddFolderToProject,
-                    ));
-                    if is_root {
+                    if !self.project.read(cx).is_remote() {
                         menu_entries.push(ContextMenuItem::item(
-                            "Remove Folder from Project",
-                            workspace::RemoveFolderFromProject(worktree_id),
+                            "Add Folder to Project",
+                            workspace::AddFolderToProject,
                         ));
+                        if is_root {
+                            menu_entries.push(ContextMenuItem::item(
+                                "Remove Folder from Project",
+                                workspace::RemoveFolderFromProject(worktree_id),
+                            ));
+                        }
                     }
                     menu_entries.push(ContextMenuItem::item("New File", AddFile));
                     menu_entries.push(ContextMenuItem::item("New Folder", AddDirectory));
