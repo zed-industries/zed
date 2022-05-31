@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     display_map::{DisplaySnapshot, TransformBlock},
-    EditorStyle,
+    EditorStyle, GoToDefinition,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
@@ -102,6 +102,7 @@ impl EditorElement {
     fn mouse_down(
         &self,
         position: Vector2F,
+        cmd: bool,
         alt: bool,
         shift: bool,
         mut click_count: usize,
@@ -118,7 +119,11 @@ impl EditorElement {
         let snapshot = self.snapshot(cx.app);
         let (position, overshoot) = paint.point_for_position(&snapshot, layout, position);
 
-        if shift && alt {
+        if cmd {
+            cx.dispatch_action(GoToDefinitionAt {
+                location: Some(position),
+            });
+        } else if shift && alt {
             cx.dispatch_action(Select(SelectPhase::BeginColumnar {
                 position,
                 overshoot,
@@ -1222,11 +1227,21 @@ impl Element for EditorElement {
         match event {
             Event::LeftMouseDown {
                 position,
+                cmd,
                 alt,
                 shift,
                 click_count,
                 ..
-            } => self.mouse_down(*position, *alt, *shift, *click_count, layout, paint, cx),
+            } => self.mouse_down(
+                *position,
+                *cmd,
+                *alt,
+                *shift,
+                *click_count,
+                layout,
+                paint,
+                cx,
+            ),
             Event::LeftMouseUp { position, .. } => self.mouse_up(*position, cx),
             Event::LeftMouseDragged { position } => {
                 self.mouse_dragged(*position, layout, paint, cx)

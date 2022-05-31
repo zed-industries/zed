@@ -113,6 +113,11 @@ pub struct ConfirmCodeAction {
     pub item_ix: Option<usize>,
 }
 
+#[derive(Clone, Default)]
+pub struct GoToDefinitionAt {
+    pub location: Option<DisplayPoint>,
+}
+
 actions!(
     editor,
     [
@@ -173,10 +178,10 @@ actions!(
         ToggleComments,
         SelectLargerSyntaxNode,
         SelectSmallerSyntaxNode,
+        GoToDefinition,
         MoveToEnclosingBracket,
         UndoSelection,
         RedoSelection,
-        GoToDefinition,
         FindAllReferences,
         Rename,
         ConfirmRename,
@@ -204,7 +209,7 @@ impl_actions!(
     ]
 );
 
-impl_internal_actions!(editor, [Scroll, Select]);
+impl_internal_actions!(editor, [Scroll, Select, GoToDefinitionAt]);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
