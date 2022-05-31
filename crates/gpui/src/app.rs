@@ -2269,21 +2269,22 @@ impl MutableAppContext {
         observed_window_id: usize,
         observed_view_id: usize,
     ) {
-        if let Some(window) = self.cx.windows.get_mut(&observed_window_id) {
-            window
-                .invalidation
-                .get_or_insert_with(Default::default)
-                .updated
-                .insert(observed_view_id);
-        }
-
         let callbacks = self.observations.lock().remove(&observed_view_id);
-        if let Some(callbacks) = callbacks {
-            if self
-                .cx
-                .views
-                .contains_key(&(observed_window_id, observed_view_id))
-            {
+
+        if self
+            .cx
+            .views
+            .contains_key(&(observed_window_id, observed_view_id))
+        {
+            if let Some(window) = self.cx.windows.get_mut(&observed_window_id) {
+                window
+                    .invalidation
+                    .get_or_insert_with(Default::default)
+                    .updated
+                    .insert(observed_view_id);
+            }
+
+            if let Some(callbacks) = callbacks {
                 for (id, callback) in callbacks {
                     if let Some(mut callback) = callback {
                         let alive = callback(self);
