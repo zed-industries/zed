@@ -131,13 +131,24 @@ impl Element for List {
         let mut cursor = old_items.cursor::<Count>();
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
         for (ix, item) in cursor.by_ref().enumerate() {
-            if rendered_height - scroll_top.offset_in_item >= size.y() + state.overdraw {
+            let visible_height = rendered_height - scroll_top.offset_in_item;
+            if visible_height >= size.y() + state.overdraw {
                 break;
             }
 
-            if let Some(element) =
-                state.render_item(scroll_top.item_ix + ix, item, item_constraint, cx)
-            {
+            // Force re-render if the item is visible, but attempt to re-use an existing one
+            // if we are inside the overdraw.
+            let existing_element = if visible_height >= size.y() {
+                Some(item)
+            } else {
+                None
+            };
+            if let Some(element) = state.render_item(
+                scroll_top.item_ix + ix,
+                existing_element,
+                item_constraint,
+                cx,
+            ) {
                 rendered_height += element.size().y();
                 rendered_items.push_back(ListItem::Rendered(element));
             }
@@ -151,9 +162,9 @@ impl Element for List {
         if rendered_height - scroll_top.offset_in_item < size.y() {
             while rendered_height < size.y() {
                 cursor.prev(&());
-                if let Some(item) = cursor.item() {
+                if cursor.item().is_some() {
                     if let Some(element) =
-                        state.render_item(cursor.start().0, item, item_constraint, cx)
+                        state.render_item(cursor.start().0, None, item_constraint, cx)
                     {
                         rendered_height += element.size().y();
                         rendered_items.push_front(ListItem::Rendered(element));
@@ -189,7 +200,7 @@ impl Element for List {
             cursor.prev(&());
             if let Some(item) = cursor.item() {
                 if let Some(element) =
-                    state.render_item(cursor.start().0, item, item_constraint, cx)
+                    state.render_item(cursor.start().0, Some(item), item_constraint, cx)
                 {
                     leading_overdraw += element.size().y();
                     rendered_items.push_front(ListItem::Rendered(element));
@@ -426,11 +437,11 @@ impl StateInner {
     fn render_item(
         &mut self,
         ix: usize,
-        existing_item: &ListItem,
+        existing_element: Option<&ListItem>,
         constraint: SizeConstraint,
         cx: &mut LayoutContext,
     ) -> Option<ElementRc> {
-        if let ListItem::Rendered(element) = existing_item {
+        if let Some(ListItem::Rendered(element)) = existing_element {
             Some(element.clone())
         } else {
             let mut element = (self.render_item)(ix, cx)?;
