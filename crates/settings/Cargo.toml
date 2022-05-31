@@ -19,7 +19,7 @@ util = { path = "../util" }
 anyhow = "1.0.38"
 json_comments = "0.2"
 schemars = "0.8"
-serde = { version = "1", features = ["derive", "rc"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 serde_path_to_error = "0.1.4"
 toml = "0.5"

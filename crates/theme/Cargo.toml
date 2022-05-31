@@ -12,7 +12,7 @@ gpui = { path = "../gpui" }
 anyhow = "1.0.38"
 indexmap = "1.6.2"
 parking_lot = "0.11.1"
-serde = { version = "1", features = ["derive", "rc"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 serde_path_to_error = "0.1.4"
 toml = "0.5"

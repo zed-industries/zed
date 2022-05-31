@@ -254,6 +254,8 @@ entity_messages!(
 
 entity_messages!(channel_id, ChannelMessageSent);
 
+const MAX_BUFFER_LEN: usize = 1 * 1024 * 1024;
+
 /// A stream of protobuf messages.
 pub struct MessageStream<S> {
     stream: S,
@@ -293,14 +295,16 @@ where
 
         match message {
             Message::Envelope(message) => {
-                self.encoding_buffer.resize(message.encoded_len(), 0);
-                self.encoding_buffer.clear();
+                self.encoding_buffer.reserve(message.encoded_len());
                 message
                     .encode(&mut self.encoding_buffer)
                     .map_err(|err| io::Error::from(err))?;
                 let buffer =
                     zstd::stream::encode_all(self.encoding_buffer.as_slice(), COMPRESSION_LEVEL)
                         .unwrap();
+
+                self.encoding_buffer.clear();
+                self.encoding_buffer.shrink_to(MAX_BUFFER_LEN);
                 self.stream.send(WebSocketMessage::Binary(buffer)).await?;
             }
             Message::Ping => {
@@ -327,10 +331,12 @@ where
         while let Some(bytes) = self.stream.next().await {
             match bytes? {
                 WebSocketMessage::Binary(bytes) => {
-                    self.encoding_buffer.clear();
                     zstd::stream::copy_decode(bytes.as_slice(), &mut self.encoding_buffer).unwrap();
                     let envelope = Envelope::decode(self.encoding_buffer.as_slice())
                         .map_err(io::Error::from)?;
+
+                    self.encoding_buffer.clear();
+                    self.encoding_buffer.shrink_to(MAX_BUFFER_LEN);
                     return Ok(Message::Envelope(envelope));
                 }
                 WebSocketMessage::Ping(_) => return Ok(Message::Ping),
@@ -377,5 +383,42 @@ impl From<Nonce> for u128 {
         let upper_half = (nonce.upper_half as u128) << 64;
         let lower_half = nonce.lower_half as u128;
         upper_half | lower_half
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[gpui::test]
+    async fn test_buffer_size() {
+        let (tx, rx) = futures::channel::mpsc::unbounded();
+        let mut sink = MessageStream::new(tx.sink_map_err(|_| anyhow!("")));
+        sink.write(Message::Envelope(Envelope {
+            payload: Some(envelope::Payload::UpdateWorktree(UpdateWorktree {
+                root_name: "abcdefg".repeat(10),
+                ..Default::default()
+            })),
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+        assert!(sink.encoding_buffer.capacity() <= MAX_BUFFER_LEN);
+        sink.write(Message::Envelope(Envelope {
+            payload: Some(envelope::Payload::UpdateWorktree(UpdateWorktree {
+                root_name: "abcdefg".repeat(1000000),
+                ..Default::default()
+            })),
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+        assert!(sink.encoding_buffer.capacity() <= MAX_BUFFER_LEN);
+
+        let mut stream = MessageStream::new(rx.map(|msg| anyhow::Ok(msg)));
+        stream.read().await.unwrap();
+        assert!(stream.encoding_buffer.capacity() <= MAX_BUFFER_LEN);
+        stream.read().await.unwrap();
+        assert!(stream.encoding_buffer.capacity() <= MAX_BUFFER_LEN);
     }
 }
