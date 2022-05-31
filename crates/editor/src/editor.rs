@@ -438,7 +438,32 @@ pub struct Editor {
     keymap_context_layers: BTreeMap<TypeId, gpui::keymap::Context>,
     input_enabled: bool,
     leader_replica_id: Option<u16>,
-    hover_popover: (Option<HoverPopover>, std::time::Instant, std::time::Instant),
+    hover_popover: HoverState,
+}
+
+pub struct HoverState {
+    popover: Option<HoverPopover>,
+    last_hover: std::time::Instant,
+    start_grace: std::time::Instant,
+}
+
+impl HoverState {
+    /// Takes whether the cursor is currently hovering over a symbol,
+    /// and returns a tuple containing whether there was a recent hover,
+    /// and whether the hover is still in the grace period.
+    pub fn determine_state(&mut self, hovering: bool) -> (bool, bool) {
+        let recent_hover = self.last_hover.elapsed() < std::time::Duration::from_millis(200);
+        if !hovering {
+            self.last_hover = std::time::Instant::now();
+        }
+
+        let in_grace = self.start_grace.elapsed() < std::time::Duration::from_millis(100);
+        if hovering && !recent_hover {
+            self.start_grace = std::time::Instant::now();
+        }
+
+        return (recent_hover, in_grace);
+    }
 }
 
 pub struct EditorSnapshot {
@@ -1053,7 +1078,11 @@ impl Editor {
             keymap_context_layers: Default::default(),
             input_enabled: true,
             leader_replica_id: None,
-            hover_popover: (None, std::time::Instant::now(), std::time::Instant::now()),
+            hover_popover: HoverState {
+                popover: None,
+                last_hover: std::time::Instant::now(),
+                start_grace: std::time::Instant::now(),
+            },
         };
         this.end_selection(cx);
 
@@ -2442,10 +2471,9 @@ impl Editor {
             async move {
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
-                        if this.hover_popover.0.is_some() {
-                            // dbg!("hidden");
-                            this.hover_popover.0 = None;
-                            this.hover_popover.1 = std::time::Instant::now();
+                        let (recent_hover, in_grace) = this.hover_popover.determine_state(false);
+                        if this.hover_popover.popover.is_some() {
+                            this.hover_popover.popover = None;
                             cx.notify();
                         }
                     });
@@ -2534,31 +2562,16 @@ impl Editor {
 
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
-                        let item_hovered_recently =
-                            this.hover_popover.1.elapsed() < std::time::Duration::from_millis(200);
-                        if hover_popover.is_none() {
-                            this.hover_popover.1 = std::time::Instant::now();
-                        }
-
-                        let in_grace_period =
-                            this.hover_popover.2.elapsed() < std::time::Duration::from_millis(100);
-                        if hover_popover.is_some() && !item_hovered_recently {
-                            this.hover_popover.2 = std::time::Instant::now();
-                        }
+                        let (recent_hover, in_grace) =
+                            this.hover_popover.determine_state(hover_popover.is_some());
 
                         let smooth_handoff =
-                            this.hover_popover.0.is_some() && hover_popover.is_some();
+                            this.hover_popover.popover.is_some() && hover_popover.is_some();
+                        let visible =
+                            this.hover_popover.popover.is_some() || hover_popover.is_some();
 
-                        let visible = this.hover_popover.0.is_some() || hover_popover.is_some();
-
-                        println!(
-                            "grace:    {}\nrecently: {}",
-                            in_grace_period, item_hovered_recently
-                        );
-
-                        if (smooth_handoff || !item_hovered_recently || in_grace_period) && visible
-                        {
-                            this.hover_popover.0 = hover_popover;
+                        if (smooth_handoff || !recent_hover || in_grace) && visible {
+                            this.hover_popover.popover = hover_popover;
                             cx.notify();
                         }
                     });
@@ -2819,7 +2832,7 @@ impl Editor {
 
     pub fn render_hover_popover(&self, style: EditorStyle) -> Option<(DisplayPoint, ElementBox)> {
         self.hover_popover
-            .0
+            .popover
             .as_ref()
             .map(|hover| hover.render(style))
     }
