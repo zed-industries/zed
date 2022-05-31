@@ -349,8 +349,8 @@ impl Presenter {
             let mut event_cx = self.build_event_context(cx);
             let mut handled = false;
             for unhovered_region in unhovered_regions {
+                handled = true;
                 if let Some(hover_callback) = unhovered_region.hover {
-                    handled = true;
                     event_cx.with_current_view(unhovered_region.view_id, |event_cx| {
                         hover_callback(false, event_cx);
                     })
@@ -358,8 +358,8 @@ impl Presenter {
             }
 
             for hovered_region in hovered_regions {
+                handled = true;
                 if let Some(hover_callback) = hovered_region.hover {
-                    handled = true;
                     event_cx.with_current_view(hovered_region.view_id, |event_cx| {
                         hover_callback(true, event_cx);
                     })
@@ -371,8 +371,8 @@ impl Presenter {
             }
 
             if let Some((mouse_down_region, position)) = mouse_down_region {
+                handled = true;
                 if let Some(mouse_down_callback) = mouse_down_region.mouse_down {
-                    handled = true;
                     event_cx.with_current_view(mouse_down_region.view_id, |event_cx| {
                         mouse_down_callback(position, event_cx);
                     })
@@ -380,8 +380,8 @@ impl Presenter {
             }
 
             if let Some((clicked_region, position, click_count)) = clicked_region {
+                handled = true;
                 if let Some(click_callback) = clicked_region.click {
-                    handled = true;
                     event_cx.with_current_view(clicked_region.view_id, |event_cx| {
                         click_callback(position, click_count, event_cx);
                     })
@@ -389,8 +389,8 @@ impl Presenter {
             }
 
             if let Some((right_mouse_down_region, position)) = right_mouse_down_region {
+                handled = true;
                 if let Some(right_mouse_down_callback) = right_mouse_down_region.right_mouse_down {
-                    handled = true;
                     event_cx.with_current_view(right_mouse_down_region.view_id, |event_cx| {
                         right_mouse_down_callback(position, event_cx);
                     })
@@ -398,8 +398,8 @@ impl Presenter {
             }
 
             if let Some((right_clicked_region, position, click_count)) = right_clicked_region {
+                handled = true;
                 if let Some(right_click_callback) = right_clicked_region.right_click {
-                    handled = true;
                     event_cx.with_current_view(right_clicked_region.view_id, |event_cx| {
                         right_click_callback(position, click_count, event_cx);
                     })
@@ -407,8 +407,8 @@ impl Presenter {
             }
 
             if let Some((dragged_region, delta)) = dragged_region {
+                handled = true;
                 if let Some(drag_callback) = dragged_region.drag {
-                    handled = true;
                     event_cx.with_current_view(dragged_region.view_id, |event_cx| {
                         drag_callback(delta, event_cx);
                     })
