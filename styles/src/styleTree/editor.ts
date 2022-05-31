@@ -8,6 +8,7 @@ import {
   text,
   TextColor
 } from "./components";
+import hoverPopover from "./hoverPopover";
 
 export default function editor(theme: Theme) {
   const autocompleteItem = {
@@ -145,6 +146,7 @@ export default function editor(theme: Theme) {
     invalidHintDiagnostic: diagnostic(theme, "muted"),
     invalidInformationDiagnostic: diagnostic(theme, "muted"),
     invalidWarningDiagnostic: diagnostic(theme, "muted"),
+    hover_popover: hoverPopover(theme),
     syntax,
   };
 }

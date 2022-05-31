@@ -1,4 +1,4 @@
-use crate::{DocumentHighlight, Location, Project, ProjectTransaction};
+use crate::{DocumentHighlight, Location, Project, ProjectTransaction, Hover};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use client::{proto, PeerId};
@@ -801,8 +801,7 @@ impl LspCommand for GetDocumentHighlights {
 
 #[async_trait(?Send)]
 impl LspCommand for GetHover {
-    // TODO: proper response type
-    type Response = Option<lsp::Hover>;
+    type Response = Option<Hover>;
     type LspRequest = lsp::request::HoverRequest;
     type ProtoRequest = proto::GetHover;
 
@@ -823,20 +822,26 @@ impl LspCommand for GetHover {
         message: Option<lsp::Hover>,
         project: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
-        cx: AsyncAppContext,
+        mut cx: AsyncAppContext,
     ) -> Result<Self::Response> {
-        // let (lsp_adapter, language_server) = project
-        //     .read_with(&cx, |project, cx| {
-        //         project
-        //             .language_server_for_buffer(buffer.read(cx), cx)
-        //             .cloned()
-        //     })
-        //     .ok_or_else(|| anyhow!("no language server found for buffer"))?;
-
-        // TODO: what here?
-        Ok(Some(
-            message.ok_or_else(|| anyhow!("invalid lsp response"))?,
-        ))
+        Ok(message.map(|hover| {
+            let range = hover.range.map(|range| {
+                cx.read(|cx| {
+                    let buffer = buffer.read(cx);
+                    let token_start = buffer
+                        .clip_point_utf16(point_from_lsp(range.start), Bias::Left);
+                    let token_end = buffer
+                        .clip_point_utf16(point_from_lsp(range.end), Bias::Left);
+                    buffer.anchor_after(token_start)..
+                        buffer.anchor_before(token_end)
+                })
+            });
+            
+            Hover {
+                contents: hover.contents,
+                range
+            }
+        }))
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {

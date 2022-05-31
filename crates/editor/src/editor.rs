@@ -424,7 +424,7 @@ pub struct Editor {
     next_completion_id: CompletionId,
     available_code_actions: Option<(ModelHandle<Buffer>, Arc<[CodeAction]>)>,
     code_actions_task: Option<Task<()>>,
-    hover_task: Option<Task<()>>,
+    hover_task: Option<Task<Option<()>>>,
     document_highlights_task: Option<Task<()>>,
     pending_rename: Option<RenameState>,
     searchable: bool,
@@ -432,6 +432,7 @@ pub struct Editor {
     keymap_context_layers: BTreeMap<TypeId, gpui::keymap::Context>,
     input_enabled: bool,
     leader_replica_id: Option<u16>,
+    hover_popover: Option<HoverPopover>,
 }
 
 pub struct EditorSnapshot {
@@ -571,7 +572,6 @@ struct InvalidationStack<T>(Vec<T>);
 enum ContextMenu {
     Completions(CompletionsMenu),
     CodeActions(CodeActionsMenu),
-    Hover(HoverPopover),
 }
 
 impl ContextMenu {
@@ -580,7 +580,6 @@ impl ContextMenu {
             match self {
                 ContextMenu::Completions(menu) => menu.select_prev(cx),
                 ContextMenu::CodeActions(menu) => menu.select_prev(cx),
-                _ => {}
             }
             true
         } else {
@@ -593,7 +592,6 @@ impl ContextMenu {
             match self {
                 ContextMenu::Completions(menu) => menu.select_next(cx),
                 ContextMenu::CodeActions(menu) => menu.select_next(cx),
-                _ => {}
             }
             true
         } else {
@@ -605,7 +603,6 @@ impl ContextMenu {
         match self {
             ContextMenu::Completions(menu) => menu.visible(),
             ContextMenu::CodeActions(menu) => menu.visible(),
-            ContextMenu::Hover(_) => true,
         }
     }
 
@@ -871,14 +868,16 @@ struct HoverPopover {
 }
 
 impl HoverPopover {
-    fn render(&self, style: EditorStyle) -> ElementBox {
-        let container_style = style.autocomplete.container;
-        Text::new(self.text.clone(), style.text.clone())
-            .with_soft_wrap(false)
-            .with_highlights(self.runs.clone())
-            .contained()
-            .with_style(container_style)
-            .boxed()
+    fn render(&self, style: EditorStyle) -> (DisplayPoint, ElementBox) {
+        (
+            self.point,
+            Text::new(self.text.clone(), style.text.clone())
+                .with_soft_wrap(false)
+                .with_highlights(self.runs.clone())
+                .contained()
+                .with_style(style.hover_popover)
+                .boxed(),
+        )
     }
 }
 
@@ -1048,6 +1047,7 @@ impl Editor {
             keymap_context_layers: Default::default(),
             input_enabled: true,
             leader_replica_id: None,
+            hover_popover: None,
         };
         this.end_selection(cx);
 
@@ -1432,6 +1432,8 @@ impl Editor {
                     self.hide_context_menu(cx);
                 }
             }
+
+            self.hover_popover.take();
 
             if old_cursor_position.to_display_point(&display_map).row()
                 != new_cursor_position.to_display_point(&display_map).row()
@@ -2456,7 +2458,6 @@ impl Editor {
 
         let point = action.0.clone();
 
-        let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn_weak(|this, mut cx| {
             async move {
                 // TODO: what to show while language server is loading?
@@ -2475,7 +2476,7 @@ impl Editor {
                     },
                 };
 
-                let mut hover_popover = HoverPopover {
+                let hover_popover = HoverPopover {
                     // TODO: fix tooltip to beginning of symbol based on range
                     point,
                     text,
@@ -2484,15 +2485,8 @@ impl Editor {
 
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
-                        if !matches!(
-                            this.context_menu.as_ref(),
-                            None | Some(ContextMenu::Hover(_))
-                        ) {
-                            return;
-                        }
-
                         if this.focused {
-                            this.show_context_menu(ContextMenu::Hover(hover_popover), cx);
+                            this.hover_popover = Some(hover_popover);
                         }
 
                         cx.notify();
@@ -2502,7 +2496,8 @@ impl Editor {
             }
             .log_err()
         });
-        self.completion_tasks.push((id, task));
+
+        self.hover_task = Some(task);
     }
 
     async fn open_project_transaction(
@@ -2749,6 +2744,10 @@ impl Editor {
         self.context_menu
             .as_ref()
             .map(|menu| menu.render(cursor_position, style))
+    }
+
+    pub fn render_hover_popover(&self, style: EditorStyle) -> Option<(DisplayPoint, ElementBox)> {
+        self.hover_popover.as_ref().map(|hover| hover.render(style))
     }
 
     fn show_context_menu(&mut self, menu: ContextMenu, cx: &mut ViewContext<Self>) {
@@ -5784,9 +5783,6 @@ impl View for Editor {
             }
             Some(ContextMenu::CodeActions(_)) => {
                 context.set.insert("showing_code_actions".into());
-            }
-            Some(ContextMenu::Hover(_)) => {
-                context.set.insert("showing_hover".into());
             }
             None => {}
         }

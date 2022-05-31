@@ -444,6 +444,7 @@ pub struct Editor {
     pub autocomplete: AutocompleteStyle,
     pub code_actions_indicator: Color,
     pub unnecessary_code_fade: f32,
+    pub hover_popover: ContainerStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]

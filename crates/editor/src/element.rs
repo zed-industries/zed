@@ -508,6 +508,28 @@ impl EditorElement {
             cx.scene.pop_stacking_context();
         }
 
+        if let Some((position, hover_popover)) = layout.hover.as_mut() {
+            cx.scene.push_stacking_context(None);
+
+            let cursor_row_layout = &layout.line_layouts[(position.row() - start_row) as usize];
+            let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
+            let y = (position.row() + 1) as f32 * layout.line_height - scroll_top;
+            let mut popover_origin = content_origin + vec2f(x, y);
+            let popover_height = hover_popover.size().y();
+
+            if popover_origin.y() + popover_height > bounds.lower_left().y() {
+                popover_origin.set_y(popover_origin.y() - layout.line_height - popover_height);
+            }
+
+            hover_popover.paint(
+                popover_origin,
+                RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
+                cx,
+            );
+
+            cx.scene.pop_stacking_context();
+        }
+
         cx.scene.pop_layer();
     }
 
@@ -1081,6 +1103,7 @@ impl Element for EditorElement {
 
         let mut context_menu = None;
         let mut code_actions_indicator = None;
+        let mut hover = None;
         cx.render(&self.view.upgrade(cx).unwrap(), |view, cx| {
             let newest_selection_head = view
                 .selections
@@ -1097,6 +1120,8 @@ impl Element for EditorElement {
                 code_actions_indicator = view
                     .render_code_actions_indicator(&style, cx)
                     .map(|indicator| (newest_selection_head.row(), indicator));
+
+                hover = view.render_hover_popover(style);
             }
         });
 
@@ -1116,6 +1141,19 @@ impl Element for EditorElement {
         if let Some((_, indicator)) = code_actions_indicator.as_mut() {
             indicator.layout(
                 SizeConstraint::strict_along(Axis::Vertical, line_height * 0.618),
+                cx,
+            );
+        }
+
+        if let Some((_, hover)) = hover.as_mut() {
+            hover.layout(
+                SizeConstraint {
+                    min: Vector2F::zero(),
+                    max: vec2f(
+                        f32::INFINITY,
+                        (12. * line_height).min((size.y() - line_height) / 2.),
+                    ),
+                },
                 cx,
             );
         }
@@ -1156,6 +1194,7 @@ impl Element for EditorElement {
                 selections,
                 context_menu,
                 code_actions_indicator,
+                hover,
             },
         )
     }
@@ -1299,6 +1338,7 @@ pub struct LayoutState {
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
     context_menu: Option<(DisplayPoint, ElementBox)>,
     code_actions_indicator: Option<(u32, ElementBox)>,
+    hover: Option<(DisplayPoint, ElementBox)>,
 }
 
 fn layout_line(

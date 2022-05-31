@@ -216,6 +216,12 @@ pub struct Symbol {
     pub signature: [u8; 32],
 }
 
+#[derive(Debug)]
+pub struct Hover {
+    pub contents: lsp::HoverContents,
+    pub range: Option<Range<language::Anchor>>,
+}
+
 #[derive(Default)]
 pub struct ProjectTransaction(pub HashMap<ModelHandle<Buffer>, language::Transaction>);
 
@@ -2890,7 +2896,7 @@ impl Project {
         buffer: &ModelHandle<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<lsp::Hover>>> {
+    ) -> Task<Result<Option<Hover>>> {
         // TODO: proper return type
         let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(buffer.clone(), GetHover { position }, cx)
