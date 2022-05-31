@@ -550,6 +550,13 @@ impl Store {
 
         let connection_ids = project.connection_ids();
         let unshare = connection_ids.len() <= 1 && project.join_requests.is_empty();
+        if unshare {
+            project.language_servers.clear();
+            for worktree in project.worktrees.values_mut() {
+                worktree.diagnostic_summaries.clear();
+                worktree.entries.clear();
+            }
+        }
 
         Ok(LeftProject {
             host_connection_id: project.host_connection_id,
