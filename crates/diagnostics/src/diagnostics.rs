@@ -702,7 +702,7 @@ mod tests {
     use super::*;
     use editor::{
         display_map::{BlockContext, TransformBlock},
-        DisplayPoint, EditorSnapshot,
+        DisplayPoint,
     };
     use gpui::TestAppContext;
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16};
@@ -835,10 +835,8 @@ mod tests {
 
         view.next_notification(&cx).await;
         view.update(cx, |view, cx| {
-            let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
-
             assert_eq!(
-                editor_blocks(&editor, cx),
+                editor_blocks(&view.editor, cx),
                 [
                     (0, "path header block".into()),
                     (2, "diagnostic header".into()),
@@ -848,7 +846,7 @@ mod tests {
                 ]
             );
             assert_eq!(
-                editor.text(),
+                view.editor.update(cx, |editor, cx| editor.display_text(cx)),
                 concat!(
                     //
                     // main.rs
@@ -923,10 +921,8 @@ mod tests {
 
         view.next_notification(&cx).await;
         view.update(cx, |view, cx| {
-            let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
-
             assert_eq!(
-                editor_blocks(&editor, cx),
+                editor_blocks(&view.editor, cx),
                 [
                     (0, "path header block".into()),
                     (2, "diagnostic header".into()),
@@ -938,7 +934,7 @@ mod tests {
                 ]
             );
             assert_eq!(
-                editor.text(),
+                view.editor.update(cx, |editor, cx| editor.display_text(cx)),
                 concat!(
                     //
                     // consts.rs
@@ -1038,10 +1034,8 @@ mod tests {
 
         view.next_notification(&cx).await;
         view.update(cx, |view, cx| {
-            let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
-
             assert_eq!(
-                editor_blocks(&editor, cx),
+                editor_blocks(&view.editor, cx),
                 [
                     (0, "path header block".into()),
                     (2, "diagnostic header".into()),
@@ -1055,7 +1049,7 @@ mod tests {
                 ]
             );
             assert_eq!(
-                editor.text(),
+                view.editor.update(cx, |editor, cx| editor.display_text(cx)),
                 concat!(
                     //
                     // consts.rs
@@ -1115,36 +1109,44 @@ mod tests {
         });
     }
 
-    fn editor_blocks(editor: &EditorSnapshot, cx: &AppContext) -> Vec<(u32, String)> {
-        editor
-            .blocks_in_range(0..editor.max_point().row())
-            .filter_map(|(row, block)| {
-                let name = match block {
-                    TransformBlock::Custom(block) => block
-                        .render(&BlockContext {
-                            cx,
-                            anchor_x: 0.,
-                            scroll_x: 0.,
-                            gutter_padding: 0.,
-                            gutter_width: 0.,
-                            line_height: 0.,
-                            em_width: 0.,
-                        })
-                        .name()?
-                        .to_string(),
-                    TransformBlock::ExcerptHeader {
-                        starts_new_buffer, ..
-                    } => {
-                        if *starts_new_buffer {
-                            "path header block".to_string()
-                        } else {
-                            "collapsed context".to_string()
+    fn editor_blocks(
+        editor: &ViewHandle<Editor>,
+        cx: &mut MutableAppContext,
+    ) -> Vec<(u32, String)> {
+        let mut presenter = cx.build_presenter(editor.id(), 0.);
+        let mut cx = presenter.build_layout_context(Default::default(), false, cx);
+        cx.render(editor, |editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            snapshot
+                .blocks_in_range(0..snapshot.max_point().row())
+                .filter_map(|(row, block)| {
+                    let name = match block {
+                        TransformBlock::Custom(block) => block
+                            .render(&mut BlockContext {
+                                cx,
+                                anchor_x: 0.,
+                                scroll_x: 0.,
+                                gutter_padding: 0.,
+                                gutter_width: 0.,
+                                line_height: 0.,
+                                em_width: 0.,
+                            })
+                            .name()?
+                            .to_string(),
+                        TransformBlock::ExcerptHeader {
+                            starts_new_buffer, ..
+                        } => {
+                            if *starts_new_buffer {
+                                "path header block".to_string()
+                            } else {
+                                "collapsed context".to_string()
+                            }
                         }
-                    }
-                };
+                    };
 
-                Some((row, name))
-            })
-            .collect()
+                    Some((row, name))
+                })
+                .collect()
+        })
     }
 }

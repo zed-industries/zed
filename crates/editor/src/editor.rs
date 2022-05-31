@@ -4745,7 +4745,7 @@ impl Editor {
                             height: 1,
                             render: Arc::new({
                                 let editor = rename_editor.clone();
-                                move |cx: &BlockContext| {
+                                move |cx: &mut BlockContext| {
                                     ChildView::new(editor.clone())
                                         .contained()
                                         .with_padding_left(cx.anchor_x)
@@ -5866,7 +5866,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
         highlighted_lines.push(highlight_diagnostic_message(line));
     }
 
-    Arc::new(move |cx: &BlockContext| {
+    Arc::new(move |cx: &mut BlockContext| {
         let settings = cx.global::<Settings>();
         let theme = &settings.theme.editor;
         let style = diagnostic_style(diagnostic.severity, is_valid, theme);
