@@ -319,7 +319,7 @@ pub struct Icon {
     pub path: String,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Deserialize, Clone, Copy, Default)]
 pub struct IconButton {
     #[serde(flatten)]
     pub container: ContainerStyle,

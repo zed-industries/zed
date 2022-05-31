@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
-use futures::{future::Shared, select_biased, Future, FutureExt, StreamExt, TryFutureExt};
+use futures::{future::Shared, Future, FutureExt, StreamExt, TryFutureExt};
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
@@ -25,6 +25,7 @@ use language::{
 use lsp::{DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer};
 use lsp_command::*;
 use parking_lot::Mutex;
+use postage::stream::Stream;
 use postage::watch;
 use rand::prelude::*;
 use search::SearchQuery;
@@ -325,14 +326,12 @@ impl Project {
             let (public_tx, public_rx) = watch::channel_with(public);
             let (remote_id_tx, remote_id_rx) = watch::channel();
             let _maintain_remote_id_task = cx.spawn_weak({
-                let mut status_rx = client.clone().status();
-                let mut public_rx = public_rx.clone();
+                let status_rx = client.clone().status();
+                let public_rx = public_rx.clone();
                 move |this, mut cx| async move {
-                    loop {
-                        select_biased! {
-                            value = status_rx.next().fuse() => { value?; }
-                            value = public_rx.next().fuse() => { value?; }
-                        };
+                    let mut stream = Stream::map(status_rx.clone(), drop)
+                        .merge(Stream::map(public_rx.clone(), drop));
+                    while stream.recv().await.is_some() {
                         let this = this.upgrade(&cx)?;
                         if status_rx.borrow().is_connected() && *public_rx.borrow() {
                             this.update(&mut cx, |this, cx| this.register(cx))
@@ -342,11 +341,12 @@ impl Project {
                             this.update(&mut cx, |this, cx| this.unregister(cx));
                         }
                     }
+                    None
                 }
             });
 
             let handle = cx.weak_handle();
-            project_store.update(cx, |store, cx| store.add(handle, cx));
+            project_store.update(cx, |store, cx| store.add_project(handle, cx));
 
             let (opened_buffer_tx, opened_buffer_rx) = watch::channel();
             Self {
@@ -434,7 +434,7 @@ impl Project {
         let (opened_buffer_tx, opened_buffer_rx) = watch::channel();
         let this = cx.add_model(|cx: &mut ModelContext<Self>| {
             let handle = cx.weak_handle();
-            project_store.update(cx, |store, cx| store.add(handle, cx));
+            project_store.update(cx, |store, cx| store.add_project(handle, cx));
 
             let mut this = Self {
                 worktrees: Vec::new(),
@@ -624,9 +624,10 @@ impl Project {
         &self.fs
     }
 
-    pub fn set_public(&mut self, is_public: bool) {
+    pub fn set_public(&mut self, is_public: bool, cx: &mut ModelContext<Self>) {
         if let ProjectClientState::Local { public_tx, .. } = &mut self.client_state {
             *public_tx.borrow_mut() = is_public;
+            self.metadata_changed(cx);
         }
     }
 
@@ -648,10 +649,19 @@ impl Project {
         }
 
         if let ProjectClientState::Local { remote_id_tx, .. } = &mut self.client_state {
-            *remote_id_tx.borrow_mut() = None;
+            let mut remote_id = remote_id_tx.borrow_mut();
+            if let Some(remote_id) = *remote_id {
+                self.client
+                    .send(proto::UnregisterProject {
+                        project_id: remote_id,
+                    })
+                    .log_err();
+            }
+            *remote_id = None;
         }
 
         self.subscriptions.clear();
+        self.metadata_changed(cx);
     }
 
     fn register(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
@@ -671,6 +681,7 @@ impl Project {
                     *remote_id_tx.borrow_mut() = Some(remote_id);
                 }
 
+                this.metadata_changed(cx);
                 cx.emit(Event::RemoteIdChanged(Some(remote_id)));
 
                 this.subscriptions
@@ -743,6 +754,10 @@ impl Project {
             ProjectClientState::Local { .. } => 0,
             ProjectClientState::Remote { replica_id, .. } => *replica_id,
         }
+    }
+
+    fn metadata_changed(&mut self, cx: &mut ModelContext<Self>) {
+        self.project_store.update(cx, |_, cx| cx.notify());
     }
 
     pub fn collaborators(&self) -> &HashMap<PeerId, Collaborator> {
@@ -3743,6 +3758,7 @@ impl Project {
                 false
             }
         });
+        self.metadata_changed(cx);
         cx.notify();
     }
 
@@ -3772,6 +3788,7 @@ impl Project {
             self.worktrees
                 .push(WorktreeHandle::Weak(worktree.downgrade()));
         }
+        self.metadata_changed(cx);
         cx.emit(Event::WorktreeAdded);
         cx.notify();
     }
@@ -5204,7 +5221,7 @@ impl ProjectStore {
             .filter_map(|project| project.upgrade(cx))
     }
 
-    fn add(&mut self, project: WeakModelHandle<Project>, cx: &mut ModelContext<Self>) {
+    fn add_project(&mut self, project: WeakModelHandle<Project>, cx: &mut ModelContext<Self>) {
         if let Err(ix) = self
             .projects
             .binary_search_by_key(&project.id(), WeakModelHandle::id)
@@ -5214,7 +5231,7 @@ impl ProjectStore {
         cx.notify();
     }
 
-    fn prune(&mut self, cx: &mut ModelContext<Self>) {
+    fn prune_projects(&mut self, cx: &mut ModelContext<Self>) {
         let mut did_change = false;
         self.projects.retain(|project| {
             if project.is_upgradable(cx) {
@@ -5316,7 +5333,7 @@ impl Entity for Project {
     type Event = Event;
 
     fn release(&mut self, cx: &mut gpui::MutableAppContext) {
-        self.project_store.update(cx, ProjectStore::prune);
+        self.project_store.update(cx, ProjectStore::prune_projects);
 
         match &self.client_state {
             ProjectClientState::Local { remote_id_rx, .. } => {

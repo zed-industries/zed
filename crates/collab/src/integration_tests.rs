@@ -532,7 +532,7 @@ async fn test_private_projects(
         .read_with(cx_b, |store, _| { store.contacts()[0].projects.is_empty() }));
 
     // The project is registered when it is made public.
-    project_a.update(cx_a, |project, _| project.set_public(true));
+    project_a.update(cx_a, |project, cx| project.set_public(true, cx));
     deterministic.run_until_parked();
     assert!(project_a.read_with(cx_a, |project, _| project.remote_id().is_some()));
     assert!(!client_b

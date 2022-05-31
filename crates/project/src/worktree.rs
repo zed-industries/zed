@@ -151,14 +151,7 @@ impl Entity for Worktree {
 
     fn release(&mut self, _: &mut MutableAppContext) {
         if let Some(worktree) = self.as_local_mut() {
-            if let Registration::Done { project_id } = worktree.registration {
-                let client = worktree.client.clone();
-                let unregister_message = proto::UnregisterWorktree {
-                    project_id,
-                    worktree_id: worktree.id().to_proto(),
-                };
-                client.send(unregister_message).log_err();
-            }
+            worktree.unregister();
         }
     }
 }
@@ -1063,6 +1056,15 @@ impl LocalWorktree {
 
     pub fn unregister(&mut self) {
         self.unshare();
+        if let Registration::Done { project_id } = self.registration {
+            self.client
+                .clone()
+                .send(proto::UnregisterWorktree {
+                    project_id,
+                    worktree_id: self.id().to_proto(),
+                })
+                .log_err();
+        }
         self.registration = Registration::None;
     }
 

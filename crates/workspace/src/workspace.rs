@@ -22,7 +22,7 @@ use gpui::{
     platform::{CursorStyle, WindowOptions},
     AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Border, Entity, ImageData,
     ModelContext, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext,
-    Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::LanguageRegistry;
 use log::error;
@@ -102,7 +102,7 @@ pub struct OpenPaths {
 #[derive(Clone, Deserialize)]
 pub struct ToggleProjectPublic {
     #[serde(skip_deserializing)]
-    pub project: Option<WeakModelHandle<Project>>,
+    pub project: Option<ModelHandle<Project>>,
 }
 
 #[derive(Clone)]
@@ -1050,19 +1050,13 @@ impl Workspace {
     }
 
     fn toggle_project_public(&mut self, action: &ToggleProjectPublic, cx: &mut ViewContext<Self>) {
-        let project = if let Some(project) = action.project {
-            if let Some(project) = project.upgrade(cx) {
-                project
-            } else {
-                return;
-            }
-        } else {
-            self.project.clone()
-        };
-
-        project.update(cx, |project, _| {
+        let project = action
+            .project
+            .clone()
+            .unwrap_or_else(|| self.project.clone());
+        project.update(cx, |project, cx| {
             let is_public = project.is_public();
-            project.set_public(!is_public);
+            project.set_public(!is_public, cx);
         });
     }
 

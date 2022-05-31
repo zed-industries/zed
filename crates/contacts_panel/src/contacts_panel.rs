@@ -207,7 +207,7 @@ impl ContactsPanel {
                 ContactEntry::Contact(contact) => {
                     Self::render_contact(&contact.user, theme, is_selected)
                 }
-                ContactEntry::ContactProject(contact, project_ix, _) => {
+                ContactEntry::ContactProject(contact, project_ix, open_project) => {
                     let is_last_project_for_contact =
                         this.entries.get(ix + 1).map_or(true, |next| {
                             if let ContactEntry::ContactProject(next_contact, _, _) = next {
@@ -216,10 +216,11 @@ impl ContactsPanel {
                                 true
                             }
                         });
-                    Self::render_contact_project(
+                    Self::render_project(
                         contact.clone(),
                         current_user_id,
                         *project_ix,
+                        open_project.clone(),
                         theme,
                         is_last_project_for_contact,
                         is_selected,
@@ -328,10 +329,11 @@ impl ContactsPanel {
             .boxed()
     }
 
-    fn render_contact_project(
+    fn render_project(
         contact: Arc<Contact>,
         current_user_id: Option<u64>,
         project_index: usize,
+        open_project: Option<WeakModelHandle<Project>>,
         theme: &theme::ContactsPanel,
         is_last_project: bool,
         is_selected: bool,
@@ -340,6 +342,7 @@ impl ContactsPanel {
         let project = &contact.projects[project_index];
         let project_id = project.id;
         let is_host = Some(contact.user.id) == current_user_id;
+        let open_project = open_project.and_then(|p| p.upgrade(cx.deref_mut()));
 
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
@@ -354,48 +357,78 @@ impl ContactsPanel {
         let baseline_offset =
             row.name.text.baseline_offset(font_cache) + (theme.row_height - line_height) / 2.;
 
-        MouseEventHandler::new::<JoinProject, _, _>(project_id as usize, cx, |mouse_state, _| {
+        MouseEventHandler::new::<JoinProject, _, _>(project_id as usize, cx, |mouse_state, cx| {
             let tree_branch = *tree_branch.style_for(mouse_state, is_selected);
             let row = theme.project_row.style_for(mouse_state, is_selected);
 
             Flex::row()
                 .with_child(
-                    Canvas::new(move |bounds, _, cx| {
-                        let start_x =
-                            bounds.min_x() + (bounds.width() / 2.) - (tree_branch.width / 2.);
-                        let end_x = bounds.max_x();
-                        let start_y = bounds.min_y();
-                        let end_y = bounds.min_y() + baseline_offset - (cap_height / 2.);
+                    Stack::new()
+                        .with_child(
+                            Canvas::new(move |bounds, _, cx| {
+                                let start_x = bounds.min_x() + (bounds.width() / 2.)
+                                    - (tree_branch.width / 2.);
+                                let end_x = bounds.max_x();
+                                let start_y = bounds.min_y();
+                                let end_y = bounds.min_y() + baseline_offset - (cap_height / 2.);
 
-                        cx.scene.push_quad(gpui::Quad {
-                            bounds: RectF::from_points(
-                                vec2f(start_x, start_y),
-                                vec2f(
-                                    start_x + tree_branch.width,
-                                    if is_last_project {
-                                        end_y
-                                    } else {
-                                        bounds.max_y()
+                                cx.scene.push_quad(gpui::Quad {
+                                    bounds: RectF::from_points(
+                                        vec2f(start_x, start_y),
+                                        vec2f(
+                                            start_x + tree_branch.width,
+                                            if is_last_project {
+                                                end_y
+                                            } else {
+                                                bounds.max_y()
+                                            },
+                                        ),
+                                    ),
+                                    background: Some(tree_branch.color),
+                                    border: gpui::Border::default(),
+                                    corner_radius: 0.,
+                                });
+                                cx.scene.push_quad(gpui::Quad {
+                                    bounds: RectF::from_points(
+                                        vec2f(start_x, end_y),
+                                        vec2f(end_x, end_y + tree_branch.width),
+                                    ),
+                                    background: Some(tree_branch.color),
+                                    border: gpui::Border::default(),
+                                    corner_radius: 0.,
+                                });
+                            })
+                            .boxed(),
+                        )
+                        .with_children(if mouse_state.hovered && open_project.is_some() {
+                            Some(
+                                MouseEventHandler::new::<ToggleProjectPublic, _, _>(
+                                    project_id as usize,
+                                    cx,
+                                    |state, _| {
+                                        let mut icon_style =
+                                            *theme.private_button.style_for(state, false);
+                                        icon_style.container.background_color =
+                                            row.container.background_color;
+                                        render_icon_button(&icon_style, "icons/lock-8.svg")
+                                            .aligned()
+                                            .boxed()
                                     },
-                                ),
-                            ),
-                            background: Some(tree_branch.color),
-                            border: gpui::Border::default(),
-                            corner_radius: 0.,
-                        });
-                        cx.scene.push_quad(gpui::Quad {
-                            bounds: RectF::from_points(
-                                vec2f(start_x, end_y),
-                                vec2f(end_x, end_y + tree_branch.width),
-                            ),
-                            background: Some(tree_branch.color),
-                            border: gpui::Border::default(),
-                            corner_radius: 0.,
-                        });
-                    })
-                    .constrained()
-                    .with_width(host_avatar_height)
-                    .boxed(),
+                                )
+                                .with_cursor_style(CursorStyle::PointingHand)
+                                .on_click(move |_, _, cx| {
+                                    cx.dispatch_action(ToggleProjectPublic {
+                                        project: open_project.clone(),
+                                    })
+                                })
+                                .boxed(),
+                            )
+                        } else {
+                            None
+                        })
+                        .constrained()
+                        .with_width(host_avatar_height)
+                        .boxed(),
                 )
                 .with_child(
                     Label::new(
@@ -467,9 +500,9 @@ impl ContactsPanel {
         MouseEventHandler::new::<LocalProject, _, _>(project_id, cx, |state, cx| {
             let row = theme.project_row.style_for(state, is_selected);
             let mut worktree_root_names = String::new();
-            let project = project.read(cx);
-            let is_public = project.is_public();
-            for tree in project.visible_worktrees(cx) {
+            let project_ = project.read(cx);
+            let is_public = project_.is_public();
+            for tree in project_.visible_worktrees(cx) {
                 if !worktree_root_names.is_empty() {
                     worktree_root_names.push_str(", ");
                 }
@@ -498,7 +531,9 @@ impl ContactsPanel {
                         CursorStyle::PointingHand
                     })
                     .on_click(move |_, _, cx| {
-                        cx.dispatch_action(ToggleProjectPublic { project: None })
+                        cx.dispatch_action(ToggleProjectPublic {
+                            project: Some(project.clone()),
+                        })
                     })
                     .boxed(),
                 )

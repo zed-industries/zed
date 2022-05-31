@@ -71,7 +71,8 @@ export default function contactsPanel(theme: Theme) {
     privateButton: {
       iconWidth: 8,
       color: iconColor(theme, "primary"),
-      buttonWidth: 8,
+      cornerRadius: 5,
+      buttonWidth: 12,
     },
     rowHeight: 28,
     sectionIconSize: 8,
