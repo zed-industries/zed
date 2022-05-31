@@ -8,9 +8,9 @@ use editor::{
     highlight_diagnostic_message, Autoscroll, Editor, ExcerptId, MultiBuffer, ToOffset,
 };
 use gpui::{
-    actions, elements::*, fonts::TextStyle, serde_json, AnyViewHandle, AppContext, Entity,
-    ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    actions, elements::*, fonts::TextStyle, platform::CursorStyle, serde_json, AnyViewHandle,
+    AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use language::{
     Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
@@ -576,11 +576,13 @@ impl workspace::Item for ProjectDiagnosticsEditor {
 }
 
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
+    enum JumpIcon {}
+
     let (message, highlights) = highlight_diagnostic_message(&diagnostic.message);
     Arc::new(move |cx| {
         let settings = cx.global::<Settings>();
         let theme = &settings.theme.editor;
-        let style = &theme.diagnostic_header;
+        let style = theme.diagnostic_header.clone();
         let font_size = (style.text_scale_factor * settings.buffer_font_size).round();
         let icon_width = cx.em_width * style.icon_width_factor;
         let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
@@ -591,6 +593,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                 .with_color(theme.warning_diagnostic.message.text.color)
         };
 
+        let x_padding = cx.gutter_padding + cx.scroll_x * cx.em_width;
         Flex::row()
             .with_child(
                 icon.constrained()
@@ -618,9 +621,33 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                     .aligned()
                     .boxed()
             }))
+            .with_child(
+                MouseEventHandler::new::<JumpIcon, _, _>(0, cx, |state, _| {
+                    let style = style.jump_icon.style_for(state, false);
+                    Svg::new("icons/jump.svg")
+                        .with_color(style.color)
+                        .constrained()
+                        .with_width(style.icon_width)
+                        .aligned()
+                        .contained()
+                        .with_style(style.container)
+                        .constrained()
+                        .with_width(style.button_width)
+                        .with_height(style.button_width)
+                        .boxed()
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(|_, _, cx| {
+                    dbg!("click!");
+                })
+                .aligned()
+                .flex_float()
+                .boxed(),
+            )
             .contained()
             .with_style(style.container)
-            .with_padding_left(cx.gutter_padding + cx.scroll_x * cx.em_width)
+            .with_padding_left(x_padding)
+            .with_padding_right(x_padding)
             .expanded()
             .named("diagnostic header")
     })

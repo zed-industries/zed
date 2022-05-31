@@ -317,7 +317,7 @@ pub struct Icon {
     pub path: String,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Clone, Deserialize, Default)]
 pub struct IconButton {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -461,6 +461,7 @@ pub struct DiagnosticHeader {
     pub code: ContainedText,
     pub text_scale_factor: f32,
     pub icon_width_factor: f32,
+    pub jump_icon: Interactive<IconButton>,
 }
 
 #[derive(Clone, Deserialize, Default)]
