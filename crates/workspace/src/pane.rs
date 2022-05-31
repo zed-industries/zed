@@ -299,7 +299,9 @@ impl Pane {
     ) -> Box<dyn ItemHandle> {
         let existing_item = pane.update(cx, |pane, cx| {
             for (ix, item) in pane.items.iter().enumerate() {
-                if item.project_entry_ids(cx).as_slice() == &[project_entry_id] {
+                if item.project_path(cx).is_some()
+                    && item.project_entry_ids(cx).as_slice() == &[project_entry_id]
+                {
                     let item = item.boxed_clone();
                     pane.activate_item(ix, true, focus_item, cx);
                     return Some(item);
