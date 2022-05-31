@@ -16,13 +16,14 @@ mod overlay;
 mod stack;
 mod svg;
 mod text;
+mod tooltip;
 mod uniform_list;
 
 use self::expanded::Expanded;
 pub use self::{
     align::*, canvas::*, constrained_box::*, container::*, empty::*, event_handler::*, flex::*,
     hook::*, image::*, keystroke_label::*, label::*, list::*, mouse_event_handler::*, overlay::*,
-    stack::*, svg::*, text::*, uniform_list::*,
+    stack::*, svg::*, text::*, tooltip::*, uniform_list::*,
 };
 pub use crate::presenter::ChildView;
 use crate::{
