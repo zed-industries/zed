@@ -779,7 +779,7 @@ impl LocalWorktree {
         entry_id: ProjectEntryId,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Worktree>,
-    ) -> Option<Task<Result<(Entry, Vec<Entry>)>>> {
+    ) -> Option<Task<Result<Entry>>> {
         let old_path = self.entry_for_id(entry_id)?.path.clone();
         let new_path = new_path.into();
         let abs_old_path = self.absolutize(&old_path);
@@ -794,38 +794,23 @@ impl LocalWorktree {
         });
 
         Some(cx.spawn(|this, mut cx| async move {
-            let copied_paths = copy.await?;
-            let (entry, child_entries) = this.update(&mut cx, |this, cx| {
-                let this = this.as_local_mut().unwrap();
-                let root_entry =
-                    this.refresh_entry(new_path.clone(), abs_new_path.clone(), None, cx);
-
-                let mut child_entries = Vec::new();
-                for copied_path in copied_paths {
-                    if copied_path != abs_new_path {
-                        let relative_copied_path = copied_path.strip_prefix(this.abs_path())?;
-                        child_entries.push(this.refresh_entry(
-                            relative_copied_path.into(),
-                            copied_path,
-                            None,
-                            cx,
-                        ));
-                    }
-                }
-
-                anyhow::Ok((root_entry, child_entries))
-            })?;
-            let (entry, child_entries) = (
-                entry.await?,
-                futures::future::try_join_all(child_entries).await?,
-            );
-
+            copy.await?;
+            let entry = this
+                .update(&mut cx, |this, cx| {
+                    this.as_local_mut().unwrap().refresh_entry(
+                        new_path.clone(),
+                        abs_new_path,
+                        None,
+                        cx,
+                    )
+                })
+                .await?;
             this.update(&mut cx, |this, cx| {
                 this.poll_snapshot(cx);
                 this.as_local().unwrap().broadcast_snapshot()
             })
             .await;
-            Ok((entry, child_entries))
+            Ok(entry)
         }))
     }
 

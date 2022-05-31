@@ -224,8 +224,7 @@ message DeleteProjectEntry {
 
 message ProjectEntryResponse {
     Entry entry = 1;
-    repeated Entry child_entries = 2;
-    uint64 worktree_scan_id = 3;
+    uint64 worktree_scan_id = 2;
 }
 
 message AddProjectCollaborator {
