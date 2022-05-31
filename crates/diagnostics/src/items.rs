@@ -159,7 +159,7 @@ impl View for DiagnosticIndicator {
                     .boxed()
             })
             .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(|_, cx| cx.dispatch_action(crate::Deploy))
+            .on_click(|_, _, cx| cx.dispatch_action(crate::Deploy))
             .aligned()
             .boxed(),
         );
@@ -192,7 +192,7 @@ impl View for DiagnosticIndicator {
                     .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(|_, cx| cx.dispatch_action(GoToNextDiagnostic))
+                .on_click(|_, _, cx| cx.dispatch_action(GoToNextDiagnostic))
                 .boxed(),
             );
         }

@@ -5,7 +5,7 @@ use crate::{
     },
     json::json,
     DebugContext, Element, ElementBox, ElementRc, Event, EventContext, LayoutContext, PaintContext,
-    SizeConstraint,
+    RenderContext, SizeConstraint, View, ViewContext,
 };
 use std::{cell::RefCell, collections::VecDeque, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
@@ -26,7 +26,7 @@ pub enum Orientation {
 
 struct StateInner {
     last_layout_width: Option<f32>,
-    render_item: Box<dyn FnMut(usize, &mut LayoutContext) -> ElementBox>,
+    render_item: Box<dyn FnMut(usize, &mut LayoutContext) -> Option<ElementBox>>,
     rendered_range: Range<usize>,
     items: SumTree<ListItem>,
     logical_scroll_top: Option<ListOffset>,
@@ -131,13 +131,27 @@ impl Element for List {
         let mut cursor = old_items.cursor::<Count>();
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
         for (ix, item) in cursor.by_ref().enumerate() {
-            if rendered_height - scroll_top.offset_in_item >= size.y() + state.overdraw {
+            let visible_height = rendered_height - scroll_top.offset_in_item;
+            if visible_height >= size.y() + state.overdraw {
                 break;
             }
 
-            let element = state.render_item(scroll_top.item_ix + ix, item, item_constraint, cx);
-            rendered_height += element.size().y();
-            rendered_items.push_back(ListItem::Rendered(element));
+            // Force re-render if the item is visible, but attempt to re-use an existing one
+            // if we are inside the overdraw.
+            let existing_element = if visible_height >= size.y() {
+                Some(item)
+            } else {
+                None
+            };
+            if let Some(element) = state.render_item(
+                scroll_top.item_ix + ix,
+                existing_element,
+                item_constraint,
+                cx,
+            ) {
+                rendered_height += element.size().y();
+                rendered_items.push_back(ListItem::Rendered(element));
+            }
         }
 
         // Prepare to start walking upward from the item at the scroll top.
@@ -148,10 +162,13 @@ impl Element for List {
         if rendered_height - scroll_top.offset_in_item < size.y() {
             while rendered_height < size.y() {
                 cursor.prev(&());
-                if let Some(item) = cursor.item() {
-                    let element = state.render_item(cursor.start().0, item, item_constraint, cx);
-                    rendered_height += element.size().y();
-                    rendered_items.push_front(ListItem::Rendered(element));
+                if cursor.item().is_some() {
+                    if let Some(element) =
+                        state.render_item(cursor.start().0, None, item_constraint, cx)
+                    {
+                        rendered_height += element.size().y();
+                        rendered_items.push_front(ListItem::Rendered(element));
+                    }
                 } else {
                     break;
                 }
@@ -182,9 +199,12 @@ impl Element for List {
         while leading_overdraw < state.overdraw {
             cursor.prev(&());
             if let Some(item) = cursor.item() {
-                let element = state.render_item(cursor.start().0, item, item_constraint, cx);
-                leading_overdraw += element.size().y();
-                rendered_items.push_front(ListItem::Rendered(element));
+                if let Some(element) =
+                    state.render_item(cursor.start().0, Some(item), item_constraint, cx)
+                {
+                    leading_overdraw += element.size().y();
+                    rendered_items.push_front(ListItem::Rendered(element));
+                }
             } else {
                 break;
             }
@@ -330,20 +350,26 @@ impl Element for List {
 }
 
 impl ListState {
-    pub fn new<F>(
+    pub fn new<F, V>(
         element_count: usize,
         orientation: Orientation,
         overdraw: f32,
-        render_item: F,
+        cx: &mut ViewContext<V>,
+        mut render_item: F,
     ) -> Self
     where
-        F: 'static + FnMut(usize, &mut LayoutContext) -> ElementBox,
+        V: View,
+        F: 'static + FnMut(&mut V, usize, &mut RenderContext<V>) -> ElementBox,
     {
         let mut items = SumTree::new();
         items.extend((0..element_count).map(|_| ListItem::Unrendered), &());
+        let handle = cx.weak_handle();
         Self(Rc::new(RefCell::new(StateInner {
             last_layout_width: None,
-            render_item: Box::new(render_item),
+            render_item: Box::new(move |ix, cx| {
+                let handle = handle.upgrade(cx)?;
+                Some(cx.render(&handle, |view, cx| render_item(view, ix, cx)))
+            }),
             rendered_range: 0..0,
             items,
             logical_scroll_top: None,
@@ -411,16 +437,16 @@ impl StateInner {
     fn render_item(
         &mut self,
         ix: usize,
-        existing_item: &ListItem,
+        existing_element: Option<&ListItem>,
         constraint: SizeConstraint,
         cx: &mut LayoutContext,
-    ) -> ElementRc {
-        if let ListItem::Rendered(element) = existing_item {
-            element.clone()
+    ) -> Option<ElementRc> {
+        if let Some(ListItem::Rendered(element)) = existing_element {
+            Some(element.clone())
         } else {
-            let mut element = (self.render_item)(ix, cx);
+            let mut element = (self.render_item)(ix, cx)?;
             element.layout(constraint, cx);
-            element.into()
+            Some(element.into())
         }
     }
 
@@ -593,26 +619,33 @@ impl<'a> sum_tree::SeekTarget<'a, ListItemSummary, ListItemSummary> for Height {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::vector::vec2f;
+    use crate::{elements::Empty, geometry::vector::vec2f, Entity};
     use rand::prelude::*;
     use std::env;
 
     #[crate::test(self)]
     fn test_layout(cx: &mut crate::MutableAppContext) {
         let mut presenter = cx.build_presenter(0, 0.);
+        let (_, view) = cx.add_window(Default::default(), |_| TestView);
         let constraint = SizeConstraint::new(vec2f(0., 0.), vec2f(100., 40.));
 
         let elements = Rc::new(RefCell::new(vec![(0, 20.), (1, 30.), (2, 100.)]));
-        let state = ListState::new(elements.borrow().len(), Orientation::Top, 1000.0, {
-            let elements = elements.clone();
-            move |ix, _| {
-                let (id, height) = elements.borrow()[ix];
-                TestElement::new(id, height).boxed()
-            }
+
+        let state = view.update(cx, |_, cx| {
+            ListState::new(elements.borrow().len(), Orientation::Top, 1000.0, cx, {
+                let elements = elements.clone();
+                move |_, ix, _| {
+                    let (id, height) = elements.borrow()[ix];
+                    TestElement::new(id, height).boxed()
+                }
+            })
         });
 
         let mut list = List::new(state.clone());
-        let (size, _) = list.layout(constraint, &mut presenter.build_layout_context(false, cx));
+        let (size, _) = list.layout(
+            constraint,
+            &mut presenter.build_layout_context(vec2f(100., 40.), false, cx),
+        );
         assert_eq!(size, vec2f(100., 40.));
         assert_eq!(
             state.0.borrow().items.summary().clone(),
@@ -634,8 +667,10 @@ mod tests {
             true,
             &mut presenter.build_event_context(cx),
         );
-        let (_, logical_scroll_top) =
-            list.layout(constraint, &mut presenter.build_layout_context(false, cx));
+        let (_, logical_scroll_top) = list.layout(
+            constraint,
+            &mut presenter.build_layout_context(vec2f(100., 40.), false, cx),
+        );
         assert_eq!(
             logical_scroll_top,
             ListOffset {
@@ -659,8 +694,10 @@ mod tests {
             }
         );
 
-        let (size, logical_scroll_top) =
-            list.layout(constraint, &mut presenter.build_layout_context(false, cx));
+        let (size, logical_scroll_top) = list.layout(
+            constraint,
+            &mut presenter.build_layout_context(vec2f(100., 40.), false, cx),
+        );
         assert_eq!(size, vec2f(100., 40.));
         assert_eq!(
             state.0.borrow().items.summary().clone(),
@@ -687,6 +724,7 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
+        let (_, view) = cx.add_window(Default::default(), |_| TestView);
         let mut presenter = cx.build_presenter(0, 0.);
         let mut next_id = 0;
         let elements = Rc::new(RefCell::new(
@@ -702,12 +740,15 @@ mod tests {
             .choose(&mut rng)
             .unwrap();
         let overdraw = rng.gen_range(1..=100) as f32;
-        let state = ListState::new(elements.borrow().len(), orientation, overdraw, {
-            let elements = elements.clone();
-            move |ix, _| {
-                let (id, height) = elements.borrow()[ix];
-                TestElement::new(id, height).boxed()
-            }
+
+        let state = view.update(cx, |_, cx| {
+            ListState::new(elements.borrow().len(), orientation, overdraw, cx, {
+                let elements = elements.clone();
+                move |_, ix, _| {
+                    let (id, height) = elements.borrow()[ix];
+                    TestElement::new(id, height).boxed()
+                }
+            })
         });
 
         let mut width = rng.gen_range(0..=2000) as f32 / 2.;
@@ -770,11 +811,12 @@ mod tests {
             }
 
             let mut list = List::new(state.clone());
+            let window_size = vec2f(width, height);
             let (size, logical_scroll_top) = list.layout(
-                SizeConstraint::new(vec2f(0., 0.), vec2f(width, height)),
-                &mut presenter.build_layout_context(false, cx),
+                SizeConstraint::new(vec2f(0., 0.), window_size),
+                &mut presenter.build_layout_context(window_size, false, cx),
             );
-            assert_eq!(size, vec2f(width, height));
+            assert_eq!(size, window_size);
             last_logical_scroll_top = Some(logical_scroll_top);
 
             let state = state.0.borrow();
@@ -840,6 +882,22 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    struct TestView;
+
+    impl Entity for TestView {
+        type Event = ();
+    }
+
+    impl View for TestView {
+        fn ui_name() -> &'static str {
+            "TestView"
+        }
+
+        fn render(&mut self, _: &mut RenderContext<'_, Self>) -> ElementBox {
+            Empty::new().boxed()
         }
     }
 

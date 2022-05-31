@@ -9,6 +9,7 @@ use gpui::{
     ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
     ViewHandle, WeakModelHandle, WeakViewHandle,
 };
+use menu::Confirm;
 use project::{search::SearchQuery, Project};
 use settings::Settings;
 use smallvec::SmallVec;
@@ -19,8 +20,7 @@ use std::{
 };
 use util::ResultExt as _;
 use workspace::{
-    menu::Confirm, Item, ItemHandle, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView,
-    Workspace,
+    Item, ItemHandle, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 actions!(project_search, [Deploy, SearchInNew, ToggleFocus]);
@@ -672,7 +672,7 @@ impl ProjectSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |_, cx| match direction {
+        .on_click(move |_, _, cx| match direction {
             Direction::Prev => cx.dispatch_action(SelectPrevMatch),
             Direction::Next => cx.dispatch_action(SelectNextMatch),
         })
@@ -699,7 +699,7 @@ impl ProjectSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |_, cx| cx.dispatch_action(ToggleSearchOption(option)))
+        .on_click(move |_, _, cx| cx.dispatch_action(ToggleSearchOption(option)))
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
     }

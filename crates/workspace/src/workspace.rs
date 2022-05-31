@@ -1,5 +1,4 @@
 pub mod lsp_status;
-pub mod menu;
 pub mod pane;
 pub mod pane_group;
 pub mod sidebar;
@@ -30,7 +29,7 @@ use log::error;
 pub use pane::*;
 pub use pane_group::*;
 use postage::prelude::Stream;
-use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, Worktree};
+use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use settings::Settings;
 use sidebar::{Side, Sidebar, SidebarButtons, ToggleSidebarItem, ToggleSidebarItemFocus};
 use smallvec::SmallVec;
@@ -73,6 +72,9 @@ type FollowableItemBuilders = HashMap<
     ),
 >;
 
+#[derive(Clone)]
+pub struct RemoveFolderFromProject(pub WorktreeId);
+
 actions!(
     workspace,
     [
@@ -105,7 +107,15 @@ pub struct JoinProject {
     pub project_index: usize,
 }
 
-impl_internal_actions!(workspace, [OpenPaths, ToggleFollow, JoinProject]);
+impl_internal_actions!(
+    workspace,
+    [
+        OpenPaths,
+        ToggleFollow,
+        JoinProject,
+        RemoveFolderFromProject
+    ]
+);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     pane::init(cx);
@@ -149,6 +159,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_async_action(Workspace::close);
     cx.add_async_action(Workspace::save_all);
     cx.add_action(Workspace::add_folder_to_project);
+    cx.add_action(Workspace::remove_folder_from_project);
     cx.add_action(
         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
             let pane = workspace.active_pane().clone();
@@ -1034,6 +1045,15 @@ impl Workspace {
         .detach();
     }
 
+    fn remove_folder_from_project(
+        &mut self,
+        RemoveFolderFromProject(worktree_id): &RemoveFolderFromProject,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.project
+            .update(cx, |project, cx| project.remove_worktree(*worktree_id, cx));
+    }
+
     fn project_path_for_path(
         &self,
         abs_path: &Path,
@@ -1777,7 +1797,7 @@ impl Workspace {
                         .with_style(style.container)
                         .boxed()
                 })
-                .on_click(|_, cx| cx.dispatch_action(Authenticate))
+                .on_click(|_, _, cx| cx.dispatch_action(Authenticate))
                 .with_cursor_style(CursorStyle::PointingHand)
                 .aligned()
                 .boxed(),
@@ -1828,7 +1848,7 @@ impl Workspace {
         if let Some(peer_id) = peer_id {
             MouseEventHandler::new::<ToggleFollow, _, _>(replica_id.into(), cx, move |_, _| content)
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(move |_, cx| cx.dispatch_action(ToggleFollow(peer_id)))
+                .on_click(move |_, _, cx| cx.dispatch_action(ToggleFollow(peer_id)))
                 .boxed()
         } else {
             content

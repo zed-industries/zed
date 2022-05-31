@@ -22,6 +22,7 @@ chat_panel = { path = "../chat_panel" }
 cli = { path = "../cli" }
 collections = { path = "../collections" }
 command_palette = { path = "../command_palette" }
+context_menu = { path = "../context_menu" }
 client = { path = "../client" }
 clock = { path = "../clock" }
 contacts_panel = { path = "../contacts_panel" }

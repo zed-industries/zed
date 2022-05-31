@@ -1,3 +1,4 @@
+use context_menu::{ContextMenu, ContextMenuItem};
 use editor::{Cancel, Editor};
 use futures::stream::StreamExt;
 use gpui::{
@@ -5,13 +6,15 @@ use gpui::{
     anyhow::{anyhow, Result},
     elements::{
         ChildView, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement,
-        ScrollTarget, Svg, UniformList, UniformListState,
+        ScrollTarget, Stack, Svg, UniformList, UniformListState,
     },
+    geometry::vector::Vector2F,
     impl_internal_actions, keymap,
     platform::CursorStyle,
-    AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, PromptLevel, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MutableAppContext,
+    PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
 };
+use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use settings::Settings;
 use std::{
@@ -19,12 +22,10 @@ use std::{
     collections::{hash_map, HashMap},
     ffi::OsStr,
     ops::Range,
+    path::{Path, PathBuf},
 };
 use unicase::UniCase;
-use workspace::{
-    menu::{Confirm, SelectNext, SelectPrev},
-    Workspace,
-};
+use workspace::Workspace;
 
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
@@ -36,7 +37,8 @@ pub struct ProjectPanel {
     selection: Option<Selection>,
     edit_state: Option<EditState>,
     filename_editor: ViewHandle<Editor>,
-    handle: WeakViewHandle<Self>,
+    clipboard_entry: Option<ClipboardEntry>,
+    context_menu: ViewHandle<ContextMenu>,
 }
 
 #[derive(Copy, Clone)]
@@ -54,6 +56,18 @@ struct EditState {
     processing_filename: Option<String>,
 }
 
+#[derive(Copy, Clone)]
+pub enum ClipboardEntry {
+    Copied {
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+    },
+    Cut {
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+    },
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct EntryDetails {
     filename: String,
@@ -64,6 +78,7 @@ struct EntryDetails {
     is_selected: bool,
     is_editing: bool,
     is_processing: bool,
+    is_cut: bool,
 }
 
 #[derive(Clone)]
@@ -75,6 +90,12 @@ pub struct Open {
     pub change_focus: bool,
 }
 
+#[derive(Clone)]
+pub struct DeployContextMenu {
+    pub position: Vector2F,
+    pub entry_id: Option<ProjectEntryId>,
+}
+
 actions!(
     project_panel,
     [
@@ -82,13 +103,18 @@ actions!(
         CollapseSelectedEntry,
         AddDirectory,
         AddFile,
+        Copy,
+        CopyPath,
+        Cut,
+        Paste,
         Delete,
         Rename
     ]
 );
-impl_internal_actions!(project_panel, [Open, ToggleExpanded]);
+impl_internal_actions!(project_panel, [Open, ToggleExpanded, DeployContextMenu]);
 
 pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action(ProjectPanel::deploy_context_menu);
     cx.add_action(ProjectPanel::expand_selected_entry);
     cx.add_action(ProjectPanel::collapse_selected_entry);
     cx.add_action(ProjectPanel::toggle_expanded);
@@ -101,6 +127,14 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(ProjectPanel::delete);
     cx.add_async_action(ProjectPanel::confirm);
     cx.add_action(ProjectPanel::cancel);
+    cx.add_action(ProjectPanel::copy);
+    cx.add_action(ProjectPanel::copy_path);
+    cx.add_action(ProjectPanel::cut);
+    cx.add_action(
+        |this: &mut ProjectPanel, action: &Paste, cx: &mut ViewContext<ProjectPanel>| {
+            this.paste(action, cx);
+        },
+    );
 }
 
 pub enum Event {
@@ -156,7 +190,8 @@ impl ProjectPanel {
                 selection: None,
                 edit_state: None,
                 filename_editor,
-                handle: cx.weak_handle(),
+                clipboard_entry: None,
+                context_menu: cx.add_view(|cx| ContextMenu::new(cx)),
             };
             this.update_visible_entries(None, cx);
             this
@@ -193,6 +228,63 @@ impl ProjectPanel {
         .detach();
 
         project_panel
+    }
+
+    fn deploy_context_menu(&mut self, action: &DeployContextMenu, cx: &mut ViewContext<Self>) {
+        let mut menu_entries = Vec::new();
+
+        if let Some(entry_id) = action.entry_id {
+            if let Some(worktree_id) = self.project.read(cx).worktree_id_for_entry(entry_id, cx) {
+                self.selection = Some(Selection {
+                    worktree_id,
+                    entry_id,
+                });
+
+                if let Some((worktree, entry)) = self.selected_entry(cx) {
+                    let is_root = Some(entry) == worktree.root_entry();
+                    if !self.project.read(cx).is_remote() {
+                        menu_entries.push(ContextMenuItem::item(
+                            "Add Folder to Project",
+                            workspace::AddFolderToProject,
+                        ));
+                        if is_root {
+                            menu_entries.push(ContextMenuItem::item(
+                                "Remove Folder from Project",
+                                workspace::RemoveFolderFromProject(worktree_id),
+                            ));
+                        }
+                    }
+                    menu_entries.push(ContextMenuItem::item("New File", AddFile));
+                    menu_entries.push(ContextMenuItem::item("New Folder", AddDirectory));
+                    menu_entries.push(ContextMenuItem::Separator);
+                    menu_entries.push(ContextMenuItem::item("Copy", Copy));
+                    menu_entries.push(ContextMenuItem::item("Copy Path", CopyPath));
+                    menu_entries.push(ContextMenuItem::item("Cut", Cut));
+                    if let Some(clipboard_entry) = self.clipboard_entry {
+                        if clipboard_entry.worktree_id() == worktree.id() {
+                            menu_entries.push(ContextMenuItem::item("Paste", Paste));
+                        }
+                    }
+                    menu_entries.push(ContextMenuItem::Separator);
+                    menu_entries.push(ContextMenuItem::item("Rename", Rename));
+                    if !is_root {
+                        menu_entries.push(ContextMenuItem::item("Delete", Delete));
+                    }
+                }
+            }
+        } else {
+            self.selection.take();
+            menu_entries.push(ContextMenuItem::item(
+                "Add Folder to Project",
+                workspace::AddFolderToProject,
+            ));
+        }
+
+        self.context_menu.update(cx, |menu, cx| {
+            menu.show(action.position, menu_entries, cx);
+        });
+
+        cx.notify();
     }
 
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
@@ -541,6 +633,92 @@ impl ProjectPanel {
         }
     }
 
+    fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            self.clipboard_entry = Some(ClipboardEntry::Cut {
+                worktree_id: worktree.id(),
+                entry_id: entry.id,
+            });
+            cx.notify();
+        }
+    }
+
+    fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            self.clipboard_entry = Some(ClipboardEntry::Copied {
+                worktree_id: worktree.id(),
+                entry_id: entry.id,
+            });
+            cx.notify();
+        }
+    }
+
+    fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) -> Option<()> {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            let clipboard_entry = self.clipboard_entry?;
+            if clipboard_entry.worktree_id() != worktree.id() {
+                return None;
+            }
+
+            let clipboard_entry_file_name = self
+                .project
+                .read(cx)
+                .path_for_entry(clipboard_entry.entry_id(), cx)?
+                .path
+                .file_name()?
+                .to_os_string();
+
+            let mut new_path = entry.path.to_path_buf();
+            if entry.is_file() {
+                new_path.pop();
+            }
+
+            new_path.push(&clipboard_entry_file_name);
+            let extension = new_path.extension().map(|e| e.to_os_string());
+            let file_name_without_extension = Path::new(&clipboard_entry_file_name).file_stem()?;
+            let mut ix = 0;
+            while worktree.entry_for_path(&new_path).is_some() {
+                new_path.pop();
+
+                let mut new_file_name = file_name_without_extension.to_os_string();
+                new_file_name.push(" copy");
+                if ix > 0 {
+                    new_file_name.push(format!(" {}", ix));
+                }
+                new_path.push(new_file_name);
+                if let Some(extension) = extension.as_ref() {
+                    new_path.set_extension(&extension);
+                }
+                ix += 1;
+            }
+
+            self.clipboard_entry.take();
+            if clipboard_entry.is_cut() {
+                self.project
+                    .update(cx, |project, cx| {
+                        project.rename_entry(clipboard_entry.entry_id(), new_path, cx)
+                    })
+                    .map(|task| task.detach_and_log_err(cx));
+            } else {
+                self.project
+                    .update(cx, |project, cx| {
+                        project.copy_entry(clipboard_entry.entry_id(), new_path, cx)
+                    })
+                    .map(|task| task.detach_and_log_err(cx));
+            }
+        }
+        None
+    }
+
+    fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            let mut path = PathBuf::new();
+            path.push(worktree.root_name());
+            path.push(&entry.path);
+            cx.write_to_clipboard(ClipboardItem::new(path.to_string_lossy().to_string()));
+        }
+    }
+
     fn index_for_selection(&self, selection: Selection) -> Option<(usize, usize, usize)> {
         let mut worktree_index = 0;
         let mut entry_index = 0;
@@ -706,8 +884,8 @@ impl ProjectPanel {
     fn for_each_visible_entry(
         &self,
         range: Range<usize>,
-        cx: &mut ViewContext<ProjectPanel>,
-        mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut ViewContext<ProjectPanel>),
+        cx: &mut RenderContext<ProjectPanel>,
+        mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut RenderContext<ProjectPanel>),
     ) {
         let mut ix = 0;
         for (worktree_id, visible_worktree_entries) in &self.visible_entries {
@@ -747,6 +925,9 @@ impl ProjectPanel {
                         }),
                         is_editing: false,
                         is_processing: false,
+                        is_cut: self
+                            .clipboard_entry
+                            .map_or(false, |e| e.is_cut() && e.entry_id() == entry.id),
                     };
                     if let Some(edit_state) = &self.edit_state {
                         let is_edited_entry = if edit_state.is_new_entry {
@@ -780,7 +961,7 @@ impl ProjectPanel {
         details: EntryDetails,
         editor: &ViewHandle<Editor>,
         theme: &theme::ProjectPanel,
-        cx: &mut ViewContext<Self>,
+        cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         let kind = details.kind;
         let show_editor = details.is_editing && !details.is_processing;
@@ -790,6 +971,10 @@ impl ProjectPanel {
             if details.is_ignored {
                 style.text.color.fade_out(theme.ignored_entry_fade);
                 style.icon_color.fade_out(theme.ignored_entry_fade);
+            }
+            if details.is_cut {
+                style.text.color.fade_out(theme.cut_entry_fade);
+                style.icon_color.fade_out(theme.cut_entry_fade);
             }
             let row_container_style = if show_editor {
                 theme.filename_editor.container
@@ -841,7 +1026,7 @@ impl ProjectPanel {
                 .with_padding_left(padding)
                 .boxed()
         })
-        .on_click(move |click_count, cx| {
+        .on_click(move |_, click_count, cx| {
             if kind == EntryKind::Dir {
                 cx.dispatch_action(ToggleExpanded(entry_id))
             } else {
@@ -850,6 +1035,12 @@ impl ProjectPanel {
                     change_focus: click_count > 1,
                 })
             }
+        })
+        .on_right_mouse_down(move |position, cx| {
+            cx.dispatch_action(DeployContextMenu {
+                entry_id: Some(entry_id),
+                position,
+            })
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
@@ -862,37 +1053,50 @@ impl View for ProjectPanel {
     }
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
+        enum Tag {}
         let theme = &cx.global::<Settings>().theme.project_panel;
         let mut container_style = theme.container;
         let padding = std::mem::take(&mut container_style.padding);
-        let handle = self.handle.clone();
-        UniformList::new(
-            self.list.clone(),
-            self.visible_entries
-                .iter()
-                .map(|(_, worktree_entries)| worktree_entries.len())
-                .sum(),
-            move |range, items, cx| {
-                let theme = cx.global::<Settings>().theme.clone();
-                let this = handle.upgrade(cx).unwrap();
-                this.update(cx.app, |this, cx| {
-                    this.for_each_visible_entry(range.clone(), cx, |id, details, cx| {
-                        items.push(Self::render_entry(
-                            id,
-                            details,
-                            &this.filename_editor,
-                            &theme.project_panel,
-                            cx,
-                        ));
-                    });
+        Stack::new()
+            .with_child(
+                MouseEventHandler::new::<Tag, _, _>(0, cx, |_, cx| {
+                    UniformList::new(
+                        self.list.clone(),
+                        self.visible_entries
+                            .iter()
+                            .map(|(_, worktree_entries)| worktree_entries.len())
+                            .sum(),
+                        cx,
+                        move |this, range, items, cx| {
+                            let theme = cx.global::<Settings>().theme.clone();
+                            this.for_each_visible_entry(range.clone(), cx, |id, details, cx| {
+                                items.push(Self::render_entry(
+                                    id,
+                                    details,
+                                    &this.filename_editor,
+                                    &theme.project_panel,
+                                    cx,
+                                ));
+                            });
+                        },
+                    )
+                    .with_padding_top(padding.top)
+                    .with_padding_bottom(padding.bottom)
+                    .contained()
+                    .with_style(container_style)
+                    .expanded()
+                    .boxed()
                 })
-            },
-        )
-        .with_padding_top(padding.top)
-        .with_padding_bottom(padding.bottom)
-        .contained()
-        .with_style(container_style)
-        .boxed()
+                .on_right_mouse_down(move |position, cx| {
+                    cx.dispatch_action(DeployContextMenu {
+                        entry_id: None,
+                        position,
+                    })
+                })
+                .boxed(),
+            )
+            .with_child(ChildView::new(&self.context_menu).boxed())
+            .boxed()
     }
 
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {
@@ -909,6 +1113,27 @@ impl Entity for ProjectPanel {
 impl workspace::sidebar::SidebarItem for ProjectPanel {
     fn should_show_badge(&self, _: &AppContext) -> bool {
         false
+    }
+}
+
+impl ClipboardEntry {
+    fn is_cut(&self) -> bool {
+        matches!(self, Self::Cut { .. })
+    }
+
+    fn entry_id(&self) -> ProjectEntryId {
+        match self {
+            ClipboardEntry::Copied { entry_id, .. } | ClipboardEntry::Cut { entry_id, .. } => {
+                *entry_id
+            }
+        }
+    }
+
+    fn worktree_id(&self) -> WorktreeId {
+        match self {
+            ClipboardEntry::Copied { worktree_id, .. }
+            | ClipboardEntry::Cut { worktree_id, .. } => *worktree_id,
+        }
     }
 }
 
@@ -1343,7 +1568,7 @@ mod tests {
         let mut result = Vec::new();
         let mut project_entries = HashSet::new();
         let mut has_editor = false;
-        panel.update(cx, |panel, cx| {
+        cx.render(panel, |panel, cx| {
             panel.for_each_visible_entry(range, cx, |project_entry, details, _| {
                 if details.is_editing {
                     assert!(!has_editor, "duplicate editor entry");

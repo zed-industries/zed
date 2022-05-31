@@ -8,9 +8,10 @@ path = "src/go_to_line.rs"
 doctest = false
 
 [dependencies]
-text = { path = "../text" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
+menu = { path = "../menu" }
 settings = { path = "../settings" }
+text = { path = "../text" }
 workspace = { path = "../workspace" }
 postage = { version = "0.4", features = ["futures-traits"] }

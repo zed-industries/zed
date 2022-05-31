@@ -1,0 +1,15 @@
+[package]
+name = "context_menu"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/context_menu.rs"
+doctest = false
+
+[dependencies]
+gpui = { path = "../gpui" }
+menu = { path = "../menu" }
+settings = { path = "../settings" }
+theme = { path = "../theme" }
+smallvec = "1.6"

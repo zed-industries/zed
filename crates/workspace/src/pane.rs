@@ -702,6 +702,7 @@ impl Pane {
         let theme = cx.global::<Settings>().theme.clone();
 
         enum Tabs {}
+        enum Tab {}
         let pane = cx.handle();
         let tabs = MouseEventHandler::new::<Tabs, _, _>(0, cx, |mouse_state, cx| {
             let autoscroll = if mem::take(&mut self.autoscroll) {
@@ -730,7 +731,7 @@ impl Pane {
                         style.container.border.left = false;
                     }
 
-                    EventHandler::new(
+                    MouseEventHandler::new::<Tab, _, _>(ix, cx, |_, cx| {
                         Container::new(
                             Flex::row()
                                 .with_child(
@@ -801,7 +802,7 @@ impl Pane {
                                             .with_cursor_style(CursorStyle::PointingHand)
                                             .on_click({
                                                 let pane = pane.clone();
-                                                move |_, cx| {
+                                                move |_, _, cx| {
                                                     cx.dispatch_action(CloseItem {
                                                         item_id,
                                                         pane: pane.clone(),
@@ -820,11 +821,10 @@ impl Pane {
                                 .boxed(),
                         )
                         .with_style(style.container)
-                        .boxed(),
-                    )
-                    .on_mouse_down(move |cx| {
+                        .boxed()
+                    })
+                    .on_mouse_down(move |_, cx| {
                         cx.dispatch_action(ActivateItem(ix));
-                        true
                     })
                     .boxed()
                 })

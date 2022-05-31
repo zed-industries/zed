@@ -282,6 +282,7 @@ impl Project {
         client.add_model_message_handler(Self::handle_update_worktree);
         client.add_model_request_handler(Self::handle_create_project_entry);
         client.add_model_request_handler(Self::handle_rename_project_entry);
+        client.add_model_request_handler(Self::handle_copy_project_entry);
         client.add_model_request_handler(Self::handle_delete_project_entry);
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_model_request_handler(Self::handle_apply_code_action);
@@ -761,6 +762,49 @@ impl Project {
                         project_id,
                         path: project_path.path.as_os_str().as_bytes().to_vec(),
                         is_directory,
+                    })
+                    .await?;
+                let entry = response
+                    .entry
+                    .ok_or_else(|| anyhow!("missing entry in response"))?;
+                worktree
+                    .update(&mut cx, |worktree, cx| {
+                        worktree.as_remote().unwrap().insert_entry(
+                            entry,
+                            response.worktree_scan_id as usize,
+                            cx,
+                        )
+                    })
+                    .await
+            }))
+        }
+    }
+
+    pub fn copy_entry(
+        &mut self,
+        entry_id: ProjectEntryId,
+        new_path: impl Into<Arc<Path>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Task<Result<Entry>>> {
+        let worktree = self.worktree_for_entry(entry_id, cx)?;
+        let new_path = new_path.into();
+        if self.is_local() {
+            worktree.update(cx, |worktree, cx| {
+                worktree
+                    .as_local_mut()
+                    .unwrap()
+                    .copy_entry(entry_id, new_path, cx)
+            })
+        } else {
+            let client = self.client.clone();
+            let project_id = self.remote_id().unwrap();
+
+            Some(cx.spawn_weak(|_, mut cx| async move {
+                let response = client
+                    .request(proto::CopyProjectEntry {
+                        project_id,
+                        entry_id: entry_id.to_proto(),
+                        new_path: new_path.as_os_str().as_bytes().to_vec(),
                     })
                     .await?;
                 let entry = response
@@ -4028,6 +4072,34 @@ impl Project {
                     .as_local_mut()
                     .unwrap()
                     .rename_entry(entry_id, new_path, cx)
+                    .ok_or_else(|| anyhow!("invalid entry"))
+            })?
+            .await?;
+        Ok(proto::ProjectEntryResponse {
+            entry: Some((&entry).into()),
+            worktree_scan_id: worktree_scan_id as u64,
+        })
+    }
+
+    async fn handle_copy_project_entry(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::CopyProjectEntry>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+        let worktree = this.read_with(&cx, |this, cx| {
+            this.worktree_for_entry(entry_id, cx)
+                .ok_or_else(|| anyhow!("worktree not found"))
+        })?;
+        let worktree_scan_id = worktree.read_with(&cx, |worktree, _| worktree.scan_id());
+        let entry = worktree
+            .update(&mut cx, |worktree, cx| {
+                let new_path = PathBuf::from(OsString::from_vec(envelope.payload.new_path));
+                worktree
+                    .as_local_mut()
+                    .unwrap()
+                    .copy_entry(entry_id, new_path, cx)
                     .ok_or_else(|| anyhow!("invalid entry"))
             })?
             .await?;

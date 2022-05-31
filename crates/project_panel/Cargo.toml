@@ -8,8 +8,10 @@ path = "src/project_panel.rs"
 doctest = false
 
 [dependencies]
+context_menu = { path = "../context_menu" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
+menu = { path = "../menu" }
 project = { path = "../project" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }

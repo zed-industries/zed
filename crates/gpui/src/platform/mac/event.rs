@@ -178,6 +178,7 @@ impl Event {
                     native_event.locationInWindow().x as f32,
                     window_height - native_event.locationInWindow().y as f32,
                 ),
+                click_count: native_event.clickCount() as usize,
             }),
             NSEventType::NSOtherMouseDown => {
                 let direction = match native_event.buttonNumber() {

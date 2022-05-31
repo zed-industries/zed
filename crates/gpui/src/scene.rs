@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use serde_json::json;
-use std::{borrow::Cow, sync::Arc};
+use std::{any::TypeId, borrow::Cow, rc::Rc, sync::Arc};
 
 use crate::{
     color::Color,
@@ -8,7 +8,7 @@ use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
     platform::CursorStyle,
-    ImageData,
+    EventContext, ImageData,
 };
 
 pub struct Scene {
@@ -20,6 +20,7 @@ pub struct Scene {
 struct StackingContext {
     layers: Vec<Layer>,
     active_layer_stack: Vec<usize>,
+    depth: usize,
 }
 
 #[derive(Default)]
@@ -33,7 +34,35 @@ pub struct Layer {
     image_glyphs: Vec<ImageGlyph>,
     icons: Vec<Icon>,
     paths: Vec<Path>,
-    cursor_styles: Vec<(RectF, CursorStyle)>,
+    cursor_regions: Vec<CursorRegion>,
+    mouse_regions: Vec<MouseRegion>,
+}
+
+#[derive(Copy, Clone)]
+pub struct CursorRegion {
+    pub bounds: RectF,
+    pub style: CursorStyle,
+}
+
+#[derive(Clone, Default)]
+pub struct MouseRegion {
+    pub view_id: usize,
+    pub discriminant: Option<(TypeId, usize)>,
+    pub bounds: RectF,
+    pub hover: Option<Rc<dyn Fn(bool, &mut EventContext)>>,
+    pub mouse_down: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
+    pub click: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
+    pub right_mouse_down: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
+    pub right_click: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
+    pub drag: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
+    pub mouse_down_out: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
+    pub right_mouse_down_out: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+pub struct MouseRegionId {
+    pub view_id: usize,
+    pub discriminant: (TypeId, usize),
 }
 
 #[derive(Default, Debug)]
@@ -159,7 +188,7 @@ pub struct Image {
 
 impl Scene {
     pub fn new(scale_factor: f32) -> Self {
-        let stacking_context = StackingContext::new(None);
+        let stacking_context = StackingContext::new(0, None);
         Scene {
             scale_factor,
             stacking_contexts: vec![stacking_context],
@@ -175,18 +204,32 @@ impl Scene {
         self.stacking_contexts.iter().flat_map(|s| &s.layers)
     }
 
-    pub fn cursor_styles(&self) -> Vec<(RectF, CursorStyle)> {
+    pub fn cursor_regions(&self) -> Vec<CursorRegion> {
         self.layers()
-            .flat_map(|layer| &layer.cursor_styles)
+            .flat_map(|layer| &layer.cursor_regions)
             .copied()
             .collect()
     }
 
+    pub fn mouse_regions(&self) -> Vec<(MouseRegion, usize)> {
+        let mut regions = Vec::new();
+        for stacking_context in self.stacking_contexts.iter() {
+            for layer in &stacking_context.layers {
+                for mouse_region in &layer.mouse_regions {
+                    regions.push((mouse_region.clone(), stacking_context.depth));
+                }
+            }
+        }
+        regions.sort_by_key(|(_, depth)| *depth);
+        regions
+    }
+
     pub fn push_stacking_context(&mut self, clip_bounds: Option<RectF>) {
+        let depth = self.active_stacking_context().depth + 1;
         self.active_stacking_context_stack
             .push(self.stacking_contexts.len());
         self.stacking_contexts
-            .push(StackingContext::new(clip_bounds))
+            .push(StackingContext::new(depth, clip_bounds))
     }
 
     pub fn pop_stacking_context(&mut self) {
@@ -206,8 +249,12 @@ impl Scene {
         self.active_layer().push_quad(quad)
     }
 
-    pub fn push_cursor_style(&mut self, bounds: RectF, style: CursorStyle) {
-        self.active_layer().push_cursor_style(bounds, style);
+    pub fn push_cursor_region(&mut self, region: CursorRegion) {
+        self.active_layer().push_cursor_region(region);
+    }
+
+    pub fn push_mouse_region(&mut self, region: MouseRegion) {
+        self.active_layer().push_mouse_region(region);
     }
 
     pub fn push_image(&mut self, image: Image) {
@@ -249,10 +296,11 @@ impl Scene {
 }
 
 impl StackingContext {
-    fn new(clip_bounds: Option<RectF>) -> Self {
+    fn new(depth: usize, clip_bounds: Option<RectF>) -> Self {
         Self {
             layers: vec![Layer::new(clip_bounds)],
             active_layer_stack: vec![0],
+            depth,
         }
     }
 
@@ -298,7 +346,8 @@ impl Layer {
             glyphs: Default::default(),
             icons: Default::default(),
             paths: Default::default(),
-            cursor_styles: Default::default(),
+            cursor_regions: Default::default(),
+            mouse_regions: Default::default(),
         }
     }
 
@@ -316,10 +365,24 @@ impl Layer {
         self.quads.as_slice()
     }
 
-    fn push_cursor_style(&mut self, bounds: RectF, style: CursorStyle) {
-        if let Some(bounds) = bounds.intersection(self.clip_bounds.unwrap_or(bounds)) {
+    fn push_cursor_region(&mut self, region: CursorRegion) {
+        if let Some(bounds) = region
+            .bounds
+            .intersection(self.clip_bounds.unwrap_or(region.bounds))
+        {
             if can_draw(bounds) {
-                self.cursor_styles.push((bounds, style));
+                self.cursor_regions.push(region);
+            }
+        }
+    }
+
+    fn push_mouse_region(&mut self, region: MouseRegion) {
+        if let Some(bounds) = region
+            .bounds
+            .intersection(self.clip_bounds.unwrap_or(region.bounds))
+        {
+            if can_draw(bounds) {
+                self.mouse_regions.push(region);
             }
         }
     }
@@ -481,6 +544,15 @@ impl ToJson for Border {
             value["left"] = json!(self.width);
         }
         value
+    }
+}
+
+impl MouseRegion {
+    pub fn id(&self) -> Option<MouseRegionId> {
+        self.discriminant.map(|discriminant| MouseRegionId {
+            view_id: self.view_id,
+            discriminant,
+        })
     }
 }
 

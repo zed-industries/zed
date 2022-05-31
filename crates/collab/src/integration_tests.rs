@@ -656,6 +656,9 @@ async fn test_fs_operations(
     cx_b: &mut TestAppContext,
 ) {
     executor.forbid_parking();
+    let fs = FakeFs::new(cx_a.background());
+
+    // Connect to a server as 2 clients.
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let mut client_a = server.create_client(cx_a, "user_a").await;
     let mut client_b = server.create_client(cx_b, "user_b").await;
@@ -663,7 +666,7 @@ async fn test_fs_operations(
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
 
-    let fs = FakeFs::new(cx_a.background());
+    // Share a project as client A
     fs.insert_tree(
         "/dir",
         json!({
@@ -761,6 +764,110 @@ async fn test_fs_operations(
 
     project_b
         .update(cx_b, |project, cx| {
+            project
+                .create_entry((worktree_id, "DIR/e.txt"), false, cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+    project_b
+        .update(cx_b, |project, cx| {
+            project
+                .create_entry((worktree_id, "DIR/SUBDIR"), true, cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+    project_b
+        .update(cx_b, |project, cx| {
+            project
+                .create_entry((worktree_id, "DIR/SUBDIR/f.txt"), false, cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+    worktree_a.read_with(cx_a, |worktree, _| {
+        assert_eq!(
+            worktree
+                .paths()
+                .map(|p| p.to_string_lossy())
+                .collect::<Vec<_>>(),
+            [
+                "DIR",
+                "DIR/SUBDIR",
+                "DIR/SUBDIR/f.txt",
+                "DIR/e.txt",
+                "a.txt",
+                "b.txt",
+                "d.txt"
+            ]
+        );
+    });
+    worktree_b.read_with(cx_b, |worktree, _| {
+        assert_eq!(
+            worktree
+                .paths()
+                .map(|p| p.to_string_lossy())
+                .collect::<Vec<_>>(),
+            [
+                "DIR",
+                "DIR/SUBDIR",
+                "DIR/SUBDIR/f.txt",
+                "DIR/e.txt",
+                "a.txt",
+                "b.txt",
+                "d.txt"
+            ]
+        );
+    });
+
+    project_b
+        .update(cx_b, |project, cx| {
+            project
+                .copy_entry(entry.id, Path::new("f.txt"), cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+    worktree_a.read_with(cx_a, |worktree, _| {
+        assert_eq!(
+            worktree
+                .paths()
+                .map(|p| p.to_string_lossy())
+                .collect::<Vec<_>>(),
+            [
+                "DIR",
+                "DIR/SUBDIR",
+                "DIR/SUBDIR/f.txt",
+                "DIR/e.txt",
+                "a.txt",
+                "b.txt",
+                "d.txt",
+                "f.txt"
+            ]
+        );
+    });
+    worktree_b.read_with(cx_b, |worktree, _| {
+        assert_eq!(
+            worktree
+                .paths()
+                .map(|p| p.to_string_lossy())
+                .collect::<Vec<_>>(),
+            [
+                "DIR",
+                "DIR/SUBDIR",
+                "DIR/SUBDIR/f.txt",
+                "DIR/e.txt",
+                "a.txt",
+                "b.txt",
+                "d.txt",
+                "f.txt"
+            ]
+        );
+    });
+
+    project_b
+        .update(cx_b, |project, cx| {
             project.delete_entry(dir_entry.id, cx).unwrap()
         })
         .await
@@ -771,7 +878,7 @@ async fn test_fs_operations(
                 .paths()
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
-            ["a.txt", "b.txt", "d.txt"]
+            ["a.txt", "b.txt", "d.txt", "f.txt"]
         );
     });
     worktree_b.read_with(cx_b, |worktree, _| {
@@ -780,7 +887,7 @@ async fn test_fs_operations(
                 .paths()
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
-            ["a.txt", "b.txt", "d.txt"]
+            ["a.txt", "b.txt", "d.txt", "f.txt"]
         );
     });
 
@@ -796,7 +903,7 @@ async fn test_fs_operations(
                 .paths()
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
-            ["a.txt", "b.txt"]
+            ["a.txt", "b.txt", "f.txt"]
         );
     });
     worktree_b.read_with(cx_b, |worktree, _| {
@@ -805,7 +912,7 @@ async fn test_fs_operations(
                 .paths()
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
-            ["a.txt", "b.txt"]
+            ["a.txt", "b.txt", "f.txt"]
         );
     });
 }

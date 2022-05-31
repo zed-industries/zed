@@ -11,12 +11,12 @@ use gpui::{
     AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View,
     ViewContext, ViewHandle,
 };
+use menu::Confirm;
 use postage::prelude::Stream;
 use settings::{Settings, SoftWrap};
 use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
 use util::{ResultExt, TryFutureExt};
-use workspace::menu::Confirm;
 
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
 
@@ -75,9 +75,9 @@ impl ChatPanel {
             })
         });
 
-        let mut message_list = ListState::new(0, Orientation::Bottom, 1000., {
+        let mut message_list = ListState::new(0, Orientation::Bottom, 1000., cx, {
             let this = cx.weak_handle();
-            move |ix, cx| {
+            move |_, ix, cx| {
                 let this = this.upgrade(cx).unwrap().read(cx);
                 let message = this.active_channel.as_ref().unwrap().0.read(cx).message(ix);
                 this.render_message(message, cx)
@@ -320,7 +320,7 @@ impl ChatPanel {
                 .boxed()
             })
             .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(move |_, cx| {
+            .on_click(move |_, _, cx| {
                 let rpc = rpc.clone();
                 let this = this.clone();
                 cx.spawn(|mut cx| async move {

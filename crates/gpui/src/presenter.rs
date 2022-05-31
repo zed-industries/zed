@@ -4,16 +4,21 @@ use crate::{
     font_cache::FontCache,
     geometry::rect::RectF,
     json::{self, ToJson},
+    keymap::Keystroke,
     platform::{CursorStyle, Event},
+    scene::CursorRegion,
     text_layout::TextLayoutCache,
-    Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox,
-    ElementStateContext, Entity, FontSystem, ModelHandle, ReadModel, ReadView, Scene,
-    UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
+    Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox, Entity,
+    FontSystem, ModelHandle, MouseRegion, MouseRegionId, ReadModel, ReadView, RenderContext,
+    RenderParams, Scene, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle,
+    WeakViewHandle,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
+use smallvec::SmallVec;
 use std::{
     collections::{HashMap, HashSet},
+    marker::PhantomData,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
@@ -22,11 +27,16 @@ pub struct Presenter {
     window_id: usize,
     pub(crate) rendered_views: HashMap<usize, ElementBox>,
     parents: HashMap<usize, usize>,
-    cursor_styles: Vec<(RectF, CursorStyle)>,
+    cursor_regions: Vec<CursorRegion>,
+    mouse_regions: Vec<(MouseRegion, usize)>,
     font_cache: Arc<FontCache>,
     text_layout_cache: TextLayoutCache,
     asset_cache: Arc<AssetCache>,
     last_mouse_moved_event: Option<Event>,
+    hovered_region_ids: HashSet<MouseRegionId>,
+    clicked_region: Option<MouseRegion>,
+    right_clicked_region: Option<MouseRegion>,
+    prev_drag_position: Option<Vector2F>,
     titlebar_height: f32,
 }
 
@@ -43,32 +53,35 @@ impl Presenter {
             window_id,
             rendered_views: cx.render_views(window_id, titlebar_height),
             parents: HashMap::new(),
-            cursor_styles: Default::default(),
+            cursor_regions: Default::default(),
+            mouse_regions: Default::default(),
             font_cache,
             text_layout_cache,
             asset_cache,
             last_mouse_moved_event: None,
+            hovered_region_ids: Default::default(),
+            clicked_region: None,
+            right_clicked_region: None,
+            prev_drag_position: None,
             titlebar_height,
         }
     }
 
     pub fn dispatch_path(&self, app: &AppContext) -> Vec<usize> {
+        let mut path = Vec::new();
         if let Some(view_id) = app.focused_view_id(self.window_id) {
-            self.dispatch_path_from(view_id)
-        } else {
-            Vec::new()
+            self.compute_dispatch_path_from(view_id, &mut path)
         }
+        path
     }
 
-    pub(crate) fn dispatch_path_from(&self, mut view_id: usize) -> Vec<usize> {
-        let mut path = Vec::new();
+    pub(crate) fn compute_dispatch_path_from(&self, mut view_id: usize, path: &mut Vec<usize>) {
         path.push(view_id);
         while let Some(parent_id) = self.parents.get(&view_id).copied() {
             path.push(parent_id);
             view_id = parent_id;
         }
         path.reverse();
-        path
     }
 
     pub fn invalidate(
@@ -85,8 +98,19 @@ impl Presenter {
         for view_id in &invalidation.updated {
             self.rendered_views.insert(
                 *view_id,
-                cx.render_view(self.window_id, *view_id, self.titlebar_height, false)
-                    .unwrap(),
+                cx.render_view(RenderParams {
+                    window_id: self.window_id,
+                    view_id: *view_id,
+                    titlebar_height: self.titlebar_height,
+                    hovered_region_ids: self.hovered_region_ids.clone(),
+                    clicked_region_id: self.clicked_region.as_ref().and_then(MouseRegion::id),
+                    right_clicked_region_id: self
+                        .right_clicked_region
+                        .as_ref()
+                        .and_then(MouseRegion::id),
+                    refreshing: false,
+                })
+                .unwrap(),
             );
         }
     }
@@ -96,7 +120,18 @@ impl Presenter {
         for (view_id, view) in &mut self.rendered_views {
             if !invalidation.updated.contains(view_id) {
                 *view = cx
-                    .render_view(self.window_id, *view_id, self.titlebar_height, true)
+                    .render_view(RenderParams {
+                        window_id: self.window_id,
+                        view_id: *view_id,
+                        titlebar_height: self.titlebar_height,
+                        hovered_region_ids: self.hovered_region_ids.clone(),
+                        clicked_region_id: self.clicked_region.as_ref().and_then(MouseRegion::id),
+                        right_clicked_region_id: self
+                            .right_clicked_region
+                            .as_ref()
+                            .and_then(MouseRegion::id),
+                        refreshing: true,
+                    })
                     .unwrap();
             }
         }
@@ -120,7 +155,8 @@ impl Presenter {
                 RectF::new(Vector2F::zero(), window_size),
             );
             self.text_layout_cache.finish_frame();
-            self.cursor_styles = scene.cursor_styles();
+            self.cursor_regions = scene.cursor_regions();
+            self.mouse_regions = scene.mouse_regions();
 
             if cx.window_is_active(self.window_id) {
                 if let Some(event) = self.last_mouse_moved_event.clone() {
@@ -134,27 +170,34 @@ impl Presenter {
         scene
     }
 
-    fn layout(&mut self, size: Vector2F, refreshing: bool, cx: &mut MutableAppContext) {
+    fn layout(&mut self, window_size: Vector2F, refreshing: bool, cx: &mut MutableAppContext) {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            self.build_layout_context(refreshing, cx)
-                .layout(root_view_id, SizeConstraint::strict(size));
+            self.build_layout_context(window_size, refreshing, cx)
+                .layout(root_view_id, SizeConstraint::strict(window_size));
         }
     }
 
     pub fn build_layout_context<'a>(
         &'a mut self,
+        window_size: Vector2F,
         refreshing: bool,
         cx: &'a mut MutableAppContext,
     ) -> LayoutContext<'a> {
         LayoutContext {
+            window_id: self.window_id,
             rendered_views: &mut self.rendered_views,
             parents: &mut self.parents,
-            refreshing,
             font_cache: &self.font_cache,
             font_system: cx.platform().fonts(),
             text_layout_cache: &self.text_layout_cache,
             asset_cache: &self.asset_cache,
             view_stack: Vec::new(),
+            refreshing,
+            hovered_region_ids: self.hovered_region_ids.clone(),
+            clicked_region_id: self.clicked_region.as_ref().and_then(MouseRegion::id),
+            right_clicked_region_id: self.right_clicked_region.as_ref().and_then(MouseRegion::id),
+            titlebar_height: self.titlebar_height,
+            window_size,
             app: cx,
         }
     }
@@ -169,13 +212,80 @@ impl Presenter {
             font_cache: &self.font_cache,
             text_layout_cache: &self.text_layout_cache,
             rendered_views: &mut self.rendered_views,
+            view_stack: Vec::new(),
             app: cx,
         }
     }
 
     pub fn dispatch_event(&mut self, event: Event, cx: &mut MutableAppContext) {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
+            let mut invalidated_views = Vec::new();
+            let mut hovered_regions = Vec::new();
+            let mut unhovered_regions = Vec::new();
+            let mut mouse_down_out_handlers = Vec::new();
+            let mut mouse_down_region = None;
+            let mut clicked_region = None;
+            let mut right_mouse_down_region = None;
+            let mut right_clicked_region = None;
+            let mut dragged_region = None;
+
             match event {
+                Event::LeftMouseDown { position, .. } => {
+                    let mut hit = false;
+                    for (region, _) in self.mouse_regions.iter().rev() {
+                        if region.bounds.contains_point(position) {
+                            if !hit {
+                                hit = true;
+                                invalidated_views.push(region.view_id);
+                                mouse_down_region = Some((region.clone(), position));
+                                self.clicked_region = Some(region.clone());
+                                self.prev_drag_position = Some(position);
+                            }
+                        } else if let Some(handler) = region.mouse_down_out.clone() {
+                            mouse_down_out_handlers.push((handler, region.view_id, position));
+                        }
+                    }
+                }
+                Event::LeftMouseUp {
+                    position,
+                    click_count,
+                    ..
+                } => {
+                    self.prev_drag_position.take();
+                    if let Some(region) = self.clicked_region.take() {
+                        invalidated_views.push(region.view_id);
+                        if region.bounds.contains_point(position) {
+                            clicked_region = Some((region, position, click_count));
+                        }
+                    }
+                }
+                Event::RightMouseDown { position, .. } => {
+                    let mut hit = false;
+                    for (region, _) in self.mouse_regions.iter().rev() {
+                        if region.bounds.contains_point(position) {
+                            if !hit {
+                                hit = true;
+                                invalidated_views.push(region.view_id);
+                                right_mouse_down_region = Some((region.clone(), position));
+                                self.right_clicked_region = Some(region.clone());
+                            }
+                        } else if let Some(handler) = region.right_mouse_down_out.clone() {
+                            mouse_down_out_handlers.push((handler, region.view_id, position));
+                        }
+                    }
+                }
+                Event::RightMouseUp {
+                    position,
+                    click_count,
+                    ..
+                } => {
+                    if let Some(region) = self.right_clicked_region.take() {
+                        invalidated_views.push(region.view_id);
+                        if region.bounds.contains_point(position) {
+                            right_clicked_region = Some((region, position, click_count));
+                        }
+                    }
+                }
                 Event::MouseMoved {
                     position,
                     left_mouse_down,
@@ -184,16 +294,50 @@ impl Presenter {
 
                     if !left_mouse_down {
                         let mut style_to_assign = CursorStyle::Arrow;
-                        for (bounds, style) in self.cursor_styles.iter().rev() {
-                            if bounds.contains_point(position) {
-                                style_to_assign = *style;
+                        for region in self.cursor_regions.iter().rev() {
+                            if region.bounds.contains_point(position) {
+                                style_to_assign = region.style;
                                 break;
                             }
                         }
                         cx.platform().set_cursor_style(style_to_assign);
+
+                        let mut hover_depth = None;
+                        for (region, depth) in self.mouse_regions.iter().rev() {
+                            if region.bounds.contains_point(position)
+                                && hover_depth.map_or(true, |hover_depth| hover_depth == *depth)
+                            {
+                                hover_depth = Some(*depth);
+                                if let Some(region_id) = region.id() {
+                                    if !self.hovered_region_ids.contains(&region_id) {
+                                        invalidated_views.push(region.view_id);
+                                        hovered_regions.push(region.clone());
+                                        self.hovered_region_ids.insert(region_id);
+                                    }
+                                }
+                            } else {
+                                if let Some(region_id) = region.id() {
+                                    if self.hovered_region_ids.contains(&region_id) {
+                                        invalidated_views.push(region.view_id);
+                                        unhovered_regions.push(region.clone());
+                                        self.hovered_region_ids.remove(&region_id);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 Event::LeftMouseDragged { position } => {
+                    if let Some((clicked_region, prev_drag_position)) = self
+                        .clicked_region
+                        .as_ref()
+                        .zip(self.prev_drag_position.as_mut())
+                    {
+                        dragged_region =
+                            Some((clicked_region.clone(), position - *prev_drag_position));
+                        *prev_drag_position = position;
+                    }
+
                     self.last_mouse_moved_event = Some(Event::MouseMoved {
                         position,
                         left_mouse_down: true,
@@ -203,16 +347,92 @@ impl Presenter {
             }
 
             let mut event_cx = self.build_event_context(cx);
-            event_cx.dispatch_event(root_view_id, &event);
+            let mut handled = false;
+            for unhovered_region in unhovered_regions {
+                handled = true;
+                if let Some(hover_callback) = unhovered_region.hover {
+                    event_cx.with_current_view(unhovered_region.view_id, |event_cx| {
+                        hover_callback(false, event_cx);
+                    })
+                }
+            }
 
-            let invalidated_views = event_cx.invalidated_views;
+            for hovered_region in hovered_regions {
+                handled = true;
+                if let Some(hover_callback) = hovered_region.hover {
+                    event_cx.with_current_view(hovered_region.view_id, |event_cx| {
+                        hover_callback(true, event_cx);
+                    })
+                }
+            }
+
+            for (handler, view_id, position) in mouse_down_out_handlers {
+                event_cx.with_current_view(view_id, |event_cx| handler(position, event_cx))
+            }
+
+            if let Some((mouse_down_region, position)) = mouse_down_region {
+                handled = true;
+                if let Some(mouse_down_callback) = mouse_down_region.mouse_down {
+                    event_cx.with_current_view(mouse_down_region.view_id, |event_cx| {
+                        mouse_down_callback(position, event_cx);
+                    })
+                }
+            }
+
+            if let Some((clicked_region, position, click_count)) = clicked_region {
+                handled = true;
+                if let Some(click_callback) = clicked_region.click {
+                    event_cx.with_current_view(clicked_region.view_id, |event_cx| {
+                        click_callback(position, click_count, event_cx);
+                    })
+                }
+            }
+
+            if let Some((right_mouse_down_region, position)) = right_mouse_down_region {
+                handled = true;
+                if let Some(right_mouse_down_callback) = right_mouse_down_region.right_mouse_down {
+                    event_cx.with_current_view(right_mouse_down_region.view_id, |event_cx| {
+                        right_mouse_down_callback(position, event_cx);
+                    })
+                }
+            }
+
+            if let Some((right_clicked_region, position, click_count)) = right_clicked_region {
+                handled = true;
+                if let Some(right_click_callback) = right_clicked_region.right_click {
+                    event_cx.with_current_view(right_clicked_region.view_id, |event_cx| {
+                        right_click_callback(position, click_count, event_cx);
+                    })
+                }
+            }
+
+            if let Some((dragged_region, delta)) = dragged_region {
+                handled = true;
+                if let Some(drag_callback) = dragged_region.drag {
+                    event_cx.with_current_view(dragged_region.view_id, |event_cx| {
+                        drag_callback(delta, event_cx);
+                    })
+                }
+            }
+
+            if !handled {
+                event_cx.dispatch_event(root_view_id, &event);
+            }
+
+            invalidated_views.extend(event_cx.invalidated_views);
             let dispatch_directives = event_cx.dispatched_actions;
 
             for view_id in invalidated_views {
                 cx.notify_view(self.window_id, view_id);
             }
+
+            let mut dispatch_path = Vec::new();
             for directive in dispatch_directives {
-                cx.dispatch_action_any(self.window_id, &directive.path, directive.action.as_ref());
+                dispatch_path.clear();
+                if let Some(view_id) = directive.dispatcher_view_id {
+                    self.compute_dispatch_path_from(view_id, &mut dispatch_path);
+                }
+                cx.dispatch_action_any(self.window_id, &dispatch_path, directive.action.as_ref());
             }
         }
     }
@@ -250,23 +470,37 @@ impl Presenter {
 }
 
 pub struct DispatchDirective {
-    pub path: Vec<usize>,
+    pub dispatcher_view_id: Option<usize>,
     pub action: Box<dyn Action>,
 }
 
 pub struct LayoutContext<'a> {
+    window_id: usize,
     rendered_views: &'a mut HashMap<usize, ElementBox>,
     parents: &'a mut HashMap<usize, usize>,
     view_stack: Vec<usize>,
-    pub refreshing: bool,
     pub font_cache: &'a Arc<FontCache>,
     pub font_system: Arc<dyn FontSystem>,
     pub text_layout_cache: &'a TextLayoutCache,
     pub asset_cache: &'a AssetCache,
     pub app: &'a mut MutableAppContext,
+    pub refreshing: bool,
+    pub window_size: Vector2F,
+    titlebar_height: f32,
+    hovered_region_ids: HashSet<MouseRegionId>,
+    clicked_region_id: Option<MouseRegionId>,
+    right_clicked_region_id: Option<MouseRegionId>,
 }
 
 impl<'a> LayoutContext<'a> {
+    pub(crate) fn keystrokes_for_action(
+        &self,
+        action: &dyn Action,
+    ) -> Option<SmallVec<[Keystroke; 2]>> {
+        self.app
+            .keystrokes_for_action(self.window_id, &self.view_stack, action)
+    }
+
     fn layout(&mut self, view_id: usize, constraint: SizeConstraint) -> Vector2F {
         if let Some(parent_id) = self.view_stack.last() {
             self.parents.insert(view_id, *parent_id);
@@ -277,6 +511,27 @@ impl<'a> LayoutContext<'a> {
         self.rendered_views.insert(view_id, rendered_view);
         self.view_stack.pop();
         size
+    }
+
+    pub fn render<F, V, T>(&mut self, handle: &ViewHandle<V>, f: F) -> T
+    where
+        F: FnOnce(&mut V, &mut RenderContext<V>) -> T,
+        V: View,
+    {
+        handle.update(self.app, |view, cx| {
+            let mut render_cx = RenderContext {
+                app: cx,
+                window_id: handle.window_id(),
+                view_id: handle.id(),
+                view_type: PhantomData,
+                titlebar_height: self.titlebar_height,
+                hovered_region_ids: self.hovered_region_ids.clone(),
+                clicked_region_id: self.clicked_region_id,
+                right_clicked_region_id: self.right_clicked_region_id,
+                refreshing: self.refreshing,
+            };
+            f(view, &mut render_cx)
+        })
     }
 }
 
@@ -333,14 +588,9 @@ impl<'a> UpgradeViewHandle for LayoutContext<'a> {
     }
 }
 
-impl<'a> ElementStateContext for LayoutContext<'a> {
-    fn current_view_id(&self) -> usize {
-        *self.view_stack.last().unwrap()
-    }
-}
-
 pub struct PaintContext<'a> {
     rendered_views: &'a mut HashMap<usize, ElementBox>,
+    view_stack: Vec<usize>,
     pub scene: &'a mut Scene,
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
@@ -350,9 +600,15 @@ pub struct PaintContext<'a> {
 impl<'a> PaintContext<'a> {
     fn paint(&mut self, view_id: usize, origin: Vector2F, visible_bounds: RectF) {
         if let Some(mut tree) = self.rendered_views.remove(&view_id) {
+            self.view_stack.push(view_id);
             tree.paint(origin, visible_bounds, self);
             self.rendered_views.insert(view_id, tree);
+            self.view_stack.pop();
         }
+    }
+
+    pub fn current_view_id(&self) -> usize {
+        *self.view_stack.last().unwrap()
     }
 }
 
@@ -378,9 +634,8 @@ pub struct EventContext<'a> {
 impl<'a> EventContext<'a> {
     fn dispatch_event(&mut self, view_id: usize, event: &Event) -> bool {
         if let Some(mut element) = self.rendered_views.remove(&view_id) {
-            self.view_stack.push(view_id);
-            let result = element.dispatch_event(event, self);
-            self.view_stack.pop();
+            let result =
+                self.with_current_view(view_id, |this| element.dispatch_event(event, this));
             self.rendered_views.insert(view_id, element);
             result
         } else {
@@ -388,9 +643,19 @@ impl<'a> EventContext<'a> {
         }
     }
 
+    fn with_current_view<F, T>(&mut self, view_id: usize, f: F) -> T
+    where
+        F: FnOnce(&mut Self) -> T,
+    {
+        self.view_stack.push(view_id);
+        let result = f(self);
+        self.view_stack.pop();
+        result
+    }
+
     pub fn dispatch_any_action(&mut self, action: Box<dyn Action>) {
         self.dispatched_actions.push(DispatchDirective {
-            path: self.view_stack.clone(),
+            dispatcher_view_id: self.view_stack.last().copied(),
             action,
         });
     }
@@ -518,6 +783,15 @@ impl SizeConstraint {
             size.x().min(self.max.x()).max(self.min.x()),
             size.y().min(self.max.y()).max(self.min.y()),
         )
+    }
+}
+
+impl Default for SizeConstraint {
+    fn default() -> Self {
+        SizeConstraint {
+            min: Vector2F::zero(),
+            max: Vector2F::splat(f32::INFINITY),
+        }
     }
 }
 

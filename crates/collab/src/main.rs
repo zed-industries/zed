@@ -82,6 +82,7 @@ pub fn init_tracing(config: &Config) -> Option<()> {
     use tracing_subscriber::layer::SubscriberExt;
     let rust_log = config.rust_log.clone()?;
 
+    println!("HEY!");
     LogTracer::init().log_err()?;
 
     let subscriber = tracing_subscriber::Registry::default()

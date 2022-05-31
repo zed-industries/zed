@@ -21,8 +21,9 @@ use gpui::{
     json::{self, ToJson},
     platform::CursorStyle,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
-    AppContext, Axis, Border, Element, ElementBox, Event, EventContext, LayoutContext,
-    MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
+    AppContext, Axis, Border, CursorRegion, Element, ElementBox, Event, EventContext,
+    LayoutContext, MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext,
+    WeakViewHandle,
 };
 use json::json;
 use language::{Bias, DiagnosticSeverity, Selection};
@@ -362,7 +363,10 @@ impl EditorElement {
         let content_origin = bounds.origin() + vec2f(layout.gutter_margin, 0.);
 
         cx.scene.push_layer(Some(bounds));
-        cx.scene.push_cursor_style(bounds, CursorStyle::IBeam);
+        cx.scene.push_cursor_region(CursorRegion {
+            bounds,
+            style: CursorStyle::IBeam,
+        });
 
         for (range, color) in &layout.highlighted_ranges {
             self.paint_highlighted_range(
@@ -1041,8 +1045,6 @@ impl Element for EditorElement {
             max_row.saturating_sub(1) as f32,
         );
 
-        let mut context_menu = None;
-        let mut code_actions_indicator = None;
         self.update_view(cx.app, |view, cx| {
             let clamped = view.clamp_scroll_left(scroll_max.x());
             let autoscrolled;
@@ -1062,7 +1064,11 @@ impl Element for EditorElement {
             if clamped || autoscrolled {
                 snapshot = view.snapshot(cx);
             }
+        });
 
+        let mut context_menu = None;
+        let mut code_actions_indicator = None;
+        cx.render(&self.view.upgrade(cx).unwrap(), |view, cx| {
             let newest_selection_head = view
                 .selections
                 .newest::<usize>(cx)
@@ -1549,7 +1555,7 @@ mod tests {
         let layouts = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             let mut presenter = cx.build_presenter(window_id, 30.);
-            let mut layout_cx = presenter.build_layout_context(false, cx);
+            let mut layout_cx = presenter.build_layout_context(Vector2F::zero(), false, cx);
             element.layout_line_numbers(0..6, &Default::default(), &snapshot, &mut layout_cx)
         });
         assert_eq!(layouts.len(), 6);
@@ -1587,7 +1593,7 @@ mod tests {
 
         let mut scene = Scene::new(1.0);
         let mut presenter = cx.build_presenter(window_id, 30.);
-        let mut layout_cx = presenter.build_layout_context(false, cx);
+        let mut layout_cx = presenter.build_layout_context(Vector2F::zero(), false, cx);
         let (size, mut state) = element.layout(
             SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
             &mut layout_cx,

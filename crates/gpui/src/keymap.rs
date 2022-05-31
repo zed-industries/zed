@@ -30,9 +30,9 @@ pub struct Keymap {
 }
 
 pub struct Binding {
-    keystrokes: Vec<Keystroke>,
+    keystrokes: SmallVec<[Keystroke; 2]>,
     action: Box<dyn Action>,
-    context: Option<ContextPredicate>,
+    context_predicate: Option<ContextPredicate>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -146,7 +146,11 @@ impl Matcher {
         let mut retain_pending = false;
         for binding in self.keymap.bindings.iter().rev() {
             if binding.keystrokes.starts_with(&pending.keystrokes)
-                && binding.context.as_ref().map(|c| c.eval(cx)).unwrap_or(true)
+                && binding
+                    .context_predicate
+                    .as_ref()
+                    .map(|c| c.eval(cx))
+                    .unwrap_or(true)
             {
                 if binding.keystrokes.len() == pending.keystrokes.len() {
                     self.pending.remove(&view_id);
@@ -164,6 +168,24 @@ impl Matcher {
             self.pending.remove(&view_id);
             MatchResult::None
         }
+    }
+
+    pub fn keystrokes_for_action(
+        &self,
+        action: &dyn Action,
+        cx: &Context,
+    ) -> Option<SmallVec<[Keystroke; 2]>> {
+        for binding in self.keymap.bindings.iter().rev() {
+            if binding.action.id() == action.id()
+                && binding
+                    .context_predicate
+                    .as_ref()
+                    .map_or(true, |predicate| predicate.eval(cx))
+            {
+                return Some(binding.keystrokes.clone());
+            }
+        }
+        None
     }
 }
 
@@ -236,7 +258,7 @@ impl Binding {
         Ok(Self {
             keystrokes,
             action,
-            context,
+            context_predicate: context,
         })
     }
 
@@ -286,6 +308,34 @@ impl Keystroke {
 
     pub fn modified(&self) -> bool {
         self.ctrl || self.alt || self.shift || self.cmd
+    }
+}
+
+impl std::fmt::Display for Keystroke {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.ctrl {
+            write!(f, "{}", "^")?;
+        }
+        if self.alt {
+            write!(f, "{}", "⎇")?;
+        }
+        if self.cmd {
+            write!(f, "{}", "⌘")?;
+        }
+        if self.shift {
+            write!(f, "{}", "⇧")?;
+        }
+        let key = match self.key.as_str() {
+            "backspace" => "⌫",
+            "up" => "↑",
+            "down" => "↓",
+            "left" => "←",
+            "right" => "→",
+            "tab" => "⇥",
+            "escape" => "⎋",
+            key => key,
+        };
+        write!(f, "{}", key)
     }
 }
 

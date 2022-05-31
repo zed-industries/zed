@@ -1,7 +1,7 @@
 use fuzzy::PathMatch;
 use gpui::{
-    actions, elements::*, AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Task,
-    View, ViewContext, ViewHandle,
+    actions, elements::*, AppContext, Entity, ModelHandle, MouseState, MutableAppContext,
+    RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath, WorktreeId};
@@ -226,7 +226,7 @@ impl PickerDelegate for FileFinder {
     fn render_match(
         &self,
         ix: usize,
-        mouse_state: &MouseState,
+        mouse_state: MouseState,
         selected: bool,
         cx: &AppContext,
     ) -> ElementBox {
@@ -257,11 +257,9 @@ impl PickerDelegate for FileFinder {
 mod tests {
     use super::*;
     use editor::{Editor, Input};
+    use menu::{Confirm, SelectNext};
     use serde_json::json;
-    use workspace::{
-        menu::{Confirm, SelectNext},
-        AppState, Workspace,
-    };
+    use workspace::{AppState, Workspace};
 
     #[ctor::ctor]
     fn init_logger() {

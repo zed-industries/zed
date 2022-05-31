@@ -4,8 +4,8 @@ use editor::{
 };
 use fuzzy::StringMatch;
 use gpui::{
-    actions, elements::*, geometry::vector::Vector2F, AppContext, Entity, MutableAppContext,
-    RenderContext, Task, View, ViewContext, ViewHandle,
+    actions, elements::*, geometry::vector::Vector2F, AppContext, Entity, MouseState,
+    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use language::Outline;
 use ordered_float::OrderedFloat;
@@ -231,7 +231,7 @@ impl PickerDelegate for OutlineView {
     fn render_match(
         &self,
         ix: usize,
-        mouse_state: &MouseState,
+        mouse_state: MouseState,
         selected: bool,
         cx: &AppContext,
     ) -> ElementBox {

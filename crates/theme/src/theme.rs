@@ -2,9 +2,9 @@ mod theme_registry;
 
 use gpui::{
     color::Color,
-    elements::{ContainerStyle, ImageStyle, LabelStyle, MouseState},
+    elements::{ContainerStyle, ImageStyle, LabelStyle},
     fonts::{HighlightStyle, TextStyle},
-    Border,
+    Border, MouseState,
 };
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
@@ -19,6 +19,7 @@ pub struct Theme {
     #[serde(default)]
     pub name: String,
     pub workspace: Workspace,
+    pub context_menu: ContextMenu,
     pub chat_panel: ChatPanel,
     pub contacts_panel: ContactsPanel,
     pub contact_finder: ContactFinder,
@@ -223,6 +224,7 @@ pub struct ProjectPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub entry: Interactive<ProjectPanelEntry>,
+    pub cut_entry_fade: f32,
     pub ignored_entry_fade: f32,
     pub filename_editor: FieldEditor,
     pub indent_width: f32,
@@ -237,6 +239,22 @@ pub struct ProjectPanelEntry {
     pub icon_color: Color,
     pub icon_size: f32,
     pub icon_spacing: f32,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct ContextMenu {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub item: Interactive<ContextMenuItem>,
+    pub separator: ContainerStyle,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct ContextMenuItem {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub label: TextStyle,
+    pub keystroke: ContainedText,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -488,7 +506,7 @@ pub struct Interactive<T> {
 }
 
 impl<T> Interactive<T> {
-    pub fn style_for(&self, state: &MouseState, active: bool) -> &T {
+    pub fn style_for(&self, state: MouseState, active: bool) -> &T {
         if active {
             if state.hovered {
                 self.active_hover

@@ -171,6 +171,7 @@ impl Server {
             .add_request_handler(Server::forward_project_request::<proto::FormatBuffers>)
             .add_request_handler(Server::forward_project_request::<proto::CreateProjectEntry>)
             .add_request_handler(Server::forward_project_request::<proto::RenameProjectEntry>)
+            .add_request_handler(Server::forward_project_request::<proto::CopyProjectEntry>)
             .add_request_handler(Server::forward_project_request::<proto::DeleteProjectEntry>)
             .add_request_handler(Server::update_buffer)
             .add_message_handler(Server::update_buffer_file)

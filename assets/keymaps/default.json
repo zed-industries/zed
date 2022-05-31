@@ -353,6 +353,10 @@
         "bindings": {
             "left": "project_panel::CollapseSelectedEntry",
             "right": "project_panel::ExpandSelectedEntry",
+            "cmd-x": "project_panel::Cut",
+            "cmd-c": "project_panel::Copy",
+            "cmd-v": "project_panel::Paste",
+            "cmd-alt-c": "project_panel::CopyPath",
             "f2": "project_panel::Rename",
             "backspace": "project_panel::Delete"
         }

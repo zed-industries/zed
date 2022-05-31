@@ -119,11 +119,10 @@ impl View for Select {
                 .with_style(style.header)
                 .boxed()
             })
-            .on_click(move |_, cx| cx.dispatch_action(ToggleSelect))
+            .on_click(move |_, _, cx| cx.dispatch_action(ToggleSelect))
             .boxed(),
         );
         if self.is_open {
-            let handle = self.handle.clone();
             result.add_child(
                 Overlay::new(
                     Container::new(
@@ -131,9 +130,8 @@ impl View for Select {
                             UniformList::new(
                                 self.list_state.clone(),
                                 self.item_count,
-                                move |mut range, items, cx| {
-                                    let handle = handle.upgrade(cx).unwrap();
-                                    let this = handle.read(cx);
+                                cx,
+                                move |this, mut range, items, cx| {
                                     let selected_item_ix = this.selected_item_ix;
                                     range.end = range.end.min(this.item_count);
                                     items.extend(range.map(|ix| {
@@ -141,7 +139,7 @@ impl View for Select {
                                             ix,
                                             cx,
                                             |mouse_state, cx| {
-                                                (handle.read(cx).render_item)(
+                                                (this.render_item)(
                                                     ix,
                                                     if ix == selected_item_ix {
                                                         ItemType::Selected
@@ -153,7 +151,9 @@ impl View for Select {
                                                 )
                                             },
                                         )
-                                        .on_click(move |_, cx| cx.dispatch_action(SelectItem(ix)))
+                                        .on_click(move |_, _, cx| {
+                                            cx.dispatch_action(SelectItem(ix))
+                                        })
                                         .boxed()
                                     }))
                                 },

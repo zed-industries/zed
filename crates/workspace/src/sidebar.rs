@@ -165,6 +165,7 @@ impl Sidebar {
             ..Default::default()
         })
         .with_cursor_style(CursorStyle::ResizeLeftRight)
+        .on_mouse_down(|_, _| {}) // This prevents the mouse down event from being propagated elsewhere
         .on_drag(move |delta, cx| {
             let prev_width = *actual_width.borrow();
             *custom_width.borrow_mut() = 0f32
@@ -293,7 +294,7 @@ impl View for SidebarButtons {
                                 .boxed()
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(move |_, cx| {
+                        .on_click(move |_, _, cx| {
                             cx.dispatch_action(ToggleSidebarItem {
                                 side,
                                 item_index: ix,
