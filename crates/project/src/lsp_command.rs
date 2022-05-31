@@ -1,4 +1,4 @@
-use crate::{DocumentHighlight, Location, Project, ProjectTransaction, Hover};
+use crate::{DocumentHighlight, Hover, Location, Project, ProjectTransaction};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use client::{proto, PeerId};
@@ -828,18 +828,16 @@ impl LspCommand for GetHover {
             let range = hover.range.map(|range| {
                 cx.read(|cx| {
                     let buffer = buffer.read(cx);
-                    let token_start = buffer
-                        .clip_point_utf16(point_from_lsp(range.start), Bias::Left);
-                    let token_end = buffer
-                        .clip_point_utf16(point_from_lsp(range.end), Bias::Left);
-                    buffer.anchor_after(token_start)..
-                        buffer.anchor_before(token_end)
+                    let token_start =
+                        buffer.clip_point_utf16(point_from_lsp(range.start), Bias::Left);
+                    let token_end = buffer.clip_point_utf16(point_from_lsp(range.end), Bias::Left);
+                    buffer.anchor_after(token_start)..buffer.anchor_before(token_end)
                 })
             });
-            
+
             Hover {
                 contents: hover.contents,
-                range
+                range,
             }
         }))
     }

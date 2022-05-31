@@ -3,7 +3,7 @@ import { backgroundColor, border, popoverShadow } from "./components";
 
 export default function HoverPopover(theme: Theme) {
   return {
-    background: backgroundColor(theme, 500),
+    background: backgroundColor(theme, "on500"),
     cornerRadius: 8,
     padding: {
       left: 8,
@@ -14,7 +14,7 @@ export default function HoverPopover(theme: Theme) {
     shadow: popoverShadow(theme),
     border: border(theme, "primary"),
     margin: {
-      left: -14,
+      left: -8,
     },
   }
 }

@@ -84,9 +84,14 @@ pub struct Select(pub SelectPhase);
 pub struct ShowHover(DisplayPoint);
 
 #[derive(Clone)]
+pub struct HideHover;
+
+#[derive(Clone)]
 pub struct Hover {
-    point: DisplayPoint,
-    overshoot: DisplayPoint,
+    point: Option<DisplayPoint>,
+    // visible: bool,
+    // TODO(isaac): remove overshoot
+    // overshoot: DisplayPoint,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -218,7 +223,7 @@ impl_actions!(
     ]
 );
 
-impl_internal_actions!(editor, [Scroll, Select, Hover, ShowHover, GoToDefinitionAt]);
+impl_internal_actions!(editor, [Scroll, Select, Hover, ShowHover, HideHover, GoToDefinitionAt]);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -307,6 +312,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::toggle_code_actions);
     cx.add_action(Editor::hover);
     cx.add_action(Editor::show_hover);
+    cx.add_action(Editor::hide_hover);
     cx.add_action(Editor::open_excerpts);
     cx.add_action(Editor::restart_language_server);
     cx.add_async_action(Editor::confirm_completion);
@@ -432,7 +438,7 @@ pub struct Editor {
     keymap_context_layers: BTreeMap<TypeId, gpui::keymap::Context>,
     input_enabled: bool,
     leader_replica_id: Option<u16>,
-    hover_popover: Option<HoverPopover>,
+    hover_popover: (Option<HoverPopover>, std::time::Instant, std::time::Instant),
 }
 
 pub struct EditorSnapshot {
@@ -1047,7 +1053,7 @@ impl Editor {
             keymap_context_layers: Default::default(),
             input_enabled: true,
             leader_replica_id: None,
-            hover_popover: None,
+            hover_popover: (None, std::time::Instant::now(), std::time::Instant::now()),
         };
         this.end_selection(cx);
 
@@ -1432,8 +1438,6 @@ impl Editor {
                     self.hide_context_menu(cx);
                 }
             }
-
-            self.hover_popover.take();
 
             if old_cursor_position.to_display_point(&display_map).row()
                 != new_cursor_position.to_display_point(&display_map).row()
@@ -2425,9 +2429,33 @@ impl Editor {
     }
 
     fn hover(&mut self, action: &Hover, cx: &mut ViewContext<Self>) {
-        if action.overshoot.is_zero() {
-            self.show_hover(&ShowHover(action.point), cx);
+        // dbg!("hover");
+        if let Some(point) = action.point {
+            self.show_hover(&ShowHover(point), cx);
+        } else {
+            self.hide_hover(&HideHover, cx);
         }
+    }
+
+    fn hide_hover(&mut self, _: &HideHover, cx: &mut ViewContext<Self>) {
+        let task = cx.spawn_weak(|this, mut cx| {
+            async move {
+                if let Some(this) = this.upgrade(&cx) {
+                    this.update(&mut cx, |this, cx| {
+                        if this.hover_popover.0.is_some() {
+                            // dbg!("hidden");
+                            this.hover_popover.0 = None;
+                            this.hover_popover.1 = std::time::Instant::now();
+                            cx.notify();
+                        }
+                    });
+                }
+                Ok(())
+            }
+            .log_err()
+        });
+
+        self.hover_task = Some(task);
     }
 
     fn show_hover(&mut self, action: &ShowHover, cx: &mut ViewContext<Self>) {
@@ -2441,29 +2469,38 @@ impl Editor {
             return;
         };
 
+        // we use the mouse cursor position by default
+        let mut point = action.0.clone();
+
         let snapshot = self.snapshot(cx);
         let (buffer, buffer_position) = if let Some(output) = self
             .buffer
             .read(cx)
-            .text_anchor_for_position(action.0.to_point(&snapshot.display_snapshot), cx)
+            .text_anchor_for_position(point.to_point(&snapshot.display_snapshot), cx)
         {
             output
         } else {
             return;
         };
 
+        let buffer_snapshot = buffer.read(cx).snapshot();
+
         let hover = project.update(cx, |project, cx| {
             project.hover(&buffer, buffer_position.clone(), cx)
         });
 
-        let point = action.0.clone();
-
         let task = cx.spawn_weak(|this, mut cx| {
             async move {
-                // TODO: what to show while language server is loading?
-                let text: String = match hover.await? {
-                    None => "Language server is warming up...".into(),
-                    Some(hover) => match hover.contents {
+                // TODO: what to show while LSP is loading?
+                let mut text = None;
+
+                let hover = match hover.await {
+                    Ok(hover) => hover,
+                    Err(_) => None,
+                };
+
+                if let Some(hover) = hover {
+                    text = Some(match hover.contents {
                         lsp::HoverContents::Scalar(marked_string) => match marked_string {
                             lsp::MarkedString::String(string) => string,
                             lsp::MarkedString::LanguageString(string) => string.value,
@@ -2473,23 +2510,57 @@ impl Editor {
                             todo!()
                         }
                         lsp::HoverContents::Markup(markup) => markup.value,
-                    },
+                    });
+
+                    if let Some(range) = hover.range {
+                        let offset_range = range.to_offset(&buffer_snapshot);
+                        if offset_range
+                            .contains(&point.to_offset(&snapshot.display_snapshot, Bias::Left))
+                        {
+                            point = offset_range
+                                .start
+                                .to_display_point(&snapshot.display_snapshot);
+                        } else {
+                            text = None;
+                        }
+                    }
                 };
 
-                let hover_popover = HoverPopover {
-                    // TODO: fix tooltip to beginning of symbol based on range
+                let hover_popover = text.map(|text| HoverPopover {
                     point,
                     text,
                     runs: Vec::new(),
-                };
+                });
 
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
-                        if this.focused {
-                            this.hover_popover = Some(hover_popover);
+                        let item_hovered_recently =
+                            this.hover_popover.1.elapsed() < std::time::Duration::from_millis(200);
+                        if hover_popover.is_none() {
+                            this.hover_popover.1 = std::time::Instant::now();
                         }
 
-                        cx.notify();
+                        let in_grace_period =
+                            this.hover_popover.2.elapsed() < std::time::Duration::from_millis(100);
+                        if hover_popover.is_some() && !item_hovered_recently {
+                            this.hover_popover.2 = std::time::Instant::now();
+                        }
+
+                        let smooth_handoff =
+                            this.hover_popover.0.is_some() && hover_popover.is_some();
+
+                        let visible = this.hover_popover.0.is_some() || hover_popover.is_some();
+
+                        println!(
+                            "grace:    {}\nrecently: {}",
+                            in_grace_period, item_hovered_recently
+                        );
+
+                        if (smooth_handoff || !item_hovered_recently || in_grace_period) && visible
+                        {
+                            this.hover_popover.0 = hover_popover;
+                            cx.notify();
+                        }
                     });
                 }
                 Ok::<_, anyhow::Error>(())
@@ -2747,7 +2818,10 @@ impl Editor {
     }
 
     pub fn render_hover_popover(&self, style: EditorStyle) -> Option<(DisplayPoint, ElementBox)> {
-        self.hover_popover.as_ref().map(|hover| hover.render(style))
+        self.hover_popover
+            .0
+            .as_ref()
+            .map(|hover| hover.render(style))
     }
 
     fn show_context_menu(&mut self, menu: ContextMenu, cx: &mut ViewContext<Self>) {

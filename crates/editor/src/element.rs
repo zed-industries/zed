@@ -33,7 +33,7 @@ use std::{
     cmp::{self, Ordering},
     fmt::Write,
     iter,
-    ops::Range,
+    ops::{Not, Range},
 };
 
 struct SelectionLayout {
@@ -509,25 +509,32 @@ impl EditorElement {
         }
 
         if let Some((position, hover_popover)) = layout.hover.as_mut() {
-            cx.scene.push_stacking_context(None);
+            if position.row() >= start_row {
+                if let Some(cursor_row_layout) = &layout
+                    .line_layouts
+                    .get((position.row() - start_row) as usize)
+                {
+                    cx.scene.push_stacking_context(None);
 
-            let cursor_row_layout = &layout.line_layouts[(position.row() - start_row) as usize];
-            let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
-            let y = (position.row() + 1) as f32 * layout.line_height - scroll_top;
-            let mut popover_origin = content_origin + vec2f(x, y);
-            let popover_height = hover_popover.size().y();
+                    let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
+                    let y = (position.row() + 1) as f32 * layout.line_height - scroll_top;
+                    let mut popover_origin = content_origin + vec2f(x, y);
+                    let popover_height = hover_popover.size().y();
 
-            if popover_origin.y() + popover_height > bounds.lower_left().y() {
-                popover_origin.set_y(popover_origin.y() - layout.line_height - popover_height);
+                    if popover_origin.y() + popover_height > bounds.lower_left().y() {
+                        popover_origin
+                            .set_y(popover_origin.y() - layout.line_height - popover_height);
+                    }
+
+                    hover_popover.paint(
+                        popover_origin,
+                        RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
+                        cx,
+                    );
+
+                    cx.scene.pop_stacking_context();
+                }
             }
-
-            hover_popover.paint(
-                popover_origin,
-                RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
-                cx,
-            );
-
-            cx.scene.pop_stacking_context();
         }
 
         cx.scene.pop_layer();
@@ -1291,14 +1298,20 @@ impl Element for EditorElement {
             } => self.scroll(*position, *delta, *precise, layout, paint, cx),
             Event::KeyDown { input, .. } => self.key_down(input.as_deref(), cx),
             Event::MouseMoved { position, .. } => {
-                if paint.text_bounds.contains_point(*position) {
+                let point = if paint.text_bounds.contains_point(*position) {
                     let (point, overshoot) =
                         paint.point_for_position(&self.snapshot(cx), layout, *position);
-                    cx.dispatch_action(Hover { point, overshoot });
-                    true
+                    if overshoot.is_zero() {
+                        Some(point)
+                    } else {
+                        None
+                    }
                 } else {
-                    false
-                }
+                    None
+                };
+
+                cx.dispatch_action(Hover { point });
+                true
             }
             _ => false,
         }
