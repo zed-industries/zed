@@ -2655,6 +2655,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "map-macro"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d5b0858fc6e216d2d6222d661021d9b184550acd757fbd80a8f86224069422c"
+
+[[package]]
 name = "matchers"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4011,6 +4017,7 @@ dependencies = [
 name = "runner"
 version = "0.1.0"
 dependencies = [
+ "map-macro",
  "mlua",
  "serde",
 ]
