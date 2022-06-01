@@ -25,6 +25,7 @@ pub struct MouseEventHandler {
     mouse_down_out: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
     right_mouse_down_out: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
     drag: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
+    hover: Option<Rc<dyn Fn(Vector2F, bool, &mut EventContext)>>,
     padding: Padding,
 }
 
@@ -47,6 +48,7 @@ impl MouseEventHandler {
             mouse_down_out: None,
             right_mouse_down_out: None,
             drag: None,
+            hover: None,
             padding: Default::default(),
         }
     }
@@ -109,6 +111,14 @@ impl MouseEventHandler {
         self
     }
 
+    pub fn on_hover(
+        mut self,
+        handler: impl Fn(Vector2F, bool, &mut EventContext) + 'static,
+    ) -> Self {
+        self.hover = Some(Rc::new(handler));
+        self
+    }
+
     pub fn with_padding(mut self, padding: Padding) -> Self {
         self.padding = padding;
         self
@@ -153,7 +163,7 @@ impl Element for MouseEventHandler {
             view_id: cx.current_view_id(),
             discriminant: Some((self.tag, self.id)),
             bounds: self.hit_bounds(bounds),
-            hover: None,
+            hover: self.hover.clone(),
             click: self.click.clone(),
             mouse_down: self.mouse_down.clone(),
             right_click: self.right_click.clone(),

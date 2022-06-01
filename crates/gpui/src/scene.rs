@@ -49,7 +49,7 @@ pub struct MouseRegion {
     pub view_id: usize,
     pub discriminant: Option<(TypeId, usize)>,
     pub bounds: RectF,
-    pub hover: Option<Rc<dyn Fn(bool, &mut EventContext)>>,
+    pub hover: Option<Rc<dyn Fn(Vector2F, bool, &mut EventContext)>>,
     pub mouse_down: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
     pub click: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
     pub right_mouse_down: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,

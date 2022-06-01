@@ -31,7 +31,8 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json, DebugContext, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
+    json, DebugContext, Event, EventContext, LayoutContext, PaintContext, RenderContext,
+    SizeConstraint, View,
 };
 use core::panic;
 use json::ToJson;
@@ -154,6 +155,18 @@ pub trait Element {
         Self: 'static + Sized,
     {
         FlexItem::new(self.boxed()).float()
+    }
+
+    fn with_tooltip<T: View>(
+        self,
+        id: usize,
+        tooltip: ElementBox,
+        cx: &mut RenderContext<T>,
+    ) -> Tooltip
+    where
+        Self: 'static + Sized,
+    {
+        Tooltip::new(id, self.boxed(), tooltip, cx)
     }
 }
 
