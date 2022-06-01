@@ -178,6 +178,12 @@ impl FakeServer {
     }
 }
 
+impl Drop for FakeServer {
+    fn drop(&mut self) {
+        self.disconnect();
+    }
+}
+
 pub struct FakeHttpClient {
     handler: Box<
         dyn 'static
