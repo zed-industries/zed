@@ -441,6 +441,8 @@ pub struct Editor {
     hover_popover: HoverState,
 }
 
+/// Keeps track of the state of the [`HoverPopover`].
+/// Times out the initial delay and the grace period.
 pub struct HoverState {
     popover: Option<HoverPopover>,
     last_hover: std::time::Instant,
@@ -452,6 +454,8 @@ impl HoverState {
     /// and returns a tuple containing whether there was a recent hover,
     /// and whether the hover is still in the grace period.
     pub fn determine_state(&mut self, hovering: bool) -> (bool, bool) {
+        // NOTE: 200ms and 100ms are sane defaults, but it might be
+        //       nice to make these values configurable.
         let recent_hover = self.last_hover.elapsed() < std::time::Duration::from_millis(200);
         if !hovering {
             self.last_hover = std::time::Instant::now();
@@ -2465,6 +2469,8 @@ impl Editor {
         }))
     }
 
+    /// The hover action dispatches between `show_hover` or `hide_hover`
+    /// depending on whether a point to hover over is provided.
     fn hover(&mut self, action: &Hover, cx: &mut ViewContext<Self>) {
         if let Some(point) = action.point {
             self.show_hover(&ShowHover(point), cx);
@@ -2473,12 +2479,17 @@ impl Editor {
         }
     }
 
+    /// Hides the type information popup ASAP.
+    /// Triggered by the `Hover` action when the cursor is not over a symbol.
     fn hide_hover(&mut self, _: &HideHover, cx: &mut ViewContext<Self>) {
         let task = cx.spawn_weak(|this, mut cx| {
             async move {
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
-                        let (recent_hover, in_grace) = this.hover_popover.determine_state(false);
+                        // consistently keep track of state to make handoff smooth
+                        let (_recent_hover, _in_grace) = this.hover_popover.determine_state(false);
+
+                        // only notify the context once
                         if this.hover_popover.popover.is_some() {
                             this.hover_popover.popover = None;
                             cx.notify();
@@ -2493,6 +2504,9 @@ impl Editor {
         self.hover_task = Some(task);
     }
 
+    /// Queries the LSP and shows type info and documentation
+    /// about the symbol the mouse is currently hovering over.
+    /// Triggered by the `Hover` action when the cursor may be over a symbol.
     fn show_hover(&mut self, action: &ShowHover, cx: &mut ViewContext<Self>) {
         if self.pending_rename.is_some() {
             return;
@@ -2520,6 +2534,7 @@ impl Editor {
 
         let buffer_snapshot = buffer.read(cx).snapshot();
 
+        // query the LSP for hover info
         let hover = project.update(cx, |project, cx| {
             project.hover(&buffer, buffer_position.clone(), cx)
         });
@@ -2534,6 +2549,7 @@ impl Editor {
                     Err(_) => None,
                 };
 
+                // determine the contents of the popover
                 if let Some(hover) = hover {
                     if hover.contents.is_empty() {
                         contents = None;
@@ -2559,14 +2575,22 @@ impl Editor {
 
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
+                        // this was trickier than expected, trying to do a couple things:
+                        //
+                        // 1. if you hover over a symbol, there should be a slight delay
+                        //    before the popover shows
+                        // 2. if you move to another symbol when the popover is showing,
+                        //    the popover should switch right away, and you should
+                        //    not have to wait for it to come up again
                         let (recent_hover, in_grace) =
                             this.hover_popover.determine_state(hover_popover.is_some());
-
                         let smooth_handoff =
                             this.hover_popover.popover.is_some() && hover_popover.is_some();
                         let visible =
                             this.hover_popover.popover.is_some() || hover_popover.is_some();
 
+                        // `smooth_handoff` and `in_grace` determine whether to switch right away.
+                        // `recent_hover` will activate the handoff after the initial delay.
                         if (smooth_handoff || !recent_hover || in_grace) && visible {
                             this.hover_popover.popover = hover_popover;
                             cx.notify();
