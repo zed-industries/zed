@@ -31,6 +31,7 @@ pub struct Theme {
     pub project_diagnostics: ProjectDiagnostics,
     pub breadcrumbs: ContainedText,
     pub contact_notification: ContactNotification,
+    pub tooltip: ContainedText,
 }
 
 #[derive(Deserialize, Default)]

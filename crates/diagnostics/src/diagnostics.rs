@@ -613,6 +613,7 @@ fn diagnostic_header_renderer(entry: DiagnosticEntry<Point>, path: ProjectPath) 
     let (message, highlights) = highlight_diagnostic_message(&entry.diagnostic.message);
     Arc::new(move |cx| {
         let settings = cx.global::<Settings>();
+        let tooltip_style = settings.theme.tooltip.clone();
         let theme = &settings.theme.editor;
         let style = theme.diagnostic_header.clone();
         let font_size = (style.text_scale_factor * settings.buffer_font_size).round();
@@ -683,6 +684,30 @@ fn diagnostic_header_renderer(entry: DiagnosticEntry<Point>, path: ProjectPath) 
                         });
                     }
                 })
+                .with_tooltip(
+                    entry.diagnostic.group_id,
+                    Flex::row()
+                        .with_child(
+                            Label::new(
+                                "Jump to diagnostic (".to_string(),
+                                tooltip_style.text.clone(),
+                            )
+                            .boxed(),
+                        )
+                        .with_child(
+                            KeystrokeLabel::new(
+                                Box::new(editor::OpenExcerpts),
+                                Default::default(),
+                                tooltip_style.text.clone(),
+                            )
+                            .boxed(),
+                        )
+                        .with_child(Label::new(")".to_string(), tooltip_style.text).boxed())
+                        .contained()
+                        .with_style(tooltip_style.container)
+                        .boxed(),
+                    cx,
+                )
                 .aligned()
                 .flex_float()
                 .boxed(),
