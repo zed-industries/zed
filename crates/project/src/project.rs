@@ -19,9 +19,9 @@ use language::{
     point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CodeAction, CodeLabel, Completion,
-    Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _, Language,
-    LanguageRegistry, LanguageServerName, LocalFile, LspAdapter, OffsetRangeExt, Operation, Patch,
-    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
+    Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _, HighlightId,
+    Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapter, OffsetRangeExt,
+    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
 };
 use lsp::{DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer};
 use lsp_command::*;
@@ -217,8 +217,14 @@ pub struct Symbol {
 }
 
 #[derive(Debug)]
+pub struct HoverContents {
+    pub text: String,
+    pub runs: Vec<(Range<usize>, HighlightId)>,
+}
+
+#[derive(Debug)]
 pub struct Hover {
-    pub contents: lsp::HoverContents,
+    pub contents: Vec<HoverContents>,
     pub range: Option<Range<language::Anchor>>,
 }
 

@@ -39,7 +39,7 @@ pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use ordered_float::OrderedFloat;
-use project::{Project, ProjectTransaction};
+use project::{HoverContents, Project, ProjectTransaction};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -891,20 +891,28 @@ impl CodeActionsMenu {
     }
 }
 
-#[derive(Clone)]
 struct HoverPopover {
     pub point: DisplayPoint,
-    pub text: String,
-    pub runs: Vec<(Range<usize>, HighlightStyle)>,
+    pub contents: Vec<HoverContents>,
 }
 
 impl HoverPopover {
     fn render(&self, style: EditorStyle) -> (DisplayPoint, ElementBox) {
+        let contents = self.contents.first().unwrap();
         (
             self.point,
-            Text::new(self.text.clone(), style.text.clone())
+            Text::new(contents.text.clone(), style.text.clone())
                 .with_soft_wrap(false)
-                .with_highlights(self.runs.clone())
+                .with_highlights(
+                    contents
+                        .runs
+                        .iter()
+                        .filter_map(|(range, id)| {
+                            id.style(style.theme.syntax.as_ref())
+                                .map(|style| (range.clone(), style))
+                        })
+                        .collect(),
+                )
                 .contained()
                 .with_style(style.hover_popover)
                 .boxed(),
@@ -2458,7 +2466,6 @@ impl Editor {
     }
 
     fn hover(&mut self, action: &Hover, cx: &mut ViewContext<Self>) {
-        // dbg!("hover");
         if let Some(point) = action.point {
             self.show_hover(&ShowHover(point), cx);
         } else {
@@ -2520,7 +2527,7 @@ impl Editor {
         let task = cx.spawn_weak(|this, mut cx| {
             async move {
                 // TODO: what to show while LSP is loading?
-                let mut text = None;
+                let mut contents = None;
 
                 let hover = match hover.await {
                     Ok(hover) => hover,
@@ -2528,37 +2535,27 @@ impl Editor {
                 };
 
                 if let Some(hover) = hover {
-                    text = Some(match hover.contents {
-                        lsp::HoverContents::Scalar(marked_string) => match marked_string {
-                            lsp::MarkedString::String(string) => string,
-                            lsp::MarkedString::LanguageString(string) => string.value,
-                        },
-                        lsp::HoverContents::Array(marked_strings) => {
-                            // TODO: what to do?
-                            todo!()
-                        }
-                        lsp::HoverContents::Markup(markup) => markup.value,
-                    });
+                    if hover.contents.is_empty() {
+                        contents = None;
+                    } else {
+                        contents = Some(hover.contents);
 
-                    if let Some(range) = hover.range {
-                        let offset_range = range.to_offset(&buffer_snapshot);
-                        if offset_range
-                            .contains(&point.to_offset(&snapshot.display_snapshot, Bias::Left))
-                        {
-                            point = offset_range
-                                .start
-                                .to_display_point(&snapshot.display_snapshot);
-                        } else {
-                            text = None;
+                        if let Some(range) = hover.range {
+                            let offset_range = range.to_offset(&buffer_snapshot);
+                            if offset_range
+                                .contains(&point.to_offset(&snapshot.display_snapshot, Bias::Left))
+                            {
+                                point = offset_range
+                                    .start
+                                    .to_display_point(&snapshot.display_snapshot);
+                            } else {
+                                contents = None;
+                            }
                         }
                     }
                 };
 
-                let hover_popover = text.map(|text| HoverPopover {
-                    point,
-                    text,
-                    runs: Vec::new(),
-                });
+                let hover_popover = contents.map(|contents| HoverPopover { point, contents });
 
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {

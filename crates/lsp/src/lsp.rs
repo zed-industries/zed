@@ -296,6 +296,10 @@ impl LanguageServer {
                         prepare_support: Some(true),
                         ..Default::default()
                     }),
+                    hover: Some(HoverClientCapabilities {
+                        content_format: Some(vec![MarkupKind::Markdown]),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 }),
                 experimental: Some(json!({

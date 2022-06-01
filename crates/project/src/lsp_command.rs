@@ -1,4 +1,4 @@
-use crate::{DocumentHighlight, Hover, Location, Project, ProjectTransaction};
+use crate::{DocumentHighlight, Hover, HoverContents, Location, Project, ProjectTransaction};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use client::{proto, PeerId};
@@ -835,10 +835,48 @@ impl LspCommand for GetHover {
                 })
             });
 
-            Hover {
-                contents: hover.contents,
-                range,
+            fn highlight(lsp_marked_string: lsp::MarkedString, project: &Project) -> HoverContents {
+                match lsp_marked_string {
+                    lsp::MarkedString::LanguageString(lsp::LanguageString { language, value }) => {
+                        if let Some(language) = project.languages().get_language(&language) {
+                            let runs =
+                                language.highlight_text(&value.as_str().into(), 0..value.len());
+                            HoverContents { text: value, runs }
+                        } else {
+                            HoverContents {
+                                text: value,
+                                runs: Vec::new(),
+                            }
+                        }
+                    }
+                    lsp::MarkedString::String(text) => HoverContents {
+                        text,
+                        runs: Vec::new(),
+                    },
+                }
             }
+
+            let contents = cx.read(|cx| {
+                let project = project.read(cx);
+                match dbg!(hover.contents) {
+                    lsp::HoverContents::Scalar(marked_string) => {
+                        vec![highlight(marked_string, project)]
+                    }
+                    lsp::HoverContents::Array(marked_strings) => marked_strings
+                        .into_iter()
+                        .map(|marked_string| highlight(marked_string, project))
+                        .collect(),
+                    lsp::HoverContents::Markup(markup_content) => {
+                        // TODO: handle markdown
+                        vec![HoverContents {
+                            text: markup_content.value,
+                            runs: Vec::new(),
+                        }]
+                    }
+                }
+            });
+
+            Hover { contents, range }
         }))
     }
 
@@ -855,7 +893,7 @@ impl LspCommand for GetHover {
 
     async fn from_proto(
         message: Self::ProtoRequest,
-        project: ModelHandle<Project>,
+        _: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self> {
