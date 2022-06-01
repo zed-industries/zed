@@ -1,12 +1,12 @@
-use mlua::{Error, FromLua, Lua, ToLua, UserData};
+use std::collections::{HashMap, HashSet};
+
+use mlua::{Error, FromLua, Function, Lua, ToLua, UserData, Value};
 
 pub mod runtime;
 pub use runtime::*;
 
 impl Runtime for Lua {
     type Module = String;
-    // type Error = Error;
-    type Interface = LuaInterface;
 
     fn init(module: Self::Module) -> Option<Self> {
         let lua = Lua::new();
@@ -14,24 +14,14 @@ impl Runtime for Lua {
         return Some(lua);
     }
 
-    fn interface(&self) -> Self::Interface {
-        todo!()
-    }
+    fn interface(&self) -> Interface {
+        let mut globals = HashSet::new();
+        for pair in self.globals().pairs::<String, Value>() {
+            if let Ok((k, _)) = pair {
+                globals.insert(k);
+            }
+        }
 
-    fn val<'lua, K: ToLua<'lua>, V: FromLua<'lua>>(&'lua self, key: K) -> Option<V> {
-        self.globals().get(key).ok()
-    }
-}
-
-pub struct LuaInterface {
-    funs: Vec<String>,
-    vals: Vec<String>,
-}
-
-impl Interface for LuaInterface {
-    type Handle = String;
-
-    fn handles(&self) -> &[Self::Handle] {
-        todo!()
+        globals
     }
 }
