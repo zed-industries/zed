@@ -3,15 +3,23 @@ use mlua::{Lua, Result};
 use runner::*;
 
 pub fn main() {
-    let lua: Lua = Runtime::init("x = 7".to_string()).unwrap();
-    println!("{:?}", lua.interface());
+    let lua: Lua = Runtime::init(
+        "query = \"Some random tree-sitter query\"\nprint(\"Hello from the Lua test runner!\")"
+            .to_string(),
+    )
+    .unwrap();
+    let runner: TestRunner = lua.as_interface::<TestRunner>().unwrap();
+    println!("{:#?}", runner);
 }
 
-struct InterfaceX;
+#[derive(Debug)]
+struct TestRunner {
+    query: String,
+}
 
-impl InterfaceX {
-    pub fn get_x<T: Runtime>(runtime: T) -> usize {
-        // runtime.get("x")
-        todo!()
+impl Interface for TestRunner {
+    fn from_runtime<T: Runtime>(runtime: &T) -> Option<TestRunner> {
+        let query: String = runtime.val("query".to_string())?;
+        Some(TestRunner { query })
     }
 }
