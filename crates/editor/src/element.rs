@@ -1619,7 +1619,7 @@ mod tests {
 
         // Don't panic.
         let bounds = RectF::new(Default::default(), size);
-        let mut paint_cx = presenter.build_paint_context(&mut scene, cx);
+        let mut paint_cx = presenter.build_paint_context(&mut scene, bounds.size(), cx);
         element.paint(bounds, bounds, &mut state, &mut paint_cx);
     }
 }

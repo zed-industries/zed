@@ -148,7 +148,7 @@ impl Presenter {
 
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             self.layout(window_size, refreshing, cx);
-            let mut paint_cx = self.build_paint_context(&mut scene, cx);
+            let mut paint_cx = self.build_paint_context(&mut scene, window_size, cx);
             paint_cx.paint(
                 root_view_id,
                 Vector2F::zero(),
@@ -205,10 +205,12 @@ impl Presenter {
     pub fn build_paint_context<'a>(
         &'a mut self,
         scene: &'a mut Scene,
+        window_size: Vector2F,
         cx: &'a mut MutableAppContext,
     ) -> PaintContext {
         PaintContext {
             scene,
+            window_size,
             font_cache: &self.font_cache,
             text_layout_cache: &self.text_layout_cache,
             rendered_views: &mut self.rendered_views,
@@ -592,6 +594,7 @@ impl<'a> UpgradeViewHandle for LayoutContext<'a> {
 pub struct PaintContext<'a> {
     rendered_views: &'a mut HashMap<usize, ElementBox>,
     view_stack: Vec<usize>,
+    pub window_size: Vector2F,
     pub scene: &'a mut Scene,
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,

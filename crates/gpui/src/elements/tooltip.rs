@@ -101,9 +101,16 @@ impl Element for Tooltip {
         self.child.paint(bounds.origin(), visible_bounds, cx);
         if let Some(tooltip) = self.tooltip.as_mut() {
             let origin = self.state.read(cx).position.get();
-            let size = tooltip.size();
+            let mut bounds = RectF::new(origin, tooltip.size());
+            if bounds.lower_right().x() > cx.window_size.x() {
+                bounds.set_origin_x(bounds.origin_x() - bounds.width());
+            }
+            if bounds.lower_right().y() > cx.window_size.y() {
+                bounds.set_origin_y(bounds.origin_y() - bounds.height());
+            }
+
             cx.scene.push_stacking_context(None);
-            tooltip.paint(origin, RectF::new(origin, size), cx);
+            tooltip.paint(bounds.origin(), bounds, cx);
             cx.scene.pop_stacking_context();
         }
     }
