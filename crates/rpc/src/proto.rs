@@ -132,7 +132,6 @@ messages!(
     (Ping, Foreground),
     (ProjectUnshared, Foreground),
     (RegisterProject, Foreground),
-    (RegisterWorktree, Foreground),
     (ReloadBuffers, Foreground),
     (ReloadBuffersResponse, Foreground),
     (RemoveProjectCollaborator, Foreground),
@@ -151,7 +150,6 @@ messages!(
     (Test, Foreground),
     (Unfollow, Foreground),
     (UnregisterProject, Foreground),
-    (UnregisterWorktree, Foreground),
     (UpdateBuffer, Foreground),
     (UpdateBufferFile, Foreground),
     (UpdateContacts, Foreground),
@@ -159,6 +157,7 @@ messages!(
     (UpdateFollowers, Foreground),
     (UpdateInviteInfo, Foreground),
     (UpdateLanguageServer, Foreground),
+    (UpdateProject, Foreground),
     (UpdateWorktree, Foreground),
 );
 
@@ -192,7 +191,6 @@ request_messages!(
     (PerformRename, PerformRenameResponse),
     (PrepareRename, PrepareRenameResponse),
     (RegisterProject, RegisterProjectResponse),
-    (RegisterWorktree, Ack),
     (ReloadBuffers, ReloadBuffersResponse),
     (RequestContact, Ack),
     (RemoveContact, Ack),
@@ -202,6 +200,7 @@ request_messages!(
     (SearchProject, SearchProjectResponse),
     (SendChannelMessage, SendChannelMessageResponse),
     (Test, Test),
+    (UnregisterProject, Ack),
     (UpdateBuffer, Ack),
     (UpdateWorktree, Ack),
 );
@@ -242,13 +241,12 @@ entity_messages!(
     StartLanguageServer,
     Unfollow,
     UnregisterProject,
-    UnregisterWorktree,
     UpdateBuffer,
     UpdateBufferFile,
     UpdateDiagnosticSummary,
     UpdateFollowers,
     UpdateLanguageServer,
-    RegisterWorktree,
+    UpdateProject,
     UpdateWorktree,
 );
 

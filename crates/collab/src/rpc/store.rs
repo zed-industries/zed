@@ -312,19 +312,32 @@ impl Store {
         project_id
     }
 
-    pub fn register_worktree(
+    pub fn update_project(
         &mut self,
         project_id: u64,
-        worktree_id: u64,
+        worktrees: &[proto::WorktreeMetadata],
         connection_id: ConnectionId,
-        worktree: Worktree,
     ) -> Result<()> {
         let project = self
             .projects
             .get_mut(&project_id)
             .ok_or_else(|| anyhow!("no such project"))?;
         if project.host_connection_id == connection_id {
-            project.worktrees.insert(worktree_id, worktree);
+            let mut old_worktrees = mem::take(&mut project.worktrees);
+            for worktree in worktrees {
+                if let Some(old_worktree) = old_worktrees.remove(&worktree.id) {
+                    project.worktrees.insert(worktree.id, old_worktree);
+                } else {
+                    project.worktrees.insert(
+                        worktree.id,
+                        Worktree {
+                            root_name: worktree.root_name.clone(),
+                            visible: worktree.visible,
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
             Ok(())
         } else {
             Err(anyhow!("no such project"))?
@@ -372,27 +385,6 @@ impl Store {
             }
             hash_map::Entry::Vacant(_) => Err(anyhow!("no such project"))?,
         }
-    }
-
-    pub fn unregister_worktree(
-        &mut self,
-        project_id: u64,
-        worktree_id: u64,
-        acting_connection_id: ConnectionId,
-    ) -> Result<(Worktree, Vec<ConnectionId>)> {
-        let project = self
-            .projects
-            .get_mut(&project_id)
-            .ok_or_else(|| anyhow!("no such project"))?;
-        if project.host_connection_id != acting_connection_id {
-            Err(anyhow!("not your worktree"))?;
-        }
-
-        let worktree = project
-            .worktrees
-            .remove(&worktree_id)
-            .ok_or_else(|| anyhow!("no such worktree"))?;
-        Ok((worktree, project.guest_connection_ids()))
     }
 
     pub fn update_diagnostic_summary(
@@ -573,15 +565,15 @@ impl Store {
         connection_id: ConnectionId,
         project_id: u64,
         worktree_id: u64,
+        worktree_root_name: &str,
         removed_entries: &[u64],
         updated_entries: &[proto::Entry],
         scan_id: u64,
-    ) -> Result<Vec<ConnectionId>> {
+    ) -> Result<(Vec<ConnectionId>, bool)> {
         let project = self.write_project(project_id, connection_id)?;
-        let worktree = project
-            .worktrees
-            .get_mut(&worktree_id)
-            .ok_or_else(|| anyhow!("no such worktree"))?;
+        let mut worktree = project.worktrees.entry(worktree_id).or_default();
+        let metadata_changed = worktree_root_name != worktree.root_name;
+        worktree.root_name = worktree_root_name.to_string();
         for entry_id in removed_entries {
             worktree.entries.remove(&entry_id);
         }
@@ -590,7 +582,7 @@ impl Store {
         }
         worktree.scan_id = scan_id;
         let connection_ids = project.connection_ids();
-        Ok(connection_ids)
+        Ok((connection_ids, metadata_changed))
     }
 
     pub fn project_connection_ids(

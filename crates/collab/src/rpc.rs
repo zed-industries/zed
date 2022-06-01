@@ -141,12 +141,11 @@ impl Server {
         server
             .add_request_handler(Server::ping)
             .add_request_handler(Server::register_project)
-            .add_message_handler(Server::unregister_project)
+            .add_request_handler(Server::unregister_project)
             .add_request_handler(Server::join_project)
             .add_message_handler(Server::leave_project)
             .add_message_handler(Server::respond_to_join_project_request)
-            .add_request_handler(Server::register_worktree)
-            .add_message_handler(Server::unregister_worktree)
+            .add_message_handler(Server::update_project)
             .add_request_handler(Server::update_worktree)
             .add_message_handler(Server::start_language_server)
             .add_message_handler(Server::update_language_server)
@@ -484,14 +483,15 @@ impl Server {
             user_id = state.user_id_for_connection(request.sender_id)?;
             project_id = state.register_project(request.sender_id, user_id);
         };
-        self.update_user_contacts(user_id).await?;
         response.send(proto::RegisterProjectResponse { project_id })?;
+        self.update_user_contacts(user_id).await?;
         Ok(())
     }
 
     async fn unregister_project(
         self: Arc<Server>,
         request: TypedEnvelope<proto::UnregisterProject>,
+        response: Response<proto::UnregisterProject>,
     ) -> Result<()> {
         let (user_id, project) = {
             let mut state = self.store_mut().await;
@@ -529,6 +529,7 @@ impl Server {
         }
 
         self.update_user_contacts(user_id).await?;
+        response.send(proto::Ack {})?;
         Ok(())
     }
 
@@ -568,6 +569,7 @@ impl Server {
         response: Response<proto::JoinProject>,
     ) -> Result<()> {
         let project_id = request.payload.project_id;
+
         let host_user_id;
         let guest_user_id;
         let host_connection_id;
@@ -768,63 +770,28 @@ impl Server {
         Ok(())
     }
 
-    async fn register_worktree(
+    async fn update_project(
         self: Arc<Server>,
-        request: TypedEnvelope<proto::RegisterWorktree>,
-        response: Response<proto::RegisterWorktree>,
+        request: TypedEnvelope<proto::UpdateProject>,
     ) -> Result<()> {
-        let host_user_id;
+        let user_id;
         {
             let mut state = self.store_mut().await;
-            host_user_id = state.user_id_for_connection(request.sender_id)?;
-
+            user_id = state.user_id_for_connection(request.sender_id)?;
             let guest_connection_ids = state
                 .read_project(request.payload.project_id, request.sender_id)?
                 .guest_connection_ids();
-            state.register_worktree(
+            state.update_project(
                 request.payload.project_id,
-                request.payload.worktree_id,
+                &request.payload.worktrees,
                 request.sender_id,
-                Worktree {
-                    root_name: request.payload.root_name.clone(),
-                    visible: request.payload.visible,
-                    ..Default::default()
-                },
             )?;
-
             broadcast(request.sender_id, guest_connection_ids, |connection_id| {
                 self.peer
                     .forward_send(request.sender_id, connection_id, request.payload.clone())
             });
-        }
-        self.update_user_contacts(host_user_id).await?;
-        response.send(proto::Ack {})?;
-        Ok(())
-    }
-
-    async fn unregister_worktree(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::UnregisterWorktree>,
-    ) -> Result<()> {
-        let host_user_id;
-        let project_id = request.payload.project_id;
-        let worktree_id = request.payload.worktree_id;
-        {
-            let mut state = self.store_mut().await;
-            let (_, guest_connection_ids) =
-                state.unregister_worktree(project_id, worktree_id, request.sender_id)?;
-            host_user_id = state.user_id_for_connection(request.sender_id)?;
-            broadcast(request.sender_id, guest_connection_ids, |conn_id| {
-                self.peer.send(
-                    conn_id,
-                    proto::UnregisterWorktree {
-                        project_id,
-                        worktree_id,
-                    },
-                )
-            });
-        }
-        self.update_user_contacts(host_user_id).await?;
+        };
+        self.update_user_contacts(user_id).await?;
         Ok(())
     }
 
@@ -833,10 +800,11 @@ impl Server {
         request: TypedEnvelope<proto::UpdateWorktree>,
         response: Response<proto::UpdateWorktree>,
     ) -> Result<()> {
-        let connection_ids = self.store_mut().await.update_worktree(
+        let (connection_ids, metadata_changed) = self.store_mut().await.update_worktree(
             request.sender_id,
             request.payload.project_id,
             request.payload.worktree_id,
+            &request.payload.root_name,
             &request.payload.removed_entries,
             &request.payload.updated_entries,
             request.payload.scan_id,
@@ -846,6 +814,13 @@ impl Server {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
         });
+        if metadata_changed {
+            let user_id = self
+                .store()
+                .await
+                .user_id_for_connection(request.sender_id)?;
+            self.update_user_contacts(user_id).await?;
+        }
         response.send(proto::Ack {})?;
         Ok(())
     }

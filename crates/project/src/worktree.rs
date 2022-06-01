@@ -68,7 +68,6 @@ pub struct LocalWorktree {
     last_scan_state_rx: watch::Receiver<ScanState>,
     _background_scanner_task: Option<Task<()>>,
     poll_task: Option<Task<()>>,
-    registration: Registration,
     share: Option<ShareState>,
     diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
     diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
@@ -129,13 +128,6 @@ enum ScanState {
     Err(Arc<anyhow::Error>),
 }
 
-#[derive(Debug, Eq, PartialEq)]
-enum Registration {
-    None,
-    Pending,
-    Done { project_id: u64 },
-}
-
 struct ShareState {
     project_id: u64,
     snapshots_tx: Sender<LocalSnapshot>,
@@ -148,12 +140,6 @@ pub enum Event {
 
 impl Entity for Worktree {
     type Event = Event;
-
-    fn release(&mut self, _: &mut MutableAppContext) {
-        if let Some(worktree) = self.as_local_mut() {
-            worktree.unregister();
-        }
-    }
 }
 
 impl Worktree {
@@ -479,7 +465,6 @@ impl LocalWorktree {
                 background_snapshot: Arc::new(Mutex::new(snapshot)),
                 last_scan_state_rx,
                 _background_scanner_task: None,
-                registration: Registration::None,
                 share: None,
                 poll_task: None,
                 diagnostics: Default::default(),
@@ -599,6 +584,14 @@ impl LocalWorktree {
 
     pub fn snapshot(&self) -> LocalSnapshot {
         self.snapshot.clone()
+    }
+
+    pub fn metadata_proto(&self) -> proto::WorktreeMetadata {
+        proto::WorktreeMetadata {
+            id: self.id().to_proto(),
+            root_name: self.root_name().to_string(),
+            visible: self.visible,
+        }
     }
 
     fn load(&self, path: &Path, cx: &mut ModelContext<Worktree>) -> Task<Result<(File, String)>> {
@@ -897,46 +890,7 @@ impl LocalWorktree {
         })
     }
 
-    pub fn register(
-        &mut self,
-        project_id: u64,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Task<anyhow::Result<()>> {
-        if self.registration != Registration::None {
-            return Task::ready(Ok(()));
-        }
-
-        self.registration = Registration::Pending;
-        let client = self.client.clone();
-        let register_message = proto::RegisterWorktree {
-            project_id,
-            worktree_id: self.id().to_proto(),
-            root_name: self.root_name().to_string(),
-            visible: self.visible,
-        };
-        let request = client.request(register_message);
-        cx.spawn(|this, mut cx| async move {
-            let response = request.await;
-            this.update(&mut cx, |this, _| {
-                let worktree = this.as_local_mut().unwrap();
-                match response {
-                    Ok(_) => {
-                        if worktree.registration == Registration::Pending {
-                            worktree.registration = Registration::Done { project_id };
-                        }
-                        Ok(())
-                    }
-                    Err(error) => {
-                        worktree.registration = Registration::None;
-                        Err(error)
-                    }
-                }
-            })
-        })
-    }
-
     pub fn share(&mut self, project_id: u64, cx: &mut ModelContext<Worktree>) -> Task<Result<()>> {
-        let register = self.register(project_id, cx);
         let (share_tx, share_rx) = oneshot::channel();
         let (snapshots_to_send_tx, snapshots_to_send_rx) =
             smol::channel::unbounded::<LocalSnapshot>();
@@ -1041,7 +995,6 @@ impl LocalWorktree {
         }
 
         cx.spawn_weak(|this, cx| async move {
-            register.await?;
             if let Some(this) = this.upgrade(&cx) {
                 this.read_with(&cx, |this, _| {
                     let this = this.as_local().unwrap();
@@ -1052,20 +1005,6 @@ impl LocalWorktree {
                 .await
                 .unwrap_or_else(|_| Err(anyhow!("share ended")))
         })
-    }
-
-    pub fn unregister(&mut self) {
-        self.unshare();
-        if let Registration::Done { project_id } = self.registration {
-            self.client
-                .clone()
-                .send(proto::UnregisterWorktree {
-                    project_id,
-                    worktree_id: self.id().to_proto(),
-                })
-                .log_err();
-        }
-        self.registration = Registration::None;
     }
 
     pub fn unshare(&mut self) {

@@ -282,8 +282,7 @@ impl Project {
         client.add_model_message_handler(Self::handle_update_language_server);
         client.add_model_message_handler(Self::handle_remove_collaborator);
         client.add_model_message_handler(Self::handle_join_project_request_cancelled);
-        client.add_model_message_handler(Self::handle_register_worktree);
-        client.add_model_message_handler(Self::handle_unregister_worktree);
+        client.add_model_message_handler(Self::handle_update_project);
         client.add_model_message_handler(Self::handle_unregister_project);
         client.add_model_message_handler(Self::handle_project_unshared);
         client.add_model_message_handler(Self::handle_update_buffer_file);
@@ -338,7 +337,9 @@ impl Project {
                                 .await
                                 .log_err()?;
                         } else {
-                            this.update(&mut cx, |this, cx| this.unregister(cx));
+                            this.update(&mut cx, |this, cx| this.unregister(cx))
+                                .await
+                                .log_err();
                         }
                     }
                     None
@@ -638,30 +639,29 @@ impl Project {
         }
     }
 
-    fn unregister(&mut self, cx: &mut ModelContext<Self>) {
+    fn unregister(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         self.unshared(cx);
-        for worktree in &self.worktrees {
-            if let Some(worktree) = worktree.upgrade(cx) {
-                worktree.update(cx, |worktree, _| {
-                    worktree.as_local_mut().unwrap().unregister();
+        if let ProjectClientState::Local { remote_id_rx, .. } = &mut self.client_state {
+            if let Some(remote_id) = *remote_id_rx.borrow() {
+                let request = self.client.request(proto::UnregisterProject {
+                    project_id: remote_id,
+                });
+                return cx.spawn(|this, mut cx| async move {
+                    let response = request.await;
+                    this.update(&mut cx, |this, cx| {
+                        if let ProjectClientState::Local { remote_id_tx, .. } =
+                            &mut this.client_state
+                        {
+                            *remote_id_tx.borrow_mut() = None;
+                        }
+                        this.subscriptions.clear();
+                        this.metadata_changed(cx);
+                    });
+                    response.map(drop)
                 });
             }
         }
-
-        if let ProjectClientState::Local { remote_id_tx, .. } = &mut self.client_state {
-            let mut remote_id = remote_id_tx.borrow_mut();
-            if let Some(remote_id) = *remote_id {
-                self.client
-                    .send(proto::UnregisterProject {
-                        project_id: remote_id,
-                    })
-                    .log_err();
-            }
-            *remote_id = None;
-        }
-
-        self.subscriptions.clear();
-        self.metadata_changed(cx);
+        Task::ready(Ok(()))
     }
 
     fn register(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
@@ -674,8 +674,6 @@ impl Project {
         let response = self.client.request(proto::RegisterProject {});
         cx.spawn(|this, mut cx| async move {
             let remote_id = response.await?.project_id;
-
-            let mut registrations = Vec::new();
             this.update(&mut cx, |this, cx| {
                 if let ProjectClientState::Local { remote_id_tx, .. } = &mut this.client_state {
                     *remote_id_tx.borrow_mut() = Some(remote_id);
@@ -683,22 +681,10 @@ impl Project {
 
                 this.metadata_changed(cx);
                 cx.emit(Event::RemoteIdChanged(Some(remote_id)));
-
                 this.subscriptions
                     .push(this.client.add_model_for_remote_entity(remote_id, cx));
-
-                for worktree in &this.worktrees {
-                    if let Some(worktree) = worktree.upgrade(cx) {
-                        registrations.push(worktree.update(cx, |worktree, cx| {
-                            let worktree = worktree.as_local_mut().unwrap();
-                            worktree.register(remote_id, cx)
-                        }));
-                    }
-                }
-            });
-
-            futures::future::try_join_all(registrations).await?;
-            Ok(())
+                Ok(())
+            })
         })
     }
 
@@ -757,7 +743,27 @@ impl Project {
     }
 
     fn metadata_changed(&mut self, cx: &mut ModelContext<Self>) {
+        cx.notify();
         self.project_store.update(cx, |_, cx| cx.notify());
+
+        if let ProjectClientState::Local { remote_id_rx, .. } = &self.client_state {
+            if let Some(project_id) = *remote_id_rx.borrow() {
+                self.client
+                    .send(proto::UpdateProject {
+                        project_id,
+                        worktrees: self
+                            .worktrees
+                            .iter()
+                            .filter_map(|worktree| {
+                                worktree.upgrade(&cx).map(|worktree| {
+                                    worktree.read(cx).as_local().unwrap().metadata_proto()
+                                })
+                            })
+                            .collect(),
+                    })
+                    .log_err();
+            }
+        }
     }
 
     pub fn collaborators(&self) -> &HashMap<PeerId, Collaborator> {
@@ -3696,37 +3702,19 @@ impl Project {
                         });
                         let worktree = worktree?;
 
-                        let remote_project_id = project.update(&mut cx, |project, cx| {
+                        let project_id = project.update(&mut cx, |project, cx| {
                             project.add_worktree(&worktree, cx);
-                            project.remote_id()
+                            project.shared_remote_id()
                         });
 
-                        if let Some(project_id) = remote_project_id {
-                            // Because sharing is async, we may have *unshared* the project by the time it completes,
-                            // in which case we need to register the worktree instead.
-                            loop {
-                                if project.read_with(&cx, |project, _| project.is_shared()) {
-                                    if worktree
-                                        .update(&mut cx, |worktree, cx| {
-                                            worktree.as_local_mut().unwrap().share(project_id, cx)
-                                        })
-                                        .await
-                                        .is_ok()
-                                    {
-                                        break;
-                                    }
-                                } else {
-                                    worktree
-                                        .update(&mut cx, |worktree, cx| {
-                                            worktree
-                                                .as_local_mut()
-                                                .unwrap()
-                                                .register(project_id, cx)
-                                        })
-                                        .await?;
-                                    break;
-                                }
-                            }
+                        // Because sharing is async, we may have *unshared* the project by the time it completes.
+                        if let Some(project_id) = project_id {
+                            worktree
+                                .update(&mut cx, |worktree, cx| {
+                                    worktree.as_local_mut().unwrap().share(project_id, cx)
+                                })
+                                .await
+                                .log_err();
                         }
 
                         Ok(worktree)
@@ -4071,40 +4059,51 @@ impl Project {
         Ok(())
     }
 
-    async fn handle_register_worktree(
+    async fn handle_update_project(
         this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::RegisterWorktree>,
+        envelope: TypedEnvelope<proto::UpdateProject>,
         client: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            let remote_id = this.remote_id().ok_or_else(|| anyhow!("invalid project"))?;
             let replica_id = this.replica_id();
-            let worktree = proto::Worktree {
-                id: envelope.payload.worktree_id,
-                root_name: envelope.payload.root_name,
-                entries: Default::default(),
-                diagnostic_summaries: Default::default(),
-                visible: envelope.payload.visible,
-                scan_id: 0,
-            };
-            let (worktree, load_task) =
-                Worktree::remote(remote_id, replica_id, worktree, client, cx);
-            this.add_worktree(&worktree, cx);
-            load_task.detach();
-            Ok(())
-        })
-    }
+            let remote_id = this.remote_id().ok_or_else(|| anyhow!("invalid project"))?;
 
-    async fn handle_unregister_worktree(
-        this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::UnregisterWorktree>,
-        _: Arc<Client>,
-        mut cx: AsyncAppContext,
-    ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
-            let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-            this.remove_worktree(worktree_id, cx);
+            let mut old_worktrees_by_id = this
+                .worktrees
+                .drain(..)
+                .filter_map(|worktree| {
+                    let worktree = worktree.upgrade(cx)?;
+                    Some((worktree.read(cx).id(), worktree))
+                })
+                .collect::<HashMap<_, _>>();
+
+            for worktree in envelope.payload.worktrees {
+                if let Some(old_worktree) =
+                    old_worktrees_by_id.remove(&WorktreeId::from_proto(worktree.id))
+                {
+                    this.worktrees.push(WorktreeHandle::Strong(old_worktree));
+                } else {
+                    let worktree = proto::Worktree {
+                        id: worktree.id,
+                        root_name: worktree.root_name,
+                        entries: Default::default(),
+                        diagnostic_summaries: Default::default(),
+                        visible: worktree.visible,
+                        scan_id: 0,
+                    };
+                    let (worktree, load_task) =
+                        Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx);
+                    this.add_worktree(&worktree, cx);
+                    load_task.detach();
+                }
+            }
+
+            this.metadata_changed(cx);
+            for (id, _) in old_worktrees_by_id {
+                cx.emit(Event::WorktreeRemoved(id));
+            }
+
             Ok(())
         })
     }
