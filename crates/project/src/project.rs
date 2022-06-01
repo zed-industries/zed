@@ -675,6 +675,23 @@ impl Project {
         }
     }
 
+    pub fn shared_remote_id(&self) -> Option<u64> {
+        match &self.client_state {
+            ProjectClientState::Local {
+                remote_id_rx,
+                is_shared,
+                ..
+            } => {
+                if *is_shared {
+                    *remote_id_rx.borrow()
+                } else {
+                    None
+                }
+            }
+            ProjectClientState::Remote { remote_id, .. } => Some(*remote_id),
+        }
+    }
+
     pub fn replica_id(&self) -> ReplicaId {
         match &self.client_state {
             ProjectClientState::Local { .. } => 0,
@@ -1468,13 +1485,14 @@ impl Project {
     ) -> Option<()> {
         match event {
             BufferEvent::Operation(operation) => {
-                let project_id = self.remote_id()?;
-                let request = self.client.request(proto::UpdateBuffer {
-                    project_id,
-                    buffer_id: buffer.read(cx).remote_id(),
-                    operations: vec![language::proto::serialize_operation(&operation)],
-                });
-                cx.background().spawn(request).detach_and_log_err(cx);
+                if let Some(project_id) = self.shared_remote_id() {
+                    let request = self.client.request(proto::UpdateBuffer {
+                        project_id,
+                        buffer_id: buffer.read(cx).remote_id(),
+                        operations: vec![language::proto::serialize_operation(&operation)],
+                    });
+                    cx.background().spawn(request).detach_and_log_err(cx);
+                }
             }
             BufferEvent::Edited { .. } => {
                 let (_, language_server) = self
@@ -1718,7 +1736,7 @@ impl Project {
                             )
                             .ok();
 
-                        if let Some(project_id) = this.remote_id() {
+                        if let Some(project_id) = this.shared_remote_id() {
                             this.client
                                 .send(proto::StartLanguageServer {
                                     project_id,
@@ -2063,7 +2081,7 @@ impl Project {
         language_server_id: usize,
         event: proto::update_language_server::Variant,
     ) {
-        if let Some(project_id) = self.remote_id() {
+        if let Some(project_id) = self.shared_remote_id() {
             self.client
                 .send(proto::UpdateLanguageServer {
                     project_id,
@@ -3746,7 +3764,7 @@ impl Project {
                             renamed_buffers.push((cx.handle(), old_path));
                         }
 
-                        if let Some(project_id) = self.remote_id() {
+                        if let Some(project_id) = self.shared_remote_id() {
                             self.client
                                 .send(proto::UpdateBufferFile {
                                     project_id,
