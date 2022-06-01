@@ -102,9 +102,13 @@ impl Element for Tooltip {
         if let Some(tooltip) = self.tooltip.as_mut() {
             let origin = self.state.read(cx).position.get();
             let mut bounds = RectF::new(origin, tooltip.size());
+
+            // Align tooltip to the left if its bounds overflow the window width.
             if bounds.lower_right().x() > cx.window_size.x() {
                 bounds.set_origin_x(bounds.origin_x() - bounds.width());
             }
+
+            // Align tooltip to the top if its bounds overflow the window height.
             if bounds.lower_right().y() > cx.window_size.y() {
                 bounds.set_origin_y(bounds.origin_y() - bounds.height());
             }
