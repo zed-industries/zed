@@ -2628,6 +2628,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "lua-src"
+version = "544.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "708ba3c844d5e9d38def4a09dd871c17c370f519b3c4b7261fbabe4a613a814c"
+dependencies = [
+ "cc",
+]
+
+[[package]]
+name = "luajit-src"
+version = "210.3.4+resty073ac54"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "640b09e99575a442b4da0ef406a78188a1a4313bb9ead7b5b20ec12cc480130f"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "malloc_buf"
 version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2843,6 +2861,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9f1c5b025cda876f66ef43a113f91ebc9f4ccef34843000e0adf6ebbab84e21"
 dependencies = [
  "winapi 0.3.9",
+]
+
+[[package]]
+name = "mlua"
+version = "0.8.0-beta.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4bb054c5769e1aeb137554b95941e997b62d17f5265bef213cb63179d75a6bf6"
+dependencies = [
+ "bstr",
+ "cc",
+ "lua-src",
+ "luajit-src",
+ "num-traits",
+ "once_cell",
+ "pkg-config",
+ "rustc-hash",
 ]
 
 [[package]]
@@ -3969,6 +4003,13 @@ dependencies = [
  "simple_asn1",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "runner"
+version = "0.1.0"
+dependencies = [
+ "mlua",
 ]
 
 [[package]]
