@@ -2819,12 +2819,14 @@ checksum = "4bb054c5769e1aeb137554b95941e997b62d17f5265bef213cb63179d75a6bf6"
 dependencies = [
  "bstr",
  "cc",
+ "erased-serde",
  "lua-src",
  "luajit-src",
  "num-traits",
  "once_cell",
  "pkg-config",
  "rustc-hash",
+ "serde",
 ]
 
 [[package]]
@@ -3913,6 +3915,7 @@ name = "runner"
 version = "0.1.0"
 dependencies = [
  "mlua",
+ "serde",
 ]
 
 [[package]]
