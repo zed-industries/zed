@@ -8,12 +8,13 @@ use editor::{
     highlight_diagnostic_message, Autoscroll, Editor, ExcerptId, MultiBuffer, ToOffset,
 };
 use gpui::{
-    actions, elements::*, fonts::TextStyle, serde_json, AnyViewHandle, AppContext, Entity,
-    ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    actions, elements::*, fonts::TextStyle, impl_internal_actions, platform::CursorStyle,
+    serde_json, AnyViewHandle, AppContext, Entity, ModelHandle, MutableAppContext, RenderContext,
+    Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{
-    Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
+    Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
+    SelectionGoal, ToPoint,
 };
 use project::{DiagnosticSummary, Project, ProjectPath};
 use serde_json::json;
@@ -27,15 +28,18 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-use util::TryFutureExt;
+use util::{ResultExt, TryFutureExt};
 use workspace::{ItemHandle as _, ItemNavHistory, Workspace};
 
 actions!(diagnostics, [Deploy]);
+
+impl_internal_actions!(diagnostics, [Jump]);
 
 const CONTEXT_LINE_COUNT: u32 = 1;
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectDiagnosticsEditor::deploy);
+    cx.add_action(ProjectDiagnosticsEditor::jump);
     items::init(cx);
 }
 
@@ -54,6 +58,13 @@ struct ProjectDiagnosticsEditor {
 struct PathState {
     path: ProjectPath,
     diagnostic_groups: Vec<DiagnosticGroupState>,
+}
+
+#[derive(Clone, Debug)]
+struct Jump {
+    path: ProjectPath,
+    position: Point,
+    anchor: Anchor,
 }
 
 struct DiagnosticGroupState {
@@ -175,6 +186,30 @@ impl ProjectDiagnosticsEditor {
             });
             workspace.add_item(Box::new(diagnostics), cx);
         }
+    }
+
+    fn jump(workspace: &mut Workspace, action: &Jump, cx: &mut ViewContext<Workspace>) {
+        let editor = workspace.open_path(action.path.clone(), true, cx);
+        let position = action.position;
+        let anchor = action.anchor;
+        cx.spawn_weak(|_, mut cx| async move {
+            let editor = editor.await.log_err()?.downcast::<Editor>()?;
+            editor.update(&mut cx, |editor, cx| {
+                let buffer = editor.buffer().read(cx).as_singleton()?;
+                let buffer = buffer.read(cx);
+                let cursor = if buffer.can_resolve(&anchor) {
+                    anchor.to_point(buffer)
+                } else {
+                    buffer.clip_point(position, Bias::Left)
+                };
+                editor.change_selections(Some(Autoscroll::Newest), cx, |s| {
+                    s.select_ranges([cursor..cursor]);
+                });
+                Some(())
+            })?;
+            Some(())
+        })
+        .detach()
     }
 
     fn update_excerpts(&mut self, cx: &mut ViewContext<Self>) {
@@ -312,13 +347,20 @@ impl ProjectDiagnosticsEditor {
                                 is_first_excerpt_for_group = false;
                                 let mut primary =
                                     group.entries[group.primary_ix].diagnostic.clone();
+                                let anchor = group.entries[group.primary_ix].range.start;
+                                let position = anchor.to_point(&snapshot);
                                 primary.message =
                                     primary.message.split('\n').next().unwrap().to_string();
                                 group_state.block_count += 1;
                                 blocks_to_add.push(BlockProperties {
                                     position: header_position,
                                     height: 2,
-                                    render: diagnostic_header_renderer(primary),
+                                    render: diagnostic_header_renderer(
+                                        primary,
+                                        path.clone(),
+                                        position,
+                                        anchor,
+                                    ),
                                     disposition: BlockDisposition::Above,
                                 });
                             }
@@ -575,12 +617,20 @@ impl workspace::Item for ProjectDiagnosticsEditor {
     }
 }
 
-fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
+fn diagnostic_header_renderer(
+    diagnostic: Diagnostic,
+    path: ProjectPath,
+    position: Point,
+    anchor: Anchor,
+) -> RenderBlock {
+    enum JumpIcon {}
+
     let (message, highlights) = highlight_diagnostic_message(&diagnostic.message);
     Arc::new(move |cx| {
         let settings = cx.global::<Settings>();
+        let tooltip_style = settings.theme.tooltip.clone();
         let theme = &settings.theme.editor;
-        let style = &theme.diagnostic_header;
+        let style = theme.diagnostic_header.clone();
         let font_size = (style.text_scale_factor * settings.buffer_font_size).round();
         let icon_width = cx.em_width * style.icon_width_factor;
         let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
@@ -591,6 +641,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                 .with_color(theme.warning_diagnostic.message.text.color)
         };
 
+        let x_padding = cx.gutter_padding + cx.scroll_x * cx.em_width;
         Flex::row()
             .with_child(
                 icon.constrained()
@@ -618,9 +669,47 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                     .aligned()
                     .boxed()
             }))
+            .with_child(
+                MouseEventHandler::new::<JumpIcon, _, _>(diagnostic.group_id, cx, |state, _| {
+                    let style = style.jump_icon.style_for(state, false);
+                    Svg::new("icons/jump.svg")
+                        .with_color(style.color)
+                        .constrained()
+                        .with_width(style.icon_width)
+                        .aligned()
+                        .contained()
+                        .with_style(style.container)
+                        .constrained()
+                        .with_width(style.button_width)
+                        .with_height(style.button_width)
+                        .boxed()
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click({
+                    let path = path.clone();
+                    move |_, _, cx| {
+                        cx.dispatch_action(Jump {
+                            path: path.clone(),
+                            position,
+                            anchor,
+                        });
+                    }
+                })
+                .with_tooltip(
+                    diagnostic.group_id,
+                    "Jump to diagnostic".to_string(),
+                    Some(Box::new(editor::OpenExcerpts)),
+                    tooltip_style,
+                    cx,
+                )
+                .aligned()
+                .flex_float()
+                .boxed(),
+            )
             .contained()
             .with_style(style.container)
-            .with_padding_left(cx.gutter_padding + cx.scroll_x * cx.em_width)
+            .with_padding_left(x_padding)
+            .with_padding_right(x_padding)
             .expanded()
             .named("diagnostic header")
     })
@@ -702,7 +791,7 @@ mod tests {
     use super::*;
     use editor::{
         display_map::{BlockContext, TransformBlock},
-        DisplayPoint, EditorSnapshot,
+        DisplayPoint,
     };
     use gpui::TestAppContext;
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16};
@@ -835,10 +924,8 @@ mod tests {
 
         view.next_notification(&cx).await;
         view.update(cx, |view, cx| {
-            let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
-
             assert_eq!(
-                editor_blocks(&editor, cx),
+                editor_blocks(&view.editor, cx),
                 [
                     (0, "path header block".into()),
                     (2, "diagnostic header".into()),
@@ -848,7 +935,7 @@ mod tests {
                 ]
             );
             assert_eq!(
-                editor.text(),
+                view.editor.update(cx, |editor, cx| editor.display_text(cx)),
                 concat!(
                     //
                     // main.rs
@@ -923,10 +1010,8 @@ mod tests {
 
         view.next_notification(&cx).await;
         view.update(cx, |view, cx| {
-            let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
-
             assert_eq!(
-                editor_blocks(&editor, cx),
+                editor_blocks(&view.editor, cx),
                 [
                     (0, "path header block".into()),
                     (2, "diagnostic header".into()),
@@ -938,7 +1023,7 @@ mod tests {
                 ]
             );
             assert_eq!(
-                editor.text(),
+                view.editor.update(cx, |editor, cx| editor.display_text(cx)),
                 concat!(
                     //
                     // consts.rs
@@ -1038,10 +1123,8 @@ mod tests {
 
         view.next_notification(&cx).await;
         view.update(cx, |view, cx| {
-            let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
-
             assert_eq!(
-                editor_blocks(&editor, cx),
+                editor_blocks(&view.editor, cx),
                 [
                     (0, "path header block".into()),
                     (2, "diagnostic header".into()),
@@ -1055,7 +1138,7 @@ mod tests {
                 ]
             );
             assert_eq!(
-                editor.text(),
+                view.editor.update(cx, |editor, cx| editor.display_text(cx)),
                 concat!(
                     //
                     // consts.rs
@@ -1115,36 +1198,44 @@ mod tests {
         });
     }
 
-    fn editor_blocks(editor: &EditorSnapshot, cx: &AppContext) -> Vec<(u32, String)> {
-        editor
-            .blocks_in_range(0..editor.max_point().row())
-            .filter_map(|(row, block)| {
-                let name = match block {
-                    TransformBlock::Custom(block) => block
-                        .render(&BlockContext {
-                            cx,
-                            anchor_x: 0.,
-                            scroll_x: 0.,
-                            gutter_padding: 0.,
-                            gutter_width: 0.,
-                            line_height: 0.,
-                            em_width: 0.,
-                        })
-                        .name()?
-                        .to_string(),
-                    TransformBlock::ExcerptHeader {
-                        starts_new_buffer, ..
-                    } => {
-                        if *starts_new_buffer {
-                            "path header block".to_string()
-                        } else {
-                            "collapsed context".to_string()
+    fn editor_blocks(
+        editor: &ViewHandle<Editor>,
+        cx: &mut MutableAppContext,
+    ) -> Vec<(u32, String)> {
+        let mut presenter = cx.build_presenter(editor.id(), 0.);
+        let mut cx = presenter.build_layout_context(Default::default(), false, cx);
+        cx.render(editor, |editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            snapshot
+                .blocks_in_range(0..snapshot.max_point().row())
+                .filter_map(|(row, block)| {
+                    let name = match block {
+                        TransformBlock::Custom(block) => block
+                            .render(&mut BlockContext {
+                                cx,
+                                anchor_x: 0.,
+                                scroll_x: 0.,
+                                gutter_padding: 0.,
+                                gutter_width: 0.,
+                                line_height: 0.,
+                                em_width: 0.,
+                            })
+                            .name()?
+                            .to_string(),
+                        TransformBlock::ExcerptHeader {
+                            starts_new_buffer, ..
+                        } => {
+                            if *starts_new_buffer {
+                                "path header block".to_string()
+                            } else {
+                                "collapsed context".to_string()
+                            }
                         }
-                    }
-                };
+                    };
 
-                Some((row, name))
-            })
-            .collect()
+                    Some((row, name))
+                })
+                .collect()
+        })
     }
 }

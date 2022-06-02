@@ -2,7 +2,7 @@ mod theme_registry;
 
 use gpui::{
     color::Color,
-    elements::{ContainerStyle, ImageStyle, LabelStyle},
+    elements::{ContainerStyle, ImageStyle, LabelStyle, TooltipStyle},
     fonts::{HighlightStyle, TextStyle},
     Border, MouseState,
 };
@@ -31,6 +31,7 @@ pub struct Theme {
     pub project_diagnostics: ProjectDiagnostics,
     pub breadcrumbs: ContainedText,
     pub contact_notification: ContactNotification,
+    pub tooltip: TooltipStyle,
 }
 
 #[derive(Deserialize, Default)]
@@ -317,7 +318,7 @@ pub struct Icon {
     pub path: String,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Clone, Deserialize, Default)]
 pub struct IconButton {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -461,6 +462,7 @@ pub struct DiagnosticHeader {
     pub code: ContainedText,
     pub text_scale_factor: f32,
     pub icon_width_factor: f32,
+    pub jump_icon: Interactive<IconButton>,
 }
 
 #[derive(Clone, Deserialize, Default)]

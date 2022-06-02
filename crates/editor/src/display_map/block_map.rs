@@ -4,14 +4,14 @@ use super::{
 };
 use crate::{Anchor, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{AppContext, ElementBox};
+use gpui::{ElementBox, RenderContext};
 use language::{BufferSnapshot, Chunk, Patch};
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,
     cmp::{self, Ordering},
     fmt::Debug,
-    ops::{Deref, Range},
+    ops::{Deref, DerefMut, Range},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -50,7 +50,7 @@ struct BlockRow(u32);
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct WrapRow(u32);
 
-pub type RenderBlock = Arc<dyn Fn(&BlockContext) -> ElementBox>;
+pub type RenderBlock = Arc<dyn Fn(&mut BlockContext) -> ElementBox>;
 
 pub struct Block {
     id: BlockId,
@@ -67,12 +67,12 @@ where
 {
     pub position: P,
     pub height: u8,
-    pub render: Arc<dyn Fn(&BlockContext) -> ElementBox>,
+    pub render: Arc<dyn Fn(&mut BlockContext) -> ElementBox>,
     pub disposition: BlockDisposition,
 }
 
-pub struct BlockContext<'a> {
-    pub cx: &'a AppContext,
+pub struct BlockContext<'a, 'b> {
+    pub cx: &'b mut RenderContext<'a, crate::Editor>,
     pub anchor_x: f32,
     pub scroll_x: f32,
     pub gutter_width: f32,
@@ -916,16 +916,22 @@ impl BlockDisposition {
     }
 }
 
-impl<'a> Deref for BlockContext<'a> {
-    type Target = AppContext;
+impl<'a, 'b> Deref for BlockContext<'a, 'b> {
+    type Target = RenderContext<'a, crate::Editor>;
 
     fn deref(&self) -> &Self::Target {
-        &self.cx
+        self.cx
+    }
+}
+
+impl<'a, 'b> DerefMut for BlockContext<'a, 'b> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.cx
     }
 }
 
 impl Block {
-    pub fn render(&self, cx: &BlockContext) -> ElementBox {
+    pub fn render(&self, cx: &mut BlockContext) -> ElementBox {
         self.render.lock()(cx)
     }
 
@@ -1008,7 +1014,7 @@ mod tests {
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
-        writer.insert(vec![
+        let block_ids = writer.insert(vec![
             BlockProperties {
                 position: buffer_snapshot.anchor_after(Point::new(1, 0)),
                 height: 1,
@@ -1036,22 +1042,7 @@ mod tests {
             .blocks_in_range(0..8)
             .map(|(start_row, block)| {
                 let block = block.as_custom().unwrap();
-                (
-                    start_row..start_row + block.height as u32,
-                    block
-                        .render(&BlockContext {
-                            cx,
-                            anchor_x: 0.,
-                            gutter_padding: 0.,
-                            scroll_x: 0.,
-                            gutter_width: 0.,
-                            line_height: 0.,
-                            em_width: 0.,
-                        })
-                        .name()
-                        .unwrap()
-                        .to_string(),
-                )
+                (start_row..start_row + block.height as u32, block.id)
             })
             .collect::<Vec<_>>();
 
@@ -1059,9 +1050,9 @@ mod tests {
         assert_eq!(
             blocks,
             &[
-                (1..2, "block 1".to_string()),
-                (2..4, "block 2".to_string()),
-                (7..10, "block 3".to_string()),
+                (1..2, block_ids[0]),
+                (2..4, block_ids[1]),
+                (7..10, block_ids[2]),
             ]
         );
 

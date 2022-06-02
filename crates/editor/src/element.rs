@@ -755,6 +755,12 @@ impl EditorElement {
         line_layouts: &[text_layout::Line],
         cx: &mut LayoutContext,
     ) -> Vec<(u32, ElementBox)> {
+        let editor = if let Some(editor) = self.view.upgrade(cx) {
+            editor
+        } else {
+            return Default::default();
+        };
+
         let scroll_x = snapshot.scroll_position.x();
         snapshot
             .blocks_in_range(rows.clone())
@@ -774,14 +780,16 @@ impl EditorElement {
                                     .x_for_index(align_to.column() as usize)
                             };
 
-                        block.render(&BlockContext {
-                            cx,
-                            anchor_x,
-                            gutter_padding,
-                            line_height,
-                            scroll_x,
-                            gutter_width,
-                            em_width,
+                        cx.render(&editor, |_, cx| {
+                            block.render(&mut BlockContext {
+                                cx,
+                                anchor_x,
+                                gutter_padding,
+                                line_height,
+                                scroll_x,
+                                gutter_width,
+                                em_width,
+                            })
                         })
                     }
                     TransformBlock::ExcerptHeader {
@@ -1611,7 +1619,7 @@ mod tests {
 
         // Don't panic.
         let bounds = RectF::new(Default::default(), size);
-        let mut paint_cx = presenter.build_paint_context(&mut scene, cx);
+        let mut paint_cx = presenter.build_paint_context(&mut scene, bounds.size(), cx);
         element.paint(bounds, bounds, &mut state, &mut paint_cx);
     }
 }

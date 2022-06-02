@@ -16,13 +16,14 @@ mod overlay;
 mod stack;
 mod svg;
 mod text;
+mod tooltip;
 mod uniform_list;
 
 use self::expanded::Expanded;
 pub use self::{
     align::*, canvas::*, constrained_box::*, container::*, empty::*, event_handler::*, flex::*,
     hook::*, image::*, keystroke_label::*, label::*, list::*, mouse_event_handler::*, overlay::*,
-    stack::*, svg::*, text::*, uniform_list::*,
+    stack::*, svg::*, text::*, tooltip::*, uniform_list::*,
 };
 pub use crate::presenter::ChildView;
 use crate::{
@@ -30,7 +31,8 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json, DebugContext, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
+    json, Action, DebugContext, Event, EventContext, LayoutContext, PaintContext, RenderContext,
+    SizeConstraint, View,
 };
 use core::panic;
 use json::ToJson;
@@ -153,6 +155,20 @@ pub trait Element {
         Self: 'static + Sized,
     {
         FlexItem::new(self.boxed()).float()
+    }
+
+    fn with_tooltip<T: View>(
+        self,
+        id: usize,
+        text: String,
+        action: Option<Box<dyn Action>>,
+        style: TooltipStyle,
+        cx: &mut RenderContext<T>,
+    ) -> Tooltip
+    where
+        Self: 'static + Sized,
+    {
+        Tooltip::new(id, text, action, style, self.boxed(), cx)
     }
 }
 

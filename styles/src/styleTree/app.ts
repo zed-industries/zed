@@ -12,6 +12,7 @@ import workspace from "./workspace";
 import contextMenu from "./contextMenu";
 import projectDiagnostics from "./projectDiagnostics";
 import contactNotification from "./contactNotification";
+import tooltip from "./tooltip";
 
 export const panel = {
   padding: { top: 12, bottom: 12 },
@@ -37,5 +38,6 @@ export default function app(theme: Theme): Object {
       },
     },
     contactNotification: contactNotification(theme),
+    tooltip: tooltip(theme),
   };
 }

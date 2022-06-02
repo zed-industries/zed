@@ -148,7 +148,7 @@ impl Presenter {
 
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             self.layout(window_size, refreshing, cx);
-            let mut paint_cx = self.build_paint_context(&mut scene, cx);
+            let mut paint_cx = self.build_paint_context(&mut scene, window_size, cx);
             paint_cx.paint(
                 root_view_id,
                 Vector2F::zero(),
@@ -205,10 +205,12 @@ impl Presenter {
     pub fn build_paint_context<'a>(
         &'a mut self,
         scene: &'a mut Scene,
+        window_size: Vector2F,
         cx: &'a mut MutableAppContext,
     ) -> PaintContext {
         PaintContext {
             scene,
+            window_size,
             font_cache: &self.font_cache,
             text_layout_cache: &self.text_layout_cache,
             rendered_views: &mut self.rendered_views,
@@ -311,7 +313,7 @@ impl Presenter {
                                 if let Some(region_id) = region.id() {
                                     if !self.hovered_region_ids.contains(&region_id) {
                                         invalidated_views.push(region.view_id);
-                                        hovered_regions.push(region.clone());
+                                        hovered_regions.push((region.clone(), position));
                                         self.hovered_region_ids.insert(region_id);
                                     }
                                 }
@@ -319,7 +321,7 @@ impl Presenter {
                                 if let Some(region_id) = region.id() {
                                     if self.hovered_region_ids.contains(&region_id) {
                                         invalidated_views.push(region.view_id);
-                                        unhovered_regions.push(region.clone());
+                                        unhovered_regions.push((region.clone(), position));
                                         self.hovered_region_ids.remove(&region_id);
                                     }
                                 }
@@ -348,20 +350,20 @@ impl Presenter {
 
             let mut event_cx = self.build_event_context(cx);
             let mut handled = false;
-            for unhovered_region in unhovered_regions {
+            for (unhovered_region, position) in unhovered_regions {
                 handled = true;
                 if let Some(hover_callback) = unhovered_region.hover {
                     event_cx.with_current_view(unhovered_region.view_id, |event_cx| {
-                        hover_callback(false, event_cx);
+                        hover_callback(position, false, event_cx);
                     })
                 }
             }
 
-            for hovered_region in hovered_regions {
+            for (hovered_region, position) in hovered_regions {
                 handled = true;
                 if let Some(hover_callback) = hovered_region.hover {
                     event_cx.with_current_view(hovered_region.view_id, |event_cx| {
-                        hover_callback(true, event_cx);
+                        hover_callback(position, true, event_cx);
                     })
                 }
             }
@@ -449,6 +451,7 @@ impl Presenter {
             view_stack: Default::default(),
             invalidated_views: Default::default(),
             notify_count: 0,
+            window_id: self.window_id,
             app: cx,
         }
     }
@@ -591,6 +594,7 @@ impl<'a> UpgradeViewHandle for LayoutContext<'a> {
 pub struct PaintContext<'a> {
     rendered_views: &'a mut HashMap<usize, ElementBox>,
     view_stack: Vec<usize>,
+    pub window_size: Vector2F,
     pub scene: &'a mut Scene,
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
@@ -626,6 +630,7 @@ pub struct EventContext<'a> {
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
     pub app: &'a mut MutableAppContext,
+    pub window_id: usize,
     pub notify_count: usize,
     view_stack: Vec<usize>,
     invalidated_views: HashSet<usize>,
@@ -651,6 +656,14 @@ impl<'a> EventContext<'a> {
         let result = f(self);
         self.view_stack.pop();
         result
+    }
+
+    pub fn window_id(&self) -> usize {
+        self.window_id
+    }
+
+    pub fn view_id(&self) -> Option<usize> {
+        self.view_stack.last().copied()
     }
 
     pub fn dispatch_any_action(&mut self, action: Box<dyn Action>) {
