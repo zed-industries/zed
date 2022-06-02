@@ -124,7 +124,7 @@ export default function contactsPanel(theme: Theme) {
         background: backgroundColor(theme, 100, "hovered"),
       },
     },
-    disabledContactButton: {
+    disabledButton: {
       ...contactButton,
       background: backgroundColor(theme, 100),
       color: iconColor(theme, "muted"),

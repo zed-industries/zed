@@ -746,8 +746,13 @@ impl Project {
         cx.notify();
         self.project_store.update(cx, |_, cx| cx.notify());
 
-        if let ProjectClientState::Local { remote_id_rx, .. } = &self.client_state {
-            if let Some(project_id) = *remote_id_rx.borrow() {
+        if let ProjectClientState::Local {
+            remote_id_rx,
+            public_rx,
+            ..
+        } = &self.client_state
+        {
+            if let (Some(project_id), true) = (*remote_id_rx.borrow(), *public_rx.borrow()) {
                 self.client
                     .send(proto::UpdateProject {
                         project_id,
@@ -3707,7 +3712,6 @@ impl Project {
                             project.shared_remote_id()
                         });
 
-                        // Because sharing is async, we may have *unshared* the project by the time it completes.
                         if let Some(project_id) = project_id {
                             worktree
                                 .update(&mut cx, |worktree, cx| {

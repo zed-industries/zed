@@ -400,32 +400,41 @@ impl ContactsPanel {
                             })
                             .boxed(),
                         )
-                        .with_children(if mouse_state.hovered && open_project.is_some() {
-                            Some(
-                                MouseEventHandler::new::<ToggleProjectPublic, _, _>(
-                                    project_id as usize,
-                                    cx,
-                                    |state, _| {
-                                        let mut icon_style =
-                                            *theme.private_button.style_for(state, false);
-                                        icon_style.container.background_color =
-                                            row.container.background_color;
-                                        render_icon_button(&icon_style, "icons/lock-8.svg")
-                                            .aligned()
-                                            .boxed()
-                                    },
-                                )
-                                .with_cursor_style(CursorStyle::PointingHand)
-                                .on_click(move |_, _, cx| {
-                                    cx.dispatch_action(ToggleProjectPublic {
-                                        project: open_project.clone(),
-                                    })
-                                })
-                                .boxed(),
-                            )
-                        } else {
-                            None
-                        })
+                        .with_children(open_project.and_then(|open_project| {
+                            let is_becoming_private = !open_project.read(cx).is_public();
+                            if !mouse_state.hovered && !is_becoming_private {
+                                return None;
+                            }
+
+                            let mut button = MouseEventHandler::new::<ToggleProjectPublic, _, _>(
+                                project_id as usize,
+                                cx,
+                                |state, _| {
+                                    let mut icon_style =
+                                        *theme.private_button.style_for(state, false);
+                                    icon_style.container.background_color =
+                                        row.container.background_color;
+                                    if is_becoming_private {
+                                        icon_style.color = theme.disabled_button.color;
+                                    }
+                                    render_icon_button(&icon_style, "icons/lock-8.svg")
+                                        .aligned()
+                                        .boxed()
+                                },
+                            );
+
+                            if !is_becoming_private {
+                                button = button
+                                    .with_cursor_style(CursorStyle::PointingHand)
+                                    .on_click(move |_, _, cx| {
+                                        cx.dispatch_action(ToggleProjectPublic {
+                                            project: Some(open_project.clone()),
+                                        })
+                                    });
+                            }
+
+                            Some(button.boxed())
+                        }))
                         .constrained()
                         .with_width(host_avatar_height)
                         .boxed(),
@@ -501,7 +510,7 @@ impl ContactsPanel {
             let row = theme.project_row.style_for(state, is_selected);
             let mut worktree_root_names = String::new();
             let project_ = project.read(cx);
-            let is_public = project_.is_public();
+            let is_becoming_public = project_.is_public();
             for tree in project_.visible_worktrees(cx) {
                 if !worktree_root_names.is_empty() {
                     worktree_root_names.push_str(", ");
@@ -510,33 +519,32 @@ impl ContactsPanel {
             }
 
             Flex::row()
-                .with_child(
-                    MouseEventHandler::new::<TogglePublic, _, _>(project_id, cx, |state, _| {
-                        if is_public {
-                            Empty::new().constrained()
-                        } else {
-                            render_icon_button(
-                                theme.private_button.style_for(state, false),
-                                "icons/lock-8.svg",
-                            )
-                            .aligned()
-                            .constrained()
-                        }
-                        .with_width(host_avatar_height)
-                        .boxed()
-                    })
-                    .with_cursor_style(if is_public {
-                        CursorStyle::default()
-                    } else {
-                        CursorStyle::PointingHand
-                    })
-                    .on_click(move |_, _, cx| {
-                        cx.dispatch_action(ToggleProjectPublic {
-                            project: Some(project.clone()),
-                        })
-                    })
-                    .boxed(),
-                )
+                .with_child({
+                    let mut button =
+                        MouseEventHandler::new::<TogglePublic, _, _>(project_id, cx, |state, _| {
+                            let mut style = *theme.private_button.style_for(state, false);
+                            if is_becoming_public {
+                                style.color = theme.disabled_button.color;
+                            }
+                            render_icon_button(&style, "icons/lock-8.svg")
+                                .aligned()
+                                .constrained()
+                                .with_width(host_avatar_height)
+                                .boxed()
+                        });
+
+                    if !is_becoming_public {
+                        button = button
+                            .with_cursor_style(CursorStyle::PointingHand)
+                            .on_click(move |_, _, cx| {
+                                cx.dispatch_action(ToggleProjectPublic {
+                                    project: Some(project.clone()),
+                                })
+                            });
+                    }
+
+                    button.boxed()
+                })
                 .with_child(
                     Label::new(worktree_root_names, row.name.text.clone())
                         .aligned()
@@ -596,7 +604,7 @@ impl ContactsPanel {
             row.add_children([
                 MouseEventHandler::new::<Decline, _, _>(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {
-                        &theme.disabled_contact_button
+                        &theme.disabled_button
                     } else {
                         &theme.contact_button.style_for(mouse_state, false)
                     };
@@ -618,7 +626,7 @@ impl ContactsPanel {
                 .boxed(),
                 MouseEventHandler::new::<Accept, _, _>(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {
-                        &theme.disabled_contact_button
+                        &theme.disabled_button
                     } else {
                         &theme.contact_button.style_for(mouse_state, false)
                     };
@@ -640,7 +648,7 @@ impl ContactsPanel {
             row.add_child(
                 MouseEventHandler::new::<Cancel, _, _>(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {
-                        &theme.disabled_contact_button
+                        &theme.disabled_button
                     } else {
                         &theme.contact_button.style_for(mouse_state, false)
                     };
@@ -1153,6 +1161,7 @@ mod tests {
         test::{FakeHttpClient, FakeServer},
         Client,
     };
+    use collections::HashSet;
     use gpui::{serde_json::json, TestAppContext};
     use language::LanguageRegistry;
     use project::{FakeFs, Project};
@@ -1182,12 +1191,14 @@ mod tests {
                 cx,
             )
         });
-        project
+        let worktree_id = project
             .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/private_dir", true, cx)
             })
             .await
-            .unwrap();
+            .unwrap()
+            .0
+            .read_with(cx, |worktree, _| worktree.id().to_proto());
 
         let workspace = cx.add_view(0, |cx| Workspace::new(project.clone(), cx));
         let panel = cx.add_view(0, |cx| {
@@ -1197,6 +1208,18 @@ mod tests {
                 workspace.downgrade(),
                 cx,
             )
+        });
+
+        workspace.update(cx, |_, cx| {
+            cx.observe(&panel, |_, panel, cx| {
+                let entries = render_to_strings(&panel, cx);
+                assert!(
+                    entries.iter().collect::<HashSet<_>>().len() == entries.len(),
+                    "Duplicate contact panel entries {:?}",
+                    entries
+                )
+            })
+            .detach();
         });
 
         let get_users_request = server.receive::<proto::GetUsers>().await.unwrap();
@@ -1278,9 +1301,196 @@ mod tests {
 
         cx.foreground().run_until_parked();
         assert_eq!(
-            render_to_strings(&panel, cx),
+            cx.read(|cx| render_to_strings(&panel, cx)),
             &[
-                "+",
+                "v Requests",
+                "  incoming user_one",
+                "  outgoing user_two",
+                "v Online",
+                "  the_current_user",
+                "    dir3",
+                "    🔒 private_dir",
+                "  user_four",
+                "    dir2",
+                "  user_three",
+                "    dir1",
+                "v Offline",
+                "  user_five",
+            ]
+        );
+
+        // Make a project public. It appears as loading, since the project
+        // isn't yet visible to other contacts.
+        project.update(cx, |project, cx| project.set_public(true, cx));
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            cx.read(|cx| render_to_strings(&panel, cx)),
+            &[
+                "v Requests",
+                "  incoming user_one",
+                "  outgoing user_two",
+                "v Online",
+                "  the_current_user",
+                "    dir3",
+                "    🔒 private_dir (becoming public...)",
+                "  user_four",
+                "    dir2",
+                "  user_three",
+                "    dir1",
+                "v Offline",
+                "  user_five",
+            ]
+        );
+
+        // The server responds, assigning the project a remote id. It still appears
+        // as loading, because the server hasn't yet sent out the updated contact
+        // state for the current user.
+        let request = server.receive::<proto::RegisterProject>().await.unwrap();
+        server
+            .respond(
+                request.receipt(),
+                proto::RegisterProjectResponse { project_id: 200 },
+            )
+            .await;
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            cx.read(|cx| render_to_strings(&panel, cx)),
+            &[
+                "v Requests",
+                "  incoming user_one",
+                "  outgoing user_two",
+                "v Online",
+                "  the_current_user",
+                "    dir3",
+                "    🔒 private_dir (becoming public...)",
+                "  user_four",
+                "    dir2",
+                "  user_three",
+                "    dir1",
+                "v Offline",
+                "  user_five",
+            ]
+        );
+
+        // The server receives the project's metadata and updates the contact metadata
+        // for the current user. Now the project appears as public.
+        assert_eq!(
+            server
+                .receive::<proto::UpdateProject>()
+                .await
+                .unwrap()
+                .payload
+                .worktrees,
+            &[proto::WorktreeMetadata {
+                id: worktree_id,
+                root_name: "private_dir".to_string(),
+                visible: true,
+            }],
+        );
+        server.send(proto::UpdateContacts {
+            contacts: vec![proto::Contact {
+                user_id: current_user_id,
+                online: true,
+                should_notify: false,
+                projects: vec![
+                    proto::ProjectMetadata {
+                        id: 103,
+                        worktree_root_names: vec!["dir3".to_string()],
+                        guests: vec![3],
+                    },
+                    proto::ProjectMetadata {
+                        id: 200,
+                        worktree_root_names: vec!["private_dir".to_string()],
+                        guests: vec![3],
+                    },
+                ],
+            }],
+            ..Default::default()
+        });
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            cx.read(|cx| render_to_strings(&panel, cx)),
+            &[
+                "v Requests",
+                "  incoming user_one",
+                "  outgoing user_two",
+                "v Online",
+                "  the_current_user",
+                "    dir3",
+                "    private_dir",
+                "  user_four",
+                "    dir2",
+                "  user_three",
+                "    dir1",
+                "v Offline",
+                "  user_five",
+            ]
+        );
+
+        // Make the project private. It appears as loading.
+        project.update(cx, |project, cx| project.set_public(false, cx));
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            cx.read(|cx| render_to_strings(&panel, cx)),
+            &[
+                "v Requests",
+                "  incoming user_one",
+                "  outgoing user_two",
+                "v Online",
+                "  the_current_user",
+                "    dir3",
+                "    private_dir (becoming private...)",
+                "  user_four",
+                "    dir2",
+                "  user_three",
+                "    dir1",
+                "v Offline",
+                "  user_five",
+            ]
+        );
+
+        // The server receives the unregister request and updates the contact
+        // metadata for the current user. The project is now private.
+        let request = server.receive::<proto::UnregisterProject>().await.unwrap();
+        server.send(proto::UpdateContacts {
+            contacts: vec![proto::Contact {
+                user_id: current_user_id,
+                online: true,
+                should_notify: false,
+                projects: vec![proto::ProjectMetadata {
+                    id: 103,
+                    worktree_root_names: vec!["dir3".to_string()],
+                    guests: vec![3],
+                }],
+            }],
+            ..Default::default()
+        });
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            cx.read(|cx| render_to_strings(&panel, cx)),
+            &[
+                "v Requests",
+                "  incoming user_one",
+                "  outgoing user_two",
+                "v Online",
+                "  the_current_user",
+                "    dir3",
+                "    🔒 private_dir",
+                "  user_four",
+                "    dir2",
+                "  user_three",
+                "    dir1",
+                "v Offline",
+                "  user_five",
+            ]
+        );
+
+        // The server responds to the unregister request.
+        server.respond(request.receipt(), proto::Ack {}).await;
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            cx.read(|cx| render_to_strings(&panel, cx)),
+            &[
                 "v Requests",
                 "  incoming user_one",
                 "  outgoing user_two",
@@ -1304,9 +1514,8 @@ mod tests {
         });
         cx.foreground().run_until_parked();
         assert_eq!(
-            render_to_strings(&panel, cx),
+            cx.read(|cx| render_to_strings(&panel, cx)),
             &[
-                "+",
                 "v Online",
                 "  user_four  <=== selected",
                 "    dir2",
@@ -1319,9 +1528,8 @@ mod tests {
             panel.select_next(&Default::default(), cx);
         });
         assert_eq!(
-            render_to_strings(&panel, cx),
+            cx.read(|cx| render_to_strings(&panel, cx)),
             &[
-                "+",
                 "v Online",
                 "  user_four",
                 "    dir2  <=== selected",
@@ -1334,9 +1542,8 @@ mod tests {
             panel.select_next(&Default::default(), cx);
         });
         assert_eq!(
-            render_to_strings(&panel, cx),
+            cx.read(|cx| render_to_strings(&panel, cx)),
             &[
-                "+",
                 "v Online",
                 "  user_four",
                 "    dir2",
@@ -1346,56 +1553,65 @@ mod tests {
         );
     }
 
-    fn render_to_strings(panel: &ViewHandle<ContactsPanel>, cx: &TestAppContext) -> Vec<String> {
-        panel.read_with(cx, |panel, _| {
-            let mut entries = Vec::new();
-            entries.push("+".to_string());
-            entries.extend(panel.entries.iter().enumerate().map(|(ix, entry)| {
-                let mut string = match entry {
-                    ContactEntry::Header(name) => {
-                        let icon = if panel.collapsed_sections.contains(name) {
-                            ">"
-                        } else {
-                            "v"
-                        };
-                        format!("{} {:?}", icon, name)
-                    }
-                    ContactEntry::IncomingRequest(user) => {
-                        format!("  incoming {}", user.github_login)
-                    }
-                    ContactEntry::OutgoingRequest(user) => {
-                        format!("  outgoing {}", user.github_login)
-                    }
-                    ContactEntry::Contact(contact) => {
-                        format!("  {}", contact.user.github_login)
-                    }
-                    ContactEntry::ContactProject(contact, project_ix, _) => {
-                        format!(
-                            "    {}",
-                            contact.projects[*project_ix].worktree_root_names.join(", ")
-                        )
-                    }
-                    ContactEntry::PrivateProject(project) => cx.read(|cx| {
-                        format!(
-                            "    🔒 {}",
-                            project
-                                .upgrade(cx)
-                                .unwrap()
-                                .read(cx)
-                                .worktree_root_names(cx)
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )
-                    }),
-                };
-
-                if panel.selection == Some(ix) {
-                    string.push_str("  <=== selected");
+    fn render_to_strings(panel: &ViewHandle<ContactsPanel>, cx: &AppContext) -> Vec<String> {
+        let panel = panel.read(cx);
+        let mut entries = Vec::new();
+        entries.extend(panel.entries.iter().enumerate().map(|(ix, entry)| {
+            let mut string = match entry {
+                ContactEntry::Header(name) => {
+                    let icon = if panel.collapsed_sections.contains(name) {
+                        ">"
+                    } else {
+                        "v"
+                    };
+                    format!("{} {:?}", icon, name)
                 }
+                ContactEntry::IncomingRequest(user) => {
+                    format!("  incoming {}", user.github_login)
+                }
+                ContactEntry::OutgoingRequest(user) => {
+                    format!("  outgoing {}", user.github_login)
+                }
+                ContactEntry::Contact(contact) => {
+                    format!("  {}", contact.user.github_login)
+                }
+                ContactEntry::ContactProject(contact, project_ix, project) => {
+                    let project = project
+                        .and_then(|p| p.upgrade(cx))
+                        .map(|project| project.read(cx));
+                    format!(
+                        "    {}{}",
+                        contact.projects[*project_ix].worktree_root_names.join(", "),
+                        if project.map_or(true, |project| project.is_public()) {
+                            ""
+                        } else {
+                            " (becoming private...)"
+                        },
+                    )
+                }
+                ContactEntry::PrivateProject(project) => {
+                    let project = project.upgrade(cx).unwrap().read(cx);
+                    format!(
+                        "    🔒 {}{}",
+                        project
+                            .worktree_root_names(cx)
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        if project.is_public() {
+                            " (becoming public...)"
+                        } else {
+                            ""
+                        },
+                    )
+                }
+            };
 
-                string
-            }));
-            entries
-        })
+            if panel.selection == Some(ix) {
+                string.push_str("  <=== selected");
+            }
+
+            string
+        }));
+        entries
     }
 }
