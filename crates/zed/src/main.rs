@@ -55,7 +55,10 @@ fn main() {
     init_logger(&logs_dir_path);
 
     let mut app = gpui::App::new(Assets).unwrap();
-    init_panic_hook(logs_dir_path, http.clone(), app.background());
+    let app_version = ZED_APP_VERSION
+        .or_else(|| app.platform().app_version().ok())
+        .map_or("dev".to_string(), |v| v.to_string());
+    init_panic_hook(logs_dir_path, app_version, http.clone(), app.background());
 
     load_embedded_fonts(&app);
 
@@ -258,7 +261,12 @@ fn init_logger(logs_dir_path: &Path) {
     }
 }
 
-fn init_panic_hook(logs_dir_path: PathBuf, http: Arc<dyn HttpClient>, background: Arc<Background>) {
+fn init_panic_hook(
+    logs_dir_path: PathBuf,
+    app_version: String,
+    http: Arc<dyn HttpClient>,
+    background: Arc<Background>,
+) {
     background
         .spawn({
             let logs_dir_path = logs_dir_path.clone();
@@ -321,7 +329,6 @@ fn init_panic_hook(logs_dir_path: PathBuf, http: Arc<dyn HttpClient>, background
         })
         .detach();
 
-    let app_version = ZED_APP_VERSION.map_or("dev".to_string(), |v| v.to_string());
     let is_pty = stdout_is_a_pty();
     panic::set_hook(Box::new(move |info| {
         let backtrace = Backtrace::new();
