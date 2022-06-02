@@ -4268,6 +4268,8 @@ dependencies = [
 name = "runner"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "bincode",
  "map-macro",
  "mlua",
  "serde",
