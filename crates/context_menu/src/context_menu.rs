@@ -50,6 +50,7 @@ impl ContextMenuItem {
 }
 
 pub struct ContextMenu {
+    show_count: usize,
     position: Vector2F,
     items: Vec<ContextMenuItem>,
     selected_index: Option<usize>,
@@ -106,6 +107,7 @@ impl View for ContextMenu {
 impl ContextMenu {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         Self {
+            show_count: 0,
             position: Default::default(),
             items: Default::default(),
             selected_index: Default::default(),
@@ -143,8 +145,9 @@ impl ContextMenu {
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         self.reset(cx);
-        cx.defer(|this, cx| {
-            if cx.handle().is_focused(cx) {
+        let show_count = self.show_count;
+        cx.defer(move |this, cx| {
+            if cx.handle().is_focused(cx) && this.show_count == show_count {
                 let window_id = cx.window_id();
                 (**cx).focus(window_id, this.previously_focused_view_id.take());
             }
@@ -212,6 +215,7 @@ impl ContextMenu {
             self.items = items.collect();
             self.position = position;
             self.visible = true;
+            self.show_count += 1;
             if !cx.is_self_focused() {
                 self.previously_focused_view_id = cx.focused_view_id(cx.window_id());
             }
