@@ -31,7 +31,7 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json, DebugContext, Event, EventContext, LayoutContext, PaintContext, RenderContext,
+    json, Action, DebugContext, Event, EventContext, LayoutContext, PaintContext, RenderContext,
     SizeConstraint, View,
 };
 use core::panic;
@@ -160,13 +160,15 @@ pub trait Element {
     fn with_tooltip<T: View>(
         self,
         id: usize,
-        tooltip: ElementBox,
+        text: String,
+        action: Option<Box<dyn Action>>,
+        style: TooltipStyle,
         cx: &mut RenderContext<T>,
     ) -> Tooltip
     where
         Self: 'static + Sized,
     {
-        Tooltip::new(id, self.boxed(), tooltip, cx)
+        Tooltip::new(id, text, action, style, self.boxed(), cx)
     }
 }
 

@@ -9,6 +9,14 @@ export default function tooltip(theme: Theme) {
     margin: { top: 6, left: 6 },
     shadow: shadow(theme),
     cornerRadius: 6,
-    ...text(theme, "sans", "secondary", { size: "xs", weight: "bold" })
+    text: text(theme, "sans", "secondary", { size: "xs", weight: "bold" }),
+    keystroke: {
+      background: backgroundColor(theme, "on500"),
+      cornerRadius: 4,
+      margin: { left: 6 },
+      padding: { left: 3, right: 3 },
+      ...text(theme, "mono", "muted", { size: "xs", weight: "bold" })
+    },
+    maxTextWidth: 200,
   }
 }

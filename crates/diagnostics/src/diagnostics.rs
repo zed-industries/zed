@@ -686,26 +686,9 @@ fn diagnostic_header_renderer(entry: DiagnosticEntry<Point>, path: ProjectPath) 
                 })
                 .with_tooltip(
                     entry.diagnostic.group_id,
-                    Flex::row()
-                        .with_child(
-                            Label::new(
-                                "Jump to diagnostic (".to_string(),
-                                tooltip_style.text.clone(),
-                            )
-                            .boxed(),
-                        )
-                        .with_child(
-                            KeystrokeLabel::new(
-                                Box::new(editor::OpenExcerpts),
-                                Default::default(),
-                                tooltip_style.text.clone(),
-                            )
-                            .boxed(),
-                        )
-                        .with_child(Label::new(")".to_string(), tooltip_style.text).boxed())
-                        .contained()
-                        .with_style(tooltip_style.container)
-                        .boxed(),
+                    "Jump to diagnostic".to_string(),
+                    Some(Box::new(editor::OpenExcerpts)),
+                    tooltip_style,
                     cx,
                 )
                 .aligned()

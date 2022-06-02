@@ -1,14 +1,19 @@
+use super::{
+    ContainerStyle, Element, ElementBox, Flex, KeystrokeLabel, MouseEventHandler, ParentElement,
+    Text,
+};
+use crate::{
+    fonts::TextStyle,
+    geometry::{rect::RectF, vector::Vector2F},
+    json::json,
+    Action, Axis, ElementStateHandle, LayoutContext, PaintContext, RenderContext, SizeConstraint,
+    Task, View,
+};
+use serde::Deserialize;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
     time::Duration,
-};
-
-use super::{Element, ElementBox, MouseEventHandler};
-use crate::{
-    geometry::{rect::RectF, vector::Vector2F},
-    json::json,
-    ElementStateHandle, LayoutContext, PaintContext, RenderContext, SizeConstraint, Task, View,
 };
 
 const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(500);
@@ -26,17 +31,53 @@ struct TooltipState {
     debounce: RefCell<Option<Task<()>>>,
 }
 
+#[derive(Clone, Deserialize, Default)]
+pub struct TooltipStyle {
+    #[serde(flatten)]
+    container: ContainerStyle,
+    text: TextStyle,
+    keystroke: KeystrokeStyle,
+    max_text_width: f32,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct KeystrokeStyle {
+    #[serde(flatten)]
+    container: ContainerStyle,
+    #[serde(flatten)]
+    text: TextStyle,
+}
+
 impl Tooltip {
     pub fn new<T: View>(
         id: usize,
+        text: String,
+        action: Option<Box<dyn Action>>,
+        style: TooltipStyle,
         child: ElementBox,
-        tooltip: ElementBox,
         cx: &mut RenderContext<T>,
     ) -> Self {
         let state_handle = cx.element_state::<TooltipState, Rc<TooltipState>>(id);
         let state = state_handle.read(cx).clone();
         let tooltip = if state.visible.get() {
-            Some(tooltip)
+            let mut collapsed_tooltip = Self::render_tooltip(
+                text.clone(),
+                style.clone(),
+                action.as_ref().map(|a| a.boxed_clone()),
+                true,
+            )
+            .boxed();
+            Some(
+                Self::render_tooltip(text, style, action, false)
+                    .constrained()
+                    .dynamically(move |constraint, cx| {
+                        SizeConstraint::strict_along(
+                            Axis::Vertical,
+                            collapsed_tooltip.layout(constraint, cx).y(),
+                        )
+                    })
+                    .boxed(),
+            )
         } else {
             None
         };
@@ -72,6 +113,36 @@ impl Tooltip {
             tooltip,
             state: state_handle,
         }
+    }
+
+    fn render_tooltip(
+        text: String,
+        style: TooltipStyle,
+        action: Option<Box<dyn Action>>,
+        measure: bool,
+    ) -> impl Element {
+        Flex::row()
+            .with_child({
+                let text = Text::new(text, style.text)
+                    .constrained()
+                    .with_max_width(style.max_text_width);
+                if measure {
+                    text.flex(1., false).boxed()
+                } else {
+                    text.flex(1., false).aligned().boxed()
+                }
+            })
+            .with_children(action.map(|action| {
+                let keystroke_label =
+                    KeystrokeLabel::new(action, style.keystroke.container, style.keystroke.text);
+                if measure {
+                    keystroke_label.boxed()
+                } else {
+                    keystroke_label.aligned().boxed()
+                }
+            }))
+            .contained()
+            .with_style(style.container)
     }
 }
 

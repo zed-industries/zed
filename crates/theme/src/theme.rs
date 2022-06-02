@@ -2,7 +2,7 @@ mod theme_registry;
 
 use gpui::{
     color::Color,
-    elements::{ContainerStyle, ImageStyle, LabelStyle},
+    elements::{ContainerStyle, ImageStyle, LabelStyle, TooltipStyle},
     fonts::{HighlightStyle, TextStyle},
     Border, MouseState,
 };
@@ -31,7 +31,7 @@ pub struct Theme {
     pub project_diagnostics: ProjectDiagnostics,
     pub breadcrumbs: ContainedText,
     pub contact_notification: ContactNotification,
-    pub tooltip: ContainedText,
+    pub tooltip: TooltipStyle,
 }
 
 #[derive(Deserialize, Default)]
