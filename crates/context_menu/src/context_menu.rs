@@ -92,6 +92,8 @@ impl View for ContextMenu {
             .boxed();
 
         Overlay::new(expanded_menu)
+            .hoverable(true)
+            .align_to_fit(true)
             .with_abs_position(self.position)
             .boxed()
     }

@@ -10,6 +10,8 @@ use crate::{
 pub struct Overlay {
     child: ElementBox,
     abs_position: Option<Vector2F>,
+    align_to_fit: bool,
+    hoverable: bool,
 }
 
 impl Overlay {
@@ -17,11 +19,23 @@ impl Overlay {
         Self {
             child,
             abs_position: None,
+            align_to_fit: false,
+            hoverable: false,
         }
     }
 
     pub fn with_abs_position(mut self, position: Vector2F) -> Self {
         self.abs_position = Some(position);
+        self
+    }
+
+    pub fn align_to_fit(mut self, align_to_fit: bool) -> Self {
+        self.align_to_fit = align_to_fit;
+        self
+    }
+
+    pub fn hoverable(mut self, hoverable: bool) -> Self {
+        self.hoverable = hoverable;
         self
     }
 }
@@ -51,15 +65,30 @@ impl Element for Overlay {
         size: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) {
-        let origin = self.abs_position.unwrap_or(bounds.origin());
-        let visible_bounds = RectF::new(origin, *size);
+        let mut bounds = RectF::new(self.abs_position.unwrap_or(bounds.origin()), *size);
         cx.scene.push_stacking_context(None);
-        cx.scene.push_mouse_region(MouseRegion {
-            view_id: cx.current_view_id(),
-            bounds: visible_bounds,
-            ..Default::default()
-        });
-        self.child.paint(origin, visible_bounds, cx);
+
+        if self.hoverable {
+            cx.scene.push_mouse_region(MouseRegion {
+                view_id: cx.current_view_id(),
+                bounds,
+                ..Default::default()
+            });
+        }
+
+        if self.align_to_fit {
+            // Align overlay to the left if its bounds overflow the window width.
+            if bounds.lower_right().x() > cx.window_size.x() {
+                bounds.set_origin_x(bounds.origin_x() - bounds.width());
+            }
+
+            // Align overlay to the top if its bounds overflow the window height.
+            if bounds.lower_right().y() > cx.window_size.y() {
+                bounds.set_origin_y(bounds.origin_y() - bounds.height());
+            }
+        }
+
+        self.child.paint(bounds.origin(), bounds, cx);
         cx.scene.pop_stacking_context();
     }
 
