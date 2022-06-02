@@ -73,6 +73,7 @@ pub struct Project {
     next_language_server_id: usize,
     client: Arc<client::Client>,
     next_entry_id: Arc<AtomicUsize>,
+    next_diagnostic_group_id: usize,
     user_store: ModelHandle<UserStore>,
     fs: Arc<dyn Fs>,
     client_state: ProjectClientState,
@@ -355,6 +356,7 @@ impl Project {
                 user_store,
                 fs,
                 next_entry_id: Default::default(),
+                next_diagnostic_group_id: Default::default(),
                 language_servers: Default::default(),
                 started_language_servers: Default::default(),
                 language_server_statuses: Default::default(),
@@ -424,6 +426,7 @@ impl Project {
                 user_store: user_store.clone(),
                 fs,
                 next_entry_id: Default::default(),
+                next_diagnostic_group_id: Default::default(),
                 subscriptions: vec![client.add_model_for_remote_entity(remote_id, cx)],
                 client: client.clone(),
                 client_state: ProjectClientState::Remote {
@@ -2121,7 +2124,6 @@ impl Project {
             .uri
             .to_file_path()
             .map_err(|_| anyhow!("URI is not a file"))?;
-        let mut next_group_id = 0;
         let mut diagnostics = Vec::default();
         let mut primary_diagnostic_group_ids = HashMap::default();
         let mut sources_by_group_id = HashMap::default();
@@ -2156,7 +2158,7 @@ impl Project {
                     (diagnostic.severity, is_unnecessary),
                 );
             } else {
-                let group_id = post_inc(&mut next_group_id);
+                let group_id = post_inc(&mut self.next_diagnostic_group_id);
                 let is_disk_based = source.map_or(false, |source| {
                     disk_based_sources.contains(&source.as_str())
                 });
@@ -6270,7 +6272,7 @@ mod tests {
                             severity: DiagnosticSeverity::WARNING,
                             message: "unreachable statement".to_string(),
                             is_disk_based: true,
-                            group_id: 1,
+                            group_id: 4,
                             is_primary: true,
                             ..Default::default()
                         }
@@ -6281,7 +6283,7 @@ mod tests {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'A'".to_string(),
                             is_disk_based: true,
-                            group_id: 0,
+                            group_id: 3,
                             is_primary: true,
                             ..Default::default()
                         },
@@ -6359,7 +6361,7 @@ mod tests {
                             severity: DiagnosticSeverity::WARNING,
                             message: "undefined variable 'A'".to_string(),
                             is_disk_based: true,
-                            group_id: 1,
+                            group_id: 6,
                             is_primary: true,
                             ..Default::default()
                         }
@@ -6370,7 +6372,7 @@ mod tests {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'BB'".to_string(),
                             is_disk_based: true,
-                            group_id: 0,
+                            group_id: 5,
                             is_primary: true,
                             ..Default::default()
                         },

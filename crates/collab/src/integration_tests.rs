@@ -1359,7 +1359,7 @@ async fn test_collaborating_with_diagnostics(
                 DiagnosticEntry {
                     range: Point::new(0, 4)..Point::new(0, 7),
                     diagnostic: Diagnostic {
-                        group_id: 0,
+                        group_id: 1,
                         message: "message 1".to_string(),
                         severity: lsp::DiagnosticSeverity::ERROR,
                         is_primary: true,
@@ -1369,7 +1369,7 @@ async fn test_collaborating_with_diagnostics(
                 DiagnosticEntry {
                     range: Point::new(0, 10)..Point::new(0, 13),
                     diagnostic: Diagnostic {
-                        group_id: 1,
+                        group_id: 2,
                         severity: lsp::DiagnosticSeverity::WARNING,
                         message: "message 2".to_string(),
                         is_primary: true,
