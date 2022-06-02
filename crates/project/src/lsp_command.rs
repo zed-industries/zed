@@ -8,7 +8,8 @@ use language::{
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, Anchor, Bias, Buffer, PointUtf16, ToPointUtf16,
 };
-use lsp::{DocumentHighlightKind, ServerCapabilities};
+use lsp::{DocumentHighlightKind, LanguageString, MarkedString, ServerCapabilities};
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 use std::{cmp::Reverse, ops::Range, path::Path};
 
 #[async_trait(?Send)]
@@ -805,7 +806,7 @@ impl LspCommand for GetHover {
     type LspRequest = lsp::request::HoverRequest;
     type ProtoRequest = proto::GetHover;
 
-    fn to_lsp(&self, path: &Path, cx: &AppContext) -> lsp::HoverParams {
+    fn to_lsp(&self, path: &Path, _: &AppContext) -> lsp::HoverParams {
         lsp::HoverParams {
             text_document_position_params: lsp::TextDocumentPositionParams {
                 text_document: lsp::TextDocumentIdentifier {
@@ -824,7 +825,7 @@ impl LspCommand for GetHover {
         buffer: ModelHandle<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self::Response> {
-        Ok(message.map(|hover| {
+        Ok(message.and_then(|hover| {
             let range = hover.range.map(|range| {
                 cx.read(|cx| {
                     let buffer = buffer.read(cx);
@@ -835,48 +836,116 @@ impl LspCommand for GetHover {
                 })
             });
 
-            fn highlight(lsp_marked_string: lsp::MarkedString, project: &Project) -> HoverContents {
-                match lsp_marked_string {
-                    lsp::MarkedString::LanguageString(lsp::LanguageString { language, value }) => {
-                        if let Some(language) = project.languages().get_language(&language) {
-                            let runs =
-                                language.highlight_text(&value.as_str().into(), 0..value.len());
-                            HoverContents { text: value, runs }
-                        } else {
-                            HoverContents {
-                                text: value,
-                                runs: Vec::new(),
-                            }
-                        }
+            fn text_and_language(marked_string: MarkedString) -> (String, Option<String>) {
+                match marked_string {
+                    MarkedString::LanguageString(LanguageString { language, value }) => {
+                        (value, Some(language))
                     }
-                    lsp::MarkedString::String(text) => HoverContents {
-                        text,
+                    MarkedString::String(text) => (text, None),
+                }
+            }
+
+            fn highlight(
+                text: String,
+                language: Option<String>,
+                project: &Project,
+            ) -> Option<HoverContents> {
+                let text = text.trim();
+                if text.is_empty() {
+                    return None;
+                }
+
+                if let Some(language) =
+                    language.and_then(|language| project.languages().get_language(&language))
+                {
+                    let runs = language.highlight_text(&text.into(), 0..text.len());
+                    Some(HoverContents {
+                        text: text.to_string(),
+                        runs,
+                    })
+                } else {
+                    Some(HoverContents {
+                        text: text.to_string(),
                         runs: Vec::new(),
-                    },
+                    })
                 }
             }
 
             let contents = cx.read(|cx| {
                 let project = project.read(cx);
-                match dbg!(hover.contents) {
+                match hover.contents {
                     lsp::HoverContents::Scalar(marked_string) => {
-                        vec![highlight(marked_string, project)]
+                        let (text, language) = text_and_language(marked_string);
+                        highlight(text, language, project).map(|content| vec![content])
                     }
-                    lsp::HoverContents::Array(marked_strings) => marked_strings
-                        .into_iter()
-                        .map(|marked_string| highlight(marked_string, project))
-                        .collect(),
+                    lsp::HoverContents::Array(marked_strings) => {
+                        let content: Vec<HoverContents> = marked_strings
+                            .into_iter()
+                            .filter_map(|marked_string| {
+                                let (text, language) = text_and_language(marked_string);
+                                highlight(text, language, project)
+                            })
+                            .collect();
+                        if content.is_empty() {
+                            None
+                        } else {
+                            Some(content)
+                        }
+                    }
                     lsp::HoverContents::Markup(markup_content) => {
-                        // TODO: handle markdown
-                        vec![HoverContents {
-                            text: markup_content.value,
-                            runs: Vec::new(),
-                        }]
+                        let mut contents = Vec::new();
+                        let mut language = None;
+                        let mut current_text = String::new();
+                        for event in Parser::new_ext(&markup_content.value, Options::all()) {
+                            match event {
+                                Event::Text(text) | Event::Code(text) => {
+                                    current_text.push_str(&text.to_string());
+                                }
+                                Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(
+                                    new_language,
+                                ))) => {
+                                    if let Some(content) =
+                                        highlight(current_text.clone(), language, project)
+                                    {
+                                        contents.push(content);
+                                        current_text.clear();
+                                    }
+
+                                    language = if new_language.is_empty() {
+                                        None
+                                    } else {
+                                        Some(new_language.to_string())
+                                    };
+                                }
+                                Event::End(Tag::CodeBlock(_)) => {
+                                    if let Some(content) =
+                                        highlight(current_text.clone(), language.clone(), project)
+                                    {
+                                        contents.push(content);
+                                        current_text.clear();
+                                        language = None;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        if let Some(content) =
+                            highlight(current_text.clone(), language.clone(), project)
+                        {
+                            contents.push(content);
+                        }
+
+                        if contents.is_empty() {
+                            None
+                        } else {
+                            Some(contents)
+                        }
                     }
                 }
             });
 
-            Hover { contents, range }
+            contents.map(|contents| Hover { contents, range })
         }))
     }
 

@@ -33,7 +33,7 @@ use std::{
     cmp::{self, Ordering},
     fmt::Write,
     iter,
-    ops::{Not, Range},
+    ops::Range,
 };
 
 struct SelectionLayout {
@@ -1118,8 +1118,8 @@ impl Element for EditorElement {
                 .head()
                 .to_display_point(&snapshot);
 
+            let style = view.style(cx);
             if (start_row..end_row).contains(&newest_selection_head.row()) {
-                let style = view.style(cx);
                 if view.context_menu_visible() {
                     context_menu = view.render_context_menu(newest_selection_head, style.clone());
                 }
@@ -1127,9 +1127,9 @@ impl Element for EditorElement {
                 code_actions_indicator = view
                     .render_code_actions_indicator(&style, cx)
                     .map(|indicator| (newest_selection_head.row(), indicator));
-
-                hover = view.render_hover_popover(style);
             }
+
+            hover = view.render_hover_popover(style);
         });
 
         if let Some((_, context_menu)) = context_menu.as_mut() {
@@ -1157,8 +1157,8 @@ impl Element for EditorElement {
                 SizeConstraint {
                     min: Vector2F::zero(),
                     max: vec2f(
-                        f32::INFINITY,
-                        (12. * line_height).min((size.y() - line_height) / 2.),
+                        (120. * em_width).min(size.x()),
+                        (size.y() - line_height) * 3. / 2.,
                     ),
                 },
                 cx,

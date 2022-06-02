@@ -25,7 +25,7 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
-    text_layout, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
+    text_layout, AppContext, AsyncAppContext, Axis, ClipboardItem, Element, ElementBox, Entity,
     ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
@@ -81,17 +81,8 @@ pub struct Scroll(pub Vector2F);
 pub struct Select(pub SelectPhase);
 
 #[derive(Clone)]
-pub struct ShowHover(DisplayPoint);
-
-#[derive(Clone)]
-pub struct HideHover;
-
-#[derive(Clone)]
 pub struct Hover {
     point: Option<DisplayPoint>,
-    // visible: bool,
-    // TODO(isaac): remove overshoot
-    // overshoot: DisplayPoint,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -223,7 +214,7 @@ impl_actions!(
     ]
 );
 
-impl_internal_actions!(editor, [Scroll, Select, Hover, ShowHover, HideHover, GoToDefinitionAt]);
+impl_internal_actions!(editor, [Scroll, Select, Hover, GoToDefinitionAt]);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -311,8 +302,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::show_completions);
     cx.add_action(Editor::toggle_code_actions);
     cx.add_action(Editor::hover);
-    cx.add_action(Editor::show_hover);
-    cx.add_action(Editor::hide_hover);
     cx.add_action(Editor::open_excerpts);
     cx.add_action(Editor::restart_language_server);
     cx.add_async_action(Editor::confirm_completion);
@@ -454,14 +443,14 @@ impl HoverState {
     /// and returns a tuple containing whether there was a recent hover,
     /// and whether the hover is still in the grace period.
     pub fn determine_state(&mut self, hovering: bool) -> (bool, bool) {
-        // NOTE: 200ms and 100ms are sane defaults, but it might be
+        // NOTE: We use some sane defaults, but it might be
         //       nice to make these values configurable.
-        let recent_hover = self.last_hover.elapsed() < std::time::Duration::from_millis(200);
+        let recent_hover = self.last_hover.elapsed() < std::time::Duration::from_millis(500);
         if !hovering {
             self.last_hover = std::time::Instant::now();
         }
 
-        let in_grace = self.start_grace.elapsed() < std::time::Duration::from_millis(100);
+        let in_grace = self.start_grace.elapsed() < std::time::Duration::from_millis(250);
         if hovering && !recent_hover {
             self.start_grace = std::time::Instant::now();
         }
@@ -902,13 +891,12 @@ struct HoverPopover {
 
 impl HoverPopover {
     fn render(&self, style: EditorStyle) -> (DisplayPoint, ElementBox) {
-        let contents = self.contents.first().unwrap();
-        (
-            self.point,
-            Text::new(contents.text.clone(), style.text.clone())
-                .with_soft_wrap(false)
+        let mut flex = Flex::new(Axis::Vertical);
+        flex.extend(self.contents.iter().map(|content| {
+            Text::new(content.text.clone(), style.text.clone())
+                .with_soft_wrap(true)
                 .with_highlights(
-                    contents
+                    content
                         .runs
                         .iter()
                         .filter_map(|(range, id)| {
@@ -917,9 +905,11 @@ impl HoverPopover {
                         })
                         .collect(),
                 )
-                .contained()
-                .with_style(style.hover_popover)
-                .boxed(),
+                .boxed()
+        }));
+        (
+            self.point,
+            flex.contained().with_style(style.hover_popover).boxed(),
         )
     }
 }
@@ -2473,15 +2463,15 @@ impl Editor {
     /// depending on whether a point to hover over is provided.
     fn hover(&mut self, action: &Hover, cx: &mut ViewContext<Self>) {
         if let Some(point) = action.point {
-            self.show_hover(&ShowHover(point), cx);
+            self.show_hover(point, cx);
         } else {
-            self.hide_hover(&HideHover, cx);
+            self.hide_hover(cx);
         }
     }
 
     /// Hides the type information popup ASAP.
     /// Triggered by the `Hover` action when the cursor is not over a symbol.
-    fn hide_hover(&mut self, _: &HideHover, cx: &mut ViewContext<Self>) {
+    fn hide_hover(&mut self, cx: &mut ViewContext<Self>) {
         let task = cx.spawn_weak(|this, mut cx| {
             async move {
                 if let Some(this) = this.upgrade(&cx) {
@@ -2507,7 +2497,7 @@ impl Editor {
     /// Queries the LSP and shows type info and documentation
     /// about the symbol the mouse is currently hovering over.
     /// Triggered by the `Hover` action when the cursor may be over a symbol.
-    fn show_hover(&mut self, action: &ShowHover, cx: &mut ViewContext<Self>) {
+    fn show_hover(&mut self, mut point: DisplayPoint, cx: &mut ViewContext<Self>) {
         if self.pending_rename.is_some() {
             return;
         }
@@ -2517,9 +2507,6 @@ impl Editor {
         } else {
             return;
         };
-
-        // we use the mouse cursor position by default
-        let mut point = action.0.clone();
 
         let snapshot = self.snapshot(cx);
         let (buffer, buffer_position) = if let Some(output) = self
@@ -2541,7 +2528,6 @@ impl Editor {
 
         let task = cx.spawn_weak(|this, mut cx| {
             async move {
-                // TODO: what to show while LSP is loading?
                 let mut contents = None;
 
                 let hover = match hover.await {
