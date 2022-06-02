@@ -1,6 +1,6 @@
 use super::{
-    ContainerStyle, Element, ElementBox, Flex, KeystrokeLabel, MouseEventHandler, ParentElement,
-    Text,
+    ContainerStyle, Element, ElementBox, Flex, KeystrokeLabel, MouseEventHandler, Overlay,
+    ParentElement, Text,
 };
 use crate::{
     fonts::TextStyle,
@@ -21,7 +21,7 @@ const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(500);
 pub struct Tooltip {
     child: ElementBox,
     tooltip: Option<ElementBox>,
-    state: ElementStateHandle<Rc<TooltipState>>,
+    _state: ElementStateHandle<Rc<TooltipState>>,
 }
 
 #[derive(Default)]
@@ -68,15 +68,20 @@ impl Tooltip {
             )
             .boxed();
             Some(
-                Self::render_tooltip(text, style, action, false)
-                    .constrained()
-                    .dynamically(move |constraint, cx| {
-                        SizeConstraint::strict_along(
-                            Axis::Vertical,
-                            collapsed_tooltip.layout(constraint, cx).y(),
-                        )
-                    })
-                    .boxed(),
+                Overlay::new(
+                    Self::render_tooltip(text, style, action, false)
+                        .constrained()
+                        .dynamically(move |constraint, cx| {
+                            SizeConstraint::strict_along(
+                                Axis::Vertical,
+                                collapsed_tooltip.layout(constraint, cx).y(),
+                            )
+                        })
+                        .boxed(),
+                )
+                .align_to_fit(true)
+                .with_abs_position(state.position.get())
+                .boxed(),
             )
         } else {
             None
@@ -111,7 +116,7 @@ impl Tooltip {
         Self {
             child,
             tooltip,
-            state: state_handle,
+            _state: state_handle,
         }
     }
 
@@ -171,22 +176,7 @@ impl Element for Tooltip {
     ) {
         self.child.paint(bounds.origin(), visible_bounds, cx);
         if let Some(tooltip) = self.tooltip.as_mut() {
-            let origin = self.state.read(cx).position.get();
-            let mut bounds = RectF::new(origin, tooltip.size());
-
-            // Align tooltip to the left if its bounds overflow the window width.
-            if bounds.lower_right().x() > cx.window_size.x() {
-                bounds.set_origin_x(bounds.origin_x() - bounds.width());
-            }
-
-            // Align tooltip to the top if its bounds overflow the window height.
-            if bounds.lower_right().y() > cx.window_size.y() {
-                bounds.set_origin_y(bounds.origin_y() - bounds.height());
-            }
-
-            cx.scene.push_stacking_context(None);
-            tooltip.paint(bounds.origin(), bounds, cx);
-            cx.scene.pop_stacking_context();
+            tooltip.paint(bounds.origin(), visible_bounds, cx);
         }
     }
 
