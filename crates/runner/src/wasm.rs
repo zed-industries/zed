@@ -71,6 +71,49 @@ impl<S> Runtime for Wasm<S> {
         todo!()
     }
 
+    // So this call function is kinda a dance, I figured it'd be a good idea to document it.
+    // the high level is we take a serde type, serialize it to a byte array,
+    // (we're doing this using bincode for now)
+    // then toss that byte array into webassembly.
+    // webassembly grabs that byte array, does some magic,
+    // and serializes the result into yet another byte array.
+    // we then grab *that* result byte array and deserialize it into a result.
+    //
+    // phew...
+    //
+    // now the problem is, webassambly doesn't support buffers.
+    // only really like i32s, that's it (yeah, it's sad. Not even unsigned!)
+    // (ok, I'm exaggerating a bit).
+    //
+    // the Wasm function that this calls must have a very specific signature:
+    //
+    // fn(pointer to byte array: i32, length of byte array: i32)
+    //     -> pointer to (
+    //            pointer to byte_array: i32,
+    //            length of byte array: i32,
+    //     ): i32
+    //
+    // This pair `(pointer to byte array, length of byte array)` is called a `Buffer`
+    // and can be found in the cargo_test plugin.
+    //
+    // so on the wasm side, we grab the two parameters to the function,
+    // stuff them into a `Buffer`,
+    // and then pray to the `unsafe` Rust gods above that a valid byte array pops out.
+    //
+    // On the flip side, when returning from a wasm function,
+    // we convert whatever serialized result we get into byte array,
+    // which we stuff into a Buffer and allocate on the heap,
+    // which pointer to we then return.
+    // Note the double indirection!
+    //
+    // So when returning from a function, we actually leak memory *twice*:
+    //
+    // 1) once when we leak the byte array
+    // 2) again when we leak the allocated `Buffer`
+    //
+    // This isn't a problem because Wasm stops executing after the function returns,
+    // so the heap is still valid for our inspection when we want to pull things out.
+
     // TODO: dont' use as for conversions
     fn call<A: Serialize, R: DeserializeOwned>(
         &mut self,
