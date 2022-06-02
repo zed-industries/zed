@@ -2,32 +2,63 @@ use mlua::Lua;
 
 use runner::*;
 
-pub fn main() -> Result<(), mlua::Error> {
-    let source = include_str!("../plugin/cargo_test.lua").to_string();
+// pub fn main() -> Result<(), mlua::Error> {
+//     let source = include_str!("../plugin/cargo_test.lua").to_string();
 
-    let module = LuaPlugin::new(source);
-    // .setup(|runtime| {
-    //     let greet = runtime
-    //         .create_function(|_, name: String| {
-    //             println!("Hello, {}!", name);
-    //             Ok(())
-    //         })
-    //         .map_err(|_| ())?;
+//     let module = LuaPlugin::new(source);
+//     let mut lua: Lua = Runtime::init(module)?;
+//     let runner: TestRunner = lua.as_interface::<TestRunner>().unwrap();
 
-    //     runtime.globals().set("greet", greet).map_err(|_| ())?;
-    //     Ok(())
-    // });
+//     println!("extracted interface: {:#?}", &runner);
 
-    let mut lua: Lua = Runtime::init(module)?;
-    let runner: TestRunner = lua.as_interface::<TestRunner>().unwrap();
+//     let contents = runner.run_test(&mut lua, "it_works".into());
 
-    println!("extracted interface: {:#?}", &runner);
+//     println!("test results:{}", contents.unwrap());
 
-    let contents = runner.run_test(&mut lua, "it_works".into());
+//     Ok(())
+// }
 
-    println!("test results:{}", contents.unwrap());
+// pub fn main() -> mlua::Result<()> {
+//     let module = LuaPlugin::new(include_str!("../plugin/cargo_test.lua").to_string());
+//     let mut lua: Lua = Runtime::init(module)?;
+//     let runner = lua.as_interface::<TestRunner>().unwrap();
+//     let test_results = runner.run_test(&mut lua, "it_works".into());
+//     Ok(())
+// }
+
+pub fn main() -> anyhow::Result<()> {
+    let plugin = WasmPlugin {
+        source_bytes: include_bytes!(
+            "../plugin/target/wasm32-unknown-unknown/release/cargo_test.wasm"
+        )
+        .to_vec(),
+        store_data: (),
+    };
+
+    let mut wasm: Wasm<()> = Runtime::init(plugin)?;
+    let banana = wasm.as_interface::<Banana>().unwrap();
+    let result = banana.banana(&mut wasm, 420.69);
+
+    dbg!("{}", result);
 
     Ok(())
+}
+
+struct Banana {
+    banana: Handle,
+}
+
+impl Interface for Banana {
+    fn from_runtime<T: Runtime>(runtime: &mut T) -> Option<Self> {
+        let banana = runtime.handle_for("banana")?;
+        Some(Banana { banana })
+    }
+}
+
+impl Banana {
+    fn banana<T: Runtime>(&self, runtime: &mut T, number: f64) -> Option<f64> {
+        runtime.call(&self.banana, number).ok()
+    }
 }
 
 #[allow(dead_code)]

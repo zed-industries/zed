@@ -45,11 +45,11 @@ where
     fn constant<T: DeserializeOwned>(&mut self, handle: &Handle) -> Result<T, Self::Error>;
 
     /// Call a function defined in the module.
-    fn call<T: Serialize + DeserializeOwned>(
+    fn call<A: Serialize, R: DeserializeOwned>(
         &mut self,
         handle: &Handle,
-        arg: T,
-    ) -> Result<T, Self::Error>;
+        arg: A,
+    ) -> Result<R, Self::Error>;
 
     /// Registers a handle with the runtime.
     /// This is a mutable item if needed, but generally

@@ -22,7 +22,7 @@ impl Runtime for Lua {
         Ok(self.from_value(val)?)
     }
 
-    fn call<T: Serialize + DeserializeOwned>(&mut self, handle: &Handle, arg: T) -> Result<T> {
+    fn call<A: Serialize, R: DeserializeOwned>(&mut self, handle: &Handle, arg: A) -> Result<R> {
         let fun: Function = self.globals().get(handle.inner())?;
         let arg: Value = self.to_value(&arg)?;
         let result = fun.call(arg)?;

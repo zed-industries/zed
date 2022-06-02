@@ -8,3 +8,6 @@ pub use runtime::*;
 
 pub mod lua;
 pub use lua::*;
+
+pub mod wasm;
+pub use wasm::*;
