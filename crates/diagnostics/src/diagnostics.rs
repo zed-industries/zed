@@ -13,7 +13,8 @@ use gpui::{
     Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{
-    Bias, Buffer, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
+    Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
+    SelectionGoal, ToPoint,
 };
 use project::{DiagnosticSummary, Project, ProjectPath};
 use serde_json::json;
@@ -62,7 +63,8 @@ struct PathState {
 #[derive(Clone, Debug)]
 struct Jump {
     path: ProjectPath,
-    range: Range<Point>,
+    position: Point,
+    anchor: Anchor,
 }
 
 struct DiagnosticGroupState {
@@ -188,12 +190,18 @@ impl ProjectDiagnosticsEditor {
 
     fn jump(workspace: &mut Workspace, action: &Jump, cx: &mut ViewContext<Workspace>) {
         let editor = workspace.open_path(action.path.clone(), true, cx);
-        let range = action.range.clone();
+        let position = action.position;
+        let anchor = action.anchor;
         cx.spawn_weak(|_, mut cx| async move {
             let editor = editor.await.log_err()?.downcast::<Editor>()?;
             editor.update(&mut cx, |editor, cx| {
                 let buffer = editor.buffer().read(cx).as_singleton()?;
-                let cursor = buffer.read(cx).clip_point(range.start, Bias::Left);
+                let buffer = buffer.read(cx);
+                let cursor = if buffer.can_resolve(&anchor) {
+                    anchor.to_point(buffer)
+                } else {
+                    buffer.clip_point(position, Bias::Left)
+                };
                 editor.change_selections(Some(Autoscroll::Newest), cx, |s| {
                     s.select_ranges([cursor..cursor]);
                 });
@@ -338,19 +346,21 @@ impl ProjectDiagnosticsEditor {
                             if is_first_excerpt_for_group {
                                 is_first_excerpt_for_group = false;
                                 let mut primary =
-                                    group.entries[group.primary_ix].resolve::<Point>(&snapshot);
-                                primary.diagnostic.message = primary
-                                    .diagnostic
-                                    .message
-                                    .split('\n')
-                                    .next()
-                                    .unwrap()
-                                    .to_string();
+                                    group.entries[group.primary_ix].diagnostic.clone();
+                                let anchor = group.entries[group.primary_ix].range.start;
+                                let position = anchor.to_point(&snapshot);
+                                primary.message =
+                                    primary.message.split('\n').next().unwrap().to_string();
                                 group_state.block_count += 1;
                                 blocks_to_add.push(BlockProperties {
                                     position: header_position,
                                     height: 2,
-                                    render: diagnostic_header_renderer(primary, path.clone()),
+                                    render: diagnostic_header_renderer(
+                                        primary,
+                                        path.clone(),
+                                        position,
+                                        anchor,
+                                    ),
                                     disposition: BlockDisposition::Above,
                                 });
                             }
@@ -607,10 +617,15 @@ impl workspace::Item for ProjectDiagnosticsEditor {
     }
 }
 
-fn diagnostic_header_renderer(entry: DiagnosticEntry<Point>, path: ProjectPath) -> RenderBlock {
+fn diagnostic_header_renderer(
+    diagnostic: Diagnostic,
+    path: ProjectPath,
+    position: Point,
+    anchor: Anchor,
+) -> RenderBlock {
     enum JumpIcon {}
 
-    let (message, highlights) = highlight_diagnostic_message(&entry.diagnostic.message);
+    let (message, highlights) = highlight_diagnostic_message(&diagnostic.message);
     Arc::new(move |cx| {
         let settings = cx.global::<Settings>();
         let tooltip_style = settings.theme.tooltip.clone();
@@ -618,7 +633,7 @@ fn diagnostic_header_renderer(entry: DiagnosticEntry<Point>, path: ProjectPath) 
         let style = theme.diagnostic_header.clone();
         let font_size = (style.text_scale_factor * settings.buffer_font_size).round();
         let icon_width = cx.em_width * style.icon_width_factor;
-        let icon = if entry.diagnostic.severity == DiagnosticSeverity::ERROR {
+        let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
             Svg::new("icons/diagnostic-error-10.svg")
                 .with_color(theme.error_diagnostic.message.text.color)
         } else {
@@ -647,7 +662,7 @@ fn diagnostic_header_renderer(entry: DiagnosticEntry<Point>, path: ProjectPath) 
                 .aligned()
                 .boxed(),
             )
-            .with_children(entry.diagnostic.code.clone().map(|code| {
+            .with_children(diagnostic.code.clone().map(|code| {
                 Label::new(code, style.code.text.clone().with_font_size(font_size))
                     .contained()
                     .with_style(style.code.container)
@@ -655,37 +670,33 @@ fn diagnostic_header_renderer(entry: DiagnosticEntry<Point>, path: ProjectPath) 
                     .boxed()
             }))
             .with_child(
-                MouseEventHandler::new::<JumpIcon, _, _>(
-                    entry.diagnostic.group_id,
-                    cx,
-                    |state, _| {
-                        let style = style.jump_icon.style_for(state, false);
-                        Svg::new("icons/jump.svg")
-                            .with_color(style.color)
-                            .constrained()
-                            .with_width(style.icon_width)
-                            .aligned()
-                            .contained()
-                            .with_style(style.container)
-                            .constrained()
-                            .with_width(style.button_width)
-                            .with_height(style.button_width)
-                            .boxed()
-                    },
-                )
+                MouseEventHandler::new::<JumpIcon, _, _>(diagnostic.group_id, cx, |state, _| {
+                    let style = style.jump_icon.style_for(state, false);
+                    Svg::new("icons/jump.svg")
+                        .with_color(style.color)
+                        .constrained()
+                        .with_width(style.icon_width)
+                        .aligned()
+                        .contained()
+                        .with_style(style.container)
+                        .constrained()
+                        .with_width(style.button_width)
+                        .with_height(style.button_width)
+                        .boxed()
+                })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click({
-                    let entry = entry.clone();
                     let path = path.clone();
                     move |_, _, cx| {
                         cx.dispatch_action(Jump {
                             path: path.clone(),
-                            range: entry.range.clone(),
+                            position,
+                            anchor,
                         });
                     }
                 })
                 .with_tooltip(
-                    entry.diagnostic.group_id,
+                    diagnostic.group_id,
                     "Jump to diagnostic".to_string(),
                     Some(Box::new(editor::OpenExcerpts)),
                     tooltip_style,
