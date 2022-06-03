@@ -17,23 +17,23 @@ impl Runtime for Lua {
         return Ok(lua);
     }
 
-    fn constant<T: DeserializeOwned>(&mut self, handle: &Handle) -> Result<T> {
-        let val: Value = self.globals().get(handle.inner())?;
-        Ok(self.from_value(val)?)
-    }
+    // fn constant<T: DeserializeOwned>(&mut self, handle: &Handle) -> Result<T> {
+    //     let val: Value = self.globals().get(handle.inner())?;
+    //     Ok(self.from_value(val)?)
+    // }
 
-    fn call<A: Serialize, R: DeserializeOwned>(&mut self, handle: &Handle, arg: A) -> Result<R> {
-        let fun: Function = self.globals().get(handle.inner())?;
+    fn call<A: Serialize, R: DeserializeOwned>(&mut self, handle: &str, arg: A) -> Result<R> {
+        let fun: Function = self.globals().get(handle.to_string())?;
         let arg: Value = self.to_value(&arg)?;
         let result = fun.call(arg)?;
         Ok(self.from_value(result)?)
     }
 
-    fn register_handle<T: AsRef<str>>(&mut self, name: T) -> bool {
-        self.globals()
-            .contains_key(name.as_ref().to_string())
-            .unwrap_or(false)
-    }
+    // fn register_handle<T: AsRef<str>>(&mut self, name: T) -> bool {
+    //     self.globals()
+    //         .contains_key(name.as_ref().to_string())
+    //         .unwrap_or(false)
+    // }
 }
 
 pub struct LuaPlugin {

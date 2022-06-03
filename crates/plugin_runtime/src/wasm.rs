@@ -62,14 +62,14 @@ impl<S> Runtime for Wasm<S> {
         })
     }
 
-    fn constant<T: DeserializeOwned>(&mut self, handle: &Handle) -> Result<T, Self::Error> {
-        let export = self
-            .instance
-            .get_export(&mut self.store, handle.inner())
-            .ok_or_else(|| anyhow!("Could not get export"))?;
+    // fn constant<T: DeserializeOwned>(&mut self, handle: &Handle) -> Result<T, Self::Error> {
+    //     let export = self
+    //         .instance
+    //         .get_export(&mut self.store, handle.inner())
+    //         .ok_or_else(|| anyhow!("Could not get export"))?;
 
-        todo!()
-    }
+    //     todo!()
+    // }
 
     // So this call function is kinda a dance, I figured it'd be a good idea to document it.
     // the high level is we take a serde type, serialize it to a byte array,
@@ -117,7 +117,7 @@ impl<S> Runtime for Wasm<S> {
     // TODO: dont' use as for conversions
     fn call<A: Serialize, R: DeserializeOwned>(
         &mut self,
-        handle: &Handle,
+        handle: &str,
         arg: A,
     ) -> Result<R, Self::Error> {
         // serialize the argument using bincode
@@ -136,7 +136,7 @@ impl<S> Runtime for Wasm<S> {
 
         // get the webassembly function we want to actually call
         // TODO: precompute handle
-        let fun_name = format!("__{}", handle.inner());
+        let fun_name = format!("__{}", handle);
         let fun = self
             .instance
             .get_typed_func::<(i32, i32), i32, _>(&mut self.store, &fun_name)?;
@@ -170,9 +170,9 @@ impl<S> Runtime for Wasm<S> {
         return Ok(result);
     }
 
-    fn register_handle<T: AsRef<str>>(&mut self, name: T) -> bool {
-        self.instance
-            .get_export(&mut self.store, name.as_ref())
-            .is_some()
-    }
+    // fn register_handle<T: AsRef<str>>(&mut self, name: T) -> bool {
+    //     self.instance
+    //         .get_export(&mut self.store, name.as_ref())
+    //         .is_some()
+    // }
 }

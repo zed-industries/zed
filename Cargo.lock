@@ -3496,6 +3496,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin_runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "map-macro",
+ "mlua",
+ "serde",
+ "wasmtime",
+]
+
+[[package]]
 name = "png"
 version = "0.16.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4106,18 +4118,6 @@ dependencies = [
  "simple_asn1",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "runner"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bincode",
- "map-macro",
- "mlua",
- "serde",
- "wasmtime",
 ]
 
 [[package]]
@@ -6553,6 +6553,8 @@ dependencies = [
  "num_cpus",
  "outline",
  "parking_lot 0.11.2",
+ "plugin",
+ "plugin_runtime",
  "postage",
  "project",
  "project_panel",

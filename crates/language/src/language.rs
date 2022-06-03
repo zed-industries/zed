@@ -87,8 +87,8 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
-    fn server_args(&self) -> &[&str] {
-        &[]
+    fn server_args(&self) -> Vec<String> {
+        Vec::new()
     }
 
     fn initialization_options(&self) -> Option<Value> {
@@ -338,7 +338,7 @@ impl LanguageRegistry {
             let server = lsp::LanguageServer::new(
                 server_id,
                 &server_binary_path,
-                server_args,
+                &server_args,
                 &root_path,
                 cx,
             )?;

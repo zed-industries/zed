@@ -30,9 +30,9 @@ pub fn bind(args: TokenStream, function: TokenStream) -> TokenStream {
             let data = unsafe { buffer.to_vec() };
 
             // operation
-            let argument = ::bincode::deserialize(&data).unwrap();
+            let argument = ::plugin::bincode::deserialize(&data).unwrap();
             let result = #inner_fn_name(argument);
-            let new_data: Result<Vec<u8>, _> = ::bincode::serialize(&result);
+            let new_data: Result<Vec<u8>, _> = ::plugin::bincode::serialize(&result);
             let new_data = new_data.unwrap();
 
             // teardown
