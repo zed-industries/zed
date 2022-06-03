@@ -1,6 +1,11 @@
 use plugin::prelude::*;
 
 #[bind]
-pub fn add(a: (f64, f64)) -> f64 {
-    a.0 + a.1
+pub fn name(_: ()) -> &'static str {
+    "vscode-json-languageserver"
+}
+
+#[bind]
+pub fn server_args(_: ()) -> Vec<String> {
+    vec!["--stdio".into()]
 }
