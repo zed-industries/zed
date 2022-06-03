@@ -10,7 +10,13 @@ use smol::fs;
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
-pub fn new_json() {}
+pub fn new_json() -> LanguagePluginLspAdapter {
+    let plugin = WasmPlugin {
+        source_bytes: include_bytes!("../../../../plugins/bin/json_language.wasm").to_vec(),
+        store_data: (),
+    };
+    LanguagePluginLspAdapter::new(plugin)
+}
 
 pub struct LanguagePluginLspAdapter {
     runtime: Mutex<Wasm<()>>,
@@ -47,14 +53,12 @@ impl LspAdapter for LanguagePluginLspAdapter {
             self.runtime.lock().call("fetch_latest_server_version", ());
 
         async move {
-            if let Ok((language_version, server_version)) = versions {
-                Ok(Box::new(Versions {
+            versions.map(|(language_version, server_version)| {
+                Box::new(Versions {
                     language_version,
                     server_version,
-                }) as Box<_>)
-            } else {
-                panic!()
-            }
+                }) as Box<_>
+            })
         }
         .boxed()
     }
