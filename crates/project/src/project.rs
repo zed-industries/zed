@@ -552,6 +552,50 @@ impl Project {
         project
     }
 
+    pub fn restore_state(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        if self.is_remote() {
+            return Task::ready(Ok(()));
+        }
+
+        let db = self.project_store.read(cx).db.clone();
+        let project_path_keys = self.project_path_keys(cx);
+        let should_be_public = cx.background().spawn(async move {
+            let values = db.read(project_path_keys)?;
+            anyhow::Ok(values.into_iter().all(|e| e.is_some()))
+        });
+        cx.spawn(|this, mut cx| async move {
+            let public = should_be_public.await.log_err().unwrap_or(false);
+            this.update(&mut cx, |this, cx| {
+                if let ProjectClientState::Local { public_tx, .. } = &mut this.client_state {
+                    let mut public_tx = public_tx.borrow_mut();
+                    if *public_tx != public {
+                        *public_tx = public;
+                        drop(public_tx);
+                        this.metadata_changed(false, cx);
+                    }
+                }
+            });
+            Ok(())
+        })
+    }
+
+    fn persist_state(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        if self.is_remote() {
+            return Task::ready(Ok(()));
+        }
+
+        let db = self.project_store.read(cx).db.clone();
+        let project_path_keys = self.project_path_keys(cx);
+        let public = self.is_public();
+        cx.background().spawn(async move {
+            if public {
+                db.write(project_path_keys.into_iter().map(|key| (key, &[])))
+            } else {
+                db.delete(project_path_keys)
+            }
+        })
+    }
+
     pub fn buffer_for_id(&self, remote_id: u64, cx: &AppContext) -> Option<ModelHandle<Buffer>> {
         self.opened_buffers
             .get(&remote_id)
@@ -633,8 +677,12 @@ impl Project {
 
     pub fn set_public(&mut self, is_public: bool, cx: &mut ModelContext<Self>) {
         if let ProjectClientState::Local { public_tx, .. } = &mut self.client_state {
-            *public_tx.borrow_mut() = is_public;
-            self.metadata_changed(cx);
+            let mut public_tx = public_tx.borrow_mut();
+            if *public_tx != is_public {
+                *public_tx = is_public;
+                drop(public_tx);
+                self.metadata_changed(true, cx);
+            }
         }
     }
 
@@ -674,7 +722,7 @@ impl Project {
                             *remote_id_tx.borrow_mut() = None;
                         }
                         this.subscriptions.clear();
-                        this.metadata_changed(cx);
+                        this.metadata_changed(false, cx);
                     });
                     response.map(drop)
                 });
@@ -698,7 +746,7 @@ impl Project {
                     *remote_id_tx.borrow_mut() = Some(remote_id);
                 }
 
-                this.metadata_changed(cx);
+                this.metadata_changed(false, cx);
                 cx.emit(Event::RemoteIdChanged(Some(remote_id)));
                 this.subscriptions
                     .push(this.client.add_model_for_remote_entity(remote_id, cx));
@@ -761,7 +809,7 @@ impl Project {
         }
     }
 
-    fn metadata_changed(&mut self, cx: &mut ModelContext<Self>) {
+    fn metadata_changed(&mut self, persist: bool, cx: &mut ModelContext<Self>) {
         if let ProjectClientState::Local {
             remote_id_rx,
             public_rx,
@@ -786,6 +834,9 @@ impl Project {
             }
 
             self.project_store.update(cx, |_, cx| cx.notify());
+            if persist {
+                self.persist_state(cx).detach_and_log_err(cx);
+            }
             cx.notify();
         }
     }
@@ -821,6 +872,25 @@ impl Project {
     pub fn worktree_root_names<'a>(&'a self, cx: &'a AppContext) -> impl Iterator<Item = &'a str> {
         self.visible_worktrees(cx)
             .map(|tree| tree.read(cx).root_name())
+    }
+
+    fn project_path_keys(&self, cx: &AppContext) -> Vec<String> {
+        self.worktrees
+            .iter()
+            .filter_map(|worktree| {
+                worktree.upgrade(&cx).map(|worktree| {
+                    format!(
+                        "public-project-path:{}",
+                        worktree
+                            .read(cx)
+                            .as_local()
+                            .unwrap()
+                            .abs_path()
+                            .to_string_lossy()
+                    )
+                })
+            })
+            .collect::<Vec<_>>()
     }
 
     pub fn worktree_for_id(
@@ -3769,7 +3839,7 @@ impl Project {
                 false
             }
         });
-        self.metadata_changed(cx);
+        self.metadata_changed(true, cx);
         cx.notify();
     }
 
@@ -3799,7 +3869,7 @@ impl Project {
             self.worktrees
                 .push(WorktreeHandle::Weak(worktree.downgrade()));
         }
-        self.metadata_changed(cx);
+        self.metadata_changed(true, cx);
         cx.emit(Event::WorktreeAdded);
         cx.notify();
     }
@@ -4122,7 +4192,7 @@ impl Project {
                 }
             }
 
-            this.metadata_changed(cx);
+            this.metadata_changed(true, cx);
             for (id, _) in old_worktrees_by_id {
                 cx.emit(Event::WorktreeRemoved(id));
             }
@@ -5273,56 +5343,6 @@ impl ProjectStore {
         if did_change {
             cx.notify();
         }
-    }
-
-    pub fn are_all_project_paths_public(
-        &self,
-        project: &Project,
-        cx: &AppContext,
-    ) -> Task<Result<bool>> {
-        let project_path_keys = self.project_path_keys(project, cx);
-        let db = self.db.clone();
-        cx.background().spawn(async move {
-            let values = db.read(project_path_keys)?;
-            Ok(values.into_iter().all(|e| e.is_some()))
-        })
-    }
-
-    pub fn set_project_paths_public(
-        &self,
-        project: &Project,
-        public: bool,
-        cx: &AppContext,
-    ) -> Task<Result<()>> {
-        let project_path_keys = self.project_path_keys(project, cx);
-        let db = self.db.clone();
-        cx.background().spawn(async move {
-            if public {
-                db.write(project_path_keys.into_iter().map(|key| (key, &[])))
-            } else {
-                db.delete(project_path_keys)
-            }
-        })
-    }
-
-    fn project_path_keys(&self, project: &Project, cx: &AppContext) -> Vec<String> {
-        project
-            .worktrees
-            .iter()
-            .filter_map(|worktree| {
-                worktree.upgrade(&cx).map(|worktree| {
-                    format!(
-                        "public-project-path:{}",
-                        worktree
-                            .read(cx)
-                            .as_local()
-                            .unwrap()
-                            .abs_path()
-                            .to_string_lossy()
-                    )
-                })
-            })
-            .collect::<Vec<_>>()
     }
 }
 

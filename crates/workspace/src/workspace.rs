@@ -1057,12 +1057,6 @@ impl Workspace {
         project.update(cx, |project, cx| {
             let public = !project.is_public();
             project.set_public(public, cx);
-            project.project_store().update(cx, |store, cx| {
-                store
-                    .set_project_paths_public(project, public, cx)
-                    .detach_and_log_err(cx);
-                cx.notify();
-            });
         });
     }
 
@@ -2454,21 +2448,10 @@ pub fn open_paths(
             .await;
 
         if let Some(project) = new_project {
-            let public = project
-                .read_with(&cx, |project, cx| {
-                    app_state
-                        .project_store
-                        .read(cx)
-                        .are_all_project_paths_public(project, cx)
-                })
+            project
+                .update(&mut cx, |project, cx| project.restore_state(cx))
                 .await
-                .log_err()
-                .unwrap_or(false);
-            if public {
-                project.update(&mut cx, |project, cx| {
-                    project.set_public(true, cx);
-                });
-            }
+                .log_err();
         }
 
         (workspace, items)
