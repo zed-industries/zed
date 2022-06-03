@@ -1,4 +1,4 @@
-use crate::{DocumentHighlight, Hover, HoverContents, Location, Project, ProjectTransaction};
+use crate::{DocumentHighlight, Hover, HoverBlock, Location, Project, ProjectTransaction};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use client::{proto, PeerId};
@@ -8,7 +8,7 @@ use language::{
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, Anchor, Bias, Buffer, PointUtf16, ToPointUtf16,
 };
-use lsp::{DocumentHighlightKind, LanguageString, MarkedString, ServerCapabilities};
+use lsp::{DocumentHighlightKind, ServerCapabilities};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 use std::{cmp::Reverse, ops::Range, path::Path};
 
@@ -821,7 +821,7 @@ impl LspCommand for GetHover {
     async fn response_from_lsp(
         self,
         message: Option<lsp::Hover>,
-        project: ModelHandle<Project>,
+        _: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self::Response> {
@@ -836,111 +836,68 @@ impl LspCommand for GetHover {
                 })
             });
 
-            fn text_and_language(marked_string: MarkedString) -> (String, Option<String>) {
-                match marked_string {
-                    MarkedString::LanguageString(LanguageString { language, value }) => {
-                        (value, Some(language))
-                    }
-                    MarkedString::String(text) => (text, None),
+            let contents = cx.read(|_| match hover.contents {
+                lsp::HoverContents::Scalar(marked_string) => {
+                    HoverBlock::try_new(marked_string).map(|contents| vec![contents])
                 }
-            }
-
-            fn highlight(
-                text: String,
-                language: Option<String>,
-                project: &Project,
-            ) -> Option<HoverContents> {
-                let text = text.trim();
-                if text.is_empty() {
-                    return None;
-                }
-
-                if let Some(language) =
-                    language.and_then(|language| project.languages().get_language(&language))
-                {
-                    let runs = language.highlight_text(&text.into(), 0..text.len());
-                    Some(HoverContents {
-                        text: text.to_string(),
-                        runs,
-                    })
-                } else {
-                    Some(HoverContents {
-                        text: text.to_string(),
-                        runs: Vec::new(),
-                    })
-                }
-            }
-
-            let contents = cx.read(|cx| {
-                let project = project.read(cx);
-                match hover.contents {
-                    lsp::HoverContents::Scalar(marked_string) => {
-                        let (text, language) = text_and_language(marked_string);
-                        highlight(text, language, project).map(|content| vec![content])
+                lsp::HoverContents::Array(marked_strings) => {
+                    let content: Vec<HoverBlock> = marked_strings
+                        .into_iter()
+                        .filter_map(|marked_string| HoverBlock::try_new(marked_string))
+                        .collect();
+                    if content.is_empty() {
+                        None
+                    } else {
+                        Some(content)
                     }
-                    lsp::HoverContents::Array(marked_strings) => {
-                        let content: Vec<HoverContents> = marked_strings
-                            .into_iter()
-                            .filter_map(|marked_string| {
-                                let (text, language) = text_and_language(marked_string);
-                                highlight(text, language, project)
-                            })
-                            .collect();
-                        if content.is_empty() {
-                            None
-                        } else {
-                            Some(content)
-                        }
-                    }
-                    lsp::HoverContents::Markup(markup_content) => {
-                        let mut contents = Vec::new();
-                        let mut language = None;
-                        let mut current_text = String::new();
-                        for event in Parser::new_ext(&markup_content.value, Options::all()) {
-                            match event {
-                                Event::Text(text) | Event::Code(text) => {
-                                    current_text.push_str(&text.to_string());
-                                }
-                                Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(
-                                    new_language,
-                                ))) => {
-                                    if let Some(content) =
-                                        highlight(current_text.clone(), language, project)
-                                    {
-                                        contents.push(content);
-                                        current_text.clear();
-                                    }
-
-                                    language = if new_language.is_empty() {
-                                        None
-                                    } else {
-                                        Some(new_language.to_string())
-                                    };
-                                }
-                                Event::End(Tag::CodeBlock(_)) => {
-                                    if let Some(content) =
-                                        highlight(current_text.clone(), language.clone(), project)
-                                    {
-                                        contents.push(content);
-                                        current_text.clear();
-                                        language = None;
-                                    }
-                                }
-                                _ => {}
+                }
+                lsp::HoverContents::Markup(markup_content) => {
+                    let mut contents = Vec::new();
+                    let mut language = None;
+                    let mut current_text = String::new();
+                    for event in Parser::new_ext(&markup_content.value, Options::all()) {
+                        match event {
+                            Event::Text(text) | Event::Code(text) => {
+                                current_text.push_str(&text.to_string());
                             }
-                        }
+                            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(new_language))) => {
+                                if !current_text.is_empty() {
+                                    let text = std::mem::replace(&mut current_text, String::new());
+                                    contents.push(HoverBlock { text, language });
+                                }
 
-                        if let Some(content) =
-                            highlight(current_text.clone(), language.clone(), project)
-                        {
-                            contents.push(content);
+                                language = if new_language.is_empty() {
+                                    None
+                                } else {
+                                    Some(new_language.to_string())
+                                };
+                            }
+                            Event::End(Tag::CodeBlock(_))
+                            | Event::End(Tag::Paragraph)
+                            | Event::End(Tag::Heading(_, _, _))
+                            | Event::End(Tag::BlockQuote) => {
+                                if !current_text.is_empty() {
+                                    let text = std::mem::replace(&mut current_text, String::new());
+                                    contents.push(HoverBlock { text, language });
+                                    current_text.clear();
+                                }
+                                language = None;
+                            }
+                            _ => {}
                         }
+                    }
 
-                        if contents.is_empty() {
-                            None
-                        } else {
-                            Some(contents)
-                        }
+                    if !current_text.is_empty() {
+                        contents.push(HoverBlock {
+                            text: current_text,
+                            language,
+                        });
+                    }
+
+                    if contents.is_empty() {
+                        None
+                    } else {
+                        Some(contents)
                     }
                 }
             });
@@ -982,22 +939,72 @@ impl LspCommand for GetHover {
 
     fn response_to_proto(
         response: Self::Response,
-        project: &mut Project,
-        peer_id: PeerId,
-        buffer_version: &clock::Global,
-        cx: &AppContext,
+        _: &mut Project,
+        _: PeerId,
+        _: &clock::Global,
+        _: &AppContext,
     ) -> proto::GetHoverResponse {
-        todo!()
+        if let Some(response) = response {
+            let (start, end) = if let Some(range) = response.range {
+                (
+                    Some(language::proto::serialize_anchor(&range.start)),
+                    Some(language::proto::serialize_anchor(&range.end)),
+                )
+            } else {
+                (None, None)
+            };
+
+            let contents = response
+                .contents
+                .into_iter()
+                .map(|block| proto::HoverBlock {
+                    text: block.text,
+                    language: block.language,
+                })
+                .collect();
+
+            proto::GetHoverResponse {
+                start,
+                end,
+                contents,
+            }
+        } else {
+            proto::GetHoverResponse {
+                start: None,
+                end: None,
+                contents: Vec::new(),
+            }
+        }
     }
 
     async fn response_from_proto(
         self,
-        message: <Self::ProtoRequest as proto::RequestMessage>::Response,
-        project: ModelHandle<Project>,
-        buffer: ModelHandle<Buffer>,
-        cx: AsyncAppContext,
+        message: proto::GetHoverResponse,
+        _: ModelHandle<Project>,
+        _: ModelHandle<Buffer>,
+        _: AsyncAppContext,
     ) -> Result<Self::Response> {
-        todo!()
+        let range = if let (Some(start), Some(end)) = (message.start, message.end) {
+            language::proto::deserialize_anchor(start)
+                .and_then(|start| language::proto::deserialize_anchor(end).map(|end| start..end))
+        } else {
+            None
+        };
+
+        let contents: Vec<_> = message
+            .contents
+            .into_iter()
+            .map(|block| HoverBlock {
+                text: block.text,
+                language: block.language,
+            })
+            .collect();
+
+        Ok(if contents.is_empty() {
+            None
+        } else {
+            Some(Hover { contents, range })
+        })
     }
 
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> u64 {

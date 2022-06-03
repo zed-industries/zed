@@ -495,7 +495,7 @@ impl EditorElement {
             let mut list_origin = content_origin + vec2f(x, y);
             let list_height = context_menu.size().y();
 
-            if list_origin.y() + list_height > bounds.lower_left().y() {
+            if list_origin.y() + list_height > bounds.max_y() {
                 list_origin.set_y(list_origin.y() - layout.line_height - list_height);
             }
 
@@ -516,14 +516,18 @@ impl EditorElement {
                 {
                     cx.scene.push_stacking_context(None);
 
+                    let size = hover_popover.size();
                     let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
-                    let y = (position.row() + 1) as f32 * layout.line_height - scroll_top;
+                    let y = position.row() as f32 * layout.line_height - scroll_top - size.y();
                     let mut popover_origin = content_origin + vec2f(x, y);
-                    let popover_height = hover_popover.size().y();
 
-                    if popover_origin.y() + popover_height > bounds.lower_left().y() {
-                        popover_origin
-                            .set_y(popover_origin.y() - layout.line_height - popover_height);
+                    if popover_origin.y() < 0.0 {
+                        popover_origin.set_y(popover_origin.y() + layout.line_height + size.y());
+                    }
+
+                    let x_out_of_bounds = bounds.max_x() - (popover_origin.x() + size.x());
+                    if x_out_of_bounds < 0.0 {
+                        popover_origin.set_x(popover_origin.x() + x_out_of_bounds);
                     }
 
                     hover_popover.paint(
@@ -1129,7 +1133,10 @@ impl Element for EditorElement {
                     .map(|indicator| (newest_selection_head.row(), indicator));
             }
 
-            hover = view.render_hover_popover(style);
+            if let Some(project) = view.project.clone() {
+                let project = project.read(cx);
+                hover = view.render_hover_popover(style, project);
+            }
         });
 
         if let Some((_, context_menu)) = context_menu.as_mut() {

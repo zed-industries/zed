@@ -444,7 +444,7 @@ pub struct Editor {
     pub autocomplete: AutocompleteStyle,
     pub code_actions_indicator: Color,
     pub unnecessary_code_fade: f32,
-    pub hover_popover: ContainerStyle,
+    pub hover_popover: HoverPopover,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -622,4 +622,11 @@ impl<'de> Deserialize<'de> for SyntaxTheme {
 
         Ok(result)
     }
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct HoverPopover {
+    pub container: ContainerStyle,
+    pub block_style: ContainerStyle,
+    pub prose: TextStyle,
 }

@@ -436,8 +436,14 @@ message GetHover {
 }
 
 message GetHoverResponse {
-    repeated CodeAction actions = 1;
-    repeated VectorClockEntry version = 2;
+    optional Anchor start = 1;
+    optional Anchor end = 2;
+    repeated HoverBlock contents = 3;
+}
+
+message HoverBlock {
+    string text = 1;
+    optional string language = 2;
 }
 
 message ApplyCodeAction {

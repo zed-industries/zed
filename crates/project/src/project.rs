@@ -19,11 +19,14 @@ use language::{
     point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CodeAction, CodeLabel, Completion,
-    Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _, HighlightId,
-    Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapter, OffsetRangeExt,
-    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
+    Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _, Language,
+    LanguageRegistry, LanguageServerName, LocalFile, LspAdapter, OffsetRangeExt, Operation, Patch,
+    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
 };
-use lsp::{DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer};
+use lsp::{
+    DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
+    MarkedString,
+};
 use lsp_command::*;
 use parking_lot::Mutex;
 use postage::stream::Stream;
@@ -217,14 +220,34 @@ pub struct Symbol {
 }
 
 #[derive(Debug)]
-pub struct HoverContents {
+pub struct HoverBlock {
     pub text: String,
-    pub runs: Vec<(Range<usize>, HighlightId)>,
+    pub language: Option<String>,
+}
+
+impl HoverBlock {
+    fn try_new(marked_string: MarkedString) -> Option<Self> {
+        let result = match marked_string {
+            MarkedString::LanguageString(LanguageString { language, value }) => HoverBlock {
+                text: value,
+                language: Some(language),
+            },
+            MarkedString::String(text) => HoverBlock {
+                text,
+                language: None,
+            },
+        };
+        if result.text.is_empty() {
+            None
+        } else {
+            Some(result)
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct Hover {
-    pub contents: Vec<HoverContents>,
+    pub contents: Vec<HoverBlock>,
     pub range: Option<Range<language::Anchor>>,
 }
 

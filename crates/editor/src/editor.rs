@@ -39,7 +39,7 @@ pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use ordered_float::OrderedFloat;
-use project::{HoverContents, Project, ProjectTransaction};
+use project::{HoverBlock, Project, ProjectTransaction};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -427,7 +427,7 @@ pub struct Editor {
     keymap_context_layers: BTreeMap<TypeId, gpui::keymap::Context>,
     input_enabled: bool,
     leader_replica_id: Option<u16>,
-    hover_popover: HoverState,
+    hover_state: HoverState,
 }
 
 /// Keeps track of the state of the [`HoverPopover`].
@@ -456,6 +456,10 @@ impl HoverState {
         }
 
         return (recent_hover, in_grace);
+    }
+
+    pub fn close(&mut self) {
+        self.popover.take();
     }
 }
 
@@ -885,31 +889,46 @@ impl CodeActionsMenu {
 }
 
 struct HoverPopover {
-    pub point: DisplayPoint,
-    pub contents: Vec<HoverContents>,
+    pub range: Range<DisplayPoint>,
+    pub contents: Vec<HoverBlock>,
 }
 
 impl HoverPopover {
-    fn render(&self, style: EditorStyle) -> (DisplayPoint, ElementBox) {
+    fn render(&self, style: EditorStyle, project: &Project) -> (DisplayPoint, ElementBox) {
         let mut flex = Flex::new(Axis::Vertical);
         flex.extend(self.contents.iter().map(|content| {
-            Text::new(content.text.clone(), style.text.clone())
-                .with_soft_wrap(true)
-                .with_highlights(
-                    content
-                        .runs
-                        .iter()
-                        .filter_map(|(range, id)| {
-                            id.style(style.theme.syntax.as_ref())
-                                .map(|style| (range.clone(), style))
-                        })
-                        .collect(),
-                )
-                .boxed()
+            if let Some(language) = content
+                .language
+                .clone()
+                .and_then(|language| project.languages().get_language(&language))
+            {
+                let runs =
+                    language.highlight_text(&content.text.as_str().into(), 0..content.text.len());
+
+                Text::new(content.text.clone(), style.text.clone())
+                    .with_soft_wrap(true)
+                    .with_highlights(
+                        runs.iter()
+                            .filter_map(|(range, id)| {
+                                id.style(style.theme.syntax.as_ref())
+                                    .map(|style| (range.clone(), style))
+                            })
+                            .collect(),
+                    )
+                    .boxed()
+            } else {
+                Text::new(content.text.clone(), style.hover_popover.prose.clone())
+                    .with_soft_wrap(true)
+                    .contained()
+                    .with_style(style.hover_popover.block_style)
+                    .boxed()
+            }
         }));
         (
-            self.point,
-            flex.contained().with_style(style.hover_popover).boxed(),
+            self.range.start,
+            flex.contained()
+                .with_style(style.hover_popover.container)
+                .boxed(),
         )
     }
 }
@@ -1080,7 +1099,7 @@ impl Editor {
             keymap_context_layers: Default::default(),
             input_enabled: true,
             leader_replica_id: None,
-            hover_popover: HoverState {
+            hover_state: HoverState {
                 popover: None,
                 last_hover: std::time::Instant::now(),
                 start_grace: std::time::Instant::now(),
@@ -1469,6 +1488,8 @@ impl Editor {
                     self.hide_context_menu(cx);
                 }
             }
+
+            self.hover_state.close();
 
             if old_cursor_position.to_display_point(&display_map).row()
                 != new_cursor_position.to_display_point(&display_map).row()
@@ -2477,11 +2498,11 @@ impl Editor {
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
                         // consistently keep track of state to make handoff smooth
-                        let (_recent_hover, _in_grace) = this.hover_popover.determine_state(false);
+                        let (_recent_hover, _in_grace) = this.hover_state.determine_state(false);
 
                         // only notify the context once
-                        if this.hover_popover.popover.is_some() {
-                            this.hover_popover.popover = None;
+                        if this.hover_state.popover.is_some() {
+                            this.hover_state.popover = None;
                             cx.notify();
                         }
                     });
@@ -2497,16 +2518,10 @@ impl Editor {
     /// Queries the LSP and shows type info and documentation
     /// about the symbol the mouse is currently hovering over.
     /// Triggered by the `Hover` action when the cursor may be over a symbol.
-    fn show_hover(&mut self, mut point: DisplayPoint, cx: &mut ViewContext<Self>) {
+    fn show_hover(&mut self, point: DisplayPoint, cx: &mut ViewContext<Self>) {
         if self.pending_rename.is_some() {
             return;
         }
-
-        let project = if let Some(project) = self.project.clone() {
-            project
-        } else {
-            return;
-        };
 
         let snapshot = self.snapshot(cx);
         let (buffer, buffer_position) = if let Some(output) = self
@@ -2520,6 +2535,19 @@ impl Editor {
         };
 
         let buffer_snapshot = buffer.read(cx).snapshot();
+
+        if let Some(existing_popover) = &self.hover_state.popover {
+            if existing_popover.range.contains(&point) {
+                // Hover already contains value. No need to request a new one
+                return;
+            }
+        }
+
+        let project = if let Some(project) = self.project.clone() {
+            project
+        } else {
+            return;
+        };
 
         // query the LSP for hover info
         let hover = project.update(cx, |project, cx| {
@@ -2535,6 +2563,8 @@ impl Editor {
                     Err(_) => None,
                 };
 
+                let mut symbol_range = point..point;
+
                 // determine the contents of the popover
                 if let Some(hover) = hover {
                     if hover.contents.is_empty() {
@@ -2547,9 +2577,12 @@ impl Editor {
                             if offset_range
                                 .contains(&point.to_offset(&snapshot.display_snapshot, Bias::Left))
                             {
-                                point = offset_range
+                                symbol_range = offset_range
                                     .start
-                                    .to_display_point(&snapshot.display_snapshot);
+                                    .to_display_point(&snapshot.display_snapshot)
+                                    ..offset_range
+                                        .end
+                                        .to_display_point(&snapshot.display_snapshot);
                             } else {
                                 contents = None;
                             }
@@ -2557,7 +2590,10 @@ impl Editor {
                     }
                 };
 
-                let hover_popover = contents.map(|contents| HoverPopover { point, contents });
+                let hover_popover = contents.map(|contents| HoverPopover {
+                    range: symbol_range,
+                    contents,
+                });
 
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
@@ -2569,16 +2605,15 @@ impl Editor {
                         //    the popover should switch right away, and you should
                         //    not have to wait for it to come up again
                         let (recent_hover, in_grace) =
-                            this.hover_popover.determine_state(hover_popover.is_some());
+                            this.hover_state.determine_state(hover_popover.is_some());
                         let smooth_handoff =
-                            this.hover_popover.popover.is_some() && hover_popover.is_some();
-                        let visible =
-                            this.hover_popover.popover.is_some() || hover_popover.is_some();
+                            this.hover_state.popover.is_some() && hover_popover.is_some();
+                        let visible = this.hover_state.popover.is_some() || hover_popover.is_some();
 
                         // `smooth_handoff` and `in_grace` determine whether to switch right away.
                         // `recent_hover` will activate the handoff after the initial delay.
                         if (smooth_handoff || !recent_hover || in_grace) && visible {
-                            this.hover_popover.popover = hover_popover;
+                            this.hover_state.popover = hover_popover;
                             cx.notify();
                         }
                     });
@@ -2837,11 +2872,15 @@ impl Editor {
             .map(|menu| menu.render(cursor_position, style))
     }
 
-    pub fn render_hover_popover(&self, style: EditorStyle) -> Option<(DisplayPoint, ElementBox)> {
-        self.hover_popover
+    pub fn render_hover_popover(
+        &self,
+        style: EditorStyle,
+        project: &Project,
+    ) -> Option<(DisplayPoint, ElementBox)> {
+        self.hover_state
             .popover
             .as_ref()
-            .map(|hover| hover.render(style))
+            .map(|hover| hover.render(style, project))
     }
 
     fn show_context_menu(&mut self, menu: ContextMenu, cx: &mut ViewContext<Self>) {
