@@ -101,10 +101,10 @@ struct Error {
 }
 
 impl LanguageServer {
-    pub fn new(
+    pub fn new<T: AsRef<std::ffi::OsStr>>(
         server_id: usize,
         binary_path: &Path,
-        args: &[&str],
+        args: &[T],
         root_path: &Path,
         cx: AsyncAppContext,
     ) -> Result<Self> {

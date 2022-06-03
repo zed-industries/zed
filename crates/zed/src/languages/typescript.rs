@@ -28,8 +28,11 @@ impl LspAdapter for TypeScriptLspAdapter {
         LanguageServerName("typescript-language-server".into())
     }
 
-    fn server_args(&self) -> &[&str] {
-        &["--stdio", "--tsserver-path", "node_modules/typescript/lib"]
+    fn server_args(&self) -> Vec<String> {
+        ["--stdio", "--tsserver-path", "node_modules/typescript/lib"]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
     }
 
     fn fetch_latest_server_version(

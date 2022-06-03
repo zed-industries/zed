@@ -6,10 +6,11 @@ use std::{borrow::Cow, str, sync::Arc};
 mod c;
 mod go;
 mod installation;
-mod json;
 mod python;
+mod language_plugin;
 mod rust;
 mod typescript;
+// mod json;
 
 #[derive(RustEmbed)]
 #[folder = "src/languages"]
@@ -37,7 +38,7 @@ pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegi
         (
             "json",
             tree_sitter_json::language(),
-            Some(Arc::new(json::JsonLspAdapter)),
+            Some(Arc::new(language_plugin::new_json())),
         ),
         (
             "markdown",

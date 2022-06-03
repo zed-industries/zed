@@ -1,3 +1,6 @@
+pub use bincode;
+pub use serde;
+
 #[repr(C)]
 pub struct __Buffer {
     pub ptr: *const u8,

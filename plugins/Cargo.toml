@@ -1,0 +1,2 @@
+[workspace]
+members = ["./json_language"]

@@ -1,6 +1,6 @@
 use mlua::Lua;
 
-use runner::*;
+use plugin_runtime::*;
 
 pub fn main() -> anyhow::Result<()> {
     let plugin = WasmPlugin {
@@ -12,7 +12,10 @@ pub fn main() -> anyhow::Result<()> {
     };
 
     let mut sum = Wasm::init(plugin)?;
-    let strings = "I hope you have a nice day".split(" ").iter().collect();
+    let strings = "I hope you have a nice day"
+        .split(" ")
+        .map(|x| x.to_string())
+        .collect();
     let result = sum.sum_lengths(strings);
 
     dbg!(result);
@@ -45,8 +48,7 @@ trait SumLengths {
 
 impl<T: Runtime> SumLengths for T {
     fn sum_lengths(&mut self, strings: Vec<String>) -> usize {
-        let handle = self.handle_for("sum_lengths").unwrap();
-        let result = self.call(&handle, strings).ok().unwrap();
+        let result = self.call("sum_lengths", strings).ok().unwrap();
         return result;
     }
 }

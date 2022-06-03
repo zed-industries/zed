@@ -1,0 +1,45 @@
+#!/bin/bash
+
+set -e
+
+echo "Clearing cached plugins..."
+cargo clean --manifest-path plugins/Cargo.toml
+
+echo "Building Wasm plugins..."
+cargo build --release --target wasm32-unknown-unknown --manifest-path plugins/Cargo.toml
+
+echo
+echo "Extracting binaries..."
+rm -rf plugins/bin
+mkdir plugins/bin
+
+for f in plugins/target/wasm32-unknown-unknown/release/*.wasm
+do
+    name=$(basename $f)
+    cp $f plugins/bin/$name
+    echo "- Extracted plugin $name"
+done
+
+echo
+echo "Creating .wat versions (for human inspection)..."
+
+for f in plugins/bin/*.wasm
+do
+    name=$(basename $f)
+    base=$(echo $name | sed "s/\..*//")
+    wasm2wat $f --output plugins/bin/$base.wat
+    echo "- Converted $base.wasm -> $base.wat"
+done
+
+echo
+echo "Optimizing plugins using wasm-opt..."
+
+for f in plugins/bin/*.wasm
+do
+    name=$(basename $f)
+    wasm-opt -Oz $f --output $f
+    echo "- Optimized $name"
+done
+
+echo
+echo "Done!"

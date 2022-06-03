@@ -24,8 +24,8 @@ impl LspAdapter for JsonLspAdapter {
         LanguageServerName("vscode-json-languageserver".into())
     }
 
-    fn server_args(&self) -> &[&str] {
-        &["--stdio"]
+    fn server_args(&self) -> Vec<String> {
+        vec!["--stdio".into()]
     }
 
     fn fetch_latest_server_version(
