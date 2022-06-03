@@ -476,15 +476,15 @@ impl Server {
         request: TypedEnvelope<proto::RegisterProject>,
         response: Response<proto::RegisterProject>,
     ) -> Result<()> {
-        let user_id;
         let project_id;
         {
             let mut state = self.store_mut().await;
-            user_id = state.user_id_for_connection(request.sender_id)?;
+            let user_id = state.user_id_for_connection(request.sender_id)?;
             project_id = state.register_project(request.sender_id, user_id);
         };
+
         response.send(proto::RegisterProjectResponse { project_id })?;
-        self.update_user_contacts(user_id).await?;
+
         Ok(())
     }
 
@@ -528,8 +528,13 @@ impl Server {
             }
         }
 
+        // Send out the `UpdateContacts` message before responding to the unregister
+        // request. This way, when the project's host can keep track of the project's
+        // remote id until after they've received the `UpdateContacts` message for
+        // themself.
         self.update_user_contacts(user_id).await?;
         response.send(proto::Ack {})?;
+
         Ok(())
     }
 
