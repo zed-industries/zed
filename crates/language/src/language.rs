@@ -77,7 +77,8 @@ pub trait LspAdapter: 'static + Send + Sync {
         container_dir: PathBuf,
     ) -> BoxFuture<'static, Result<PathBuf>>;
     fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>>;
-    fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams);
+
+    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
     fn label_for_completion(&self, _: &lsp::CompletionItem, _: &Language) -> Option<CodeLabel> {
         None

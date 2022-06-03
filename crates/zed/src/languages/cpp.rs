@@ -30,6 +30,4 @@ impl super::LspAdapter for CppLspAdapter {
     fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
         super::c::CLspAdapter.cached_server_binary(container_dir)
     }
-
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 }

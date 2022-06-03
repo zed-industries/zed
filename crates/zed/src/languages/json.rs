@@ -120,8 +120,6 @@ impl LspAdapter for JsonLspAdapter {
         .boxed()
     }
 
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
-
     fn initialization_options(&self) -> Option<serde_json::Value> {
         Some(json!({
             "provideFormatter": true

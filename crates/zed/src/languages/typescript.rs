@@ -113,8 +113,6 @@ impl LspAdapter for TypeScriptLspAdapter {
         .boxed()
     }
 
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
-
     fn label_for_completion(
         &self,
         item: &lsp::CompletionItem,

@@ -105,6 +105,4 @@ impl super::LspAdapter for CLspAdapter {
         .log_err()
         .boxed()
     }
-
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 }
