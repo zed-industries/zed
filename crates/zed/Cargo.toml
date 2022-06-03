@@ -88,6 +88,7 @@ tiny_http = "0.8"
 toml = "0.5"
 tree-sitter = "0.20.6"
 tree-sitter-c = "0.20.1"
+tree-sitter-cpp = "0.20.0"
 tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "137e1ce6a02698fc246cdb9c6b886ed1de9a1ed8" }
 tree-sitter-rust = "0.20.1"
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
