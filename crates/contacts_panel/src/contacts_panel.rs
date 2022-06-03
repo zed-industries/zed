@@ -1175,7 +1175,7 @@ mod tests {
         let http_client = FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let project_store = cx.add_model(|_| ProjectStore::default());
+        let project_store = cx.add_model(|_| ProjectStore::new(project::Db::open_fake()));
         let server = FakeServer::for_client(current_user_id, &client, &cx).await;
         let fs = FakeFs::new(cx.background());
         fs.insert_tree("/private_dir", json!({ "one.rs": "" }))

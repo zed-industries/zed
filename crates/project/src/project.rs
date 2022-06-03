@@ -1,3 +1,4 @@
+mod db;
 pub mod fs;
 mod ignore;
 mod lsp_command;
@@ -53,6 +54,7 @@ use std::{
 use thiserror::Error;
 use util::{post_inc, ResultExt, TryFutureExt as _};
 
+pub use db::Db;
 pub use fs::*;
 pub use worktree::*;
 
@@ -60,8 +62,8 @@ pub trait Item: Entity {
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
 }
 
-#[derive(Default)]
 pub struct ProjectStore {
+    db: Arc<Db>,
     projects: Vec<WeakModelHandle<Project>>,
 }
 
@@ -533,7 +535,7 @@ impl Project {
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = client::Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let project_store = cx.add_model(|_| ProjectStore::default());
+        let project_store = cx.add_model(|_| ProjectStore::new(Db::open_fake()));
         let project = cx.update(|cx| {
             Project::local(true, client, user_store, project_store, languages, fs, cx)
         });
@@ -566,6 +568,10 @@ impl Project {
 
     pub fn user_store(&self) -> ModelHandle<UserStore> {
         self.user_store.clone()
+    }
+
+    pub fn project_store(&self) -> ModelHandle<ProjectStore> {
+        self.project_store.clone()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -743,9 +749,6 @@ impl Project {
     }
 
     fn metadata_changed(&mut self, cx: &mut ModelContext<Self>) {
-        cx.notify();
-        self.project_store.update(cx, |_, cx| cx.notify());
-
         if let ProjectClientState::Local {
             remote_id_rx,
             public_rx,
@@ -768,6 +771,9 @@ impl Project {
                     })
                     .log_err();
             }
+
+            self.project_store.update(cx, |_, cx| cx.notify());
+            cx.notify();
         }
     }
 
@@ -5215,6 +5221,13 @@ impl Project {
 }
 
 impl ProjectStore {
+    pub fn new(db: Arc<Db>) -> Self {
+        Self {
+            db,
+            projects: Default::default(),
+        }
+    }
+
     pub fn projects<'a>(
         &'a self,
         cx: &'a AppContext,
@@ -5247,6 +5260,56 @@ impl ProjectStore {
         if did_change {
             cx.notify();
         }
+    }
+
+    pub fn are_all_project_paths_public(
+        &self,
+        project: &Project,
+        cx: &AppContext,
+    ) -> Task<Result<bool>> {
+        let project_path_keys = self.project_path_keys(project, cx);
+        let db = self.db.clone();
+        cx.background().spawn(async move {
+            let values = db.read(project_path_keys)?;
+            Ok(values.into_iter().all(|e| e.is_some()))
+        })
+    }
+
+    pub fn set_project_paths_public(
+        &self,
+        project: &Project,
+        public: bool,
+        cx: &AppContext,
+    ) -> Task<Result<()>> {
+        let project_path_keys = self.project_path_keys(project, cx);
+        let db = self.db.clone();
+        cx.background().spawn(async move {
+            if public {
+                db.write(project_path_keys.into_iter().map(|key| (key, &[])))
+            } else {
+                db.delete(project_path_keys)
+            }
+        })
+    }
+
+    fn project_path_keys(&self, project: &Project, cx: &AppContext) -> Vec<String> {
+        project
+            .worktrees
+            .iter()
+            .filter_map(|worktree| {
+                worktree.upgrade(&cx).map(|worktree| {
+                    format!(
+                        "public-project-path:{}",
+                        worktree
+                            .read(cx)
+                            .as_local()
+                            .unwrap()
+                            .abs_path()
+                            .to_string_lossy()
+                    )
+                })
+            })
+            .collect::<Vec<_>>()
     }
 }
 

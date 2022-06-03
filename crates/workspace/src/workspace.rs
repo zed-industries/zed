@@ -692,7 +692,7 @@ impl AppState {
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone());
-        let project_store = cx.add_model(|_| ProjectStore::default());
+        let project_store = cx.add_model(|_| ProjectStore::new(project::Db::open_fake()));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let themes = ThemeRegistry::new((), cx.font_cache().clone());
         Arc::new(Self {
@@ -1055,8 +1055,15 @@ impl Workspace {
             .clone()
             .unwrap_or_else(|| self.project.clone());
         project.update(cx, |project, cx| {
-            let is_public = project.is_public();
-            project.set_public(!is_public, cx);
+            let public = !project.is_public();
+            eprintln!("toggle_project_public => {}", public);
+            project.set_public(public, cx);
+            project.project_store().update(cx, |store, cx| {
+                store
+                    .set_project_paths_public(project, public, cx)
+                    .detach_and_log_err(cx);
+                cx.notify();
+            });
         });
     }
 
@@ -2407,6 +2414,7 @@ pub fn open_paths(
     let app_state = app_state.clone();
     let abs_paths = abs_paths.to_vec();
     cx.spawn(|mut cx| async move {
+        let mut new_project = None;
         let workspace = if let Some(existing) = existing {
             existing
         } else {
@@ -2416,18 +2424,17 @@ pub fn open_paths(
                     .contains(&false);
 
             cx.add_window((app_state.build_window_options)(), |cx| {
-                let mut workspace = Workspace::new(
-                    Project::local(
-                        false,
-                        app_state.client.clone(),
-                        app_state.user_store.clone(),
-                        app_state.project_store.clone(),
-                        app_state.languages.clone(),
-                        app_state.fs.clone(),
-                        cx,
-                    ),
+                let project = Project::local(
+                    false,
+                    app_state.client.clone(),
+                    app_state.user_store.clone(),
+                    app_state.project_store.clone(),
+                    app_state.languages.clone(),
+                    app_state.fs.clone(),
                     cx,
                 );
+                new_project = Some(project.clone());
+                let mut workspace = Workspace::new(project, cx);
                 (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
                 if contains_directory {
                     workspace.toggle_sidebar_item(
@@ -2446,6 +2453,26 @@ pub fn open_paths(
         let items = workspace
             .update(&mut cx, |workspace, cx| workspace.open_paths(abs_paths, cx))
             .await;
+
+        if let Some(project) = new_project {
+            let public = project
+                .read_with(&cx, |project, cx| {
+                    app_state
+                        .project_store
+                        .read(cx)
+                        .are_all_project_paths_public(project, cx)
+                })
+                .await
+                .log_err()
+                .unwrap_or(false);
+            if public {
+                project.update(&mut cx, |project, cx| {
+                    eprintln!("initialize new project public");
+                    project.set_public(true, cx);
+                });
+            }
+        }
+
         (workspace, items)
     })
 }

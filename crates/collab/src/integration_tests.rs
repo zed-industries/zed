@@ -4604,7 +4604,7 @@ impl TestServer {
             });
 
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
-        let project_store = cx.add_model(|_| ProjectStore::default());
+        let project_store = cx.add_model(|_| ProjectStore::new(project::Db::open_fake()));
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
