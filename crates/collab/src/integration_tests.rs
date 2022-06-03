@@ -70,8 +70,8 @@ async fn test_share_project(
     cx_a.foreground().forbid_parking();
     let (window_b, _) = cx_b.add_window(|_| EmptyView);
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -193,10 +193,7 @@ async fn test_share_project(
     });
 
     // Dropping client B's first project removes only that from client A's collaborators.
-    cx_b.update(move |_| {
-        drop(client_b.project.take());
-        drop(project_b);
-    });
+    cx_b.update(move |_| drop(project_b));
     deterministic.run_until_parked();
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 1);
@@ -214,8 +211,8 @@ async fn test_unshare_project(
 ) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -241,10 +238,7 @@ async fn test_unshare_project(
         .unwrap();
 
     // When client B leaves the project, it gets automatically unshared.
-    cx_b.update(|_| {
-        drop(client_b.project.take());
-        drop(project_b);
-    });
+    cx_b.update(|_| drop(project_b));
     deterministic.run_until_parked();
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
 
@@ -257,10 +251,7 @@ async fn test_unshare_project(
         .unwrap();
 
     // When client A (the host) leaves, the project gets unshared and guests are notified.
-    cx_a.update(|_| {
-        drop(project_a);
-        client_a.project.take();
-    });
+    cx_a.update(|_| drop(project_a));
     deterministic.run_until_parked();
     project_b2.read_with(cx_b, |project, _| {
         assert!(project.is_read_only());
@@ -277,8 +268,8 @@ async fn test_host_disconnect(
 ) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
     server
         .make_contacts(vec![
@@ -360,7 +351,7 @@ async fn test_decline_join_request(
 ) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
@@ -408,10 +399,7 @@ async fn test_decline_join_request(
 
     // Close the project on the host
     deterministic.run_until_parked();
-    cx_a.update(|_| {
-        drop(project_a);
-        client_a.project.take();
-    });
+    cx_a.update(|_| drop(project_a));
     deterministic.run_until_parked();
     assert!(matches!(
         project_b.await.unwrap_err(),
@@ -427,7 +415,7 @@ async fn test_cancel_join_request(
 ) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
@@ -499,7 +487,7 @@ async fn test_private_projects(
 ) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
@@ -522,7 +510,6 @@ async fn test_private_projects(
             cx,
         )
     });
-    client_a.project = Some(project_a.clone());
 
     // Private projects are not registered with the server.
     deterministic.run_until_parked();
@@ -564,9 +551,9 @@ async fn test_propagate_saves_and_fs_changes(
 ) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
-    let mut client_c = server.create_client(cx_c, "user_c").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
     server
         .make_contacts(vec![
             (&client_a, cx_a),
@@ -712,8 +699,8 @@ async fn test_fs_operations(
 
     // Connect to a server as 2 clients.
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -973,8 +960,8 @@ async fn test_fs_operations(
 async fn test_buffer_conflict_after_save(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -1022,8 +1009,8 @@ async fn test_buffer_conflict_after_save(cx_a: &mut TestAppContext, cx_b: &mut T
 async fn test_buffer_reloading(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -1070,8 +1057,8 @@ async fn test_editing_while_guest_opens_buffer(
 ) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -1117,8 +1104,8 @@ async fn test_leaving_worktree_while_opening_buffer(
 ) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -1144,10 +1131,7 @@ async fn test_leaving_worktree_while_opening_buffer(
     let buffer_b = cx_b
         .background()
         .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx)));
-    cx_b.update(|_| {
-        drop(client_b.project.take());
-        drop(project_b);
-    });
+    cx_b.update(|_| drop(project_b));
     drop(buffer_b);
 
     // See that the guest has left.
@@ -1160,8 +1144,8 @@ async fn test_leaving_worktree_while_opening_buffer(
 async fn test_leaving_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -1216,9 +1200,9 @@ async fn test_collaborating_with_diagnostics(
 ) {
     deterministic.forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
-    let mut client_c = server.create_client(cx_c, "user_c").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
     server
         .make_contacts(vec![
             (&client_a, cx_a),
@@ -1456,8 +1440,8 @@ async fn test_collaborating_with_diagnostics(
 async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -1623,8 +1607,8 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 async fn test_reloading_buffer_manually(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -1709,8 +1693,8 @@ async fn test_reloading_buffer_manually(cx_a: &mut TestAppContext, cx_b: &mut Te
 async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -1775,8 +1759,8 @@ async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
 async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -1883,8 +1867,8 @@ async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
 async fn test_references(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -1981,8 +1965,8 @@ async fn test_references(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
 async fn test_project_search(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -2057,8 +2041,8 @@ async fn test_project_search(cx_a: &mut TestAppContext, cx_b: &mut TestAppContex
 async fn test_document_highlights(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -2153,8 +2137,8 @@ async fn test_document_highlights(cx_a: &mut TestAppContext, cx_b: &mut TestAppC
 async fn test_project_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -2258,8 +2242,8 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
 ) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -2329,8 +2313,8 @@ async fn test_collaborating_with_code_actions(
     cx_a.foreground().forbid_parking();
     cx_b.update(|cx| editor::init(cx));
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -2533,8 +2517,8 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     cx_a.foreground().forbid_parking();
     cx_b.update(|cx| editor::init(cx));
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -3125,8 +3109,8 @@ async fn test_contacts(
 ) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
     server
         .make_contacts(vec![
@@ -3218,7 +3202,6 @@ async fn test_contacts(
         })
         .await;
 
-    client_a.project.take();
     cx_a.update(move |_| drop(project_a));
     deterministic.run_until_parked();
     for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
@@ -3503,8 +3486,8 @@ async fn test_following(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
 
     // 2 clients connect to a server.
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -3712,8 +3695,8 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
 
     // 2 clients connect to a server.
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -3852,8 +3835,8 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
 
     // 2 clients connect to a server.
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let mut client_a = server.create_client(cx_a, "user_a").await;
-    let mut client_b = server.create_client(cx_b, "user_b").await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
@@ -4238,15 +4221,12 @@ async fn test_random_collaboration(
             let mut clients = futures::future::join_all(clients).await;
             cx.foreground().run_until_parked();
 
-            let (host, mut host_cx, host_err) = clients.remove(0);
+            let (host, host_project, mut host_cx, host_err) = clients.remove(0);
             if let Some(host_err) = host_err {
                 log::error!("host error - {:?}", host_err);
             }
-            host.project
-                .as_ref()
-                .unwrap()
-                .read_with(&host_cx, |project, _| assert!(!project.is_shared()));
-            for (guest, mut guest_cx, guest_err) in clients {
+            host_project.read_with(&host_cx, |project, _| assert!(!project.is_shared()));
+            for (guest, guest_project, mut guest_cx, guest_err) in clients {
                 if let Some(guest_err) = guest_err {
                     log::error!("{} error - {:?}", guest.username, guest_err);
                 }
@@ -4267,14 +4247,10 @@ async fn test_random_collaboration(
                     .iter()
                     .flat_map(|contact| &contact.projects)
                     .any(|project| project.id == host_project_id));
-                guest
-                    .project
-                    .as_ref()
-                    .unwrap()
-                    .read_with(&guest_cx, |project, _| assert!(project.is_read_only()));
-                guest_cx.update(|_| drop(guest));
+                guest_project.read_with(&guest_cx, |project, _| assert!(project.is_read_only()));
+                guest_cx.update(|_| drop((guest, guest_project)));
             }
-            host_cx.update(|_| drop(host));
+            host_cx.update(|_| drop((host, host_project)));
 
             return;
         }
@@ -4330,17 +4306,13 @@ async fn test_random_collaboration(
                 server.forbid_connections();
                 server.disconnect_client(removed_guest_id);
                 cx.foreground().advance_clock(RECEIVE_TIMEOUT);
-                let (guest, mut guest_cx, guest_err) = guest.await;
+                let (guest, guest_project, mut guest_cx, guest_err) = guest.await;
                 server.allow_connections();
 
                 if let Some(guest_err) = guest_err {
                     log::error!("{} error - {:?}", guest.username, guest_err);
                 }
-                guest
-                    .project
-                    .as_ref()
-                    .unwrap()
-                    .read_with(&guest_cx, |project, _| assert!(project.is_read_only()));
+                guest_project.read_with(&guest_cx, |project, _| assert!(project.is_read_only()));
                 for user_id in &user_ids {
                     let contacts = server.app_state.db.get_contacts(*user_id).await.unwrap();
                     let contacts = server
@@ -4369,7 +4341,7 @@ async fn test_random_collaboration(
 
                 log::info!("{} removed", guest.username);
                 available_guests.push(guest.username.clone());
-                guest_cx.update(|_| drop(guest));
+                guest_cx.update(|_| drop((guest, guest_project)));
 
                 operations += 1;
             }
@@ -4394,11 +4366,10 @@ async fn test_random_collaboration(
     let mut clients = futures::future::join_all(clients).await;
     cx.foreground().run_until_parked();
 
-    let (host_client, mut host_cx, host_err) = clients.remove(0);
+    let (host_client, host_project, mut host_cx, host_err) = clients.remove(0);
     if let Some(host_err) = host_err {
         panic!("host error - {:?}", host_err);
     }
-    let host_project = host_client.project.as_ref().unwrap();
     let host_worktree_snapshots = host_project.read_with(&host_cx, |project, cx| {
         project
             .worktrees(cx)
@@ -4409,30 +4380,21 @@ async fn test_random_collaboration(
             .collect::<BTreeMap<_, _>>()
     });
 
-    host_client
-        .project
-        .as_ref()
-        .unwrap()
-        .read_with(&host_cx, |project, cx| project.check_invariants(cx));
+    host_project.read_with(&host_cx, |project, cx| project.check_invariants(cx));
 
-    for (guest_client, mut guest_cx, guest_err) in clients.into_iter() {
+    for (guest_client, guest_project, mut guest_cx, guest_err) in clients.into_iter() {
         if let Some(guest_err) = guest_err {
             panic!("{} error - {:?}", guest_client.username, guest_err);
         }
-        let worktree_snapshots =
-            guest_client
-                .project
-                .as_ref()
-                .unwrap()
-                .read_with(&guest_cx, |project, cx| {
-                    project
-                        .worktrees(cx)
-                        .map(|worktree| {
-                            let worktree = worktree.read(cx);
-                            (worktree.id(), worktree.snapshot())
-                        })
-                        .collect::<BTreeMap<_, _>>()
-                });
+        let worktree_snapshots = guest_project.read_with(&guest_cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    (worktree.id(), worktree.snapshot())
+                })
+                .collect::<BTreeMap<_, _>>()
+        });
 
         assert_eq!(
             worktree_snapshots.keys().collect::<Vec<_>>(),
@@ -4459,11 +4421,7 @@ async fn test_random_collaboration(
             assert_eq!(guest_snapshot.scan_id(), host_snapshot.scan_id());
         }
 
-        guest_client
-            .project
-            .as_ref()
-            .unwrap()
-            .read_with(&guest_cx, |project, cx| project.check_invariants(cx));
+        guest_project.read_with(&guest_cx, |project, cx| project.check_invariants(cx));
 
         for guest_buffer in &guest_client.buffers {
             let buffer_id = guest_buffer.read_with(&guest_cx, |buffer, _| buffer.remote_id());
@@ -4494,10 +4452,10 @@ async fn test_random_collaboration(
             );
         }
 
-        guest_cx.update(|_| drop(guest_client));
+        guest_cx.update(|_| drop((guest_project, guest_client)));
     }
 
-    host_cx.update(|_| drop(host_client));
+    host_cx.update(|_| drop((host_client, host_project)));
 }
 
 struct TestServer {
@@ -4633,7 +4591,6 @@ impl TestServer {
             user_store,
             project_store,
             language_registry: Arc::new(LanguageRegistry::test()),
-            project: Default::default(),
             buffers: Default::default(),
         };
         client.wait_for_current_user(cx).await;
@@ -4727,7 +4684,6 @@ struct TestClient {
     pub user_store: ModelHandle<UserStore>,
     pub project_store: ModelHandle<ProjectStore>,
     language_registry: Arc<LanguageRegistry>,
-    project: Option<ModelHandle<Project>>,
     buffers: HashSet<ModelHandle<language::Buffer>>,
 }
 
@@ -4787,7 +4743,7 @@ impl TestClient {
     }
 
     async fn build_local_project(
-        &mut self,
+        &self,
         fs: Arc<FakeFs>,
         root_path: impl AsRef<Path>,
         cx: &mut TestAppContext,
@@ -4803,7 +4759,6 @@ impl TestClient {
                 cx,
             )
         });
-        self.project = Some(project.clone());
         let (worktree, _) = project
             .update(cx, |p, cx| {
                 p.find_or_create_local_worktree(root_path, true, cx)
@@ -4820,7 +4775,7 @@ impl TestClient {
     }
 
     async fn build_remote_project(
-        &mut self,
+        &self,
         host_project: &ModelHandle<Project>,
         host_cx: &mut TestAppContext,
         guest_cx: &mut TestAppContext,
@@ -4846,7 +4801,6 @@ impl TestClient {
             project.respond_to_join_request(guest_user_id, true, cx)
         });
         let project = project_b.await.unwrap();
-        self.project = Some(project.clone());
         project
     }
 
@@ -4865,7 +4819,12 @@ impl TestClient {
         op_start_signal: futures::channel::mpsc::UnboundedReceiver<()>,
         rng: Arc<Mutex<StdRng>>,
         mut cx: TestAppContext,
-    ) -> (Self, TestAppContext, Option<anyhow::Error>) {
+    ) -> (
+        Self,
+        ModelHandle<Project>,
+        TestAppContext,
+        Option<anyhow::Error>,
+    ) {
         async fn simulate_host_internal(
             client: &mut TestClient,
             project: ModelHandle<Project>,
@@ -4999,8 +4958,7 @@ impl TestClient {
         let result =
             simulate_host_internal(&mut self, project.clone(), op_start_signal, rng, &mut cx).await;
         log::info!("Host done");
-        self.project = Some(project);
-        (self, cx, result.err())
+        (self, project, cx, result.err())
     }
 
     pub async fn simulate_guest(
@@ -5010,7 +4968,12 @@ impl TestClient {
         op_start_signal: futures::channel::mpsc::UnboundedReceiver<()>,
         rng: Arc<Mutex<StdRng>>,
         mut cx: TestAppContext,
-    ) -> (Self, TestAppContext, Option<anyhow::Error>) {
+    ) -> (
+        Self,
+        ModelHandle<Project>,
+        TestAppContext,
+        Option<anyhow::Error>,
+    ) {
         async fn simulate_guest_internal(
             client: &mut TestClient,
             guest_username: &str,
@@ -5325,8 +5288,7 @@ impl TestClient {
         .await;
         log::info!("{}: done", guest_username);
 
-        self.project = Some(project);
-        (self, cx, result.err())
+        (self, project, cx, result.err())
     }
 }
 
