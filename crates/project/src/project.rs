@@ -654,6 +654,19 @@ impl Project {
                 });
                 return cx.spawn(|this, mut cx| async move {
                     let response = request.await;
+
+                    // Unregistering the project causes the server to send out a
+                    // contact update removing this project from the host's list
+                    // of public projects. Wait until this contact update has been
+                    // processed before clearing out this project's remote id, so
+                    // that there is no moment where this project appears in the
+                    // contact metadata and *also* has no remote id.
+                    this.update(&mut cx, |this, cx| {
+                        this.user_store()
+                            .update(cx, |store, _| store.contact_updates_done())
+                    })
+                    .await;
+
                     this.update(&mut cx, |this, cx| {
                         if let ProjectClientState::Local { remote_id_tx, .. } =
                             &mut this.client_state

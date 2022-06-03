@@ -99,6 +99,7 @@ impl Entity for UserStore {
 
 enum UpdateContacts {
     Update(proto::UpdateContacts),
+    Wait(postage::barrier::Sender),
     Clear(postage::barrier::Sender),
 }
 
@@ -217,6 +218,10 @@ impl UserStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         match message {
+            UpdateContacts::Wait(barrier) => {
+                drop(barrier);
+                Task::ready(Ok(()))
+            }
             UpdateContacts::Clear(barrier) => {
                 self.contacts.clear();
                 self.incoming_contact_requests.clear();
@@ -491,6 +496,16 @@ impl UserStore {
         let (tx, mut rx) = postage::barrier::channel();
         self.update_contacts_tx
             .unbounded_send(UpdateContacts::Clear(tx))
+            .unwrap();
+        async move {
+            rx.recv().await;
+        }
+    }
+
+    pub fn contact_updates_done(&mut self) -> impl Future<Output = ()> {
+        let (tx, mut rx) = postage::barrier::channel();
+        self.update_contacts_tx
+            .unbounded_send(UpdateContacts::Wait(tx))
             .unwrap();
         async move {
             rx.recv().await;
