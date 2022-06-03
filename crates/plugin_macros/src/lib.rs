@@ -2,7 +2,7 @@ use core::panic;
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, ItemFn, VisPublic, Visibility};
+use syn::{parse_macro_input, ItemFn, Visibility};
 
 #[proc_macro_attribute]
 pub fn bind(args: TokenStream, function: TokenStream) -> TokenStream {
@@ -20,25 +20,23 @@ pub fn bind(args: TokenStream, function: TokenStream) -> TokenStream {
     let outer_fn_name = format_ident!("__{}", inner_fn_name);
 
     TokenStream::from(quote! {
-        use serde;
-
         #[no_mangle]
         #inner_fn
 
         #[no_mangle]
-        pub extern "C" fn #outer_fn_name(ptr: *const u8, len: usize) -> *const Buffer {
+        pub extern "C" fn #outer_fn_name(ptr: *const u8, len: usize) -> *const ::plugin::__Buffer {
             // setup
-            let buffer = Buffer { ptr, len };
+            let buffer = ::plugin::__Buffer { ptr, len };
             let data = unsafe { buffer.to_vec() };
 
             // operation
-            let argument = bincode::deserialize(&data).unwrap();
+            let argument = ::bincode::deserialize(&data).unwrap();
             let result = #inner_fn_name(argument);
-            let new_data: Result<Vec<u8>, _> = bincode::serialize(&result);
+            let new_data: Result<Vec<u8>, _> = ::bincode::serialize(&result);
             let new_data = new_data.unwrap();
 
             // teardown
-            let new_buffer = unsafe { Buffer::from_vec(new_data) };
+            let new_buffer = unsafe { ::plugin::__Buffer::from_vec(new_data) };
             return new_buffer.leak_to_heap();
         }
     })

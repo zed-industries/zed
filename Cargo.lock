@@ -3614,8 +3614,19 @@ name = "plugin"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "rust_plugin_macros",
+ "plugin_macros",
  "serde",
+]
+
+[[package]]
+name = "plugin_macros"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "syn",
 ]
 
 [[package]]
@@ -4318,17 +4329,6 @@ dependencies = [
  "globset",
  "sha2 0.9.9",
  "walkdir",
-]
-
-[[package]]
-name = "rust_plugin_macros"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "proc-macro2",
- "quote",
- "serde",
- "syn",
 ]
 
 [[package]]
