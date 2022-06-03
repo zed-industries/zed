@@ -1,7 +1,7 @@
 #[repr(C)]
-pub struct Buffer {
-    ptr: *const u8,
-    len: usize,
+pub struct __Buffer {
+    pub ptr: *const u8,
+    pub len: usize,
 }
 
 /// Allocates a buffer with an exact size.
@@ -9,7 +9,7 @@ pub struct Buffer {
 #[no_mangle]
 pub extern "C" fn __alloc_buffer(len: usize) -> *const u8 {
     let vec = vec![0; len];
-    let buffer = unsafe { Buffer::from_vec(vec) };
+    let buffer = unsafe { __Buffer::from_vec(vec) };
     return buffer.ptr;
 }
 
@@ -21,31 +21,30 @@ pub extern "C" fn __alloc_buffer(len: usize) -> *const u8 {
 //     std::mem::drop(vec);
 // }
 
-impl Buffer {
+impl __Buffer {
     #[inline(always)]
     pub unsafe fn to_vec(&self) -> Vec<u8> {
-        slice::from_raw_parts(self.ptr, self.len).to_vec()
+        core::slice::from_raw_parts(self.ptr, self.len).to_vec()
     }
 
     #[inline(always)]
-    pub unsafe fn from_vec(mut vec: Vec<u8>) -> Buffer {
+    pub unsafe fn from_vec(mut vec: Vec<u8>) -> __Buffer {
         vec.shrink_to(0);
         let ptr = vec.as_ptr();
         let len = vec.len();
         std::mem::forget(vec);
-        Buffer { ptr, len }
+        __Buffer { ptr, len }
     }
 
     #[inline(always)]
-    pub fn leak_to_heap(self) -> *const Buffer {
+    pub fn leak_to_heap(self) -> *const __Buffer {
         let boxed = Box::new(self);
-        let ptr = Box::<Buffer>::into_raw(boxed) as *const Buffer;
+        let ptr = Box::<__Buffer>::into_raw(boxed) as *const __Buffer;
         return ptr;
     }
 }
 
 pub mod prelude {
-    pub use super::{Buffer, __alloc_buffer};
-    #[macro_use]
+    pub use super::{__Buffer, __alloc_buffer};
     pub use plugin_macros::bind;
 }
