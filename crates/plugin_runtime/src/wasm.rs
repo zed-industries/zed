@@ -135,18 +135,16 @@ impl<S> Runtime for Wasm<S> {
         plugin_memory.write(&mut self.store, arg_buffer_ptr as usize, &arg)?;
 
         // get the webassembly function we want to actually call
+        // TODO: precompute handle
+        let fun_name = format!("__{}", handle.inner());
         let fun = self
             .instance
-            .get_typed_func::<(i32, i32), i32, _>(&mut self.store, handle.inner())?;
+            .get_typed_func::<(i32, i32), i32, _>(&mut self.store, &fun_name)?;
 
         // call the function, passing in the buffer and its length
         // this should return a pointer to a (ptr, lentgh) pair
         let arg_buffer = (arg_buffer_ptr, arg_buffer_len as i32);
         let result_buffer = fun.call(&mut self.store, arg_buffer)?;
-        dbg!(result_buffer);
-
-        // panic!();
-        // dbg!()
 
         // create a buffer to read the (ptr, length) pair into
         // this is a total of 4 + 4 = 8 bytes.
@@ -160,14 +158,12 @@ impl<S> Runtime for Wasm<S> {
         let result_buffer_len = u32::from_le_bytes([b[4], b[5], b[6], b[7]]) as usize;
         let result_buffer_end = result_buffer_ptr + result_buffer_len;
 
-        dbg!(result_buffer_ptr);
-        dbg!(result_buffer_len);
-
         // read the buffer at this point into a byte array
         // deserialize the byte array into the provided serde type
         let result = &plugin_memory.data(&mut self.store)[result_buffer_ptr..result_buffer_end];
         let result = bincode::deserialize(result)?;
 
+        // TODO: this is handled wasm-side, but I'd like to double-check
         // // deallocate the argument buffer
         // self.free_buffer.call(&mut self.store, arg_buffer);
 
