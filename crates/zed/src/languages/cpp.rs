@@ -82,6 +82,7 @@ impl super::LspAdapter for CppLspAdapter {
                 let highlight_name = match kind {
                     lsp::CompletionItemKind::STRUCT
                     | lsp::CompletionItemKind::INTERFACE
+                    | lsp::CompletionItemKind::CLASS
                     | lsp::CompletionItemKind::ENUM => Some("type"),
                     lsp::CompletionItemKind::ENUM_MEMBER => Some("variant"),
                     lsp::CompletionItemKind::KEYWORD => Some("keyword"),
@@ -105,5 +106,64 @@ impl super::LspAdapter for CppLspAdapter {
             _ => {}
         }
         Some(CodeLabel::plain(label.to_string(), None))
+    }
+
+    fn label_for_symbol(
+        &self,
+        name: &str,
+        kind: lsp::SymbolKind,
+        language: &Language,
+    ) -> Option<CodeLabel> {
+        let (text, filter_range, display_range) = match kind {
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+                let text = format!("void {} () {{}}", name);
+                let filter_range = 0..name.len();
+                let display_range = 5..5 + name.len();
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::STRUCT => {
+                let text = format!("struct {} {{}}", name);
+                let filter_range = 7..7 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::ENUM => {
+                let text = format!("enum {} {{}}", name);
+                let filter_range = 5..5 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::INTERFACE | lsp::SymbolKind::CLASS => {
+                let text = format!("class {} {{}}", name);
+                let filter_range = 6..6 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::CONSTANT => {
+                let text = format!("const int {} = 0;", name);
+                let filter_range = 10..10 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::MODULE => {
+                let text = format!("namespace {} {{}}", name);
+                let filter_range = 10..10 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::TYPE_PARAMETER => {
+                let text = format!("typename {} {{}};", name);
+                let filter_range = 9..9 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            _ => return None,
+        };
+
+        Some(CodeLabel {
+            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
+            text: text[display_range].to_string(),
+            filter_range,
+        })
     }
 }
