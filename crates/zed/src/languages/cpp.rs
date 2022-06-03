@@ -8,7 +8,7 @@ pub struct CppLspAdapter;
 
 impl super::LspAdapter for CppLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("clangd".into())
+        super::c::CLspAdapter.name()
     }
 
     fn fetch_latest_server_version(
