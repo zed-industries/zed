@@ -20,7 +20,7 @@ async-task = "4.0.3"
 backtrace = { version = "0.3", optional = true }
 ctor = "0.1"
 dhat = { version = "0.3", optional = true }
-env_logger = { version = "0.8", optional = true }
+env_logger = { version = "0.9", optional = true }
 etagere = "0.2"
 futures = "0.3"
 image = "0.23"
@@ -47,14 +47,14 @@ usvg = "0.14"
 waker-fn = "1.1.0"
 
 [build-dependencies]
-bindgen = "0.58.1"
+bindgen = "0.59.2"
 cc = "1.0.67"
 
 [dev-dependencies]
 backtrace = "0.3"
 collections = { path = "../collections", features = ["test-support"] }
 dhat = "0.3"
-env_logger = "0.8"
+env_logger = "0.9"
 png = "0.16"
 simplelog = "0.9"
 

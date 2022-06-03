@@ -31,7 +31,7 @@ tracing = { version = "0.1.34", features = ["log"] }
 zstd = "0.9"
 
 [build-dependencies]
-prost-build = "0.8"
+prost-build = "0.9"
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }

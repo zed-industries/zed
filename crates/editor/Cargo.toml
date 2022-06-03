@@ -59,7 +59,7 @@ project = { path = "../project", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
 ctor = "0.1"
-env_logger = "0.8"
+env_logger = "0.9"
 rand = "0.8"
 unindent = "0.1.7"
 tree-sitter = "0.20"
