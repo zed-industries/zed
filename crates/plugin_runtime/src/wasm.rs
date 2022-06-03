@@ -12,7 +12,7 @@ pub struct Wasm<T> {
     store: Store<T>,
     instance: Instance,
     alloc_buffer: TypedFunc<i32, i32>,
-    free_buffer: TypedFunc<(i32, i32), ()>,
+    // free_buffer: TypedFunc<(i32, i32), ()>,
 }
 
 pub struct WasmPlugin<T> {
@@ -50,7 +50,7 @@ impl<S> Runtime for Wasm<S> {
         let instance = Instance::new(&mut store, &module, &[])?;
 
         let alloc_buffer = instance.get_typed_func(&mut store, "__alloc_buffer")?;
-        let free_buffer = instance.get_typed_func(&mut store, "__free_buffer")?;
+        // let free_buffer = instance.get_typed_func(&mut store, "__free_buffer")?;
 
         Ok(Wasm {
             engine,
@@ -58,7 +58,7 @@ impl<S> Runtime for Wasm<S> {
             store,
             instance,
             alloc_buffer,
-            free_buffer,
+            // free_buffer,
         })
     }
 
@@ -141,7 +141,8 @@ impl<S> Runtime for Wasm<S> {
 
         // call the function, passing in the buffer and its length
         // this should return a pointer to a (ptr, lentgh) pair
-        let result_buffer = fun.call(&mut self.store, (arg_buffer_ptr, arg_buffer_len as i32))?;
+        let arg_buffer = (arg_buffer_ptr, arg_buffer_len as i32);
+        let result_buffer = fun.call(&mut self.store, arg_buffer)?;
         dbg!(result_buffer);
 
         // panic!();
@@ -163,10 +164,13 @@ impl<S> Runtime for Wasm<S> {
         dbg!(result_buffer_len);
 
         // read the buffer at this point into a byte array
-        let result = &plugin_memory.data(&mut self.store)[result_buffer_ptr..result_buffer_end];
-
         // deserialize the byte array into the provided serde type
+        let result = &plugin_memory.data(&mut self.store)[result_buffer_ptr..result_buffer_end];
         let result = bincode::deserialize(result)?;
+
+        // // deallocate the argument buffer
+        // self.free_buffer.call(&mut self.store, arg_buffer);
+
         return Ok(result);
     }
 

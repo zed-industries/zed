@@ -3476,6 +3476,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "rust_plugin_macros",
+ "serde",
+]
+
+[[package]]
 name = "png"
 version = "0.16.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4133,6 +4142,17 @@ dependencies = [
  "globset",
  "sha2 0.9.9",
  "walkdir",
+]
+
+[[package]]
+name = "rust_plugin_macros"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "syn",
 ]
 
 [[package]]
