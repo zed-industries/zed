@@ -1,0 +1,9 @@
+[package]
+name = "plugin"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = "1.0"
+bincode = "1.3"
+rust_plugin_macros = { path = "../plugin_macros" }
