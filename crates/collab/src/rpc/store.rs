@@ -32,7 +32,7 @@ pub struct Project {
     #[serde(skip)]
     pub join_requests: HashMap<UserId, Vec<Receipt<proto::JoinProject>>>,
     pub active_replica_ids: HashSet<ReplicaId>,
-    pub worktrees: HashMap<u64, Worktree>,
+    pub worktrees: BTreeMap<u64, Worktree>,
     pub language_servers: Vec<proto::LanguageServer>,
 }
 

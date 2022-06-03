@@ -7,7 +7,7 @@ use ::rpc::Peer;
 use anyhow::anyhow;
 use client::{
     self, proto, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Connection,
-    Credentials, EstablishConnectionError, UserStore, RECEIVE_TIMEOUT,
+    Credentials, EstablishConnectionError, ProjectMetadata, UserStore, RECEIVE_TIMEOUT,
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use editor::{
@@ -479,8 +479,8 @@ async fn test_cancel_join_request(
     );
 }
 
-#[gpui::test(iterations = 3)]
-async fn test_private_projects(
+#[gpui::test(iterations = 10)]
+async fn test_offline_projects(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
@@ -489,58 +489,229 @@ async fn test_private_projects(
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
+    let user_a = UserId::from_proto(client_a.user_id().unwrap());
     server
         .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
         .await;
 
-    let user_a = UserId::from_proto(client_a.user_id().unwrap());
+    // Set up observers of the project and user stores. Any time either of
+    // these models update, they should be in a consistent state with each
+    // other. There should not be an observable moment where the current
+    // user's contact entry contains a project that does not match one of
+    // the current open projects. That would cause a duplicate entry to be
+    // shown in the contacts panel.
+    let mut subscriptions = vec![];
+    let (window_id, view) = cx_a.add_window(|cx| {
+        subscriptions.push(cx.observe(&client_a.user_store, {
+            let project_store = client_a.project_store.clone();
+            let user_store = client_a.user_store.clone();
+            move |_, _, cx| check_project_list(project_store.clone(), user_store.clone(), cx)
+        }));
 
-    let fs = FakeFs::new(cx_a.background());
-    fs.insert_tree("/a", json!({})).await;
+        subscriptions.push(cx.observe(&client_a.project_store, {
+            let project_store = client_a.project_store.clone();
+            let user_store = client_a.user_store.clone();
+            move |_, _, cx| check_project_list(project_store.clone(), user_store.clone(), cx)
+        }));
 
-    // Create a private project
-    let project_a = cx_a.update(|cx| {
+        fn check_project_list(
+            project_store: ModelHandle<ProjectStore>,
+            user_store: ModelHandle<UserStore>,
+            cx: &mut gpui::MutableAppContext,
+        ) {
+            let open_project_ids = project_store
+                .read(cx)
+                .projects(cx)
+                .filter_map(|project| project.read(cx).remote_id())
+                .collect::<Vec<_>>();
+
+            let user_store = user_store.read(cx);
+            for contact in user_store.contacts() {
+                if contact.user.id == user_store.current_user().unwrap().id {
+                    for project in &contact.projects {
+                        if !open_project_ids.contains(&project.id) {
+                            panic!(
+                                concat!(
+                                    "current user's contact data has a project",
+                                    "that doesn't match any open project {:?}",
+                                ),
+                                project
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        EmptyView
+    });
+
+    // Build an offline project with two worktrees.
+    client_a
+        .fs
+        .insert_tree(
+            "/code",
+            json!({
+                "crate1": { "a.rs": "" },
+                "crate2": { "b.rs": "" },
+            }),
+        )
+        .await;
+    let project = cx_a.update(|cx| {
         Project::local(
             false,
             client_a.client.clone(),
             client_a.user_store.clone(),
             client_a.project_store.clone(),
             client_a.language_registry.clone(),
-            fs.clone(),
+            client_a.fs.clone(),
             cx,
         )
     });
+    project
+        .update(cx_a, |p, cx| {
+            p.find_or_create_local_worktree("/code/crate1", true, cx)
+        })
+        .await
+        .unwrap();
+    project
+        .update(cx_a, |p, cx| {
+            p.find_or_create_local_worktree("/code/crate2", true, cx)
+        })
+        .await
+        .unwrap();
+    project
+        .update(cx_a, |p, cx| p.restore_state(cx))
+        .await
+        .unwrap();
 
-    // Private projects are not registered with the server.
+    // When a project is offline, no information about it is sent to the server.
     deterministic.run_until_parked();
-    assert!(project_a.read_with(cx_a, |project, _| project.remote_id().is_none()));
+    assert!(server
+        .store
+        .read()
+        .await
+        .project_metadata_for_user(user_a)
+        .is_empty());
+    assert!(project.read_with(cx_a, |project, _| project.remote_id().is_none()));
     assert!(client_b
         .user_store
         .read_with(cx_b, |store, _| { store.contacts()[0].projects.is_empty() }));
 
-    // The project is registered when it is made public.
-    project_a.update(cx_a, |project, cx| project.set_online(true, cx));
+    // When the project is taken online, its metadata is sent to the server
+    // and broadcasted to other users.
+    project.update(cx_a, |p, cx| p.set_online(true, cx));
     deterministic.run_until_parked();
-    assert!(project_a.read_with(cx_a, |project, _| project.remote_id().is_some()));
-    assert!(!client_b
-        .user_store
-        .read_with(cx_b, |store, _| { store.contacts()[0].projects.is_empty() }));
+    let project_id = project.read_with(cx_a, |p, _| p.remote_id()).unwrap();
+    client_b.user_store.read_with(cx_b, |store, _| {
+        assert_eq!(
+            store.contacts()[0].projects,
+            &[ProjectMetadata {
+                id: project_id,
+                worktree_root_names: vec!["crate1".into(), "crate2".into()],
+                guests: Default::default(),
+            }]
+        );
+    });
 
-    // The project is registered again when it loses and regains connection.
+    // The project is registered again when the host loses and regains connection.
     server.disconnect_client(user_a);
     server.forbid_connections();
     cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
-    // deterministic.run_until_parked();
-    assert!(project_a.read_with(cx_a, |project, _| project.remote_id().is_none()));
+    assert!(server
+        .store
+        .read()
+        .await
+        .project_metadata_for_user(user_a)
+        .is_empty());
+    assert!(project.read_with(cx_a, |p, _| p.remote_id().is_none()));
     assert!(client_b
         .user_store
         .read_with(cx_b, |store, _| { store.contacts()[0].projects.is_empty() }));
+
     server.allow_connections();
     cx_b.foreground().advance_clock(Duration::from_secs(10));
-    assert!(project_a.read_with(cx_a, |project, _| project.remote_id().is_some()));
-    assert!(!client_b
-        .user_store
-        .read_with(cx_b, |store, _| { store.contacts()[0].projects.is_empty() }));
+    let project_id = project.read_with(cx_a, |p, _| p.remote_id()).unwrap();
+    client_b.user_store.read_with(cx_b, |store, _| {
+        assert_eq!(
+            store.contacts()[0].projects,
+            &[ProjectMetadata {
+                id: project_id,
+                worktree_root_names: vec!["crate1".into(), "crate2".into()],
+                guests: Default::default(),
+            }]
+        );
+    });
+
+    project
+        .update(cx_a, |p, cx| {
+            p.find_or_create_local_worktree("/code/crate3", true, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    client_b.user_store.read_with(cx_b, |store, _| {
+        assert_eq!(
+            store.contacts()[0].projects,
+            &[ProjectMetadata {
+                id: project_id,
+                worktree_root_names: vec!["crate1".into(), "crate2".into(), "crate3".into()],
+                guests: Default::default(),
+            }]
+        );
+    });
+
+    // Build another project using a directory which was previously part of
+    // an online project. Restore the project's state from the host's database.
+    let project2 = cx_a.update(|cx| {
+        Project::local(
+            false,
+            client_a.client.clone(),
+            client_a.user_store.clone(),
+            client_a.project_store.clone(),
+            client_a.language_registry.clone(),
+            client_a.fs.clone(),
+            cx,
+        )
+    });
+    project2
+        .update(cx_a, |p, cx| {
+            p.find_or_create_local_worktree("/code/crate3", true, cx)
+        })
+        .await
+        .unwrap();
+    project2
+        .update(cx_a, |project, cx| project.restore_state(cx))
+        .await
+        .unwrap();
+
+    // This project is now online, because its directory was previously online.
+    project2.read_with(cx_a, |project, _| assert!(project.is_online()));
+    deterministic.run_until_parked();
+    let project2_id = project2.read_with(cx_a, |p, _| p.remote_id()).unwrap();
+    client_b.user_store.read_with(cx_b, |store, _| {
+        assert_eq!(
+            store.contacts()[0].projects,
+            &[
+                ProjectMetadata {
+                    id: project_id,
+                    worktree_root_names: vec!["crate1".into(), "crate2".into(), "crate3".into()],
+                    guests: Default::default(),
+                },
+                ProjectMetadata {
+                    id: project2_id,
+                    worktree_root_names: vec!["crate3".into()],
+                    guests: Default::default(),
+                }
+            ]
+        );
+    });
+
+    cx_a.update(|cx| {
+        drop(subscriptions);
+        drop(view);
+        cx.remove_window(window_id);
+    });
 }
 
 #[gpui::test(iterations = 10)]

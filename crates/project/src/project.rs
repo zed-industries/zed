@@ -99,6 +99,7 @@ pub struct Project {
     opened_buffers: HashMap<u64, OpenBuffer>,
     buffer_snapshots: HashMap<u64, Vec<(i32, TextBufferSnapshot)>>,
     nonce: u128,
+    initialized_persistent_state: bool,
 }
 
 #[derive(Error, Debug)]
@@ -385,6 +386,7 @@ impl Project {
                 language_server_settings: Default::default(),
                 next_language_server_id: 0,
                 nonce: StdRng::from_entropy().gen(),
+                initialized_persistent_state: false,
             }
         })
     }
@@ -497,6 +499,7 @@ impl Project {
                 opened_buffers: Default::default(),
                 buffer_snapshots: Default::default(),
                 nonce: StdRng::from_entropy().gen(),
+                initialized_persistent_state: false,
             };
             for worktree in worktrees {
                 this.add_worktree(&worktree, cx);
@@ -566,6 +569,7 @@ impl Project {
         cx.spawn(|this, mut cx| async move {
             let online = read_online.await.log_err().unwrap_or(false);
             this.update(&mut cx, |this, cx| {
+                this.initialized_persistent_state = true;
                 if let ProjectClientState::Local { online_tx, .. } = &mut this.client_state {
                     let mut online_tx = online_tx.borrow_mut();
                     if *online_tx != online {
@@ -580,7 +584,7 @@ impl Project {
     }
 
     fn persist_state(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        if self.is_remote() {
+        if self.is_remote() || !self.initialized_persistent_state {
             return Task::ready(Ok(()));
         }
 

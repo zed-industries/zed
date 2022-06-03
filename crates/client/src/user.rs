@@ -42,7 +42,7 @@ pub struct Contact {
     pub projects: Vec<ProjectMetadata>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ProjectMetadata {
     pub id: u64,
     pub worktree_root_names: Vec<String>,
