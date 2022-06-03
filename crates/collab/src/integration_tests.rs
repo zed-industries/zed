@@ -4635,7 +4635,8 @@ impl TestServer {
 
     async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
         cx.update(|cx| {
-            let settings = Settings::test(cx);
+            let mut settings = Settings::test(cx);
+            settings.projects_online_by_default = false;
             cx.set_global(settings);
         });
 

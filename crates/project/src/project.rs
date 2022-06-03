@@ -562,9 +562,14 @@ impl Project {
 
         let db = self.project_store.read(cx).db.clone();
         let keys = self.db_keys_for_online_state(cx);
+        let online_by_default = cx.global::<Settings>().projects_online_by_default;
         let read_online = cx.background().spawn(async move {
             let values = db.read(keys)?;
-            anyhow::Ok(values.into_iter().all(|e| e.is_some()))
+            anyhow::Ok(
+                values
+                    .into_iter()
+                    .all(|e| e.map_or(online_by_default, |e| e == [true as u8])),
+            )
         });
         cx.spawn(|this, mut cx| async move {
             let online = read_online.await.log_err().unwrap_or(false);
@@ -592,11 +597,8 @@ impl Project {
         let keys = self.db_keys_for_online_state(cx);
         let is_online = self.is_online();
         cx.background().spawn(async move {
-            if is_online {
-                db.write(keys.into_iter().map(|key| (key, &[])))
-            } else {
-                db.delete(keys)
-            }
+            let value = &[is_online as u8];
+            db.write(keys.into_iter().map(|key| (key, value)))
         })
     }
 
@@ -882,17 +884,15 @@ impl Project {
         self.worktrees
             .iter()
             .filter_map(|worktree| {
-                worktree.upgrade(&cx).map(|worktree| {
-                    format!(
+                let worktree = worktree.upgrade(&cx)?.read(cx);
+                if worktree.is_visible() {
+                    Some(format!(
                         "project-path-online:{}",
-                        worktree
-                            .read(cx)
-                            .as_local()
-                            .unwrap()
-                            .abs_path()
-                            .to_string_lossy()
-                    )
-                })
+                        worktree.as_local().unwrap().abs_path().to_string_lossy()
+                    ))
+                } else {
+                    None
+                }
             })
             .collect::<Vec<_>>()
     }
