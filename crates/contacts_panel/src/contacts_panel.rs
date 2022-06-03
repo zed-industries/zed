@@ -45,7 +45,7 @@ enum ContactEntry {
     OutgoingRequest(Arc<User>),
     Contact(Arc<Contact>),
     ContactProject(Arc<Contact>, usize, Option<WeakModelHandle<Project>>),
-    PrivateProject(WeakModelHandle<Project>),
+    OfflineProject(WeakModelHandle<Project>),
 }
 
 #[derive(Clone)]
@@ -233,7 +233,7 @@ impl ContactsPanel {
                         cx,
                     )
                 }
-                ContactEntry::PrivateProject(project) => Self::render_private_project(
+                ContactEntry::OfflineProject(project) => Self::render_offline_project(
                     project.clone(),
                     &theme.contacts_panel,
                     &theme.tooltip,
@@ -412,8 +412,8 @@ impl ContactsPanel {
                             .boxed(),
                         )
                         .with_children(open_project.and_then(|open_project| {
-                            let is_becoming_private = !open_project.read(cx).is_public();
-                            if !mouse_state.hovered && !is_becoming_private {
+                            let is_going_offline = !open_project.read(cx).is_online();
+                            if !mouse_state.hovered && !is_going_offline {
                                 return None;
                             }
 
@@ -425,7 +425,7 @@ impl ContactsPanel {
                                         *theme.private_button.style_for(state, false);
                                     icon_style.container.background_color =
                                         row.container.background_color;
-                                    if is_becoming_private {
+                                    if is_going_offline {
                                         icon_style.color = theme.disabled_button.color;
                                     }
                                     render_icon_button(&icon_style, "icons/lock-8.svg")
@@ -434,7 +434,7 @@ impl ContactsPanel {
                                 },
                             );
 
-                            if is_becoming_private {
+                            if is_going_offline {
                                 Some(button.boxed())
                             } else {
                                 Some(
@@ -447,7 +447,7 @@ impl ContactsPanel {
                                         })
                                         .with_tooltip(
                                             project_id as usize,
-                                            "Make project private".to_string(),
+                                            "Take project offline".to_string(),
                                             None,
                                             tooltip_style.clone(),
                                             cx,
@@ -505,7 +505,7 @@ impl ContactsPanel {
         .boxed()
     }
 
-    fn render_private_project(
+    fn render_offline_project(
         project: WeakModelHandle<Project>,
         theme: &theme::ContactsPanel,
         tooltip_style: &TooltipStyle,
@@ -532,7 +532,7 @@ impl ContactsPanel {
             let row = theme.project_row.style_for(state, is_selected);
             let mut worktree_root_names = String::new();
             let project_ = project.read(cx);
-            let is_becoming_public = project_.is_public();
+            let is_going_online = project_.is_online();
             for tree in project_.visible_worktrees(cx) {
                 if !worktree_root_names.is_empty() {
                     worktree_root_names.push_str(", ");
@@ -545,7 +545,7 @@ impl ContactsPanel {
                     let button =
                         MouseEventHandler::new::<TogglePublic, _, _>(project_id, cx, |state, _| {
                             let mut style = *theme.private_button.style_for(state, false);
-                            if is_becoming_public {
+                            if is_going_online {
                                 style.color = theme.disabled_button.color;
                             }
                             render_icon_button(&style, "icons/lock-8.svg")
@@ -555,7 +555,7 @@ impl ContactsPanel {
                                 .boxed()
                         });
 
-                    if is_becoming_public {
+                    if is_going_online {
                         button.boxed()
                     } else {
                         button
@@ -567,7 +567,7 @@ impl ContactsPanel {
                             })
                             .with_tooltip(
                                 project_id,
-                                "Make project public".to_string(),
+                                "Take project online".to_string(),
                                 None,
                                 tooltip_style.clone(),
                                 cx,
@@ -864,7 +864,7 @@ impl ContactsPanel {
                                         if project.read(cx).visible_worktrees(cx).next().is_none() {
                                             None
                                         } else {
-                                            Some(ContactEntry::PrivateProject(project.downgrade()))
+                                            Some(ContactEntry::OfflineProject(project.downgrade()))
                                         }
                                     },
                                 ));
@@ -1173,8 +1173,8 @@ impl PartialEq for ContactEntry {
                     return contact_1.user.id == contact_2.user.id && ix_1 == ix_2;
                 }
             }
-            ContactEntry::PrivateProject(project_1) => {
-                if let ContactEntry::PrivateProject(project_2) = other {
+            ContactEntry::OfflineProject(project_1) => {
+                if let ContactEntry::OfflineProject(project_2) = other {
                     return project_1.id() == project_2.id();
                 }
             }
@@ -1351,7 +1351,7 @@ mod tests {
 
         // Make a project public. It appears as loading, since the project
         // isn't yet visible to other contacts.
-        project.update(cx, |project, cx| project.set_public(true, cx));
+        project.update(cx, |project, cx| project.set_online(true, cx));
         cx.foreground().run_until_parked();
         assert_eq!(
             cx.read(|cx| render_to_strings(&panel, cx)),
@@ -1458,7 +1458,7 @@ mod tests {
         );
 
         // Make the project private. It appears as loading.
-        project.update(cx, |project, cx| project.set_public(false, cx));
+        project.update(cx, |project, cx| project.set_online(false, cx));
         cx.foreground().run_until_parked();
         assert_eq!(
             cx.read(|cx| render_to_strings(&panel, cx)),
@@ -1612,14 +1612,14 @@ mod tests {
                     format!(
                         "    {}{}",
                         contact.projects[*project_ix].worktree_root_names.join(", "),
-                        if project.map_or(true, |project| project.is_public()) {
+                        if project.map_or(true, |project| project.is_online()) {
                             ""
                         } else {
                             " (becoming private...)"
                         },
                     )
                 }
-                ContactEntry::PrivateProject(project) => {
+                ContactEntry::OfflineProject(project) => {
                     let project = project.upgrade(cx).unwrap().read(cx);
                     format!(
                         "    🔒 {}{}",
@@ -1627,7 +1627,7 @@ mod tests {
                             .worktree_root_names(cx)
                             .collect::<Vec<_>>()
                             .join(", "),
-                        if project.is_public() {
+                        if project.is_online() {
                             " (becoming public...)"
                         } else {
                             ""

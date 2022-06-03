@@ -129,8 +129,8 @@ enum ProjectClientState {
         is_shared: bool,
         remote_id_tx: watch::Sender<Option<u64>>,
         remote_id_rx: watch::Receiver<Option<u64>>,
-        public_tx: watch::Sender<bool>,
-        public_rx: watch::Receiver<bool>,
+        online_tx: watch::Sender<bool>,
+        online_rx: watch::Receiver<bool>,
         _maintain_remote_id_task: Task<Option<()>>,
     },
     Remote {
@@ -315,7 +315,7 @@ impl Project {
     }
 
     pub fn local(
-        public: bool,
+        online: bool,
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
         project_store: ModelHandle<ProjectStore>,
@@ -324,17 +324,17 @@ impl Project {
         cx: &mut MutableAppContext,
     ) -> ModelHandle<Self> {
         cx.add_model(|cx: &mut ModelContext<Self>| {
-            let (public_tx, public_rx) = watch::channel_with(public);
+            let (online_tx, online_rx) = watch::channel_with(online);
             let (remote_id_tx, remote_id_rx) = watch::channel();
             let _maintain_remote_id_task = cx.spawn_weak({
                 let status_rx = client.clone().status();
-                let public_rx = public_rx.clone();
+                let online_rx = online_rx.clone();
                 move |this, mut cx| async move {
                     let mut stream = Stream::map(status_rx.clone(), drop)
-                        .merge(Stream::map(public_rx.clone(), drop));
+                        .merge(Stream::map(online_rx.clone(), drop));
                     while stream.recv().await.is_some() {
                         let this = this.upgrade(&cx)?;
-                        if status_rx.borrow().is_connected() && *public_rx.borrow() {
+                        if status_rx.borrow().is_connected() && *online_rx.borrow() {
                             this.update(&mut cx, |this, cx| this.register(cx))
                                 .await
                                 .log_err()?;
@@ -364,8 +364,8 @@ impl Project {
                     is_shared: false,
                     remote_id_tx,
                     remote_id_rx,
-                    public_tx,
-                    public_rx,
+                    online_tx,
+                    online_rx,
                     _maintain_remote_id_task,
                 },
                 opened_buffer: (Rc::new(RefCell::new(opened_buffer_tx)), opened_buffer_rx),
@@ -558,19 +558,19 @@ impl Project {
         }
 
         let db = self.project_store.read(cx).db.clone();
-        let project_path_keys = self.project_path_keys(cx);
-        let should_be_public = cx.background().spawn(async move {
-            let values = db.read(project_path_keys)?;
+        let keys = self.db_keys_for_online_state(cx);
+        let read_online = cx.background().spawn(async move {
+            let values = db.read(keys)?;
             anyhow::Ok(values.into_iter().all(|e| e.is_some()))
         });
         cx.spawn(|this, mut cx| async move {
-            let public = should_be_public.await.log_err().unwrap_or(false);
+            let online = read_online.await.log_err().unwrap_or(false);
             this.update(&mut cx, |this, cx| {
-                if let ProjectClientState::Local { public_tx, .. } = &mut this.client_state {
-                    let mut public_tx = public_tx.borrow_mut();
-                    if *public_tx != public {
-                        *public_tx = public;
-                        drop(public_tx);
+                if let ProjectClientState::Local { online_tx, .. } = &mut this.client_state {
+                    let mut online_tx = online_tx.borrow_mut();
+                    if *online_tx != online {
+                        *online_tx = online;
+                        drop(online_tx);
                         this.metadata_changed(false, cx);
                     }
                 }
@@ -585,13 +585,13 @@ impl Project {
         }
 
         let db = self.project_store.read(cx).db.clone();
-        let project_path_keys = self.project_path_keys(cx);
-        let public = self.is_public();
+        let keys = self.db_keys_for_online_state(cx);
+        let is_online = self.is_online();
         cx.background().spawn(async move {
-            if public {
-                db.write(project_path_keys.into_iter().map(|key| (key, &[])))
+            if is_online {
+                db.write(keys.into_iter().map(|key| (key, &[])))
             } else {
-                db.delete(project_path_keys)
+                db.delete(keys)
             }
         })
     }
@@ -675,20 +675,20 @@ impl Project {
         &self.fs
     }
 
-    pub fn set_public(&mut self, is_public: bool, cx: &mut ModelContext<Self>) {
-        if let ProjectClientState::Local { public_tx, .. } = &mut self.client_state {
-            let mut public_tx = public_tx.borrow_mut();
-            if *public_tx != is_public {
-                *public_tx = is_public;
-                drop(public_tx);
+    pub fn set_online(&mut self, online: bool, cx: &mut ModelContext<Self>) {
+        if let ProjectClientState::Local { online_tx, .. } = &mut self.client_state {
+            let mut online_tx = online_tx.borrow_mut();
+            if *online_tx != online {
+                *online_tx = online;
+                drop(online_tx);
                 self.metadata_changed(true, cx);
             }
         }
     }
 
-    pub fn is_public(&self) -> bool {
+    pub fn is_online(&self) -> bool {
         match &self.client_state {
-            ProjectClientState::Local { public_rx, .. } => *public_rx.borrow(),
+            ProjectClientState::Local { online_rx, .. } => *online_rx.borrow(),
             ProjectClientState::Remote { .. } => true,
         }
     }
@@ -705,7 +705,7 @@ impl Project {
 
                     // Unregistering the project causes the server to send out a
                     // contact update removing this project from the host's list
-                    // of public projects. Wait until this contact update has been
+                    // of online projects. Wait until this contact update has been
                     // processed before clearing out this project's remote id, so
                     // that there is no moment where this project appears in the
                     // contact metadata and *also* has no remote id.
@@ -812,11 +812,11 @@ impl Project {
     fn metadata_changed(&mut self, persist: bool, cx: &mut ModelContext<Self>) {
         if let ProjectClientState::Local {
             remote_id_rx,
-            public_rx,
+            online_rx,
             ..
         } = &self.client_state
         {
-            if let (Some(project_id), true) = (*remote_id_rx.borrow(), *public_rx.borrow()) {
+            if let (Some(project_id), true) = (*remote_id_rx.borrow(), *online_rx.borrow()) {
                 self.client
                     .send(proto::UpdateProject {
                         project_id,
@@ -874,13 +874,13 @@ impl Project {
             .map(|tree| tree.read(cx).root_name())
     }
 
-    fn project_path_keys(&self, cx: &AppContext) -> Vec<String> {
+    fn db_keys_for_online_state(&self, cx: &AppContext) -> Vec<String> {
         self.worktrees
             .iter()
             .filter_map(|worktree| {
                 worktree.upgrade(&cx).map(|worktree| {
                     format!(
-                        "public-project-path:{}",
+                        "project-path-online:{}",
                         worktree
                             .read(cx)
                             .as_local()

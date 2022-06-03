@@ -1055,8 +1055,8 @@ impl Workspace {
             .clone()
             .unwrap_or_else(|| self.project.clone());
         project.update(cx, |project, cx| {
-            let public = !project.is_public();
-            project.set_public(public, cx);
+            let public = !project.is_online();
+            project.set_online(public, cx);
         });
     }
 
