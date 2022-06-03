@@ -179,19 +179,24 @@ impl ContactsPanel {
 
         let list_state = ListState::new(0, Orientation::Top, 1000., cx, move |this, ix, cx| {
             let theme = cx.global::<Settings>().theme.clone();
-            let theme = &theme.contacts_panel;
             let current_user_id = this.user_store.read(cx).current_user().map(|user| user.id);
             let is_selected = this.selection == Some(ix);
 
             match &this.entries[ix] {
                 ContactEntry::Header(section) => {
                     let is_collapsed = this.collapsed_sections.contains(&section);
-                    Self::render_header(*section, theme, is_selected, is_collapsed, cx)
+                    Self::render_header(
+                        *section,
+                        &theme.contacts_panel,
+                        is_selected,
+                        is_collapsed,
+                        cx,
+                    )
                 }
                 ContactEntry::IncomingRequest(user) => Self::render_contact_request(
                     user.clone(),
                     this.user_store.clone(),
-                    theme,
+                    &theme.contacts_panel,
                     true,
                     is_selected,
                     cx,
@@ -199,13 +204,13 @@ impl ContactsPanel {
                 ContactEntry::OutgoingRequest(user) => Self::render_contact_request(
                     user.clone(),
                     this.user_store.clone(),
-                    theme,
+                    &theme.contacts_panel,
                     false,
                     is_selected,
                     cx,
                 ),
                 ContactEntry::Contact(contact) => {
-                    Self::render_contact(&contact.user, theme, is_selected)
+                    Self::render_contact(&contact.user, &theme.contacts_panel, is_selected)
                 }
                 ContactEntry::ContactProject(contact, project_ix, open_project) => {
                     let is_last_project_for_contact =
@@ -221,15 +226,20 @@ impl ContactsPanel {
                         current_user_id,
                         *project_ix,
                         open_project.clone(),
-                        theme,
+                        &theme.contacts_panel,
+                        &theme.tooltip,
                         is_last_project_for_contact,
                         is_selected,
                         cx,
                     )
                 }
-                ContactEntry::PrivateProject(project) => {
-                    Self::render_private_project(project.clone(), theme, is_selected, cx)
-                }
+                ContactEntry::PrivateProject(project) => Self::render_private_project(
+                    project.clone(),
+                    &theme.contacts_panel,
+                    &theme.tooltip,
+                    is_selected,
+                    cx,
+                ),
             }
         });
 
@@ -335,6 +345,7 @@ impl ContactsPanel {
         project_index: usize,
         open_project: Option<WeakModelHandle<Project>>,
         theme: &theme::ContactsPanel,
+        tooltip_style: &TooltipStyle,
         is_last_project: bool,
         is_selected: bool,
         cx: &mut RenderContext<Self>,
@@ -406,7 +417,7 @@ impl ContactsPanel {
                                 return None;
                             }
 
-                            let mut button = MouseEventHandler::new::<ToggleProjectPublic, _, _>(
+                            let button = MouseEventHandler::new::<ToggleProjectPublic, _, _>(
                                 project_id as usize,
                                 cx,
                                 |state, _| {
@@ -423,17 +434,27 @@ impl ContactsPanel {
                                 },
                             );
 
-                            if !is_becoming_private {
-                                button = button
-                                    .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_click(move |_, _, cx| {
-                                        cx.dispatch_action(ToggleProjectPublic {
-                                            project: Some(open_project.clone()),
+                            if is_becoming_private {
+                                Some(button.boxed())
+                            } else {
+                                Some(
+                                    button
+                                        .with_cursor_style(CursorStyle::PointingHand)
+                                        .on_click(move |_, _, cx| {
+                                            cx.dispatch_action(ToggleProjectPublic {
+                                                project: Some(open_project.clone()),
+                                            })
                                         })
-                                    });
+                                        .with_tooltip(
+                                            project_id as usize,
+                                            "Make project private".to_string(),
+                                            None,
+                                            tooltip_style.clone(),
+                                            cx,
+                                        )
+                                        .boxed(),
+                                )
                             }
-
-                            Some(button.boxed())
                         }))
                         .constrained()
                         .with_width(host_avatar_height)
@@ -487,6 +508,7 @@ impl ContactsPanel {
     fn render_private_project(
         project: WeakModelHandle<Project>,
         theme: &theme::ContactsPanel,
+        tooltip_style: &TooltipStyle,
         is_selected: bool,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
@@ -520,7 +542,7 @@ impl ContactsPanel {
 
             Flex::row()
                 .with_child({
-                    let mut button =
+                    let button =
                         MouseEventHandler::new::<TogglePublic, _, _>(project_id, cx, |state, _| {
                             let mut style = *theme.private_button.style_for(state, false);
                             if is_becoming_public {
@@ -533,17 +555,25 @@ impl ContactsPanel {
                                 .boxed()
                         });
 
-                    if !is_becoming_public {
-                        button = button
+                    if is_becoming_public {
+                        button.boxed()
+                    } else {
+                        button
                             .with_cursor_style(CursorStyle::PointingHand)
                             .on_click(move |_, _, cx| {
                                 cx.dispatch_action(ToggleProjectPublic {
                                     project: Some(project.clone()),
                                 })
-                            });
+                            })
+                            .with_tooltip(
+                                project_id,
+                                "Make project public".to_string(),
+                                None,
+                                tooltip_style.clone(),
+                                cx,
+                            )
+                            .boxed()
                     }
-
-                    button.boxed()
                 })
                 .with_child(
                     Label::new(worktree_root_names, row.name.text.clone())

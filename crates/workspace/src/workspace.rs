@@ -1056,7 +1056,6 @@ impl Workspace {
             .unwrap_or_else(|| self.project.clone());
         project.update(cx, |project, cx| {
             let public = !project.is_public();
-            eprintln!("toggle_project_public => {}", public);
             project.set_public(public, cx);
             project.project_store().update(cx, |store, cx| {
                 store
@@ -2467,7 +2466,6 @@ pub fn open_paths(
                 .unwrap_or(false);
             if public {
                 project.update(&mut cx, |project, cx| {
-                    eprintln!("initialize new project public");
                     project.set_public(true, cx);
                 });
             }
