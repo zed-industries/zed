@@ -75,6 +75,20 @@ fn main() {
             },
         )
         .with_overrides(
+            "C",
+            settings::LanguageOverride {
+                tab_size: Some(2),
+                ..Default::default()
+            },
+        )
+        .with_overrides(
+            "C++",
+            settings::LanguageOverride {
+                tab_size: Some(2),
+                ..Default::default()
+            },
+        )
+        .with_overrides(
             "Markdown",
             settings::LanguageOverride {
                 soft_wrap: Some(settings::SoftWrap::PreferredLineLength),

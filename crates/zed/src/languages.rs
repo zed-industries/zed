@@ -23,6 +23,11 @@ pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegi
             Some(Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>),
         ),
         (
+            "cpp",
+            tree_sitter_cpp::language(),
+            Some(Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>),
+        ),
+        (
             "json",
             tree_sitter_json::language(),
             Some(Arc::new(json::JsonLspAdapter)),

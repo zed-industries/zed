@@ -75,7 +75,6 @@
 
 (comment) @comment
 
-(null) @constant
 (number_literal) @number
 
 [
