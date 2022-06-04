@@ -157,7 +157,7 @@ impl Vim {
                                 map.clip_point(selection.head(), Bias::Left),
                                 selection.goal,
                             );
-                            if state.empty_selections_only() {
+                            if self.enabled && state.empty_selections_only() {
                                 selection.collapse_to(selection.head(), selection.goal)
                             }
                         });
