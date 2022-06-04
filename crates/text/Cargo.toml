@@ -28,5 +28,5 @@ collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 ctor = "0.1"
-env_logger = "0.8"
+env_logger = "0.9"
 rand = "0.8.3"

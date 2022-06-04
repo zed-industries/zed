@@ -30,5 +30,5 @@ gpui = { path = "../gpui", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 ctor = "0.1"
-env_logger = "0.8"
+env_logger = "0.9"
 unindent = "0.1.7"

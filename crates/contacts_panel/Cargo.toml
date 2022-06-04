@@ -9,6 +9,7 @@ doctest = false
 
 [dependencies]
 client = { path = "../client" }
+collections = { path = "../collections" }
 editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }

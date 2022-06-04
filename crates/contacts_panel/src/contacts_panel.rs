@@ -13,15 +13,16 @@ use gpui::{
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
     AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MutableAppContext,
-    RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    RenderContext, Subscription, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use join_project_notification::JoinProjectNotification;
 use menu::{Confirm, SelectNext, SelectPrev};
+use project::{Project, ProjectStore};
 use serde::Deserialize;
 use settings::Settings;
-use std::sync::Arc;
+use std::{ops::DerefMut, sync::Arc};
 use theme::IconButton;
-use workspace::{sidebar::SidebarItem, JoinProject, Workspace};
+use workspace::{sidebar::SidebarItem, JoinProject, ToggleProjectOnline, Workspace};
 
 impl_actions!(
     contacts_panel,
@@ -37,13 +38,14 @@ enum Section {
     Offline,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 enum ContactEntry {
     Header(Section),
     IncomingRequest(Arc<User>),
     OutgoingRequest(Arc<User>),
     Contact(Arc<Contact>),
-    ContactProject(Arc<Contact>, usize),
+    ContactProject(Arc<Contact>, usize, Option<WeakModelHandle<Project>>),
+    OfflineProject(WeakModelHandle<Project>),
 }
 
 #[derive(Clone)]
@@ -54,6 +56,7 @@ pub struct ContactsPanel {
     match_candidates: Vec<StringMatchCandidate>,
     list_state: ListState,
     user_store: ModelHandle<UserStore>,
+    project_store: ModelHandle<ProjectStore>,
     filter_editor: ViewHandle<Editor>,
     collapsed_sections: Vec<Section>,
     selection: Option<usize>,
@@ -89,6 +92,7 @@ pub fn init(cx: &mut MutableAppContext) {
 impl ContactsPanel {
     pub fn new(
         user_store: ModelHandle<UserStore>,
+        project_store: ModelHandle<ProjectStore>,
         workspace: WeakViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -148,93 +152,99 @@ impl ContactsPanel {
             }
         });
 
-        cx.subscribe(&user_store, {
-            let user_store = user_store.downgrade();
-            move |_, _, event, cx| {
-                if let Some((workspace, user_store)) =
-                    workspace.upgrade(cx).zip(user_store.upgrade(cx))
-                {
-                    workspace.update(cx, |workspace, cx| match event {
-                        client::Event::Contact { user, kind } => match kind {
-                            ContactEventKind::Requested | ContactEventKind::Accepted => workspace
-                                .show_notification(user.id as usize, cx, |cx| {
-                                    cx.add_view(|cx| {
-                                        ContactNotification::new(
-                                            user.clone(),
-                                            *kind,
-                                            user_store,
-                                            cx,
-                                        )
-                                    })
-                                }),
-                            _ => {}
-                        },
-                        _ => {}
-                    });
-                }
+        cx.observe(&project_store, |this, _, cx| this.update_entries(cx))
+            .detach();
 
-                if let client::Event::ShowContacts = event {
-                    cx.emit(Event::Activate);
-                }
+        cx.subscribe(&user_store, move |_, user_store, event, cx| {
+            if let Some(workspace) = workspace.upgrade(cx) {
+                workspace.update(cx, |workspace, cx| match event {
+                    client::Event::Contact { user, kind } => match kind {
+                        ContactEventKind::Requested | ContactEventKind::Accepted => workspace
+                            .show_notification(user.id as usize, cx, |cx| {
+                                cx.add_view(|cx| {
+                                    ContactNotification::new(user.clone(), *kind, user_store, cx)
+                                })
+                            }),
+                        _ => {}
+                    },
+                    _ => {}
+                });
+            }
+
+            if let client::Event::ShowContacts = event {
+                cx.emit(Event::Activate);
             }
         })
         .detach();
 
-        let mut this = Self {
-            list_state: ListState::new(0, Orientation::Top, 1000., cx, {
-                move |this, ix, cx| {
-                    let theme = cx.global::<Settings>().theme.clone();
-                    let theme = &theme.contacts_panel;
-                    let current_user_id =
-                        this.user_store.read(cx).current_user().map(|user| user.id);
-                    let is_selected = this.selection == Some(ix);
+        let list_state = ListState::new(0, Orientation::Top, 1000., cx, move |this, ix, cx| {
+            let theme = cx.global::<Settings>().theme.clone();
+            let current_user_id = this.user_store.read(cx).current_user().map(|user| user.id);
+            let is_selected = this.selection == Some(ix);
 
-                    match &this.entries[ix] {
-                        ContactEntry::Header(section) => {
-                            let is_collapsed = this.collapsed_sections.contains(&section);
-                            Self::render_header(*section, theme, is_selected, is_collapsed, cx)
-                        }
-                        ContactEntry::IncomingRequest(user) => Self::render_contact_request(
-                            user.clone(),
-                            this.user_store.clone(),
-                            theme,
-                            true,
-                            is_selected,
-                            cx,
-                        ),
-                        ContactEntry::OutgoingRequest(user) => Self::render_contact_request(
-                            user.clone(),
-                            this.user_store.clone(),
-                            theme,
-                            false,
-                            is_selected,
-                            cx,
-                        ),
-                        ContactEntry::Contact(contact) => {
-                            Self::render_contact(contact.clone(), theme, is_selected)
-                        }
-                        ContactEntry::ContactProject(contact, project_ix) => {
-                            let is_last_project_for_contact =
-                                this.entries.get(ix + 1).map_or(true, |next| {
-                                    if let ContactEntry::ContactProject(next_contact, _) = next {
-                                        next_contact.user.id != contact.user.id
-                                    } else {
-                                        true
-                                    }
-                                });
-                            Self::render_contact_project(
-                                contact.clone(),
-                                current_user_id,
-                                *project_ix,
-                                theme,
-                                is_last_project_for_contact,
-                                is_selected,
-                                cx,
-                            )
-                        }
-                    }
+            match &this.entries[ix] {
+                ContactEntry::Header(section) => {
+                    let is_collapsed = this.collapsed_sections.contains(&section);
+                    Self::render_header(
+                        *section,
+                        &theme.contacts_panel,
+                        is_selected,
+                        is_collapsed,
+                        cx,
+                    )
                 }
-            }),
+                ContactEntry::IncomingRequest(user) => Self::render_contact_request(
+                    user.clone(),
+                    this.user_store.clone(),
+                    &theme.contacts_panel,
+                    true,
+                    is_selected,
+                    cx,
+                ),
+                ContactEntry::OutgoingRequest(user) => Self::render_contact_request(
+                    user.clone(),
+                    this.user_store.clone(),
+                    &theme.contacts_panel,
+                    false,
+                    is_selected,
+                    cx,
+                ),
+                ContactEntry::Contact(contact) => {
+                    Self::render_contact(&contact.user, &theme.contacts_panel, is_selected)
+                }
+                ContactEntry::ContactProject(contact, project_ix, open_project) => {
+                    let is_last_project_for_contact =
+                        this.entries.get(ix + 1).map_or(true, |next| {
+                            if let ContactEntry::ContactProject(next_contact, _, _) = next {
+                                next_contact.user.id != contact.user.id
+                            } else {
+                                true
+                            }
+                        });
+                    Self::render_project(
+                        contact.clone(),
+                        current_user_id,
+                        *project_ix,
+                        open_project.clone(),
+                        &theme.contacts_panel,
+                        &theme.tooltip,
+                        is_last_project_for_contact,
+                        is_selected,
+                        cx,
+                    )
+                }
+                ContactEntry::OfflineProject(project) => Self::render_offline_project(
+                    project.clone(),
+                    &theme.contacts_panel,
+                    &theme.tooltip,
+                    is_selected,
+                    cx,
+                ),
+            }
+        });
+
+        let mut this = Self {
+            list_state,
             selection: None,
             collapsed_sections: Default::default(),
             entries: Default::default(),
@@ -242,6 +252,7 @@ impl ContactsPanel {
             filter_editor,
             _maintain_contacts: cx.observe(&user_store, |this, _, cx| this.update_entries(cx)),
             user_store,
+            project_store,
         };
         this.update_entries(cx);
         this
@@ -300,13 +311,9 @@ impl ContactsPanel {
         .boxed()
     }
 
-    fn render_contact(
-        contact: Arc<Contact>,
-        theme: &theme::ContactsPanel,
-        is_selected: bool,
-    ) -> ElementBox {
+    fn render_contact(user: &User, theme: &theme::ContactsPanel, is_selected: bool) -> ElementBox {
         Flex::row()
-            .with_children(contact.user.avatar.clone().map(|avatar| {
+            .with_children(user.avatar.clone().map(|avatar| {
                 Image::new(avatar)
                     .with_style(theme.contact_avatar)
                     .aligned()
@@ -315,7 +322,7 @@ impl ContactsPanel {
             }))
             .with_child(
                 Label::new(
-                    contact.user.github_login.clone(),
+                    user.github_login.clone(),
                     theme.contact_username.text.clone(),
                 )
                 .contained()
@@ -332,11 +339,13 @@ impl ContactsPanel {
             .boxed()
     }
 
-    fn render_contact_project(
+    fn render_project(
         contact: Arc<Contact>,
         current_user_id: Option<u64>,
         project_index: usize,
+        open_project: Option<WeakModelHandle<Project>>,
         theme: &theme::ContactsPanel,
+        tooltip_style: &TooltipStyle,
         is_last_project: bool,
         is_selected: bool,
         cx: &mut RenderContext<Self>,
@@ -344,6 +353,7 @@ impl ContactsPanel {
         let project = &contact.projects[project_index];
         let project_id = project.id;
         let is_host = Some(contact.user.id) == current_user_id;
+        let open_project = open_project.and_then(|p| p.upgrade(cx.deref_mut()));
 
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
@@ -358,48 +368,97 @@ impl ContactsPanel {
         let baseline_offset =
             row.name.text.baseline_offset(font_cache) + (theme.row_height - line_height) / 2.;
 
-        MouseEventHandler::new::<JoinProject, _, _>(project_id as usize, cx, |mouse_state, _| {
+        MouseEventHandler::new::<JoinProject, _, _>(project_id as usize, cx, |mouse_state, cx| {
             let tree_branch = *tree_branch.style_for(mouse_state, is_selected);
             let row = theme.project_row.style_for(mouse_state, is_selected);
 
             Flex::row()
                 .with_child(
-                    Canvas::new(move |bounds, _, cx| {
-                        let start_x =
-                            bounds.min_x() + (bounds.width() / 2.) - (tree_branch.width / 2.);
-                        let end_x = bounds.max_x();
-                        let start_y = bounds.min_y();
-                        let end_y = bounds.min_y() + baseline_offset - (cap_height / 2.);
+                    Stack::new()
+                        .with_child(
+                            Canvas::new(move |bounds, _, cx| {
+                                let start_x = bounds.min_x() + (bounds.width() / 2.)
+                                    - (tree_branch.width / 2.);
+                                let end_x = bounds.max_x();
+                                let start_y = bounds.min_y();
+                                let end_y = bounds.min_y() + baseline_offset - (cap_height / 2.);
 
-                        cx.scene.push_quad(gpui::Quad {
-                            bounds: RectF::from_points(
-                                vec2f(start_x, start_y),
-                                vec2f(
-                                    start_x + tree_branch.width,
-                                    if is_last_project {
-                                        end_y
-                                    } else {
-                                        bounds.max_y()
-                                    },
-                                ),
-                            ),
-                            background: Some(tree_branch.color),
-                            border: gpui::Border::default(),
-                            corner_radius: 0.,
-                        });
-                        cx.scene.push_quad(gpui::Quad {
-                            bounds: RectF::from_points(
-                                vec2f(start_x, end_y),
-                                vec2f(end_x, end_y + tree_branch.width),
-                            ),
-                            background: Some(tree_branch.color),
-                            border: gpui::Border::default(),
-                            corner_radius: 0.,
-                        });
-                    })
-                    .constrained()
-                    .with_width(host_avatar_height)
-                    .boxed(),
+                                cx.scene.push_quad(gpui::Quad {
+                                    bounds: RectF::from_points(
+                                        vec2f(start_x, start_y),
+                                        vec2f(
+                                            start_x + tree_branch.width,
+                                            if is_last_project {
+                                                end_y
+                                            } else {
+                                                bounds.max_y()
+                                            },
+                                        ),
+                                    ),
+                                    background: Some(tree_branch.color),
+                                    border: gpui::Border::default(),
+                                    corner_radius: 0.,
+                                });
+                                cx.scene.push_quad(gpui::Quad {
+                                    bounds: RectF::from_points(
+                                        vec2f(start_x, end_y),
+                                        vec2f(end_x, end_y + tree_branch.width),
+                                    ),
+                                    background: Some(tree_branch.color),
+                                    border: gpui::Border::default(),
+                                    corner_radius: 0.,
+                                });
+                            })
+                            .boxed(),
+                        )
+                        .with_children(open_project.and_then(|open_project| {
+                            let is_going_offline = !open_project.read(cx).is_online();
+                            if !mouse_state.hovered && !is_going_offline {
+                                return None;
+                            }
+
+                            let button = MouseEventHandler::new::<ToggleProjectOnline, _, _>(
+                                project_id as usize,
+                                cx,
+                                |state, _| {
+                                    let mut icon_style =
+                                        *theme.private_button.style_for(state, false);
+                                    icon_style.container.background_color =
+                                        row.container.background_color;
+                                    if is_going_offline {
+                                        icon_style.color = theme.disabled_button.color;
+                                    }
+                                    render_icon_button(&icon_style, "icons/lock-8.svg")
+                                        .aligned()
+                                        .boxed()
+                                },
+                            );
+
+                            if is_going_offline {
+                                Some(button.boxed())
+                            } else {
+                                Some(
+                                    button
+                                        .with_cursor_style(CursorStyle::PointingHand)
+                                        .on_click(move |_, _, cx| {
+                                            cx.dispatch_action(ToggleProjectOnline {
+                                                project: Some(open_project.clone()),
+                                            })
+                                        })
+                                        .with_tooltip(
+                                            project_id as usize,
+                                            "Take project offline".to_string(),
+                                            None,
+                                            tooltip_style.clone(),
+                                            cx,
+                                        )
+                                        .boxed(),
+                                )
+                            }
+                        }))
+                        .constrained()
+                        .with_width(host_avatar_height)
+                        .boxed(),
                 )
                 .with_child(
                     Label::new(
@@ -446,6 +505,94 @@ impl ContactsPanel {
         .boxed()
     }
 
+    fn render_offline_project(
+        project: WeakModelHandle<Project>,
+        theme: &theme::ContactsPanel,
+        tooltip_style: &TooltipStyle,
+        is_selected: bool,
+        cx: &mut RenderContext<Self>,
+    ) -> ElementBox {
+        let project = if let Some(project) = project.upgrade(cx.deref_mut()) {
+            project
+        } else {
+            return Empty::new().boxed();
+        };
+
+        let host_avatar_height = theme
+            .contact_avatar
+            .width
+            .or(theme.contact_avatar.height)
+            .unwrap_or(0.);
+
+        enum LocalProject {}
+        enum ToggleOnline {}
+
+        let project_id = project.id();
+        MouseEventHandler::new::<LocalProject, _, _>(project_id, cx, |state, cx| {
+            let row = theme.project_row.style_for(state, is_selected);
+            let mut worktree_root_names = String::new();
+            let project_ = project.read(cx);
+            let is_going_online = project_.is_online();
+            for tree in project_.visible_worktrees(cx) {
+                if !worktree_root_names.is_empty() {
+                    worktree_root_names.push_str(", ");
+                }
+                worktree_root_names.push_str(tree.read(cx).root_name());
+            }
+
+            Flex::row()
+                .with_child({
+                    let button =
+                        MouseEventHandler::new::<ToggleOnline, _, _>(project_id, cx, |state, _| {
+                            let mut style = *theme.private_button.style_for(state, false);
+                            if is_going_online {
+                                style.color = theme.disabled_button.color;
+                            }
+                            render_icon_button(&style, "icons/lock-8.svg")
+                                .aligned()
+                                .constrained()
+                                .with_width(host_avatar_height)
+                                .boxed()
+                        });
+
+                    if is_going_online {
+                        button.boxed()
+                    } else {
+                        button
+                            .with_cursor_style(CursorStyle::PointingHand)
+                            .on_click(move |_, _, cx| {
+                                cx.dispatch_action(ToggleProjectOnline {
+                                    project: Some(project.clone()),
+                                })
+                            })
+                            .with_tooltip(
+                                project_id,
+                                "Take project online".to_string(),
+                                None,
+                                tooltip_style.clone(),
+                                cx,
+                            )
+                            .boxed()
+                    }
+                })
+                .with_child(
+                    Label::new(worktree_root_names, row.name.text.clone())
+                        .aligned()
+                        .left()
+                        .contained()
+                        .with_style(row.name.container)
+                        .flex(1., false)
+                        .boxed(),
+                )
+                .constrained()
+                .with_height(theme.row_height)
+                .contained()
+                .with_style(row.container)
+                .boxed()
+        })
+        .boxed()
+    }
+
     fn render_contact_request(
         user: Arc<User>,
         user_store: ModelHandle<UserStore>,
@@ -487,7 +634,7 @@ impl ContactsPanel {
             row.add_children([
                 MouseEventHandler::new::<Decline, _, _>(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {
-                        &theme.disabled_contact_button
+                        &theme.disabled_button
                     } else {
                         &theme.contact_button.style_for(mouse_state, false)
                     };
@@ -509,7 +656,7 @@ impl ContactsPanel {
                 .boxed(),
                 MouseEventHandler::new::<Accept, _, _>(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {
-                        &theme.disabled_contact_button
+                        &theme.disabled_button
                     } else {
                         &theme.contact_button.style_for(mouse_state, false)
                     };
@@ -531,7 +678,7 @@ impl ContactsPanel {
             row.add_child(
                 MouseEventHandler::new::<Cancel, _, _>(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {
-                        &theme.disabled_contact_button
+                        &theme.disabled_button
                     } else {
                         &theme.contact_button.style_for(mouse_state, false)
                     };
@@ -557,6 +704,7 @@ impl ContactsPanel {
 
     fn update_entries(&mut self, cx: &mut ViewContext<Self>) {
         let user_store = self.user_store.read(cx);
+        let project_store = self.project_store.read(cx);
         let query = self.filter_editor.read(cx).text(cx);
         let executor = cx.background().clone();
 
@@ -629,20 +777,37 @@ impl ContactsPanel {
             }
         }
 
+        let current_user = user_store.current_user();
+
         let contacts = user_store.contacts();
         if !contacts.is_empty() {
+            // Always put the current user first.
             self.match_candidates.clear();
-            self.match_candidates
-                .extend(
-                    contacts
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, contact)| StringMatchCandidate {
-                            id: ix,
-                            string: contact.user.github_login.clone(),
-                            char_bag: contact.user.github_login.chars().collect(),
-                        }),
-                );
+            self.match_candidates.reserve(contacts.len());
+            self.match_candidates.push(StringMatchCandidate {
+                id: 0,
+                string: Default::default(),
+                char_bag: Default::default(),
+            });
+            for (ix, contact) in contacts.iter().enumerate() {
+                let candidate = StringMatchCandidate {
+                    id: ix,
+                    string: contact.user.github_login.clone(),
+                    char_bag: contact.user.github_login.chars().collect(),
+                };
+                if current_user
+                    .as_ref()
+                    .map_or(false, |current_user| current_user.id == contact.user.id)
+                {
+                    self.match_candidates[0] = candidate;
+                } else {
+                    self.match_candidates.push(candidate);
+                }
+            }
+            if self.match_candidates[0].string.is_empty() {
+                self.match_candidates.remove(0);
+            }
+
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
@@ -666,16 +831,60 @@ impl ContactsPanel {
                         for mat in matches {
                             let contact = &contacts[mat.candidate_id];
                             self.entries.push(ContactEntry::Contact(contact.clone()));
-                            self.entries
-                                .extend(contact.projects.iter().enumerate().filter_map(
-                                    |(ix, project)| {
-                                        if project.worktree_root_names.is_empty() {
+
+                            let is_current_user = current_user
+                                .as_ref()
+                                .map_or(false, |user| user.id == contact.user.id);
+                            if is_current_user {
+                                let mut open_projects =
+                                    project_store.projects(cx).collect::<Vec<_>>();
+                                self.entries.extend(
+                                    contact.projects.iter().enumerate().filter_map(
+                                        |(ix, project)| {
+                                            let open_project = open_projects
+                                                .iter()
+                                                .position(|p| {
+                                                    p.read(cx).remote_id() == Some(project.id)
+                                                })
+                                                .map(|ix| open_projects.remove(ix).downgrade());
+                                            if project.worktree_root_names.is_empty() {
+                                                None
+                                            } else {
+                                                Some(ContactEntry::ContactProject(
+                                                    contact.clone(),
+                                                    ix,
+                                                    open_project,
+                                                ))
+                                            }
+                                        },
+                                    ),
+                                );
+                                self.entries.extend(open_projects.into_iter().filter_map(
+                                    |project| {
+                                        if project.read(cx).visible_worktrees(cx).next().is_none() {
                                             None
                                         } else {
-                                            Some(ContactEntry::ContactProject(contact.clone(), ix))
+                                            Some(ContactEntry::OfflineProject(project.downgrade()))
                                         }
                                     },
                                 ));
+                            } else {
+                                self.entries.extend(
+                                    contact.projects.iter().enumerate().filter_map(
+                                        |(ix, project)| {
+                                            if project.worktree_root_names.is_empty() {
+                                                None
+                                            } else {
+                                                Some(ContactEntry::ContactProject(
+                                                    contact.clone(),
+                                                    ix,
+                                                    None,
+                                                ))
+                                            }
+                                        },
+                                    ),
+                                );
+                            }
                         }
                     }
                 }
@@ -757,11 +966,18 @@ impl ContactsPanel {
                         let section = *section;
                         self.toggle_expanded(&ToggleExpanded(section), cx);
                     }
-                    ContactEntry::ContactProject(contact, project_index) => cx
-                        .dispatch_global_action(JoinProject {
-                            contact: contact.clone(),
-                            project_index: *project_index,
-                        }),
+                    ContactEntry::ContactProject(contact, project_index, open_project) => {
+                        if let Some(open_project) = open_project {
+                            workspace::activate_workspace_for_project(cx, |_, cx| {
+                                cx.model_id() == open_project.id()
+                            });
+                        } else {
+                            cx.dispatch_global_action(JoinProject {
+                                contact: contact.clone(),
+                                project_index: *project_index,
+                            })
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -952,9 +1168,14 @@ impl PartialEq for ContactEntry {
                     return contact_1.user.id == contact_2.user.id;
                 }
             }
-            ContactEntry::ContactProject(contact_1, ix_1) => {
-                if let ContactEntry::ContactProject(contact_2, ix_2) = other {
+            ContactEntry::ContactProject(contact_1, ix_1, _) => {
+                if let ContactEntry::ContactProject(contact_2, ix_2, _) = other {
                     return contact_1.user.id == contact_2.user.id && ix_1 == ix_2;
+                }
+            }
+            ContactEntry::OfflineProject(project_1) => {
+                if let ContactEntry::OfflineProject(project_2) = other {
+                    return project_1.id() == project_2.id();
                 }
             }
         }
@@ -965,20 +1186,70 @@ impl PartialEq for ContactEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use client::{proto, test::FakeServer, Client};
-    use gpui::TestAppContext;
+    use client::{
+        proto,
+        test::{FakeHttpClient, FakeServer},
+        Client,
+    };
+    use collections::HashSet;
+    use gpui::{serde_json::json, TestAppContext};
     use language::LanguageRegistry;
-    use project::Project;
-    use theme::ThemeRegistry;
-    use workspace::AppState;
+    use project::{FakeFs, Project};
 
     #[gpui::test]
     async fn test_contact_panel(cx: &mut TestAppContext) {
-        let (app_state, server) = init(cx).await;
-        let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let workspace = cx.add_view(0, |cx| Workspace::new(project, cx));
+        Settings::test_async(cx);
+        let current_user_id = 100;
+
+        let languages = Arc::new(LanguageRegistry::test());
+        let http_client = FakeHttpClient::with_404_response();
+        let client = Client::new(http_client.clone());
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+        let project_store = cx.add_model(|_| ProjectStore::new(project::Db::open_fake()));
+        let server = FakeServer::for_client(current_user_id, &client, &cx).await;
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree("/private_dir", json!({ "one.rs": "" }))
+            .await;
+        let project = cx.update(|cx| {
+            Project::local(
+                false,
+                client.clone(),
+                user_store.clone(),
+                project_store.clone(),
+                languages,
+                fs,
+                cx,
+            )
+        });
+        let worktree_id = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/private_dir", true, cx)
+            })
+            .await
+            .unwrap()
+            .0
+            .read_with(cx, |worktree, _| worktree.id().to_proto());
+
+        let workspace = cx.add_view(0, |cx| Workspace::new(project.clone(), cx));
         let panel = cx.add_view(0, |cx| {
-            ContactsPanel::new(app_state.user_store.clone(), workspace.downgrade(), cx)
+            ContactsPanel::new(
+                user_store.clone(),
+                project_store.clone(),
+                workspace.downgrade(),
+                cx,
+            )
+        });
+
+        workspace.update(cx, |_, cx| {
+            cx.observe(&panel, |_, panel, cx| {
+                let entries = render_to_strings(&panel, cx);
+                assert!(
+                    entries.iter().collect::<HashSet<_>>().len() == entries.len(),
+                    "Duplicate contact panel entries {:?}",
+                    entries
+                )
+            })
+            .detach();
         });
 
         let get_users_request = server.receive::<proto::GetUsers>().await.unwrap();
@@ -1001,6 +1272,11 @@ mod tests {
                         github_login: name.to_string(),
                         ..Default::default()
                     })
+                    .chain([proto::User {
+                        id: current_user_id,
+                        github_login: "the_current_user".to_string(),
+                        ..Default::default()
+                    }])
                     .collect(),
                 },
             )
@@ -1039,19 +1315,219 @@ mod tests {
                     should_notify: false,
                     projects: vec![],
                 },
+                proto::Contact {
+                    user_id: current_user_id,
+                    online: true,
+                    should_notify: false,
+                    projects: vec![proto::ProjectMetadata {
+                        id: 103,
+                        worktree_root_names: vec!["dir3".to_string()],
+                        guests: vec![3],
+                    }],
+                },
             ],
             ..Default::default()
         });
 
         cx.foreground().run_until_parked();
         assert_eq!(
-            render_to_strings(&panel, cx),
+            cx.read(|cx| render_to_strings(&panel, cx)),
             &[
-                "+",
                 "v Requests",
                 "  incoming user_one",
                 "  outgoing user_two",
                 "v Online",
+                "  the_current_user",
+                "    dir3",
+                "    🔒 private_dir",
+                "  user_four",
+                "    dir2",
+                "  user_three",
+                "    dir1",
+                "v Offline",
+                "  user_five",
+            ]
+        );
+
+        // Take a project online. It appears as loading, since the project
+        // isn't yet visible to other contacts.
+        project.update(cx, |project, cx| project.set_online(true, cx));
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            cx.read(|cx| render_to_strings(&panel, cx)),
+            &[
+                "v Requests",
+                "  incoming user_one",
+                "  outgoing user_two",
+                "v Online",
+                "  the_current_user",
+                "    dir3",
+                "    🔒 private_dir (going online...)",
+                "  user_four",
+                "    dir2",
+                "  user_three",
+                "    dir1",
+                "v Offline",
+                "  user_five",
+            ]
+        );
+
+        // The server responds, assigning the project a remote id. It still appears
+        // as loading, because the server hasn't yet sent out the updated contact
+        // state for the current user.
+        let request = server.receive::<proto::RegisterProject>().await.unwrap();
+        server
+            .respond(
+                request.receipt(),
+                proto::RegisterProjectResponse { project_id: 200 },
+            )
+            .await;
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            cx.read(|cx| render_to_strings(&panel, cx)),
+            &[
+                "v Requests",
+                "  incoming user_one",
+                "  outgoing user_two",
+                "v Online",
+                "  the_current_user",
+                "    dir3",
+                "    🔒 private_dir (going online...)",
+                "  user_four",
+                "    dir2",
+                "  user_three",
+                "    dir1",
+                "v Offline",
+                "  user_five",
+            ]
+        );
+
+        // The server receives the project's metadata and updates the contact metadata
+        // for the current user. Now the project appears as online.
+        assert_eq!(
+            server
+                .receive::<proto::UpdateProject>()
+                .await
+                .unwrap()
+                .payload
+                .worktrees,
+            &[proto::WorktreeMetadata {
+                id: worktree_id,
+                root_name: "private_dir".to_string(),
+                visible: true,
+            }],
+        );
+        server.send(proto::UpdateContacts {
+            contacts: vec![proto::Contact {
+                user_id: current_user_id,
+                online: true,
+                should_notify: false,
+                projects: vec![
+                    proto::ProjectMetadata {
+                        id: 103,
+                        worktree_root_names: vec!["dir3".to_string()],
+                        guests: vec![3],
+                    },
+                    proto::ProjectMetadata {
+                        id: 200,
+                        worktree_root_names: vec!["private_dir".to_string()],
+                        guests: vec![3],
+                    },
+                ],
+            }],
+            ..Default::default()
+        });
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            cx.read(|cx| render_to_strings(&panel, cx)),
+            &[
+                "v Requests",
+                "  incoming user_one",
+                "  outgoing user_two",
+                "v Online",
+                "  the_current_user",
+                "    dir3",
+                "    private_dir",
+                "  user_four",
+                "    dir2",
+                "  user_three",
+                "    dir1",
+                "v Offline",
+                "  user_five",
+            ]
+        );
+
+        // Take the project offline. It appears as loading.
+        project.update(cx, |project, cx| project.set_online(false, cx));
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            cx.read(|cx| render_to_strings(&panel, cx)),
+            &[
+                "v Requests",
+                "  incoming user_one",
+                "  outgoing user_two",
+                "v Online",
+                "  the_current_user",
+                "    dir3",
+                "    private_dir (going offline...)",
+                "  user_four",
+                "    dir2",
+                "  user_three",
+                "    dir1",
+                "v Offline",
+                "  user_five",
+            ]
+        );
+
+        // The server receives the unregister request and updates the contact
+        // metadata for the current user. The project is now offline.
+        let request = server.receive::<proto::UnregisterProject>().await.unwrap();
+        server.send(proto::UpdateContacts {
+            contacts: vec![proto::Contact {
+                user_id: current_user_id,
+                online: true,
+                should_notify: false,
+                projects: vec![proto::ProjectMetadata {
+                    id: 103,
+                    worktree_root_names: vec!["dir3".to_string()],
+                    guests: vec![3],
+                }],
+            }],
+            ..Default::default()
+        });
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            cx.read(|cx| render_to_strings(&panel, cx)),
+            &[
+                "v Requests",
+                "  incoming user_one",
+                "  outgoing user_two",
+                "v Online",
+                "  the_current_user",
+                "    dir3",
+                "    🔒 private_dir",
+                "  user_four",
+                "    dir2",
+                "  user_three",
+                "    dir1",
+                "v Offline",
+                "  user_five",
+            ]
+        );
+
+        // The server responds to the unregister request.
+        server.respond(request.receipt(), proto::Ack {}).await;
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            cx.read(|cx| render_to_strings(&panel, cx)),
+            &[
+                "v Requests",
+                "  incoming user_one",
+                "  outgoing user_two",
+                "v Online",
+                "  the_current_user",
+                "    dir3",
+                "    🔒 private_dir",
                 "  user_four",
                 "    dir2",
                 "  user_three",
@@ -1068,9 +1544,8 @@ mod tests {
         });
         cx.foreground().run_until_parked();
         assert_eq!(
-            render_to_strings(&panel, cx),
+            cx.read(|cx| render_to_strings(&panel, cx)),
             &[
-                "+",
                 "v Online",
                 "  user_four  <=== selected",
                 "    dir2",
@@ -1083,9 +1558,8 @@ mod tests {
             panel.select_next(&Default::default(), cx);
         });
         assert_eq!(
-            render_to_strings(&panel, cx),
+            cx.read(|cx| render_to_strings(&panel, cx)),
             &[
-                "+",
                 "v Online",
                 "  user_four",
                 "    dir2  <=== selected",
@@ -1098,9 +1572,8 @@ mod tests {
             panel.select_next(&Default::default(), cx);
         });
         assert_eq!(
-            render_to_strings(&panel, cx),
+            cx.read(|cx| render_to_strings(&panel, cx)),
             &[
-                "+",
                 "v Online",
                 "  user_four",
                 "    dir2",
@@ -1110,68 +1583,65 @@ mod tests {
         );
     }
 
-    fn render_to_strings(panel: &ViewHandle<ContactsPanel>, cx: &TestAppContext) -> Vec<String> {
-        panel.read_with(cx, |panel, _| {
-            let mut entries = Vec::new();
-            entries.push("+".to_string());
-            entries.extend(panel.entries.iter().enumerate().map(|(ix, entry)| {
-                let mut string = match entry {
-                    ContactEntry::Header(name) => {
-                        let icon = if panel.collapsed_sections.contains(name) {
-                            ">"
-                        } else {
-                            "v"
-                        };
-                        format!("{} {:?}", icon, name)
-                    }
-                    ContactEntry::IncomingRequest(user) => {
-                        format!("  incoming {}", user.github_login)
-                    }
-                    ContactEntry::OutgoingRequest(user) => {
-                        format!("  outgoing {}", user.github_login)
-                    }
-                    ContactEntry::Contact(contact) => {
-                        format!("  {}", contact.user.github_login)
-                    }
-                    ContactEntry::ContactProject(contact, project_ix) => {
-                        format!(
-                            "    {}",
-                            contact.projects[*project_ix].worktree_root_names.join(", ")
-                        )
-                    }
-                };
-
-                if panel.selection == Some(ix) {
-                    string.push_str("  <=== selected");
+    fn render_to_strings(panel: &ViewHandle<ContactsPanel>, cx: &AppContext) -> Vec<String> {
+        let panel = panel.read(cx);
+        let mut entries = Vec::new();
+        entries.extend(panel.entries.iter().enumerate().map(|(ix, entry)| {
+            let mut string = match entry {
+                ContactEntry::Header(name) => {
+                    let icon = if panel.collapsed_sections.contains(name) {
+                        ">"
+                    } else {
+                        "v"
+                    };
+                    format!("{} {:?}", icon, name)
                 }
+                ContactEntry::IncomingRequest(user) => {
+                    format!("  incoming {}", user.github_login)
+                }
+                ContactEntry::OutgoingRequest(user) => {
+                    format!("  outgoing {}", user.github_login)
+                }
+                ContactEntry::Contact(contact) => {
+                    format!("  {}", contact.user.github_login)
+                }
+                ContactEntry::ContactProject(contact, project_ix, project) => {
+                    let project = project
+                        .and_then(|p| p.upgrade(cx))
+                        .map(|project| project.read(cx));
+                    format!(
+                        "    {}{}",
+                        contact.projects[*project_ix].worktree_root_names.join(", "),
+                        if project.map_or(true, |project| project.is_online()) {
+                            ""
+                        } else {
+                            " (going offline...)"
+                        },
+                    )
+                }
+                ContactEntry::OfflineProject(project) => {
+                    let project = project.upgrade(cx).unwrap().read(cx);
+                    format!(
+                        "    🔒 {}{}",
+                        project
+                            .worktree_root_names(cx)
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        if project.is_online() {
+                            " (going online...)"
+                        } else {
+                            ""
+                        },
+                    )
+                }
+            };
 
-                string
-            }));
-            entries
-        })
-    }
+            if panel.selection == Some(ix) {
+                string.push_str("  <=== selected");
+            }
 
-    async fn init(cx: &mut TestAppContext) -> (Arc<AppState>, FakeServer) {
-        cx.update(|cx| cx.set_global(Settings::test(cx)));
-        let themes = ThemeRegistry::new((), cx.font_cache());
-        let fs = project::FakeFs::new(cx.background().clone());
-        let languages = Arc::new(LanguageRegistry::test());
-        let http_client = client::test::FakeHttpClient::with_404_response();
-        let mut client = Client::new(http_client.clone());
-        let server = FakeServer::for_client(100, &mut client, &cx).await;
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-
-        (
-            Arc::new(AppState {
-                languages,
-                themes,
-                client,
-                user_store: user_store.clone(),
-                fs,
-                build_window_options: || Default::default(),
-                initialize_workspace: |_, _, _| {},
-            }),
-            server,
-        )
+            string
+        }));
+        entries
     }
 }

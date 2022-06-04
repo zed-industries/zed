@@ -28,7 +28,7 @@ struct FakeServerState {
 impl FakeServer {
     pub async fn for_client(
         client_user_id: u64,
-        client: &mut Arc<Client>,
+        client: &Arc<Client>,
         cx: &TestAppContext,
     ) -> Self {
         let server = Self {
@@ -38,8 +38,7 @@ impl FakeServer {
             executor: cx.foreground(),
         };
 
-        Arc::get_mut(client)
-            .unwrap()
+        client
             .override_authenticate({
                 let state = Arc::downgrade(&server.state);
                 move |cx| {
@@ -176,6 +175,12 @@ impl FakeServer {
             &[self.user_id]
         );
         user_store
+    }
+}
+
+impl Drop for FakeServer {
+    fn drop(&mut self) {
+        self.disconnect();
     }
 }
 

@@ -35,8 +35,7 @@ message Envelope {
         OpenBufferForSymbol open_buffer_for_symbol = 28;
         OpenBufferForSymbolResponse open_buffer_for_symbol_response = 29;
 
-        RegisterWorktree register_worktree = 30;
-        UnregisterWorktree unregister_worktree = 31;
+        UpdateProject update_project = 30;
         UpdateWorktree update_worktree = 32;
 
         CreateProjectEntry create_project_entry = 33;
@@ -129,6 +128,11 @@ message UnregisterProject {
     uint64 project_id = 1;
 }
 
+message UpdateProject {
+    uint64 project_id = 1;
+    repeated WorktreeMetadata worktrees = 2;
+}
+
 message RequestJoinProject {
     uint64 requester_id = 1;
     uint64 project_id = 2;
@@ -175,18 +179,6 @@ message JoinProjectResponse {
 
 message LeaveProject {
     uint64 project_id = 1;
-}
-
-message RegisterWorktree {
-    uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    string root_name = 3;
-    bool visible = 4;
-}
-
-message UnregisterWorktree {
-    uint64 project_id = 1;
-    uint64 worktree_id = 2;
 }
 
 message UpdateWorktree {
@@ -933,4 +925,10 @@ message ProjectMetadata {
     uint64 id = 1;
     repeated string worktree_root_names = 3;
     repeated uint64 guests = 4;
+}
+
+message WorktreeMetadata {
+    uint64 id = 1;
+    string root_name = 2;
+    bool visible = 3;
 }

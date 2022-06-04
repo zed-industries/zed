@@ -59,7 +59,7 @@ chrono = "0.4"
 ctor = "0.1.20"
 dirs = "3.0"
 easy-parallel = "3.1.0"
-env_logger = "0.8"
+env_logger = "0.9"
 futures = "0.3"
 http-auth-basic = "0.1.3"
 ignore = "0.4"
@@ -108,7 +108,7 @@ client = { path = "../client", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
-env_logger = "0.8"
+env_logger = "0.9"
 serde_json = { version = "1.0", features = ["preserve_order"] }
 unindent = "0.1.7"
 

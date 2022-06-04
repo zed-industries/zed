@@ -23,7 +23,7 @@ use gpui::{executor::Background, App, AssetSource, AsyncAppContext, Task};
 use isahc::{config::Configurable, AsyncBody, Request};
 use log::LevelFilter;
 use parking_lot::Mutex;
-use project::Fs;
+use project::{Fs, ProjectStore};
 use serde_json::json;
 use settings::{self, KeymapFileContent, Settings, SettingsFileContent};
 use smol::process::Command;
@@ -48,9 +48,10 @@ use zed::{
 
 fn main() {
     let http = http::client();
-    let logs_dir_path = dirs::home_dir()
-        .expect("could not find home dir")
-        .join("Library/Logs/Zed");
+    let home_dir = dirs::home_dir().expect("could not find home dir");
+    let db_dir_path = home_dir.join("Library/Application Support/Zed");
+    let logs_dir_path = home_dir.join("Library/Logs/Zed");
+    fs::create_dir_all(&db_dir_path).expect("could not create database path");
     fs::create_dir_all(&logs_dir_path).expect("could not create logs path");
     init_logger(&logs_dir_path);
 
@@ -59,6 +60,11 @@ fn main() {
         .or_else(|| app.platform().app_version().ok())
         .map_or("dev".to_string(), |v| v.to_string());
     init_panic_hook(logs_dir_path, app_version, http.clone(), app.background());
+    let db = app.background().spawn(async move {
+        project::Db::open(db_dir_path.join("zed.db"))
+            .log_err()
+            .unwrap_or(project::Db::null())
+    });
 
     load_embedded_fonts(&app);
 
@@ -169,6 +175,7 @@ fn main() {
         search::init(cx);
         vim::init(cx);
 
+        let db = cx.background().block(db);
         let (settings_file, keymap_file) = cx.background().block(config_files).unwrap();
         let mut settings_rx = settings_from_files(
             default_settings,
@@ -204,11 +211,13 @@ fn main() {
         .detach();
         cx.set_global(settings);
 
+        let project_store = cx.add_model(|_| ProjectStore::new(db));
         let app_state = Arc::new(AppState {
             languages,
             themes,
             client: client.clone(),
             user_store,
+            project_store,
             fs,
             build_window_options,
             initialize_workspace,

@@ -19,6 +19,7 @@ pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
 
 #[derive(Clone)]
 pub struct Settings {
+    pub projects_online_by_default: bool,
     pub buffer_font_family: FamilyId,
     pub buffer_font_size: f32,
     pub default_buffer_font_size: f32,
@@ -49,6 +50,8 @@ pub enum SoftWrap {
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct SettingsFileContent {
+    #[serde(default)]
+    pub projects_online_by_default: Option<bool>,
     #[serde(default)]
     pub buffer_font_family: Option<String>,
     #[serde(default)]
@@ -81,6 +84,7 @@ impl Settings {
             preferred_line_length: 80,
             language_overrides: Default::default(),
             format_on_save: true,
+            projects_online_by_default: true,
             theme,
         })
     }
@@ -135,6 +139,7 @@ impl Settings {
             preferred_line_length: 80,
             format_on_save: true,
             language_overrides: Default::default(),
+            projects_online_by_default: true,
             theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), || Default::default()),
         }
     }
@@ -164,6 +169,10 @@ impl Settings {
             }
         }
 
+        merge(
+            &mut self.projects_online_by_default,
+            data.projects_online_by_default,
+        );
         merge(&mut self.buffer_font_size, data.buffer_font_size);
         merge(&mut self.default_buffer_font_size, data.buffer_font_size);
         merge(&mut self.vim_mode, data.vim_mode);

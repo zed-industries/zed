@@ -279,8 +279,9 @@ pub struct ContactsPanel {
     pub contact_username: ContainedText,
     pub contact_button: Interactive<IconButton>,
     pub contact_button_spacing: f32,
-    pub disabled_contact_button: IconButton,
+    pub disabled_button: IconButton,
     pub tree_branch: Interactive<TreeBranch>,
+    pub private_button: Interactive<IconButton>,
     pub section_icon_size: f32,
     pub invite_row: Interactive<ContainedLabel>,
 }
@@ -318,7 +319,7 @@ pub struct Icon {
     pub path: String,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Deserialize, Clone, Copy, Default)]
 pub struct IconButton {
     #[serde(flatten)]
     pub container: ContainerStyle,

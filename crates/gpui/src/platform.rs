@@ -147,6 +147,12 @@ pub struct AppVersion {
     patch: usize,
 }
 
+impl Default for CursorStyle {
+    fn default() -> Self {
+        Self::Arrow
+    }
+}
+
 impl FromStr for AppVersion {
     type Err = anyhow::Error;
 

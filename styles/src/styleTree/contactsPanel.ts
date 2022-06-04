@@ -68,6 +68,12 @@ export default function contactsPanel(theme: Theme) {
       buttonWidth: 8,
       iconWidth: 8,
     },
+    privateButton: {
+      iconWidth: 8,
+      color: iconColor(theme, "primary"),
+      cornerRadius: 5,
+      buttonWidth: 12,
+    },
     rowHeight: 28,
     sectionIconSize: 8,
     headerRow: {
@@ -118,7 +124,7 @@ export default function contactsPanel(theme: Theme) {
         background: backgroundColor(theme, 100, "hovered"),
       },
     },
-    disabledContactButton: {
+    disabledButton: {
       ...contactButton,
       background: backgroundColor(theme, 100),
       color: iconColor(theme, "muted"),
