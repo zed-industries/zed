@@ -100,7 +100,7 @@ pub struct OpenPaths {
 }
 
 #[derive(Clone, Deserialize)]
-pub struct ToggleProjectPublic {
+pub struct ToggleProjectOnline {
     #[serde(skip_deserializing)]
     pub project: Option<ModelHandle<Project>>,
 }
@@ -123,7 +123,7 @@ impl_internal_actions!(
         RemoveFolderFromProject
     ]
 );
-impl_actions!(workspace, [ToggleProjectPublic]);
+impl_actions!(workspace, [ToggleProjectOnline]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     pane::init(cx);
@@ -168,7 +168,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_async_action(Workspace::save_all);
     cx.add_action(Workspace::add_folder_to_project);
     cx.add_action(Workspace::remove_folder_from_project);
-    cx.add_action(Workspace::toggle_project_public);
+    cx.add_action(Workspace::toggle_project_online);
     cx.add_action(
         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
             let pane = workspace.active_pane().clone();
@@ -1049,7 +1049,7 @@ impl Workspace {
             .update(cx, |project, cx| project.remove_worktree(*worktree_id, cx));
     }
 
-    fn toggle_project_public(&mut self, action: &ToggleProjectPublic, cx: &mut ViewContext<Self>) {
+    fn toggle_project_online(&mut self, action: &ToggleProjectOnline, cx: &mut ViewContext<Self>) {
         let project = action
             .project
             .clone()

@@ -22,7 +22,7 @@ use serde::Deserialize;
 use settings::Settings;
 use std::{ops::DerefMut, sync::Arc};
 use theme::IconButton;
-use workspace::{sidebar::SidebarItem, JoinProject, ToggleProjectPublic, Workspace};
+use workspace::{sidebar::SidebarItem, JoinProject, ToggleProjectOnline, Workspace};
 
 impl_actions!(
     contacts_panel,
@@ -417,7 +417,7 @@ impl ContactsPanel {
                                 return None;
                             }
 
-                            let button = MouseEventHandler::new::<ToggleProjectPublic, _, _>(
+                            let button = MouseEventHandler::new::<ToggleProjectOnline, _, _>(
                                 project_id as usize,
                                 cx,
                                 |state, _| {
@@ -441,7 +441,7 @@ impl ContactsPanel {
                                     button
                                         .with_cursor_style(CursorStyle::PointingHand)
                                         .on_click(move |_, _, cx| {
-                                            cx.dispatch_action(ToggleProjectPublic {
+                                            cx.dispatch_action(ToggleProjectOnline {
                                                 project: Some(open_project.clone()),
                                             })
                                         })
@@ -525,7 +525,7 @@ impl ContactsPanel {
             .unwrap_or(0.);
 
         enum LocalProject {}
-        enum TogglePublic {}
+        enum ToggleOnline {}
 
         let project_id = project.id();
         MouseEventHandler::new::<LocalProject, _, _>(project_id, cx, |state, cx| {
@@ -543,7 +543,7 @@ impl ContactsPanel {
             Flex::row()
                 .with_child({
                     let button =
-                        MouseEventHandler::new::<TogglePublic, _, _>(project_id, cx, |state, _| {
+                        MouseEventHandler::new::<ToggleOnline, _, _>(project_id, cx, |state, _| {
                             let mut style = *theme.private_button.style_for(state, false);
                             if is_going_online {
                                 style.color = theme.disabled_button.color;
@@ -561,7 +561,7 @@ impl ContactsPanel {
                         button
                             .with_cursor_style(CursorStyle::PointingHand)
                             .on_click(move |_, _, cx| {
-                                cx.dispatch_action(ToggleProjectPublic {
+                                cx.dispatch_action(ToggleProjectOnline {
                                     project: Some(project.clone()),
                                 })
                             })
@@ -1349,7 +1349,7 @@ mod tests {
             ]
         );
 
-        // Make a project public. It appears as loading, since the project
+        // Take a project online. It appears as loading, since the project
         // isn't yet visible to other contacts.
         project.update(cx, |project, cx| project.set_online(true, cx));
         cx.foreground().run_until_parked();
@@ -1362,7 +1362,7 @@ mod tests {
                 "v Online",
                 "  the_current_user",
                 "    dir3",
-                "    🔒 private_dir (becoming public...)",
+                "    🔒 private_dir (going online...)",
                 "  user_four",
                 "    dir2",
                 "  user_three",
@@ -1392,7 +1392,7 @@ mod tests {
                 "v Online",
                 "  the_current_user",
                 "    dir3",
-                "    🔒 private_dir (becoming public...)",
+                "    🔒 private_dir (going online...)",
                 "  user_four",
                 "    dir2",
                 "  user_three",
@@ -1403,7 +1403,7 @@ mod tests {
         );
 
         // The server receives the project's metadata and updates the contact metadata
-        // for the current user. Now the project appears as public.
+        // for the current user. Now the project appears as online.
         assert_eq!(
             server
                 .receive::<proto::UpdateProject>()
@@ -1457,7 +1457,7 @@ mod tests {
             ]
         );
 
-        // Make the project private. It appears as loading.
+        // Take the project offline. It appears as loading.
         project.update(cx, |project, cx| project.set_online(false, cx));
         cx.foreground().run_until_parked();
         assert_eq!(
@@ -1469,7 +1469,7 @@ mod tests {
                 "v Online",
                 "  the_current_user",
                 "    dir3",
-                "    private_dir (becoming private...)",
+                "    private_dir (going offline...)",
                 "  user_four",
                 "    dir2",
                 "  user_three",
@@ -1480,7 +1480,7 @@ mod tests {
         );
 
         // The server receives the unregister request and updates the contact
-        // metadata for the current user. The project is now private.
+        // metadata for the current user. The project is now offline.
         let request = server.receive::<proto::UnregisterProject>().await.unwrap();
         server.send(proto::UpdateContacts {
             contacts: vec![proto::Contact {
@@ -1615,7 +1615,7 @@ mod tests {
                         if project.map_or(true, |project| project.is_online()) {
                             ""
                         } else {
-                            " (becoming private...)"
+                            " (going offline...)"
                         },
                     )
                 }
@@ -1628,7 +1628,7 @@ mod tests {
                             .collect::<Vec<_>>()
                             .join(", "),
                         if project.is_online() {
-                            " (becoming public...)"
+                            " (going online...)"
                         } else {
                             ""
                         },
