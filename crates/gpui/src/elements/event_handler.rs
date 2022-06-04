@@ -1,14 +1,14 @@
+use crate::{
+    geometry::vector::Vector2F, CursorRegion, DebugContext, Element, ElementBox, Event,
+    EventContext, LayoutContext, MouseRegion, NavigationDirection, PaintContext, SizeConstraint,
+};
 use pathfinder_geometry::rect::RectF;
 use serde_json::json;
-
-use crate::{
-    geometry::vector::Vector2F, DebugContext, Element, ElementBox, Event, EventContext,
-    LayoutContext, NavigationDirection, PaintContext, SizeConstraint,
-};
+use std::{any::TypeId, rc::Rc};
 
 pub struct EventHandler {
     child: ElementBox,
-    capture: Option<Box<dyn FnMut(&Event, RectF, &mut EventContext) -> bool>>,
+    capture_all: Option<(TypeId, usize)>,
     mouse_down: Option<Box<dyn FnMut(&mut EventContext) -> bool>>,
     right_mouse_down: Option<Box<dyn FnMut(&mut EventContext) -> bool>>,
     navigate_mouse_down: Option<Box<dyn FnMut(NavigationDirection, &mut EventContext) -> bool>>,
@@ -18,7 +18,7 @@ impl EventHandler {
     pub fn new(child: ElementBox) -> Self {
         Self {
             child,
-            capture: None,
+            capture_all: None,
             mouse_down: None,
             right_mouse_down: None,
             navigate_mouse_down: None,
@@ -49,11 +49,8 @@ impl EventHandler {
         self
     }
 
-    pub fn capture<F>(mut self, callback: F) -> Self
-    where
-        F: 'static + FnMut(&Event, RectF, &mut EventContext) -> bool,
-    {
-        self.capture = Some(Box::new(callback));
+    pub fn capture_all<T: 'static>(mut self, id: usize) -> Self {
+        self.capture_all = Some((TypeId::of::<T>(), id));
         self
     }
 }
@@ -78,6 +75,27 @@ impl Element for EventHandler {
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
+        if let Some(discriminant) = self.capture_all {
+            cx.scene.push_stacking_context(None);
+            cx.scene.push_cursor_region(CursorRegion {
+                bounds,
+                style: Default::default(),
+            });
+            cx.scene.push_mouse_region(MouseRegion {
+                view_id: cx.current_view_id(),
+                discriminant: Some(discriminant),
+                bounds,
+                hover: Some(Rc::new(|_, _, _| {})),
+                mouse_down: Some(Rc::new(|_, _| {})),
+                click: Some(Rc::new(|_, _, _| {})),
+                right_mouse_down: Some(Rc::new(|_, _| {})),
+                right_click: Some(Rc::new(|_, _, _| {})),
+                drag: Some(Rc::new(|_, _| {})),
+                mouse_down_out: Some(Rc::new(|_, _| {})),
+                right_mouse_down_out: Some(Rc::new(|_, _| {})),
+            });
+            cx.scene.pop_stacking_context();
+        }
         self.child.paint(bounds.origin(), visible_bounds, cx);
     }
 
@@ -90,10 +108,8 @@ impl Element for EventHandler {
         _: &mut Self::PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        if let Some(capture) = self.capture.as_mut() {
-            if capture(event, visible_bounds, cx) {
-                return true;
-            }
+        if self.capture_all.is_some() {
+            return true;
         }
 
         if self.child.dispatch_event(event, cx) {

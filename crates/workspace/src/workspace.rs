@@ -1878,7 +1878,7 @@ impl Workspace {
                     .with_style(theme.workspace.disconnected_overlay.container)
                     .boxed(),
                 )
-                .capture(|_, _, _| true)
+                .capture_all::<Self>(0)
                 .boxed(),
             )
         } else {
