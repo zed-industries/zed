@@ -1,2 +1,0 @@
-[workspace]
-members = ["cargo_test"]

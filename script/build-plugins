@@ -2,8 +2,8 @@
 
 set -e
 
-echo "Clearing cached plugins..."
-cargo clean --manifest-path plugins/Cargo.toml
+# echo "Clearing cached plugins..."
+# cargo clean --manifest-path plugins/Cargo.toml
 
 echo "Building Wasm plugins..."
 # cargo build --release --target wasm32-unknown-unknown --manifest-path plugins/Cargo.toml

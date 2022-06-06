@@ -20,14 +20,21 @@ pub fn bind(args: TokenStream, function: TokenStream) -> TokenStream {
     let outer_fn_name = format_ident!("__{}", inner_fn_name);
 
     let variadic = inner_fn.sig.inputs.len();
-    let mut args = vec![];
-    for i in 0..variadic {
-        let ident = format_ident!("__{}_arg_{}", inner_fn_name, i);
-        args.push(ident);
-    }
+    let i = (0..variadic).map(syn::Index::from);
+    let t = (0..variadic).map(|_| quote! { _ });
 
-    let args = quote! {
-        ( #(args ,) )*
+    // this is cursed...
+    let (args, ty) = if variadic != 1 {
+        (
+            quote! {
+                #( data.#i ),*
+            },
+            quote! {
+                ( #( #t ),* )
+            },
+        )
+    } else {
+        (quote! { data }, quote! { _ })
     };
 
     TokenStream::from(quote! {
@@ -41,8 +48,8 @@ pub fn bind(args: TokenStream, function: TokenStream) -> TokenStream {
             let data = unsafe { buffer.to_vec() };
 
             // operation
-            let #args = ::plugin::bincode::deserialize(&data).unwrap();
-            let result = #inner_fn_name #args;
+            let data: #ty = ::plugin::bincode::deserialize(&data).unwrap();
+            let result = #inner_fn_name(#args);
             let new_data: Result<Vec<u8>, _> = ::plugin::bincode::serialize(&result);
             let new_data = new_data.unwrap();
 

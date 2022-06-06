@@ -4,15 +4,16 @@ use client::http::HttpClient;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use language::{LanguageServerName, LspAdapter};
 use parking_lot::{Mutex, RwLock};
-use plugin_runtime::{Runtime, Wasi, WasiPlugin};
+use plugin_runtime::{Wasi, WasiPlugin};
 use serde_json::json;
-use smol::fs;
+use std::fs;
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
 pub fn new_json() -> LanguagePluginLspAdapter {
     let plugin = WasiPlugin {
-        source_bytes: include_bytes!("../../../../plugins/bin/json_language.wasm").to_vec(),
+        module: include_bytes!("../../../../plugins/bin/json_language.wasm").to_vec(),
+        wasi_ctx: Wasi::default_ctx(),
     };
     LanguagePluginLspAdapter::new(plugin)
 }
@@ -69,10 +70,13 @@ impl LspAdapter for LanguagePluginLspAdapter {
         container_dir: PathBuf,
     ) -> BoxFuture<'static, Result<PathBuf>> {
         // TODO: async runtime
-        let result = self
-            .runtime
-            .lock()
-            .call("fetch_server_binary", container_dir);
+        let mut runtime = self.runtime.lock();
+        let result = runtime.attach_file(&container_dir);
+        let result = match result {
+            Ok(_) => runtime.call("fetch_server_binary", container_dir),
+            Err(e) => Err(e),
+        };
+
         async move { result }.boxed()
     }
 
