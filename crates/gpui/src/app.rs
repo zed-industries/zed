@@ -6336,7 +6336,7 @@ mod tests {
             }
         }
 
-        #[derive(Clone, Default, Deserialize)]
+        #[derive(Clone, Default, Deserialize, PartialEq)]
         pub struct Action(pub String);
 
         impl_actions!(test, [Action]);
@@ -6459,7 +6459,7 @@ mod tests {
 
     #[crate::test(self)]
     fn test_dispatch_keystroke(cx: &mut MutableAppContext) {
-        #[derive(Clone, Deserialize)]
+        #[derive(Clone, Deserialize, PartialEq)]
         pub struct Action(String);
 
         impl_actions!(test, [Action]);
