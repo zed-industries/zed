@@ -21,10 +21,10 @@ pub struct ContactNotification {
     kind: client::ContactEventKind,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct Dismiss(u64);
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct RespondToContactRequest {
     pub user_id: u64,
     pub accept: bool,

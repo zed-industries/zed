@@ -28,25 +28,25 @@ actions!(
     ]
 );
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct Split(pub SplitDirection);
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct CloseItem {
     pub item_id: usize,
     pub pane: WeakViewHandle<Pane>,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct ActivateItem(pub usize);
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct GoBack {
     #[serde(skip_deserializing)]
     pub pane: Option<WeakViewHandle<Pane>>,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct GoForward {
     #[serde(skip_deserializing)]
     pub pane: Option<WeakViewHandle<Pane>>,

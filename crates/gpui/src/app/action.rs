@@ -5,6 +5,7 @@ pub trait Action: 'static {
     fn name(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;
     fn boxed_clone(&self) -> Box<dyn Action>;
+    fn eq(&self, other: &dyn Action) -> bool;
 
     fn qualified_name() -> &'static str
     where
@@ -101,6 +102,14 @@ macro_rules! __impl_action {
 
             fn boxed_clone(&self) -> Box<dyn $crate::Action> {
                 Box::new(self.clone())
+            }
+
+            fn eq(&self, other: &dyn $crate::Action) -> bool {
+                if let Some(other) = other.as_any().downcast_ref::<Self>() {
+                    self == other
+                } else {
+                    false
+                }
             }
 
             $from_json_fn

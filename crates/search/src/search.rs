@@ -15,13 +15,13 @@ pub fn init(cx: &mut MutableAppContext) {
     project_search::init(cx);
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct ToggleSearchOption(pub SearchOption);
 
 actions!(search, [SelectNextMatch, SelectPrevMatch]);
 impl_internal_actions!(search, [ToggleSearchOption]);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum SearchOption {
     WholeWord,
     CaseSensitive,

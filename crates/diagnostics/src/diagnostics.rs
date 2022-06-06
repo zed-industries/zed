@@ -60,7 +60,7 @@ struct PathState {
     diagnostic_groups: Vec<DiagnosticGroupState>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct Jump {
     path: ProjectPath,
     position: Point,

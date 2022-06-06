@@ -81,16 +81,16 @@ struct EntryDetails {
     is_cut: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct ToggleExpanded(pub ProjectEntryId);
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Open {
     pub entry_id: ProjectEntryId,
     pub change_focus: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct DeployContextMenu {
     pub position: Vector2F,
     pub entry_id: Option<ProjectEntryId>,

@@ -27,7 +27,7 @@ pub enum ItemType {
     Unselected,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct SelectItem(pub usize);
 
 actions!(select, [ToggleSelect]);

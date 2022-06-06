@@ -16,12 +16,12 @@ use settings::Settings;
 use std::ops::Range;
 use workspace::{ItemHandle, Pane, ToolbarItemLocation, ToolbarItemView};
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct Deploy {
     pub focus: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct ToggleSearchOption(pub SearchOption);
 
 actions!(buffer_search, [Dismiss, FocusEditor]);
