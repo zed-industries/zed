@@ -17,6 +17,7 @@ use std::{
     cell::{Ref, RefCell},
     cmp, fmt, io,
     iter::{self, FromIterator},
+    mem,
     ops::{Range, RangeBounds, Sub},
     str,
     sync::Arc,
@@ -298,7 +299,7 @@ impl MultiBuffer {
 
     pub fn edit_internal<I, S, T>(
         &mut self,
-        edits_iter: I,
+        edits: I,
         autoindent: bool,
         cx: &mut ModelContext<Self>,
     ) where
@@ -310,14 +311,16 @@ impl MultiBuffer {
             return;
         }
 
+        let snapshot = self.read(cx);
+        let edits = edits.into_iter().map(|(range, new_text)| {
+            let mut range = range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot);
+            if range.start > range.end {
+                mem::swap(&mut range.start, &mut range.end);
+            }
+            (range, new_text)
+        });
+
         if let Some(buffer) = self.as_singleton() {
-            let snapshot = self.read(cx);
-            let edits = edits_iter.into_iter().map(|(range, new_text)| {
-                (
-                    range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot),
-                    new_text,
-                )
-            });
             return buffer.update(cx, |buffer, cx| {
                 let language_name = buffer.language().map(|language| language.name());
                 let indent_size = cx.global::<Settings>().tab_size(language_name.as_deref());
@@ -329,29 +332,26 @@ impl MultiBuffer {
             });
         }
 
-        let snapshot = self.read(cx);
         let mut buffer_edits: HashMap<usize, Vec<(Range<usize>, Arc<str>, bool)>> =
             Default::default();
         let mut cursor = snapshot.excerpts.cursor::<usize>();
-        for (range, new_text) in edits_iter {
+        for (range, new_text) in edits {
             let new_text: Arc<str> = new_text.into();
-            let start = range.start.to_offset(&snapshot);
-            let end = range.end.to_offset(&snapshot);
-            cursor.seek(&start, Bias::Right, &());
-            if cursor.item().is_none() && start == *cursor.start() {
+            cursor.seek(&range.start, Bias::Right, &());
+            if cursor.item().is_none() && range.start == *cursor.start() {
                 cursor.prev(&());
             }
             let start_excerpt = cursor.item().expect("start offset out of bounds");
-            let start_overshoot = start - cursor.start();
+            let start_overshoot = range.start - cursor.start();
             let buffer_start =
                 start_excerpt.range.start.to_offset(&start_excerpt.buffer) + start_overshoot;
 
-            cursor.seek(&end, Bias::Right, &());
-            if cursor.item().is_none() && end == *cursor.start() {
+            cursor.seek(&range.end, Bias::Right, &());
+            if cursor.item().is_none() && range.end == *cursor.start() {
                 cursor.prev(&());
             }
             let end_excerpt = cursor.item().expect("end offset out of bounds");
-            let end_overshoot = end - cursor.start();
+            let end_overshoot = range.end - cursor.start();
             let buffer_end = end_excerpt.range.start.to_offset(&end_excerpt.buffer) + end_overshoot;
 
             if start_excerpt.id == end_excerpt.id {
@@ -373,7 +373,7 @@ impl MultiBuffer {
                     .or_insert(Vec::new())
                     .push((end_excerpt_range, new_text.clone(), false));
 
-                cursor.seek(&start, Bias::Right, &());
+                cursor.seek(&range.start, Bias::Right, &());
                 cursor.next(&());
                 while let Some(excerpt) = cursor.item() {
                     if excerpt.id == end_excerpt.id {
@@ -1310,7 +1310,11 @@ impl MultiBuffer {
             let end = snapshot.clip_offset(rng.gen_range(new_start..=snapshot.len()), Bias::Right);
             let start = snapshot.clip_offset(rng.gen_range(new_start..=end), Bias::Right);
             last_end = Some(end);
-            let range = start..end;
+
+            let mut range = start..end;
+            if rng.gen_bool(0.2) {
+                mem::swap(&mut range.start, &mut range.end);
+            }
 
             let new_text_len = rng.gen_range(0..10);
             let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
@@ -1414,8 +1418,27 @@ impl MultiBuffer {
         mutation_count: usize,
         cx: &mut ModelContext<Self>,
     ) {
+        use rand::prelude::*;
+
         if rng.gen_bool(0.7) || self.singleton {
-            self.randomly_edit(rng, mutation_count, cx);
+            let buffer = self
+                .buffers
+                .borrow()
+                .values()
+                .choose(rng)
+                .map(|state| state.buffer.clone());
+
+            if rng.gen() && buffer.is_some() {
+                buffer.unwrap().update(cx, |buffer, cx| {
+                    if rng.gen() {
+                        buffer.randomly_edit(rng, mutation_count, cx);
+                    } else {
+                        buffer.randomly_undo_redo(rng, cx);
+                    }
+                });
+            } else {
+                self.randomly_edit(rng, mutation_count, cx);
+            }
         } else {
             self.randomly_edit_excerpts(rng, mutation_count, cx);
         }
@@ -3330,7 +3353,7 @@ mod tests {
         });
         buffer_2.update(cx, |buffer, cx| {
             buffer.edit([(0..0, "Y")], cx);
-            buffer.edit([(6..0, "Z")], cx);
+            buffer.edit([(6..6, "Z")], cx);
         });
         let new_snapshot = multibuffer.read(cx).snapshot(cx);
 

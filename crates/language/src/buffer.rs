@@ -23,6 +23,7 @@ use std::{
     ffi::OsString,
     future::Future,
     iter::{Iterator, Peekable},
+    mem,
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
@@ -1108,7 +1109,10 @@ impl Buffer {
         // Skip invalid edits and coalesce contiguous ones.
         let mut edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
         for (range, new_text) in edits_iter {
-            let range = range.start.to_offset(self)..range.end.to_offset(self);
+            let mut range = range.start.to_offset(self)..range.end.to_offset(self);
+            if range.start > range.end {
+                mem::swap(&mut range.start, &mut range.end);
+            }
             let new_text = new_text.into();
             if !new_text.is_empty() || !range.is_empty() {
                 if let Some((prev_range, prev_text)) = edits.last_mut() {
@@ -1452,7 +1456,10 @@ impl Buffer {
             }
 
             let new_start = last_end.map_or(0, |last_end| last_end + 1);
-            let range = self.random_byte_range(new_start, rng);
+            let mut range = self.random_byte_range(new_start, rng);
+            if rng.gen_bool(0.2) {
+                mem::swap(&mut range.start, &mut range.end);
+            }
             last_end = Some(range.end);
 
             let new_text_len = rng.gen_range(0..10);
