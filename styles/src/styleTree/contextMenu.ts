@@ -1,5 +1,5 @@
 import Theme from "../themes/common/theme";
-import { backgroundColor, borderColor, shadow, text } from "./components";
+import { backgroundColor, border, borderColor, shadow, text } from "./components";
 
 export default function contextMenu(theme: Theme) {
   return {
@@ -7,6 +7,7 @@ export default function contextMenu(theme: Theme) {
     cornerRadius: 6,
     padding: 6,
     shadow: shadow(theme),
+    border: border(theme, "primary"),
     item: {
       padding: { left: 4, right: 4, top: 2, bottom: 2 },
       cornerRadius: 6,
