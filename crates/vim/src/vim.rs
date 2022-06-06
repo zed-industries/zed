@@ -143,6 +143,17 @@ impl Vim {
                             matches!(state.mode, Mode::Visual { line: true });
                         let context_layer = state.keymap_context_layer();
                         editor.set_keymap_context_layer::<Self>(context_layer);
+                        editor.change_selections(None, cx, |s| {
+                            s.move_with(|map, selection| {
+                                selection.set_head(
+                                    map.clip_point(selection.head(), Bias::Left),
+                                    selection.goal,
+                                );
+                                if state.empty_selections_only() {
+                                    selection.collapse_to(selection.head(), selection.goal)
+                                }
+                            });
+                        })
                     } else {
                         editor.set_cursor_shape(CursorShape::Bar, cx);
                         editor.set_clip_at_line_ends(false, cx);
@@ -150,18 +161,6 @@ impl Vim {
                         editor.selections.line_mode = false;
                         editor.remove_keymap_context_layer::<Self>();
                     }
-
-                    editor.change_selections(None, cx, |s| {
-                        s.move_with(|map, selection| {
-                            selection.set_head(
-                                map.clip_point(selection.head(), Bias::Left),
-                                selection.goal,
-                            );
-                            if state.empty_selections_only() {
-                                selection.collapse_to(selection.head(), selection.goal)
-                            }
-                        });
-                    })
                 });
             }
         }
@@ -190,6 +189,14 @@ mod test {
         cx.disable_vim();
         cx.simulate_keystrokes(["h", "j", "k", "l"]);
         cx.assert_editor_state("hjkl|");
+
+        // Selections aren't changed if editor is blurred but vim-mode is still disabled.
+        cx.set_state("[hjkl}", Mode::Normal);
+        cx.assert_editor_state("[hjkl}");
+        cx.update_editor(|_, cx| cx.blur());
+        cx.assert_editor_state("[hjkl}");
+        cx.update_editor(|_, cx| cx.focus_self());
+        cx.assert_editor_state("[hjkl}");
 
         // Enabling dynamically sets vim mode again and restores normal mode
         cx.enable_vim();
