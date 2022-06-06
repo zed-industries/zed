@@ -2,24 +2,25 @@ use std::collections::HashMap;
 
 use anyhow::anyhow;
 
-use wasmtime::{Engine, Func, Instance, Memory, MemoryType, Module, Store, TypedFunc};
+use wasmtime::{Engine, Func, Instance, Linker, Memory, MemoryType, Module, Store, TypedFunc};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder};
 
 use crate::*;
 
-pub struct Wasm {
+pub struct Wasi {
     engine: Engine,
     module: Module,
-    store: Store<()>,
+    store: Store<WasiCtx>,
     instance: Instance,
     alloc_buffer: TypedFunc<i32, i32>,
     // free_buffer: TypedFunc<(i32, i32), ()>,
 }
 
-pub struct WasmPlugin {
+pub struct WasiPlugin {
     pub source_bytes: Vec<u8>,
 }
 
-impl Wasm {
+impl Wasi {
     pub fn dump_memory(data: &[u8]) {
         for (i, byte) in data.iter().enumerate() {
             if i % 32 == 0 {
@@ -38,20 +39,36 @@ impl Wasm {
     }
 }
 
-impl Runtime for Wasm {
-    type Plugin = WasmPlugin;
+impl Runtime for Wasi {
+    type Plugin = WasiPlugin;
     type Error = anyhow::Error;
 
-    fn init(plugin: WasmPlugin) -> Result<Self, Self::Error> {
+    fn init(plugin: WasiPlugin) -> Result<Self, Self::Error> {
         let engine = Engine::default();
+        let mut linker = Linker::new(&engine);
+        println!("linking");
+        wasmtime_wasi::add_to_linker(&mut linker, |s| s)?;
+        println!("linked");
+        let wasi = WasiCtxBuilder::new()
+            .inherit_stdout()
+            .inherit_stderr()
+            .build();
+
+        let mut store: Store<_> = Store::new(&engine, wasi);
+        println!("moduling");
         let module = Module::new(&engine, plugin.source_bytes)?;
-        let mut store: Store<()> = Store::new(&engine, ());
-        let instance = Instance::new(&mut store, &module, &[])?;
+        println!("moduled");
+
+        linker.module(&mut store, "", &module)?;
+        println!("linked again");
+        let instance = linker.instantiate(&mut store, &module)?;
+        println!("instantiated");
 
         let alloc_buffer = instance.get_typed_func(&mut store, "__alloc_buffer")?;
         // let free_buffer = instance.get_typed_func(&mut store, "__free_buffer")?;
+        println!("can alloc");
 
-        Ok(Wasm {
+        Ok(Wasi {
             engine,
             module,
             store,

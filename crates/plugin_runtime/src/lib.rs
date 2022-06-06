@@ -11,3 +11,6 @@ pub use lua::*;
 
 pub mod wasm;
 pub use wasm::*;
+
+pub mod wasi;
+pub use wasi::*;

@@ -8,7 +8,6 @@ pub fn main() -> anyhow::Result<()> {
             "../plugin/target/wasm32-unknown-unknown/release/cargo_test.wasm"
         )
         .to_vec(),
-        store_data: (),
     };
 
     let mut sum = Wasm::init(plugin)?;

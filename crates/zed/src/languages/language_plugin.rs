@@ -4,28 +4,27 @@ use client::http::HttpClient;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use language::{LanguageServerName, LspAdapter};
 use parking_lot::{Mutex, RwLock};
-use plugin_runtime::{Runtime, Wasm, WasmPlugin};
+use plugin_runtime::{Runtime, Wasi, WasiPlugin};
 use serde_json::json;
 use smol::fs;
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
 pub fn new_json() -> LanguagePluginLspAdapter {
-    let plugin = WasmPlugin {
+    let plugin = WasiPlugin {
         source_bytes: include_bytes!("../../../../plugins/bin/json_language.wasm").to_vec(),
-        store_data: (),
     };
     LanguagePluginLspAdapter::new(plugin)
 }
 
 pub struct LanguagePluginLspAdapter {
-    runtime: Mutex<Wasm<()>>,
+    runtime: Mutex<Wasi>,
 }
 
 impl LanguagePluginLspAdapter {
-    pub fn new(plugin: WasmPlugin<()>) -> Self {
+    pub fn new(plugin: WasiPlugin) -> Self {
         Self {
-            runtime: Mutex::new(Wasm::init(plugin).unwrap()),
+            runtime: Mutex::new(Wasi::init(plugin).unwrap()),
         }
     }
 }
