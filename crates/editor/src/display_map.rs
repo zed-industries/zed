@@ -693,7 +693,7 @@ pub mod tests {
                     }
                 }
                 _ => {
-                    buffer.update(cx, |buffer, cx| buffer.randomly_edit(&mut rng, 5, cx));
+                    buffer.update(cx, |buffer, cx| buffer.randomly_mutate(&mut rng, 5, cx));
                 }
             }
 

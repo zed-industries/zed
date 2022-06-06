@@ -22,6 +22,7 @@ use serde_json::Value;
 use std::{
     any::Any,
     cell::RefCell,
+    mem,
     ops::Range,
     path::{Path, PathBuf},
     str,
@@ -692,5 +693,10 @@ pub fn range_to_lsp(range: Range<PointUtf16>) -> lsp::Range {
 }
 
 pub fn range_from_lsp(range: lsp::Range) -> Range<PointUtf16> {
-    point_from_lsp(range.start)..point_from_lsp(range.end)
+    let mut start = point_from_lsp(range.start);
+    let mut end = point_from_lsp(range.end);
+    if start > end {
+        mem::swap(&mut start, &mut end);
+    }
+    start..end
 }
