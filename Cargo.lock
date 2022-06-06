@@ -3584,6 +3584,8 @@ dependencies = [
  "anyhow",
  "bincode",
  "serde",
+ "serde_json",
+ "wasi-common",
  "wasmtime",
  "wasmtime-wasi",
 ]
