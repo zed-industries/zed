@@ -4,10 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-mlua = { version = "0.8.0-beta.5", features = ["lua54", "vendored", "serialize"] }
-serde = "1.0"
-map-macro = "0.2"
 wasmtime = "0.37.0"
 wasmtime-wasi = "0.37.0"
 anyhow = { version = "1.0", features = ["std"] }
+serde = "1.0"
 bincode = "1.3"

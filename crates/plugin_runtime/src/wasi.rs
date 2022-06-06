@@ -1,11 +1,10 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fs::File, path::Path};
 
-use anyhow::anyhow;
+use anyhow::{anyhow, Error};
+use serde::{de::DeserializeOwned, Serialize};
 
 use wasmtime::{Engine, Func, Instance, Linker, Memory, MemoryType, Module, Store, TypedFunc};
-use wasmtime_wasi::{WasiCtx, WasiCtxBuilder};
-
-use crate::*;
+use wasmtime_wasi::{dir, Dir, WasiCtx, WasiCtxBuilder};
 
 pub struct Wasi {
     engine: Engine,
@@ -17,7 +16,8 @@ pub struct Wasi {
 }
 
 pub struct WasiPlugin {
-    pub source_bytes: Vec<u8>,
+    pub module: Vec<u8>,
+    pub wasi_ctx: WasiCtx,
 }
 
 impl Wasi {
@@ -39,24 +39,23 @@ impl Wasi {
     }
 }
 
-impl Runtime for Wasi {
-    type Plugin = WasiPlugin;
-    type Error = anyhow::Error;
+impl Wasi {
+    pub fn default_ctx() -> WasiCtx {
+        WasiCtxBuilder::new()
+            .inherit_stdout()
+            .inherit_stderr()
+            .build()
+    }
 
-    fn init(plugin: WasiPlugin) -> Result<Self, Self::Error> {
+    pub fn init(plugin: WasiPlugin) -> Result<Self, Error> {
         let engine = Engine::default();
         let mut linker = Linker::new(&engine);
         println!("linking");
         wasmtime_wasi::add_to_linker(&mut linker, |s| s)?;
         println!("linked");
-        let wasi = WasiCtxBuilder::new()
-            .inherit_stdout()
-            .inherit_stderr()
-            .build();
-
-        let mut store: Store<_> = Store::new(&engine, wasi);
+        let mut store: Store<_> = Store::new(&engine, plugin.wasi_ctx);
         println!("moduling");
-        let module = Module::new(&engine, plugin.source_bytes)?;
+        let module = Module::new(&engine, plugin.module)?;
         println!("moduled");
 
         linker.module(&mut store, "", &module)?;
@@ -78,13 +77,20 @@ impl Runtime for Wasi {
         })
     }
 
-    // fn constant<T: DeserializeOwned>(&mut self, handle: &Handle) -> Result<T, Self::Error> {
-    //     let export = self
-    //         .instance
-    //         .get_export(&mut self.store, handle.inner())
-    //         .ok_or_else(|| anyhow!("Could not get export"))?;
+    pub fn attach_file<T: AsRef<Path>>(&mut self, path: T) -> Result<(), Error> {
+        let ctx = self.store.data_mut();
+        let file = File::open(&path).unwrap();
+        let dir = Dir::from_std_file(file);
+        // this is a footgun and a half.
+        let dir = dir::Dir::from_cap_std(dir);
+        ctx.push_preopened_dir(Box::new(dir), path)?;
+        Ok(())
+    }
 
-    //     todo!()
+    // pub fn remove_file<T: AsRef<Path>>(&mut self, path: T) -> Result<(), Error> {
+    //     let ctx = self.store.data_mut();
+    //     ctx.remove
+    //     Ok(())
     // }
 
     // So this call function is kinda a dance, I figured it'd be a good idea to document it.
@@ -131,11 +137,11 @@ impl Runtime for Wasi {
     // so the heap is still valid for our inspection when we want to pull things out.
 
     // TODO: dont' use as for conversions
-    fn call<A: Serialize, R: DeserializeOwned>(
+    pub fn call<A: Serialize, R: DeserializeOwned>(
         &mut self,
         handle: &str,
         arg: A,
-    ) -> Result<R, Self::Error> {
+    ) -> Result<R, Error> {
         // serialize the argument using bincode
         let arg = bincode::serialize(&arg)?;
         let arg_buffer_len = arg.len();
@@ -185,10 +191,4 @@ impl Runtime for Wasi {
 
         return Ok(result);
     }
-
-    // fn register_handle<T: AsRef<str>>(&mut self, name: T) -> bool {
-    //     self.instance
-    //         .get_export(&mut self.store, name.as_ref())
-    //         .is_some()
-    // }
 }
