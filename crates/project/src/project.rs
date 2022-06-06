@@ -36,7 +36,7 @@ use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use std::{
     cell::RefCell,
-    cmp::{self, Ordering},
+    cmp::{self, Ordering, Reverse},
     convert::TryInto,
     ffi::OsString,
     hash::Hash,
@@ -5164,8 +5164,10 @@ impl Project {
             let mut lsp_edits = lsp_edits
                 .into_iter()
                 .map(|edit| (range_from_lsp(edit.range), edit.new_text))
-                .peekable();
+                .collect::<Vec<_>>();
+            lsp_edits.sort_by_key(|(range, _)| range.start);
 
+            let mut lsp_edits = lsp_edits.into_iter().peekable();
             let mut edits = Vec::new();
             while let Some((mut range, mut new_text)) = lsp_edits.next() {
                 // Combine any LSP edits that are adjacent.
@@ -6953,6 +6955,121 @@ mod tests {
                         b();
                         c();
                     }
+                "
+                .unindent()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_invalid_edits_from_lsp(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let text = "
+            use a::b;
+            use a::c;
+            
+            fn f() {
+            b();
+            c();
+            }
+            "
+        .unindent();
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a.rs": text.clone(),
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+            .await
+            .unwrap();
+
+        // Simulate the language server sending us edits in a non-ordered fashion,
+        // with ranges sometimes being inverted.
+        let edits = project
+            .update(cx, |project, cx| {
+                project.edits_from_lsp(
+                    &buffer,
+                    [
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 9),
+                                lsp::Position::new(0, 9),
+                            ),
+                            new_text: "\n\n".into(),
+                        },
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 8),
+                                lsp::Position::new(0, 4),
+                            ),
+                            new_text: "a::{b, c}".into(),
+                        },
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(1, 0),
+                                lsp::Position::new(7, 0),
+                            ),
+                            new_text: "".into(),
+                        },
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 9),
+                                lsp::Position::new(0, 9),
+                            ),
+                            new_text: "
+                                fn f() {
+                                b();
+                                c();
+                                }"
+                            .unindent(),
+                        },
+                    ],
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        buffer.update(cx, |buffer, cx| {
+            let edits = edits
+                .into_iter()
+                .map(|(range, text)| {
+                    (
+                        range.start.to_point(&buffer)..range.end.to_point(&buffer),
+                        text,
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                edits,
+                [
+                    (Point::new(0, 4)..Point::new(0, 8), "a::{b, c}".into()),
+                    (Point::new(1, 0)..Point::new(2, 0), "".into())
+                ]
+            );
+
+            for (range, new_text) in edits {
+                buffer.edit([(range, new_text)], cx);
+            }
+            assert_eq!(
+                buffer.text(),
+                "
+                use a::{b, c};
+                
+                fn f() {
+                b();
+                c();
+                }
                 "
                 .unindent()
             );
