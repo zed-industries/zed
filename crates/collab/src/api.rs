@@ -88,8 +88,6 @@ async fn create_user(
     Extension(app): Extension<Arc<AppState>>,
     Extension(rpc_server): Extension<Arc<rpc::Server>>,
 ) -> Result<Json<User>> {
-    println!("{:?}", params);
-
     let user_id = if let Some(invite_code) = params.invite_code {
         let invitee_id = app
             .db
@@ -133,15 +131,17 @@ async fn update_user(
     Path(user_id): Path<i32>,
     Json(params): Json<UpdateUserParams>,
     Extension(app): Extension<Arc<AppState>>,
+    Extension(rpc_server): Extension<Arc<rpc::Server>>,
 ) -> Result<()> {
+    let user_id = UserId(user_id);
+
     if let Some(admin) = params.admin {
-        app.db.set_user_is_admin(UserId(user_id), admin).await?;
+        app.db.set_user_is_admin(user_id, admin).await?;
     }
 
     if let Some(invite_count) = params.invite_count {
-        app.db
-            .set_invite_count(UserId(user_id), invite_count)
-            .await?;
+        app.db.set_invite_count(user_id, invite_count).await?;
+        rpc_server.invite_count_updated(user_id).await.trace_err();
     }
 
     Ok(())

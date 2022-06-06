@@ -462,6 +462,24 @@ impl Server {
         Ok(())
     }
 
+    pub async fn invite_count_updated(self: &Arc<Self>, user_id: UserId) -> Result<()> {
+        if let Some(user) = self.app_state.db.get_user_by_id(user_id).await? {
+            if let Some(invite_code) = &user.invite_code {
+                let store = self.store().await;
+                for connection_id in store.connection_ids_for_user(user_id) {
+                    self.peer.send(
+                        connection_id,
+                        proto::UpdateInviteInfo {
+                            url: format!("{}{}", self.app_state.invite_link_prefix, invite_code),
+                            count: user.invite_count as u32,
+                        },
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     async fn ping(
         self: Arc<Server>,
         _: TypedEnvelope<proto::Ping>,
