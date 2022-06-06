@@ -19,6 +19,17 @@ pub fn bind(args: TokenStream, function: TokenStream) -> TokenStream {
     let inner_fn_name = format_ident!("{}", inner_fn.sig.ident);
     let outer_fn_name = format_ident!("__{}", inner_fn_name);
 
+    let variadic = inner_fn.sig.inputs.len();
+    let mut args = vec![];
+    for i in 0..variadic {
+        let ident = format_ident!("__{}_arg_{}", inner_fn_name, i);
+        args.push(ident);
+    }
+
+    let args = quote! {
+        ( #(args ,) )*
+    };
+
     TokenStream::from(quote! {
         #[no_mangle]
         #inner_fn
@@ -30,8 +41,8 @@ pub fn bind(args: TokenStream, function: TokenStream) -> TokenStream {
             let data = unsafe { buffer.to_vec() };
 
             // operation
-            let argument = ::plugin::bincode::deserialize(&data).unwrap();
-            let result = #inner_fn_name(argument);
+            let #args = ::plugin::bincode::deserialize(&data).unwrap();
+            let result = #inner_fn_name #args;
             let new_data: Result<Vec<u8>, _> = ::plugin::bincode::serialize(&result);
             let new_data = new_data.unwrap();
 
