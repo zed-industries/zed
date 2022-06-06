@@ -6,14 +6,15 @@ echo "Clearing cached plugins..."
 cargo clean --manifest-path plugins/Cargo.toml
 
 echo "Building Wasm plugins..."
-cargo build --release --target wasm32-unknown-unknown --manifest-path plugins/Cargo.toml
+# cargo build --release --target wasm32-unknown-unknown --manifest-path plugins/Cargo.toml
+cargo build --release --target wasm32-wasi --manifest-path plugins/Cargo.toml
 
 echo
 echo "Extracting binaries..."
 rm -rf plugins/bin
 mkdir plugins/bin
 
-for f in plugins/target/wasm32-unknown-unknown/release/*.wasm
+for f in plugins/target/wasm32-wasi/release/*.wasm
 do
     name=$(basename $f)
     cp $f plugins/bin/$name
