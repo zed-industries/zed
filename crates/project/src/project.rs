@@ -36,7 +36,7 @@ use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use std::{
     cell::RefCell,
-    cmp::{self, Ordering, Reverse},
+    cmp::{self, Ordering},
     convert::TryInto,
     ffi::OsString,
     hash::Hash,
