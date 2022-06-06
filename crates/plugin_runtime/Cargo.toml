@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 wasmtime = "0.37.0"
 wasmtime-wasi = "0.37.0"
+wasi-common = "0.37.0"
 anyhow = { version = "1.0", features = ["std"] }
 serde = "1.0"
+serde_json = "1.0"
 bincode = "1.3"

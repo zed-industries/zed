@@ -2,6 +2,7 @@ use super::installation::{npm_install_packages, npm_package_latest_version};
 use anyhow::{anyhow, Context, Result};
 use client::http::HttpClient;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
+use isahc::http::version;
 use language::{LanguageServerName, LspAdapter};
 use parking_lot::{Mutex, RwLock};
 use plugin_runtime::{Wasi, WasiPlugin};
@@ -42,7 +43,7 @@ impl LspAdapter for LanguagePluginLspAdapter {
     }
 
     fn server_args<'a>(&'a self) -> Vec<String> {
-        self.runtime.lock().call("args", ()).unwrap()
+        self.runtime.lock().call("server_args", ()).unwrap()
     }
 
     fn fetch_latest_server_version(
@@ -65,27 +66,38 @@ impl LspAdapter for LanguagePluginLspAdapter {
 
     fn fetch_server_binary(
         &self,
-        versions: Box<dyn 'static + Send + Any>,
+        version: Box<dyn 'static + Send + Any>,
         _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
     ) -> BoxFuture<'static, Result<PathBuf>> {
-        // TODO: async runtime
+        let version = version.downcast::<String>().unwrap();
         let mut runtime = self.runtime.lock();
-        let result = runtime.attach_file(&container_dir);
-        let result = match result {
-            Ok(_) => runtime.call("fetch_server_binary", container_dir),
-            Err(e) => Err(e),
-        };
+
+        let result: Result<PathBuf, _> = (|| {
+            let handle = runtime.attach_path(&container_dir)?;
+            let result = runtime
+                .call::<_, Option<PathBuf>>("fetch_server_binary", container_dir)?
+                .ok_or_else(|| anyhow!("Could not load cached server binary"));
+            runtime.remove_resource(handle)?;
+            result
+        })();
 
         async move { result }.boxed()
     }
 
     fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
-        let result = self
-            .runtime
-            .lock()
-            .call("cached_server_binary", container_dir);
-        async move { result }.log_err().boxed()
+        let mut runtime = self.runtime.lock();
+
+        let result: Option<PathBuf> = (|| {
+            let handle = runtime.attach_path(&container_dir).ok()?;
+            let result = runtime
+                .call::<_, Option<PathBuf>>("cached_server_binary", container_dir)
+                .ok()?;
+            runtime.remove_resource(handle).ok()?;
+            result
+        })();
+
+        async move { result }.boxed()
     }
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
@@ -113,11 +125,13 @@ impl LspAdapter for LanguagePluginLspAdapter {
     }
 
     fn initialization_options(&self) -> Option<serde_json::Value> {
-        let result = self
-            .runtime
-            .lock()
-            .call("initialization_options", ())
-            .unwrap();
-        Some(result)
+        // self.runtime
+        //     .lock()
+        //     .call::<_, Option<serde_json::Value>>("initialization_options", ())
+        //     .unwrap()
+
+        Some(json!({
+            "provideFormatter": true
+        }))
     }
 }

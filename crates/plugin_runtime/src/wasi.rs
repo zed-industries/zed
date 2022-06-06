@@ -1,10 +1,13 @@
-use std::{collections::HashMap, fs::File, path::Path};
+use std::{fs::File, os::unix::prelude::AsRawFd, path::Path};
 
 use anyhow::{anyhow, Error};
 use serde::{de::DeserializeOwned, Serialize};
 
-use wasmtime::{Engine, Func, Instance, Linker, Memory, MemoryType, Module, Store, TypedFunc};
-use wasmtime_wasi::{dir, Dir, WasiCtx, WasiCtxBuilder};
+use wasi_common::{dir, file};
+use wasmtime::{Engine, Instance, Linker, Module, Store, TypedFunc};
+use wasmtime_wasi::{Dir, WasiCtx, WasiCtxBuilder};
+
+pub struct WasiResource(u32);
 
 pub struct Wasi {
     engine: Engine,
@@ -50,8 +53,13 @@ impl Wasi {
     pub fn init(plugin: WasiPlugin) -> Result<Self, Error> {
         let engine = Engine::default();
         let mut linker = Linker::new(&engine);
+
+        linker.func_wrap("env", "hello", |x: u32| x * 2).unwrap();
+        linker.func_wrap("env", "bye", |x: u32| x / 2).unwrap();
+
         println!("linking");
         wasmtime_wasi::add_to_linker(&mut linker, |s| s)?;
+
         println!("linked");
         let mut store: Store<_> = Store::new(&engine, plugin.wasi_ctx);
         println!("moduling");
@@ -60,13 +68,13 @@ impl Wasi {
 
         linker.module(&mut store, "", &module)?;
         println!("linked again");
+
         let instance = linker.instantiate(&mut store, &module)?;
         println!("instantiated");
 
         let alloc_buffer = instance.get_typed_func(&mut store, "__alloc_buffer")?;
         // let free_buffer = instance.get_typed_func(&mut store, "__free_buffer")?;
         println!("can alloc");
-
         Ok(Wasi {
             engine,
             module,
@@ -77,20 +85,48 @@ impl Wasi {
         })
     }
 
-    pub fn attach_file<T: AsRef<Path>>(&mut self, path: T) -> Result<(), Error> {
+    /// Attaches a file or directory the the given system path to the runtime.
+    /// Note that the resource must be freed by calling `remove_resource` afterwards.
+    pub fn attach_path<T: AsRef<Path>>(&mut self, path: T) -> Result<WasiResource, Error> {
+        // grab the WASI context
         let ctx = self.store.data_mut();
+
+        // open the file we want, and convert it into the right type
+        // this is a footgun and a half
         let file = File::open(&path).unwrap();
         let dir = Dir::from_std_file(file);
-        // this is a footgun and a half.
-        let dir = dir::Dir::from_cap_std(dir);
-        ctx.push_preopened_dir(Box::new(dir), path)?;
+        let dir = Box::new(wasmtime_wasi::dir::Dir::from_cap_std(dir));
+
+        // grab an empty file descriptor, specify capabilities
+        let fd = ctx.table().push(Box::new(()))?;
+        dbg!(fd);
+        let caps = dir::DirCaps::all();
+        let file_caps = file::FileCaps::all();
+
+        // insert the directory at the given fd,
+        // return a handle to the resource
+        ctx.insert_dir(fd, dir, caps, file_caps, path.as_ref().to_path_buf());
+        Ok(WasiResource(fd))
+    }
+
+    /// Returns `true` if the resource existed and was removed.
+    pub fn remove_resource(&mut self, resource: WasiResource) -> Result<(), Error> {
+        self.store
+            .data_mut()
+            .table()
+            .delete(resource.0)
+            .ok_or_else(|| anyhow!("Resource did not exist, but a valid handle was passed in"))?;
         Ok(())
     }
 
-    // pub fn remove_file<T: AsRef<Path>>(&mut self, path: T) -> Result<(), Error> {
-    //     let ctx = self.store.data_mut();
-    //     ctx.remove
-    //     Ok(())
+    // pub fn with_resource<T>(
+    //     &mut self,
+    //     resource: WasiResource,
+    //     callback: fn(&mut Self) -> Result<T, Error>,
+    // ) -> Result<T, Error> {
+    //     let result = callback(self);
+    //     self.remove_resource(resource)?;
+    //     return result;
     // }
 
     // So this call function is kinda a dance, I figured it'd be a good idea to document it.
@@ -142,6 +178,9 @@ impl Wasi {
         handle: &str,
         arg: A,
     ) -> Result<R, Error> {
+        dbg!(&handle);
+        // dbg!(serde_json::to_string(&arg)).unwrap();
+
         // serialize the argument using bincode
         let arg = bincode::serialize(&arg)?;
         let arg_buffer_len = arg.len();
